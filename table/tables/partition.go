@@ -451,10 +451,12 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 					logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", colPruneExpr), zap.Error(err))
 					return nil, errors.Trace(err)
 				}
+				expr = expr.Clone()
+				cols := expression.ExtractColumns(expr)
+				// TODO: assert
+				cols[0].Index = 0
 				if colPrune.ExprCol == nil {
-					cols := expression.ExtractColumns(expr)
-					cols[0].Index = 0
-					colPrune.ExprCol = cols[0]
+					colPrune.ExprCol = cols[0].Clone().(*expression.Column)
 				}
 				colPrune.Exprs = append(colPrune.Exprs, expr)
 			}

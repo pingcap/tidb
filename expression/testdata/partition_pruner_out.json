@@ -816,7 +816,7 @@
           "2 2 2"
         ],
         "Plan": [
-          "TableReader_7 19.99 root partition:all data:Selection_6",
+          "TableReader_7 19.99 root partition:p0 data:Selection_6",
           "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -852,7 +852,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "TableReader_7 59.91 root partition:all data:Selection_6",
+          "TableReader_7 59.91 root partition:p0,p1 data:Selection_6",
           "└─Selection_6 59.91 cop[tikv]  or(in(test_partition.t1.a, 1, 2, 3), in(test_partition.t1.b, 4, 5, 6))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -934,7 +934,7 @@
           "1 1 1"
         ],
         "Plan": [
-          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "TableReader_7 10.00 root partition:p0 data:Selection_6",
           "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -945,8 +945,84 @@
           "1 1 1"
         ],
         "Plan": [
-          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "TableReader_7 10.00 root partition:p0 data:Selection_6",
           "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 or b = 2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 19.99 root partition:p0 data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 or (a = 2 and b = 2) or ((a,b) in ((4,4),(5,5)))",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "4 4 4",
+          "5 5 5"
+        ],
+        "Plan": [
+          "TableReader_7 10.03 root partition:p0 data:Selection_6",
+          "└─Selection_6 10.03 cop[tikv]  or(or(eq(test_partition.t1.a, 1), and(eq(test_partition.t1.a, 2), eq(test_partition.t1.b, 2))), or(and(eq(test_partition.t1.a, 4), eq(test_partition.t1.b, 4)), and(eq(test_partition.t1.a, 5), eq(test_partition.t1.b, 5))))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 and false",
+        "Result": null,
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 and true",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 10.00 root partition:p0 data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 or false",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 0)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 or true",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10",
+          "<nil> 10 <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 10000.00 root partition:all data:Selection_6",
+          "└─Selection_6 10000.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 1)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }

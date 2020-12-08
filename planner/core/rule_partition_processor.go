@@ -224,6 +224,183 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
+type listColumnsPruner struct {
+	*partitionProcessor
+	ctx             sessionctx.Context
+	tbl             table.Table
+	partitionNames  []model.CIStr
+	colIDToUniqueID map[int64]int64
+	colPrunes       []tables.ForListColumnPruning
+	used            map[int]struct{}
+}
+
+func newListColumnsPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	s *partitionProcessor, colIDToUniqueID map[int64]int64, colPrunes []tables.ForListColumnPruning) *listColumnsPruner {
+	return &listColumnsPruner{
+		partitionProcessor: s,
+		ctx:                ctx,
+		tbl:                tbl,
+		partitionNames:     partitionNames,
+		colIDToUniqueID:    colIDToUniqueID,
+		colPrunes:          colPrunes,
+		used:               make(map[int]struct{}),
+	}
+}
+
+func (l *listColumnsPruner) fullRange() map[int]struct{} {
+	l.used[FullRange] = struct{}{}
+	return l.used
+}
+
+func (l *listColumnsPruner) findUsedPartitionForCondition(cond expression.Expression) (map[int]struct{}, bool, error) {
+	sf, ok := cond.(*expression.ScalarFunction)
+	if !ok {
+		return nil, false, nil
+	}
+	switch sf.FuncName.L {
+	case ast.LogicOr:
+		dnfItems := expression.FlattenDNFConditions(sf)
+		return l.findUsedPartitionForDNFCondition(dnfItems)
+	case ast.LogicAnd:
+		cnfItems := expression.SplitCNFItems(cond)
+		return l.findUsedPartitionForCNFCondition(cnfItems)
+	}
+	return l.findUsedPartitionForExpression(cond)
+}
+
+func (l *listColumnsPruner) findUsedPartitionForCNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
+	cnfUseds := make([]map[int]struct{}, 0, len(conds))
+	for _, cond := range conds {
+		cnfUsed, ok, err := l.findUsedPartitionForCondition(cond)
+		if err != nil || !ok {
+			return l.fullRange(), false, err
+		}
+		if len(cnfUsed) == 0 {
+			// no partition.
+			return make(map[int]struct{}), true, nil
+		}
+		if _, ok := cnfUsed[FullRange]; ok {
+			continue
+		}
+		cnfUseds = append(cnfUseds, cnfUsed)
+	}
+	return l.intersection(cnfUseds), true, nil
+}
+
+func (l *listColumnsPruner) findUsedPartitionForDNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
+	dnfUseds := make([]map[int]struct{}, 0, len(conds))
+	for _, cond := range conds {
+		dnfUsed, ok, err := l.findUsedPartitionForCondition(cond)
+		if err != nil || !ok {
+			return l.fullRange(), false, err
+		}
+		if len(dnfUsed) == 0 {
+			// no partition need to merge.
+			continue
+		}
+		if _, ok := dnfUsed[FullRange]; ok {
+			return l.fullRange(), true, nil
+		}
+		dnfUseds = append(dnfUseds, dnfUsed)
+	}
+	return l.merge(dnfUseds), true, nil
+}
+
+func (l *listColumnsPruner) intersection(subUseds []map[int]struct{}) map[int]struct{} {
+	used := make(map[int]struct{})
+	if len(subUseds) == 0 {
+		return used
+	}
+	subUsed := subUseds[0]
+	for p := range subUsed {
+		exist := true
+		for i := 1; i < len(subUseds); i++ {
+			_, ok := subUseds[i][p]
+			if !ok {
+				exist = false
+				break
+			}
+		}
+		if exist {
+			used[p] = struct{}{}
+		}
+	}
+	return used
+}
+
+func (l *listColumnsPruner) merge(subUseds []map[int]struct{}) map[int]struct{} {
+	used := make(map[int]struct{})
+	for _, subUsed := range subUseds {
+		for p := range subUsed {
+			used[p] = struct{}{}
+		}
+	}
+	return used
+}
+
+func (l *listColumnsPruner) findUsedPartitionForExpression(cond expression.Expression) (map[int]struct{}, bool, error) {
+	fmt.Printf("cond: %v      -----\n", cond.String())
+	condCols := expression.ExtractColumns(cond)
+	if len(condCols) != 1 {
+		return nil, false, nil
+	}
+	var pruneExprs []expression.Expression
+	var pruneCol *expression.Column
+	for _, colPrune := range l.colPrunes {
+		if colPrune.ExprCol.ID == condCols[0].ID {
+			pruneExprs = colPrune.Exprs
+			pruneCol = colPrune.ExprCol
+		}
+	}
+	if len(pruneExprs) == 0 {
+		return nil, false, nil
+	}
+	col := pruneCol.Clone().(*expression.Column)
+	if uniqueID, ok := l.colIDToUniqueID[col.ID]; ok {
+		col.UniqueID = uniqueID
+	}
+	cols := []*expression.Column{col}
+	colLen := []int{types.UnspecifiedLength}
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, []expression.Expression{cond}, cols, colLen)
+	if err != nil {
+		return nil, false, err
+	}
+	ranges := detachedResult.Ranges
+	pi := l.tbl.Meta().Partition
+	subUsed := make(map[int]struct{}, len(ranges))
+	for _, r := range ranges {
+		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(cols) {
+					return nil, false, nil
+				}
+			}
+			found := int64(-1)
+			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
+			for j, expr := range pruneExprs {
+				ret, _, err := expr.EvalInt(l.ctx, row)
+				if err != nil {
+					return nil, false, err
+				}
+				if ret > 0 {
+					found = int64(j)
+					break
+				}
+			}
+			if found == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, pi.Definitions[found].Name.L) {
+				continue
+			}
+			subUsed[int(found)] = struct{}{}
+		} else {
+			return nil, false, nil
+		}
+	}
+	return subUsed, true, nil
+}
+
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression) ([]int, error) {
 	pi := tbl.Meta().Partition
@@ -291,87 +468,113 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 			break
 		}
 	}
+	// --------------------------------------
 	if _, ok := used[FullRange]; ok && len(pruneList.ColPrunes) > 1 {
-		// --------------------------------------
-		subUseds := make([]map[int]struct{}, 0, len(pruneList.ColPrunes))
-		for _, colPrune := range pruneList.ColPrunes {
-			col := colPrune.ExprCol.Clone().(*expression.Column)
-			colLen := []int{types.UnspecifiedLength}
-			if uniqueID, ok := colIDToUniqueID[col.ID]; ok {
-				col.UniqueID = uniqueID
-			}
-			cols := []*expression.Column{col}
-			detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
-			if err != nil {
-				return nil, err
-			}
-			ranges := detachedResult.Ranges
-			subUsed := make(map[int]struct{}, len(ranges))
-			for _, r := range ranges {
-				if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
-					if !r.HighVal[0].IsNull() {
-						if len(r.HighVal) != len(cols) {
-							subUsed[FullRange] = struct{}{}
-							break
-						}
-					}
-					found := int64(-1)
-					row := chunk.MutRowFromDatums(r.HighVal).ToRow()
-					for j, expr := range colPrune.Exprs {
-						ret, _, err := expr.EvalInt(ctx, row)
-						if err != nil {
-							return nil, err
-						}
-						if ret > 0 {
-							found = int64(j)
-							break
-						}
-					}
-					if found == -1 {
-						continue
-					}
-					if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
-						continue
-					}
-					subUsed[int(found)] = struct{}{}
-				} else {
-					subUsed[FullRange] = struct{}{}
-					break
-				}
-			}
-			subUseds = append(subUseds, subUsed)
+		lc := newListColumnsPruner(ctx, tbl, partitionNames, s, colIDToUniqueID, pruneList.ColPrunes)
+		var newUsed map[int]struct{}
+		newUsed, ok, err = lc.findUsedPartitionForCNFCondition(conds)
+		if err != nil {
+			return nil, err
 		}
-		used = make(map[int]struct{}, len(ranges))
-		notFullRangIdx := -1
-		for i := 0; i < len(subUseds); i++ {
-			_, ok := subUseds[i][FullRange]
-			if !ok {
-				notFullRangIdx = i
-				break
-			}
+		if ok {
+			used = newUsed
 		}
-		if notFullRangIdx != -1 {
-			subUsed := subUseds[notFullRangIdx]
-			for k := range subUsed {
-				exist := true
-				for i := 0; i < len(subUseds); i++ {
-					_, ok := subUseds[i][FullRange]
-					if ok {
-						continue
-					}
-					_, ok = subUseds[i][k]
-					if !ok {
-						exist = false
-						break
-					}
-				}
-				if exist {
-					used[k] = struct{}{}
-				}
-			}
-		} else {
-			used[FullRange] = struct{}{}
-		}
+		//	subUseds := make([]map[int]struct{}, 0, len(pruneList.ColPrunes))
+		//loop1:
+		//	for _, cond := range conds {
+		//		sf, ok := cond.(*expression.ScalarFunction)
+		//		if !ok {
+		//			break loop1
+		//		}
+		//		var dnfItems []expression.Expression
+		//		if sf.FuncName.L == ast.LogicOr {
+		//			dnfItems = expression.FlattenDNFConditions(sf)
+		//		} else {
+		//			dnfItems = []expression.Expression{sf}
+		//		}
+		//		subUsed := make(map[int]struct{}, len(ranges))
+		//		for _, item := range dnfItems {
+		//			condCols := expression.ExtractColumns(item)
+		//			// TODO:
+		//			if len(condCols) != 1 {
+		//				break loop1
+		//			}
+		//			var pruneExprs []expression.Expression
+		//			var pruneCol *expression.Column
+		//			for _, colPrune := range pruneList.ColPrunes {
+		//				if colPrune.ExprCol.ID == condCols[0].ID {
+		//					pruneExprs = colPrune.Exprs
+		//					pruneCol = colPrune.ExprCol
+		//				}
+		//			}
+		//			if len(pruneExprs) == 0 {
+		//				break loop1
+		//			}
+		//			//
+		//			cnfItems := expression.SplitCNFItems(item)
+		//			col := pruneCol.Clone().(*expression.Column)
+		//			colLen := []int{types.UnspecifiedLength}
+		//			if uniqueID, ok := colIDToUniqueID[col.ID]; ok {
+		//				col.UniqueID = uniqueID
+		//			}
+		//			cols := []*expression.Column{col}
+		//			detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, cnfItems, cols, colLen)
+		//			if err != nil {
+		//				return nil, err
+		//			}
+		//			ranges := detachedResult.Ranges
+		//			for _, r := range ranges {
+		//				if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
+		//					if !r.HighVal[0].IsNull() {
+		//						if len(r.HighVal) != len(cols) {
+		//							break loop1
+		//						}
+		//					}
+		//					found := int64(-1)
+		//					row := chunk.MutRowFromDatums(r.HighVal).ToRow()
+		//					for j, expr := range pruneExprs {
+		//						ret, _, err := expr.EvalInt(ctx, row)
+		//						if err != nil {
+		//							return nil, err
+		//						}
+		//						if ret > 0 {
+		//							found = int64(j)
+		//							break
+		//						}
+		//					}
+		//					if found == -1 {
+		//						continue
+		//					}
+		//					if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
+		//						continue
+		//					}
+		//					subUsed[int(found)] = struct{}{}
+		//				} else {
+		//					break loop1
+		//				}
+		//			}
+		//		}
+		//		if _, ok := subUsed[FullRange]; !ok {
+		//			subUseds = append(subUseds, subUsed)
+		//		}
+		//	}
+		//	if len(subUseds) > 0 {
+		//		used = make(map[int]struct{}, len(ranges))
+		//		subUsed := subUseds[0]
+		//		for p := range subUsed {
+		//			exist := true
+		//			for i := 1; i < len(subUseds); i++ {
+		//				_, ok := subUseds[i][p]
+		//				if !ok {
+		//					exist = false
+		//					break
+		//				}
+		//			}
+		//			if exist {
+		//				used[p] = struct{}{}
+		//			}
+		//		}
+		//	}
 		// --------------------------------------
 	}
 	if _, ok := used[FullRange]; ok {
