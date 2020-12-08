@@ -42,6 +42,8 @@ const (
 	Capture = "capture"
 	// Evolve indicates the binding is evolved by TiDB from old bindings.
 	Evolve = "evolve"
+	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	Builtin = "builtin"
 )
 
 // Binding stores the basic bind hint info.
