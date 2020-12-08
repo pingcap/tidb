@@ -1124,16 +1124,14 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 				}
 			}
 			idxRecords[i].skip = true
-		} else {
+		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			if w.distinctCheckFlags[i] {
-				val, err := w.index.GenIndexValue(stmtCtx, idxRecords[i].vals, w.distinctCheckFlags[i], false, idxRecords[i].handle)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				batchVals[string(key)] = val
+			val, err := w.index.GenIndexValue(stmtCtx, idxRecords[i].vals, w.distinctCheckFlags[i], false, idxRecords[i].handle)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			batchVals[string(key)] = val
 		}
 	}
 	// Constrains is already checked.

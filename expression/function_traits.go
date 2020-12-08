@@ -186,3 +186,29 @@ var noopFuncs = map[string]struct{}{
 	ast.GetLock:     {},
 	ast.ReleaseLock: {},
 }
+
+// booleanFunctions stores boolean functions
+var booleanFunctions = map[string]struct{}{
+	ast.UnaryNot:           {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.NullEQ:             {},
+	ast.LT:                 {},
+	ast.LE:                 {},
+	ast.GT:                 {},
+	ast.GE:                 {},
+	ast.In:                 {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.IsTruthWithNull:    {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.IsNull:             {},
+	ast.Like:               {},
+	ast.Regexp:             {},
+	ast.IsIPv4:             {},
+	ast.IsIPv4Compat:       {},
+	ast.IsIPv4Mapped:       {},
+	ast.IsIPv6:             {},
+}
