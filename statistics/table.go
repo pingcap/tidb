@@ -571,8 +571,8 @@ func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyC
 	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
 	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hg.GetUpper(0))
 	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hg.GetUpper(0))
-	selectivity := hg.TotalRowCount() * (rangeWidth / hgWidth)
-	return math.Min(selectivity, float64(modifyCount)/hg.TotalRowCount())
+	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
+	return math.Min(rangeCount, float64(modifyCount))
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
