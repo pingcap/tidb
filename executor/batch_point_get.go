@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"sync"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -68,8 +69,12 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
-	// 0 indicates not set, 1 indicates already set.
-	alreadySetOptionForSnapshot int32
+	// mu protect from data race since there may exist multiple
+	// BatchPointGetExec set option for the same snapshot simultaneously.
+	mu struct {
+		sync.Mutex
+		alreadySetOptionForSnapshot bool
+	}
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -103,7 +108,8 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
-	if atomic.CompareAndSwapInt32(&e.alreadySetOptionForSnapshot, 0, 1) {
+	e.mu.Lock()
+	if !e.mu.alreadySetOptionForSnapshot {
 		if e.runtimeStats != nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
@@ -116,7 +122,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 		snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+		e.mu.alreadySetOptionForSnapshot = true
 	}
+	e.mu.Unlock()
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		if e.lock {
