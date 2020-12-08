@@ -1476,6 +1476,7 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
+	e.lastOpenedChildID = atomic.Value{}
 	return nil
 }
 
