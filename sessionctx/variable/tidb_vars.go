@@ -485,6 +485,9 @@ const (
 
 	// TiDBGuaranteeExternalConsistency indicates whether maintain the external consistency.
 	TiDBGuaranteeExternalConsistency = "tidb_guarantee_external_consistency"
+
+	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
+	TiDBAnalyzeVersion = "tidb_analyze_version"
 )
 
 // Default TiDB system variable values.
@@ -601,6 +604,7 @@ const (
 	DefTiDBEnableAsyncCommit            = false
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
+	DefTiDBAnalyzeVersion               = 1
 )
 
 // Process global variables.
