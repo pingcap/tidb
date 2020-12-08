@@ -68,13 +68,12 @@ func main() {
 		fmt.Printf("\ncreate dumper failed: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer dumper.Close()
 	err = dumper.Dump()
+	dumper.Close()
 	if err != nil {
 		log.Error("dump failed error stack info", zap.Error(err))
 		fmt.Printf("\ndump failed: %s\n", err.Error())
 		os.Exit(1)
-	} else {
-		log.Info("dump data successfully, dumpling will exit now")
 	}
+	log.Info("dump data successfully, dumpling will exit now")
 }

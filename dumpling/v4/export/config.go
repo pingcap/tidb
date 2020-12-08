@@ -54,7 +54,7 @@ const (
 	flagNoSchemas                = "no-schemas"
 	flagNoData                   = "no-data"
 	flagCsvNullValue             = "csv-null-value"
-	flagSql                      = "sql"
+	flagSQL                      = "sql"
 	flagFilter                   = "filter"
 	flagCaseSensitive            = "case-sensitive"
 	flagDumpEmptyDatabase        = "dump-empty-database"
@@ -71,67 +71,68 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 
+	// FlagHelp represents the help flag
 	FlagHelp = "help"
 )
 
+// Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
 
-	Databases               []string
-	Host                    string
-	User                    string
-	Port                    int
-	Password                string `json:"-"`
-	AllowCleartextPasswords bool
-	Security                struct {
+	AllowCleartextPasswords  bool
+	SortByPk                 bool
+	NoViews                  bool
+	NoHeader                 bool
+	NoSchemas                bool
+	NoData                   bool
+	CompleteInsert           bool
+	TransactionalConsistency bool
+	EscapeBackslash          bool
+	DumpEmptyDatabase        bool
+	PosAfterConnect          bool
+	CompressType             storage.CompressType
+
+	Host     string
+	Port     int
+	Threads  int
+	User     string
+	Password string `json:"-"`
+	Security struct {
 		CAPath   string
 		CertPath string
 		KeyPath  string
 	}
 
-	Threads int
-
-	LogLevel  string
-	LogFile   string
-	LogFormat string
-	Logger    *zap.Logger `json:"-"`
-
-	FileSize      uint64
-	StatementSize uint64
+	LogLevel      string
+	LogFile       string
+	LogFormat     string
 	OutputDirPath string
-	ServerInfo    ServerInfo
-	SortByPk      bool
-	Tables        DatabaseTables
 	StatusAddr    string
 	Snapshot      string
 	Consistency   string
-	NoViews       bool
-	NoHeader      bool
-	NoSchemas     bool
-	NoData        bool
 	CsvNullValue  string
-	Sql           string
+	SQL           string
 	CsvSeparator  string
 	CsvDelimiter  string
-	ReadTimeout   time.Duration
-	CompressType  storage.CompressType
+	Databases     []string
 
-	TableFilter              filter.Filter `json:"-"`
-	Rows                     uint64
-	Where                    string
-	FileType                 string
-	CompleteInsert           bool
-	TransactionalConsistency bool
-	EscapeBackslash          bool
-	DumpEmptyDatabase        bool
-	OutputFileTemplate       *template.Template `json:"-"`
-	TiDBMemQuotaQuery        uint64
-	SessionParams            map[string]interface{}
-
-	PosAfterConnect bool
-	Labels          prometheus.Labels `json:"-"`
+	TableFilter        filter.Filter `json:"-"`
+	Where              string
+	FileType           string
+	ServerInfo         ServerInfo
+	Logger             *zap.Logger        `json:"-"`
+	OutputFileTemplate *template.Template `json:"-"`
+	Rows               uint64
+	ReadTimeout        time.Duration
+	TiDBMemQuotaQuery  uint64
+	FileSize           uint64
+	StatementSize      uint64
+	SessionParams      map[string]interface{}
+	Labels             prometheus.Labels `json:"-"`
+	Tables             DatabaseTables
 }
 
+// DefaultConfig returns the default export Config for dumpling
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
@@ -154,12 +155,12 @@ func DefaultConfig() *Config {
 		NoViews:            true,
 		Rows:               UnspecifiedSize,
 		Where:              "",
-		FileType:           "sql",
+		FileType:           FileFormatSQLTextString,
 		NoHeader:           false,
 		NoSchemas:          false,
 		NoData:             false,
 		CsvNullValue:       "\\N",
-		Sql:                "",
+		SQL:                "",
 		TableFilter:        allFilter,
 		DumpEmptyDatabase:  true,
 		SessionParams:      make(map[string]interface{}),
@@ -168,8 +169,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-func (config *Config) String() string {
-	cfg, err := json.Marshal(config)
+// String returns dumpling's config in json format
+func (conf *Config) String() string {
+	cfg, err := json.Marshal(conf)
 	if err != nil {
 		log.Error("marshal config to json", zap.Error(err))
 	}
@@ -195,6 +197,7 @@ func timestampDirName() string {
 	return fmt.Sprintf("./export-%s", time.Now().Format(time.RFC3339))
 }
 
+// DefineFlags defines flags of dumpling's configuration
 func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
@@ -218,12 +221,12 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "sql", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, FileFormatSQLTextString, "The type of export file (sql/csv)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
 	flags.String(flagCsvNullValue, "\\N", "The null value used when export to csv")
-	flags.StringP(flagSql, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
+	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
@@ -238,12 +241,13 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
-	flags.MarkHidden(flagReadTimeout)
+	_ = flags.MarkHidden(flagReadTimeout)
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'no-compression' now")
 }
 
-// GetDSN generates DSN from Config
+// ParseFromFlags parses dumpling's export.Config from flags
+// nolint: gocyclo
 func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	conf.Databases, err = flags.GetStringSlice(flagDatabase)
@@ -342,7 +346,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.Sql, err = flags.GetString(flagSql)
+	conf.SQL, err = flags.GetString(flagSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -434,7 +438,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if outputFilenameFormat == "" && conf.Sql != "" {
+	if outputFilenameFormat == "" && conf.SQL != "" {
 		outputFilenameFormat = DefaultAnonymousOutputFileTemplateText
 	}
 	tmpl, err := ParseOutputFileTemplate(outputFilenameFormat)
@@ -464,6 +468,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
+// ParseFileSize parses file size from tables-list and filter arguments
 func ParseFileSize(fileSizeStr string) (uint64, error) {
 	if len(fileSizeStr) == 0 {
 		return UnspecifiedSize, nil
@@ -476,6 +481,7 @@ func ParseFileSize(fileSizeStr string) (uint64, error) {
 	return 0, errors.Errorf("failed to parse filesize (-F '%s')", fileSizeStr)
 }
 
+// ParseTableFilter parses table filter from tables-list and filter arguments
 func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	if len(tablesList) == 0 {
 		return filter.Parse(filters)
@@ -498,6 +504,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+// ParseCompressType parses compressType string to storage.CompressType
 func ParseCompressType(compressType string) (storage.CompressType, error) {
 	switch compressType {
 	case "", "no-compression":
@@ -509,16 +516,16 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 	}
 }
 
-func (config *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
-	b, err := storage.ParseBackend(config.OutputDirPath, &config.BackendOptions)
+func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	httpClient := http.DefaultClient
 	httpClient.Timeout = 30 * time.Second
 	maxIdleConnsPerHost := http.DefaultMaxIdleConnsPerHost
-	if config.Threads > maxIdleConnsPerHost {
-		maxIdleConnsPerHost = config.Threads
+	if conf.Threads > maxIdleConnsPerHost {
+		maxIdleConnsPerHost = conf.Threads
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
@@ -530,11 +537,16 @@ func (config *Config) createExternalStorage(ctx context.Context) (storage.Extern
 }
 
 const (
-	UnspecifiedSize          = 0
+	// UnspecifiedSize means the filesize/statement-size is unspecified
+	UnspecifiedSize = 0
+	// DefaultTiDBMemQuotaQuery is the default TiDBMemQuotaQuery size for TiDB
 	DefaultTiDBMemQuotaQuery = 32 << 30
-	DefaultStatementSize     = 1000000
-	TiDBMemQuotaQueryName    = "tidb_mem_quota_query"
-	DefaultTableFilter       = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
+	// DefaultStatementSize is the default statement size
+	DefaultStatementSize = 1000000
+	// TiDBMemQuotaQueryName is the session variable TiDBMemQuotaQuery's name in TiDB
+	TiDBMemQuotaQueryName = "tidb_mem_quota_query"
+	// DefaultTableFilter is the default exclude table filter. It will exclude all system databases
+	DefaultTableFilter = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
 
 	defaultDumpThreads         = 128
 	defaultDumpGCSafePointTTL  = 5 * 60
@@ -547,30 +559,36 @@ var (
 	tableSampleVersion = semver.New("5.0.0")
 )
 
+// ServerInfo is the combination of ServerType and ServerInfo
 type ServerInfo struct {
 	ServerType    ServerType
 	ServerVersion *semver.Version
 }
 
+// ServerInfoUnknown is the unknown database type to dumpling
 var ServerInfoUnknown = ServerInfo{
 	ServerType:    ServerTypeUnknown,
 	ServerVersion: nil,
 }
 
-var versionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-var tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+var (
+	versionRegex     = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+)
 
+// ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
 	log.Debug("parse server info", zap.String("server info string", src))
 	lowerCase := strings.ToLower(src)
 	serverInfo := ServerInfo{}
-	if strings.Contains(lowerCase, "tidb") {
+	switch {
+	case strings.Contains(lowerCase, "tidb"):
 		serverInfo.ServerType = ServerTypeTiDB
-	} else if strings.Contains(lowerCase, "mariadb") {
+	case strings.Contains(lowerCase, "mariadb"):
 		serverInfo.ServerType = ServerTypeMariaDB
-	} else if versionRegex.MatchString(lowerCase) {
+	case versionRegex.MatchString(lowerCase):
 		serverInfo.ServerType = ServerTypeMySQL
-	} else {
+	default:
 		serverInfo.ServerType = ServerTypeUnknown
 	}
 
@@ -598,8 +616,10 @@ func ParseServerInfo(src string) ServerInfo {
 	return serverInfo
 }
 
+// ServerType represents the type of database to export
 type ServerType int8
 
+// String implements Stringer.String
 func (s ServerType) String() string {
 	if s >= ServerTypeAll {
 		return ""
@@ -608,22 +628,24 @@ func (s ServerType) String() string {
 }
 
 const (
+	// ServerTypeUnknown represents unknown server type
 	ServerTypeUnknown = iota
+	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
+	// ServerTypeMariaDB represents MariaDB server type
 	ServerTypeMariaDB
+	// ServerTypeTiDB represents TiDB server type
 	ServerTypeTiDB
 
+	// ServerTypeAll represents All server types
 	ServerTypeAll
 )
 
-var serverTypeString []string
-
-func init() {
-	serverTypeString = make([]string, ServerTypeAll)
-	serverTypeString[ServerTypeUnknown] = "Unknown"
-	serverTypeString[ServerTypeMySQL] = "MySQL"
-	serverTypeString[ServerTypeMariaDB] = "MariaDB"
-	serverTypeString[ServerTypeTiDB] = "TiDB"
+var serverTypeString = []string{
+	ServerTypeUnknown: "Unknown",
+	ServerTypeMySQL:   "MySQL",
+	ServerTypeMariaDB: "MariaDB",
+	ServerTypeTiDB:    "TiDB",
 }
 
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {
@@ -646,7 +668,7 @@ func initLogger(conf *Config) error {
 			Format: conf.LogFormat,
 		})
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -656,18 +678,18 @@ func registerTLSConfig(conf *Config) error {
 	if len(conf.Security.CAPath) > 0 {
 		tlsConfig, err := utils.ToTLSConfig(conf.Security.CAPath, conf.Security.CertPath, conf.Security.KeyPath)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
 func validateSpecifiedSQL(conf *Config) error {
-	if conf.Sql != "" && conf.Where != "" {
+	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
 	return nil
@@ -676,7 +698,7 @@ func validateSpecifiedSQL(conf *Config) error {
 func validateFileFormat(conf *Config) error {
 	conf.FileType = strings.ToLower(conf.FileType)
 	switch conf.FileType {
-	case "sql", "csv":
+	case FileFormatSQLTextString, FileFormatCSVString:
 		return nil
 	}
 	return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
