@@ -234,7 +234,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 					atomic.StoreInt64(&gotCheckA, 1)
 
 					resp = kvrpcpb.CheckSecondaryLocksResponse{
-						Locks:    []*kvrpcpb.LockInfo{{Key: []byte("a"), PrimaryLock: []byte("z"), LockVersion: ts}},
+						Locks:    []*kvrpcpb.LockInfo{{Key: []byte("a"), PrimaryLock: []byte("z"), LockVersion: ts, UseAsyncCommit: true}},
 						CommitTs: commitTs,
 					}
 				} else if bytes.Equal(k, []byte("i")) {

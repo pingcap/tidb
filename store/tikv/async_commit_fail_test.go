@@ -203,6 +203,8 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		c.Assert(gotSecondaries, DeepEquals, expectedSecondaries)
 
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+		txn.committer.cleanup(context.Background())
+		txn.committer.cleanWg.Wait()
 	}
 
 	test([]string{"a"}, []string{"a1"})
