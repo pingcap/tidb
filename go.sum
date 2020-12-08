@@ -821,8 +821,8 @@ github.com/spf13/viper v1.4.0/go.mod h1:PTJ7Z/lr49W6bUbkmS1V3by4uWynFiR9p7+dSq/y
 github.com/steveyen/gtreap v0.1.0/go.mod h1:kl/5J7XbrOmlIbYIXdRHDDE5QxHqpk0cmkT7Z4dM9/Y=
 github.com/sticnarf/kvproto v0.0.0-20201207083920-0f4b5eba03a9 h1:564n6YEcPpyzIV0V+sriAi8wcGFtuOaKFL3/L+rpvkw=
 github.com/sticnarf/kvproto v0.0.0-20201207083920-0f4b5eba03a9/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
-github.com/sticnarf/unistore v0.0.0-20201207084729-7cb7deba10e6 h1:CLqpepWj6yueEIpEJV8Y9EHuuTO80BPC7zwRo+fwiO0=
-github.com/sticnarf/unistore v0.0.0-20201207084729-7cb7deba10e6/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
+github.com/sticnarf/unistore v0.0.0-20201208032526-a859048e36eb h1:s8CY2LbmNUs/8glnX2ltmnnheOmu+J5hhIkYte2UQFo=
+github.com/sticnarf/unistore v0.0.0-20201208032526-a859048e36eb/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=
