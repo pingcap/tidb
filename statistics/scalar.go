@@ -110,6 +110,9 @@ func (hg *Histogram) PreCalculateScalar() {
 
 func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	lower, upper := hg.GetLower(index), hg.GetUpper(index)
+	if value.Kind() == types.KindMysqlBit {
+		return 0.5
+	}
 	return calcWidth4Datums(lower, value, lower, upper) / calcWidth4Datums(lower, upper, lower, upper)
 }
 
@@ -275,6 +278,9 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 
 // calcWidth is used to calculate the width of the interval [lower, upper]
 func calcWidth(lower, upper float64) float64 {
+	if lower >= upper {
+		return 0
+	}
 	return upper - lower
 }
 

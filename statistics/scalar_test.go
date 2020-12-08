@@ -251,3 +251,134 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 		c.Assert(str, Equals, t.res)
 	}
 }
+
+func (s *testStatisticsSuite) TestCalcWidth4Datums(c *C) {
+	tests := []struct {
+		left     types.Datum
+		right    types.Datum
+		lower    types.Datum
+		upper    types.Datum
+		width    float64
+		tp       *types.FieldType
+	}{
+		{
+			left:     types.NewIntDatum(0),
+			right:    types.NewIntDatum(1),
+			lower:    types.NewIntDatum(0),
+			upper:    types.NewIntDatum(4),
+			width:    1,
+			tp:       types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			left:     types.NewIntDatum(0),
+			right:    types.NewIntDatum(4),
+			lower:    types.NewIntDatum(0),
+			upper:    types.NewIntDatum(4),
+			width:    4,
+			tp:       types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			left:     types.NewIntDatum(0),
+			right:    types.NewIntDatum(-1),
+			lower:    types.NewIntDatum(0),
+			upper:    types.NewIntDatum(4),
+			width:    0,
+			tp:       types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			left:     types.NewUintDatum(0),
+			right:    types.NewUintDatum(1),
+			lower:    types.NewUintDatum(0),
+			upper:    types.NewUintDatum(4),
+			width:    1,
+			tp:       getUnsignedFieldType(),
+		},
+		{
+			left:     types.NewFloat64Datum(0),
+			right:    types.NewFloat64Datum(1),
+			lower:    types.NewFloat64Datum(0),
+			upper:    types.NewFloat64Datum(4),
+			width:    1,
+			tp:       types.NewFieldType(mysql.TypeDouble),
+		},
+		{
+			left:     types.NewFloat32Datum(0),
+			right:    types.NewFloat32Datum(1),
+			lower:    types.NewFloat32Datum(0),
+			upper:    types.NewFloat32Datum(4),
+			width:    1,
+			tp:       types.NewFieldType(mysql.TypeFloat),
+		},
+		{
+			left:     types.NewDecimalDatum(getDecimal(0)),
+			right:    types.NewDecimalDatum(getDecimal(1)),
+			lower:    types.NewDecimalDatum(getDecimal(0)),
+			upper:    types.NewDecimalDatum(getDecimal(4)),
+			width:    1,
+			tp:       types.NewFieldType(mysql.TypeNewDecimal),
+		},
+		{
+			left:     types.NewMysqlBitDatum(getBinaryLiteral("0b0")),
+			right:    types.NewMysqlBitDatum(getBinaryLiteral("0b1")),
+			lower:    types.NewMysqlBitDatum(getBinaryLiteral("0b0")),
+			upper:    types.NewMysqlBitDatum(getBinaryLiteral("0b100")),
+			width:    0,
+			tp:       types.NewFieldType(mysql.TypeBit),
+		},
+		{
+			left:     types.NewDurationDatum(getDuration("0:00:00")),
+			right:    types.NewDurationDatum(getDuration("1:00:00")),
+			lower:    types.NewDurationDatum(getDuration("0:00:00")),
+			upper:    types.NewDurationDatum(getDuration("4:00:00")),
+			width:    3600000000000,
+			tp:       types.NewFieldType(mysql.TypeDuration),
+		},
+		{
+			left:     types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
+			right:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
+			width:    2678400000000000,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
+			left:     types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
+			right:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
+			width:    2678400000000000,
+			tp:       types.NewFieldType(mysql.TypeDatetime),
+		},
+		{
+			left:     types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			right:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDate)),
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDate)),
+			width:    2678400000000000,
+			tp:       types.NewFieldType(mysql.TypeDate),
+		},
+		{
+			left:     types.NewStringDatum("aasad"),
+			right:    types.NewStringDatum("abfsd"),
+			lower:    types.NewStringDatum("aasad"),
+			upper:    types.NewStringDatum("addad"),
+			width:    68418210549989376,
+			tp:       types.NewFieldType(mysql.TypeString),
+		},
+		{
+			left:     types.NewBytesDatum([]byte("aasad")),
+			right:    types.NewBytesDatum([]byte("abfsd")),
+			lower:    types.NewBytesDatum([]byte("aasad")),
+			upper:    types.NewBytesDatum([]byte("asdff")),
+			width:    68418210549989376,
+			tp:       types.NewFieldType(mysql.TypeBlob),
+		},
+	}
+	for _, test := range tests {
+		hg := NewHistogram(0, 0, 0, 0, test.tp, 1, 0)
+		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
+		hg.PreCalculateScalar()
+		width := calcWidth4Datums(&test.left, &test.right, &test.lower, &test.upper)
+		c.Check(math.Abs(width-test.width) < eps, IsTrue)
+	}
+}
