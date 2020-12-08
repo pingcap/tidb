@@ -2984,7 +2984,6 @@ func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set v = 11 where a = 1")
 
-
 	tk.MustExec("select * from t")
 	rows = tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.for_update_ts')").Rows()
 	c.Assert(toUint64(rows[0][0]), Greater, uint64(0))
@@ -3563,7 +3562,7 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id bigint unsigned primary key)")
-	var num1, num2 uint64 = math.MaxInt64+1, math.MaxInt64+2
+	var num1, num2 uint64 = math.MaxInt64 + 1, math.MaxInt64 + 2
 	tk.MustExec(fmt.Sprintf("insert into t values(%v), (%v), (1), (2)", num1, num2))
 	num1Str := strconv.FormatUint(num1, 10)
 	num2Str := strconv.FormatUint(num2, 10)
