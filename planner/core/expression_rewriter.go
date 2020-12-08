@@ -343,7 +343,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			return inNode, true
 		}
-		if col, ok := er.b.corAggMapper[v]; ok {
+		if col, ok := er.b.correlatedAggMapper[v]; ok {
 			er.ctxStackAppend(col, types.EmptyName)
 			return inNode, true
 		}

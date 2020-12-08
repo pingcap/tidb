@@ -163,7 +163,7 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
-	corAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
+	correlatedAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -223,14 +223,19 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 				newFunc.OrderByItems = append(newFunc.OrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
 			}
 		}
+		// combine identical aggregate functions
 		combined := false
 		for j, oldFunc := range plan4Agg.AggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
 				aggIndexMap[i] = j
 				combined = true
+				if _, ok := correlatedAggMap[aggFunc]; ok {
+					b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
+				}
 				break
 			}
 		}
+		// create new columns for aggregate functions which show up first
 		if !combined {
 			position := len(plan4Agg.AggFuncs)
 			aggIndexMap[i] = position
@@ -241,8 +246,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			}
 			schema4Agg.Append(&column)
 			names = append(names, types.EmptyName)
-			if _, ok := corAggMap[aggFunc]; ok {
-				b.corAggMapper[aggFunc] = &expression.CorrelatedColumn{
+			if _, ok := correlatedAggMap[aggFunc]; ok {
+				b.correlatedAggMapper[aggFunc] = &expression.CorrelatedColumn{
 					Column: column,
 				}
 			}
@@ -288,8 +293,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 		return
 	}
 	if !useCache {
-		p, err = b.buildResultSetNode(ctx, from.TableRefs)
-		return
+		return b.buildResultSetNode(ctx, from.TableRefs)
 	}
 	var ok bool
 	p, ok = b.cachedResultSetNodes[from.TableRefs]
@@ -2018,8 +2022,8 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) (
-	[]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr, error) {
+func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField,
+) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr, error) {
 	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
@@ -2203,35 +2207,29 @@ func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, 
 
 func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Context, p LogicalPlan, sel *ast.SelectStmt) error {
 	hasAgg := r.b.detectSelectAgg(sel)
-	if hasAgg {
-		_, _, outerAggFuncs, err := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
-		if err != nil {
-			return err
-		}
-		r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
+	if !hasAgg {
+		return nil
 	}
+	_, _, outerAggFuncs, err := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
+	if err != nil {
+		return err
+	}
+	r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
 	return nil
 }
 
 func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.ExprNode) error {
-	if where != nil {
-		outerAggFuncs, err := r.extractAggFromWhere(r.ctx, p, where)
-		if err != nil {
-			return err
-		}
-		r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
+	if where == nil {
+		return nil
 	}
-	return nil
-}
-
-func (r *correlatedAggregateResolver) extractAggFromWhere(ctx context.Context, p LogicalPlan, where ast.ExprNode) ([]*ast.AggregateFuncExpr, error) {
 	extractor := &AggregateFuncExtractor{}
 	_, _ = where.Accept(extractor)
-	_, outerAggList, err := r.b.splitOuterAggFuncs(ctx, p, extractor.AggFuncs)
+	_, outerAggFuncs, err := r.b.splitOuterAggFuncs(r.ctx, p, extractor.AggFuncs)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return outerAggList, nil
+	r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
+	return nil
 }
 
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
@@ -2251,25 +2249,25 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 		ctx: ctx,
 		b:   b,
 	}
-	corAggList := make([]*ast.AggregateFuncExpr, 0)
+	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
 		resolver.outerAggFuncs = resolver.outerAggFuncs[:0]
 		_, ok := field.Expr.Accept(resolver)
 		if !ok {
 			return nil, resolver.err
 		}
-		corAggList = append(corAggList, resolver.outerAggFuncs...)
+		correlatedAggList = append(correlatedAggList, resolver.outerAggFuncs...)
 	}
-	corAggMap := make(map[*ast.AggregateFuncExpr]int)
-	for _, aggFunc := range corAggList {
-		corAggMap[aggFunc] = len(sel.Fields.Fields)
+	correlatedAggMap := make(map[*ast.AggregateFuncExpr]int)
+	for _, aggFunc := range correlatedAggList {
+		correlatedAggMap[aggFunc] = len(sel.Fields.Fields)
 		sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
 			Auxiliary: true,
 			Expr:      aggFunc,
 			AsName:    model.NewCIStr(fmt.Sprintf("sel_subq_agg_%d", len(sel.Fields.Fields))),
 		})
 	}
-	return corAggMap, nil
+	return correlatedAggMap, nil
 }
 
 // gbyResolver resolves group by items from select fields.
@@ -3137,23 +3135,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
-	if hasAgg {
+	if hasAgg || sel.GroupBy != nil {
 		aggFuncs, totalMap, _, err = b.extractAggFuncs(ctx, p, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
-		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
-		if err != nil {
-			return nil, err
-		}
-		for agg, idx := range totalMap {
-			totalMap[agg] = aggIndexMap[idx]
-		}
-		for agg, _ := range correlatedAggMap {
-			idx := totalMap[agg]
-			b.corAggMapper[agg] = b.corAggMapper[aggFuncs[idx]]
-			agg.SetFlag(agg.GetFlag() &^ ast.FlagHasAggregateFunc)
+		if len(aggFuncs) > 0 || sel.GroupBy != nil {
+			var aggIndexMap map[int]int
+			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+			if err != nil {
+				return nil, err
+			}
+			for agg, idx := range totalMap {
+				totalMap[agg] = aggIndexMap[idx]
+			}
 		}
 	}
 

@@ -458,8 +458,8 @@ type PlanBuilder struct {
 	// isSampling indicates whether the query is sampling.
 	isSampling bool
 
-	// corAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
-	corAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
 	cachedResultSetNodes  map[*ast.Join]LogicalPlan
 	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
@@ -573,7 +573,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		colMapper:             make(map[*ast.ColumnNameExpr]int),
 		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:         processor,
-		corAggMapper:          make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
 		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
 	}, savedBlockNames
@@ -774,9 +774,6 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
-	if sel.GroupBy != nil {
-		return true
-	}
 	for _, f := range sel.Fields.Fields {
 		if ast.HasAggFlag(f.Expr) {
 			return true
