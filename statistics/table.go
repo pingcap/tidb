@@ -563,34 +563,16 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
+// outOfRangeIntervalSelectivity estimates selectivities for out-of-range range.
 func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyCount int64) float64 {
+	if modifyCount == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
 	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
-	hgWidth := hg.calcWidth(0, hgLow, hgHigh)
-	rangeWidth := calcWidthDatums(low, high, hg)
+	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hg.GetUpper(0))
+	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hg.GetUpper(0))
 	selectivity := hg.TotalRowCount() * (rangeWidth / hgWidth)
 	return math.Min(selectivity, float64(modifyCount)/hg.TotalRowCount())
-}
-
-func calcWidthDatums(low, high types.Datum, hg *Histogram) float64 {
-	switch low.Kind() {
-	case types.KindFloat32:
-		return float64(high.GetFloat32()) - float64(low.GetFloat32())
-	case types.KindFloat64:
-		return high.GetFloat64() - low.GetFloat64()
-	case types.KindInt64:
-		return float64(high.GetInt64()) - float64(low.GetInt64())
-	case types.KindUint64:
-		return float64(high.GetUint64()) - float64(low.GetUint64())
-	case types.KindMysqlDuration:
-		return float64(high.GetMysqlDuration().Duration) - float64(low.GetMysqlDuration().Duration)
-	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return convertDatumToScalar(&high, 0) - convertDatumToScalar(&low, 0)
-	case types.KindBytes, types.KindString:
-		lower, upper := hg.GetLower(0), hg.GetUpper(0)
-		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-		return convertDatumToScalar(&high, commonPfxLen) - convertDatumToScalar(&low, commonPfxLen)
-	}
-	return 0.0
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.

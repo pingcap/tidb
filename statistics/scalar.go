@@ -110,7 +110,7 @@ func (hg *Histogram) PreCalculateScalar() {
 
 func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	lower, upper := hg.GetLower(index), hg.GetUpper(index)
-	return hg.calcWidth(index, lower, value) / hg.calcWidth(index, lower, upper)
+	return calcWidth4Datums(lower, value, lower, upper) / calcWidth4Datums(lower, upper, lower, upper)
 }
 
 func commonPrefixLength(lower, upper []byte) int {
@@ -278,7 +278,7 @@ func calcWidth(lower, upper float64) float64 {
 	return upper - lower
 }
 
-func (hg *Histogram) calcWidth(index int, left, right *types.Datum) float64 {
+func calcWidth4Datums(left, right, lower, upper *types.Datum) float64 {
 	switch left.Kind() {
 	case types.KindFloat32:
 		return calcWidth(float64(left.GetFloat32()), float64(right.GetFloat32()))
@@ -293,7 +293,6 @@ func (hg *Histogram) calcWidth(index int, left, right *types.Datum) float64 {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		return calcWidth(convertDatumToScalar(left, 0), convertDatumToScalar(right, 0))
 	case types.KindBytes, types.KindString:
-		lower, upper := hg.GetLower(index), hg.GetUpper(index)
 		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
 		return calcWidth(convertDatumToScalar(left, commonPfxLen), convertDatumToScalar(right, commonPfxLen))
 	}
