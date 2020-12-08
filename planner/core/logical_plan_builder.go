@@ -1561,10 +1561,10 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
-	return b.buildSortForSelect(ctx, p, byItems, nil, 0, false, aggMapper, windowMapper)
+	return b.buildSortWithCheck(ctx, p, byItems, nil, 0, false, aggMapper, windowMapper)
 }
 
-func (b *PlanBuilder) buildSortForSelect(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, projExprs []expression.Expression, oldLen int,
+func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, projExprs []expression.Expression, oldLen int,
 	hasDistinct bool, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
@@ -3007,7 +3007,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSortForSelect(ctx, p, sel.OrderBy.Items, projExprs, oldLen, sel.Distinct, orderMap, windowMapper)
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, projExprs, oldLen, sel.Distinct, orderMap, windowMapper)
+		} else {
+			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+		}
 		if err != nil {
 			return nil, err
 		}
