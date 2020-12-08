@@ -1153,7 +1153,7 @@ func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
 	defer c.storeMu.RUnlock()
 	s := make([]*Store, 0)
 	for _, store := range c.storeMu.stores {
-		if store.isLabelsMatch(labels) {
+		if store.IsLabelsMatch(labels) {
 			s = append(s, store)
 		}
 	}
@@ -1524,7 +1524,7 @@ func (s *Store) reResolve(c *RegionCache) {
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
 	store.GetLabels()
-	if s.addr != addr || s.isSameLabels(store.GetLabels()) {
+	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
 		state := resolved
 		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels()}
 		newStore.state = *(*uint64)(&state)
@@ -1584,14 +1584,16 @@ retry:
 	}
 }
 
-func (s *Store) isSameLabels(labels []*metapb.StoreLabel) bool {
+// IsSameLabels returns whether the store have the same labels with target labels
+func (s *Store) IsSameLabels(labels []*metapb.StoreLabel) bool {
 	if len(s.labels) != len(labels) {
 		return false
 	}
-	return s.isLabelsMatch(labels)
+	return s.IsLabelsMatch(labels)
 }
 
-func (s *Store) isLabelsMatch(labels []*metapb.StoreLabel) bool {
+// IsLabelsMatch return whether the store's labels match the target labels
+func (s *Store) IsLabelsMatch(labels []*metapb.StoreLabel) bool {
 	for _, targetLabel := range labels {
 		match := false
 		for _, label := range s.labels {
