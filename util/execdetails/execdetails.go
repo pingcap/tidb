@@ -44,8 +44,6 @@ var (
 type ExecDetails struct {
 	CalleeAddress    string
 	CopTime          time.Duration
-	ProcessTime      time.Duration
-	WaitTime         time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	BackoffSleep     map[string]time.Duration
@@ -53,7 +51,7 @@ type ExecDetails struct {
 	RequestCount     int
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
-	CopDetail        *CopDetails
+	ScanDetail       *ScanDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -169,8 +167,8 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
-// CopDetails contains coprocessor detail information.
-type CopDetails struct {
+// ScanDetail contains coprocessor detail information.
+type ScanDetail struct {
 	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
 	// deleted versions, but does not include RocksDB tombstone keys.
 	TotalKeys int64
@@ -189,17 +187,23 @@ type CopDetails struct {
 	RocksdbBlockReadCount uint64
 	// RocksdbBlockReadByte is the total number of bytes from block reads.
 	RocksdbBlockReadByte uint64
+	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
+	// other kind of waitings in series.
+	ProcessTime time.Duration
+	WaitTime    time.Duration
 }
 
 // Merge merges lock keys execution details into self.
-func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalKeys += copDetails.TotalKeys
-	cd.ProcessedKeys += copDetails.ProcessedKeys
-	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
-	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
-	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
-	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
-	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
+func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
+	sd.TotalKeys += scanDetail.TotalKeys
+	sd.ProcessedKeys += scanDetail.ProcessedKeys
+	sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
+	sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
+	sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
+	sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
+	sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
+	sd.ProcessTime += scanDetail.ProcessTime
+	sd.WaitTime += scanDetail.WaitTime
 }
 
 const (
@@ -261,11 +265,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
+	if d.ScanDetail != nil && d.ScanDetail.ProcessTime > 0 {
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ScanDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
+	if d.ScanDetail != nil && d.ScanDetail.WaitTime > 0 {
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.ScanDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
@@ -320,7 +324,7 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
-	copDetails := d.CopDetail
+	copDetails := d.ScanDetail
 	if copDetails != nil {
 		if copDetails.ProcessedKeys > 0 {
 			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
@@ -353,11 +357,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.ScanDetail != nil && d.ScanDetail.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ScanDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.ScanDetail != nil && d.ScanDetail.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.ScanDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
@@ -365,11 +369,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.ScanDetail.TotalKeys, 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ScanDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -425,7 +429,7 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats      map[string][]*BasicRuntimeStats
-	copDetails *CopDetails
+	copDetails *ScanDetail
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -743,10 +747,10 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 }
 
 // RecordCopDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
+func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *ScanDetail) {
 	copStats := e.GetCopStats(planID)
 	if copStats.copDetails == nil {
-		copStats.copDetails = &CopDetails{}
+		copStats.copDetails = &ScanDetail{}
 	}
 	copStats.copDetails.Merge(detail)
 }

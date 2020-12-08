@@ -32,8 +32,6 @@ func TestT(t *testing.T) {
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
 		CopTime:      time.Second + 3*time.Millisecond,
-		ProcessTime:  2*time.Second + 5*time.Millisecond,
-		WaitTime:     time.Second,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
 		CommitDetail: &CommitDetails{
@@ -59,7 +57,7 @@ func TestString(t *testing.T) {
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
 		},
-		CopDetail: &CopDetails{
+		ScanDetail: &ScanDetail{
 			ProcessedKeys:             10,
 			TotalKeys:                 100,
 			RocksdbDeleteSkippedCount: 1,
@@ -67,6 +65,8 @@ func TestString(t *testing.T) {
 			RocksdbBlockCacheHitCount: 1,
 			RocksdbBlockReadCount:     1,
 			RocksdbBlockReadByte:      100,
+			ProcessTime:  2*time.Second + 5*time.Millisecond,
+			WaitTime:     time.Second,
 		},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
@@ -100,7 +100,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
-	copDetails := &CopDetails{
+	copDetails := &ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 5,
@@ -158,7 +158,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, "tablescan_"+strconv.Itoa(tableScanID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
-	copDetails := &CopDetails{
+	copDetails := &ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 10,

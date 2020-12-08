@@ -335,6 +335,28 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				locks = append(locks, lock)
 			}
 		}
+		if batchGetResp.ExecDetailsV2 != nil {
+			scanDetail := &execdetails.ScanDetail{}
+			if batchGetResp.ExecDetailsV2.TimeDetail != nil {
+				scanDetail.WaitTime = time.Duration(batchGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
+				scanDetail.ProcessTime = time.Duration(batchGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
+			}
+			if batchGetResp.ExecDetailsV2.ScanDetailV2 != nil {
+				scanDetail.TotalKeys = int64(batchGetResp.ExecDetailsV2.ScanDetailV2.TotalVersions)
+				scanDetail.ProcessedKeys = int64(batchGetResp.ExecDetailsV2.ScanDetailV2.ProcessedVersions)
+				scanDetail.RocksdbDeleteSkippedCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
+				scanDetail.RocksdbKeySkippedCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
+				scanDetail.RocksdbBlockCacheHitCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
+				scanDetail.RocksdbBlockReadCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadCount
+				scanDetail.RocksdbBlockReadByte = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
+			}
+			if s.mu.stats != nil {
+				if s.mu.stats.scanDetail == nil {
+					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+				}
+				s.mu.stats.scanDetail.Merge(scanDetail)
+			}
+		}
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
 			if err != nil {
@@ -427,6 +449,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
 		})
+	req.RecordTimeStat = true
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
@@ -451,6 +474,28 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			return nil, errors.Trace(ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
+		if cmdGetResp.ExecDetailsV2 != nil {
+			scanDetail := &execdetails.ScanDetail{}
+			if cmdGetResp.ExecDetailsV2.TimeDetail != nil {
+				scanDetail.WaitTime = time.Duration(cmdGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
+				scanDetail.ProcessTime = time.Duration(cmdGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
+			}
+			if cmdGetResp.ExecDetailsV2.ScanDetailV2 != nil {
+				scanDetail.TotalKeys = int64(cmdGetResp.ExecDetailsV2.ScanDetailV2.TotalVersions)
+				scanDetail.ProcessedKeys = int64(cmdGetResp.ExecDetailsV2.ScanDetailV2.ProcessedVersions)
+				scanDetail.RocksdbDeleteSkippedCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
+				scanDetail.RocksdbKeySkippedCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
+				scanDetail.RocksdbBlockCacheHitCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
+				scanDetail.RocksdbBlockReadCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadCount
+				scanDetail.RocksdbBlockReadByte = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
+			}
+			if s.mu.stats != nil {
+				if s.mu.stats.scanDetail == nil {
+					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+				}
+				s.mu.stats.scanDetail.Merge(scanDetail)
+			}
+		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
@@ -706,6 +751,8 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+	scanDetail     *execdetails.ScanDetail
+	timeDetail     *pb.TimeDetail
 }
 
 // Tp implements the RuntimeStats interface.
@@ -773,6 +820,18 @@ func (rs *SnapshotRuntimeStats) String() string {
 		ms := rs.backoffSleepMS[k]
 		d := time.Duration(ms) * time.Millisecond
 		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
+	}
+	if rs.scanDetail != nil {
+		buf.WriteString(fmt.Sprintf(", rocksdb{%s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d}",
+			execdetails.ProcessKeysStr, rs.scanDetail.ProcessedKeys,
+			execdetails.TotalKeysStr, rs.scanDetail.TotalKeys,
+			execdetails.RocksdbDeleteSkippedCountStr, rs.scanDetail.RocksdbDeleteSkippedCount,
+			execdetails.RocksdbKeySkippedCountStr, rs.scanDetail.RocksdbKeySkippedCount,
+			execdetails.RocksdbBlockCacheHitCountStr, rs.scanDetail.RocksdbBlockCacheHitCount,
+			execdetails.RocksdbBlockReadCountStr, rs.scanDetail.RocksdbBlockReadCount,
+			execdetails.RocksdbBlockReadByteStr, rs.scanDetail.RocksdbBlockReadByte,
+			execdetails.ProcessTimeStr, rs.scanDetail.ProcessTime,
+			execdetails.WaitTimeStr, rs.scanDetail.WaitTime))
 	}
 	return buf.String()
 }

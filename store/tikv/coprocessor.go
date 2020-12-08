@@ -1164,36 +1164,35 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	resp.respTime = costTime
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		sd := &execdetails.ScanDetail{}
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+			sd.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			copDetail := &execdetails.CopDetails{
-				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
-				TotalKeys:                 int64(scanDetailV2.TotalVersions),
-				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
-				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
-				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
-				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
-				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
-			}
-			resp.detail.CopDetail = copDetail
+			sd.ProcessedKeys = int64(scanDetailV2.ProcessedVersions)
+			sd.TotalKeys = int64(scanDetailV2.TotalVersions)
+			sd.RocksdbDeleteSkippedCount = scanDetailV2.RocksdbDeleteSkippedCount
+			sd.RocksdbKeySkippedCount = scanDetailV2.RocksdbKeySkippedCount
+			sd.RocksdbBlockCacheHitCount = scanDetailV2.RocksdbBlockCacheHitCount
+			sd.RocksdbBlockReadCount = scanDetailV2.RocksdbBlockReadCount
+			sd.RocksdbBlockReadByte = scanDetailV2.RocksdbBlockReadByte
 		}
+		resp.detail.ScanDetail = sd
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
+		sd := &execdetails.ScanDetail{}
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+			sd.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.CopDetail = &execdetails.CopDetails{
-					ProcessedKeys: scanDetail.Write.Processed,
-					TotalKeys:     scanDetail.Write.Total,
-				}
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
 			}
 		}
+		resp.detail.ScanDetail = sd
 	}
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
@@ -1206,8 +1205,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CoprCacheHit = true
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
-		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 && resp.detail.ScanDetail != nil {
+			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ScanDetail.ProcessTime) {
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 
