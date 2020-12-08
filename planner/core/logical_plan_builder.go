@@ -2022,32 +2022,38 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField,
-) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr, error) {
-	extractor := &AggregateFuncExtractor{}
+func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, error) {
+	aggList, _ := b.extractAggFuncs(fields)
+	_, outerAggList, err := b.splitOuterAggFuncs(ctx, p, aggList)
+	if err != nil {
+		return nil, err
+	}
+	return outerAggList, nil
+}
+
+func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
 	}
-	aggList, outerAggList, err := b.splitOuterAggFuncs(ctx, p, extractor.AggFuncs)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
 	}
-	return aggList, totalAggMapper, outerAggList, nil
+	return aggList, totalAggMapper
 }
 
 func (b *PlanBuilder) splitOuterAggFuncs(ctx context.Context, p LogicalPlan, aggFuncs []*ast.AggregateFuncExpr) (
 	inner []*ast.AggregateFuncExpr, outer []*ast.AggregateFuncExpr, err error) {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(aggFuncs))
 	cols := make([]*expression.Column, 0, len(aggFuncs))
+	aggMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range aggFuncs {
 		for _, arg := range agg.Args {
-			expr, _, err := b.rewrite(ctx, arg, p, nil, true)
+			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2059,6 +2065,7 @@ func (b *PlanBuilder) splitOuterAggFuncs(ctx context.Context, p LogicalPlan, agg
 		} else {
 			inner = append(inner, agg)
 		}
+		aggMapper[agg] = -1
 		corCols, cols = corCols[:0], cols[:0]
 	}
 	return
@@ -2110,9 +2117,10 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 }
 
 type correlatedAggregateResolver struct {
-	ctx context.Context
-	b   *PlanBuilder
-	err error
+	ctx       context.Context
+	err       error
+	b         *PlanBuilder
+	outerPlan LogicalPlan
 	// outerAggMapper stores aggregate functions which belong to outer query
 	outerAggFuncs []*ast.AggregateFuncExpr
 }
@@ -2120,6 +2128,11 @@ type correlatedAggregateResolver struct {
 func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.SelectStmt:
+		if r.outerPlan != nil {
+			outerSchema := r.outerPlan.Schema().Clone()
+			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
+			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
+		}
 		r.err = r.resolveSelect(v)
 		return n, true
 	}
@@ -2210,7 +2223,7 @@ func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Contex
 	if !hasAgg {
 		return nil
 	}
-	_, _, outerAggFuncs, err := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, sel.Fields.Fields)
 	if err != nil {
 		return err
 	}
@@ -2222,7 +2235,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 	if where == nil {
 		return nil
 	}
-	extractor := &AggregateFuncExtractor{}
+	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
 	_, _ = where.Accept(extractor)
 	_, outerAggFuncs, err := r.b.splitOuterAggFuncs(r.ctx, p, extractor.AggFuncs)
 	if err != nil {
@@ -2233,21 +2246,21 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 }
 
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
+	switch n.(type) {
+	case *ast.SelectStmt:
+		if r.outerPlan != nil {
+			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
+			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
+		}
+	}
 	return n, true
 }
 
 func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
-	outerSchema := p.Schema().Clone()
-	b.outerSchemas = append(b.outerSchemas, outerSchema)
-	b.outerNames = append(b.outerNames, p.OutputNames())
-	defer func() {
-		b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
-		b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
-	}()
-
 	resolver := &correlatedAggregateResolver{
-		ctx: ctx,
-		b:   b,
+		ctx:       ctx,
+		b:         b,
+		outerPlan: p,
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
@@ -3136,10 +3149,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg || sel.GroupBy != nil {
-		aggFuncs, totalMap, _, err = b.extractAggFuncs(ctx, p, sel.Fields.Fields)
-		if err != nil {
-			return nil, err
-		}
+		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if len(aggFuncs) > 0 || sel.GroupBy != nil {
 			var aggIndexMap map[int]int
 			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)

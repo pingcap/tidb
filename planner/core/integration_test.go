@@ -1996,6 +1996,31 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	tk.MustQuery("select (select count(n.a) from t order by count(n.b) limit 1) from t n").Check(testkit.Rows("6"))
 	tk.MustQuery("select (select (select (select count(a)))) from t").Check(testkit.Rows("6"))
 	tk.MustQuery("select (select (select count(n.a)) from t m order by count(m.b)) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select cnt from (select count(a) cnt) s) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum((select count(a)))) from t").Check(testkit.Rows("6"))
+
+	// Nested aggregate
+	tk.MustQuery("select (select sum(count(a))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(sum(a))) from t").Check(testkit.Rows("14"))
+
+	// #17748
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (m int, n int)")
+	tk.MustExec("insert into t1 values (2,2), (2,2), (3,3), (3,3), (3,3), (4,4)")
+	tk.MustExec("insert into t2 values (1,11), (2,22), (3,32), (4,44), (4,44)")
+	tk.MustExec("set @@sql_mode='TRADITIONAL'")
+
+	tk.MustQuery(`select count(*) c, a,
+		( select group_concat(count(a)) from t2 where m = a )
+		from t1 group by a order by a`).
+		Check(testkit.Rows("2 2 2", "3 3 3", "1 4 1,1"))
+}
+
+func (s *testIntegrationSuite) TestNestedCorrelatedAggregate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
 }
 
 func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {

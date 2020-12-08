@@ -340,7 +340,14 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			index, ok = er.aggrMap[v]
 		}
 		if ok {
-			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			// index < 0 indicates this is a correlated aggregate belonging to outer query,
+			// for which a correlated column will be created later, so we append a null constant
+			// as a temporary result expression.
+			if index < 0 {
+				er.ctxStackAppend(&expression.Constant{}, types.EmptyName)
+			} else {
+				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			}
 			return inNode, true
 		}
 		if col, ok := er.b.correlatedAggMapper[v]; ok {

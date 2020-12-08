@@ -30,7 +30,8 @@ import (
 // AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
-	inAggregateFuncExpr bool
+	inAggregateFuncExpr int
+	skipAggMap          map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 	// AggFuncs is the collected AggregateFuncExprs.
 	AggFuncs []*ast.AggregateFuncExpr
 }
@@ -39,7 +40,7 @@ type AggregateFuncExtractor struct {
 func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = true
+		a.inAggregateFuncExpr++
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
@@ -50,8 +51,10 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = false
-		a.AggFuncs = append(a.AggFuncs, v)
+		a.inAggregateFuncExpr--
+		if _, ok := a.skipAggMap[v]; !ok {
+			a.AggFuncs = append(a.AggFuncs, v)
+		}
 	}
 	return n, true
 }
