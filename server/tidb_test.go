@@ -983,6 +983,14 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 		expectFlag := uint16(tmysql.BinaryFlag)
 		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 	}
+	{
+		rs, err := Execute(ctx, qctx, "select NULL;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }
 
 func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
