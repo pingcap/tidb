@@ -7628,7 +7628,8 @@ SelectStmt:
 |	"TABLE" TableName OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := &ast.SelectStmt{
-			Kind: ast.SelectStmtKindTable,
+			Kind:   ast.SelectStmtKindTable,
+			Fields: &ast.FieldList{Fields: []*ast.SelectField{{WildCard: &ast.WildCardField{}}}},
 		}
 		ts := &ast.TableSource{Source: $2.(*ast.TableName)}
 		st.From = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -7649,8 +7650,9 @@ SelectStmt:
 |	"VALUES" ValuesStmtList OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := &ast.SelectStmt{
-			Kind:  ast.SelectStmtKindValues,
-			Lists: $2.([]*ast.RowExpr),
+			Kind:   ast.SelectStmtKindValues,
+			Fields: &ast.FieldList{Fields: []*ast.SelectField{{WildCard: &ast.WildCardField{}}}},
+			Lists:  $2.([]*ast.RowExpr),
 		}
 		if $3 != nil {
 			st.OrderBy = $3.(*ast.OrderByClause)
