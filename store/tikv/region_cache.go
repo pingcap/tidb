@@ -315,6 +315,10 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 }
 
 func (c *RegionCache) markAllNeedCheck() {
+	// only when there is no checking, then mark the store to be checked.
+	if len(c.notifyCheckCh) > 0 {
+		return
+	}
 	c.storeMu.Lock()
 	defer c.storeMu.Unlock()
 	if len(c.storeMu.stores) < 1 {
