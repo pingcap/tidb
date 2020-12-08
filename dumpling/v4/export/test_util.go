@@ -29,25 +29,6 @@ func (m *mockPoisonWriter) Close(ctx context.Context) error {
 	return nil
 }
 
-type mockSQLRowIterator struct {
-	idx  int
-	data [][]sql.NullString
-}
-
-func (m *mockSQLRowIterator) Next(sp RowReceiver) error {
-	args := make([]interface{}, len(m.data[m.idx]))
-	sp.BindAddress(args)
-	for i := range args {
-		*(args[i]).(*sql.NullString) = m.data[m.idx][i]
-	}
-	m.idx += 1
-	return nil
-}
-
-func (m *mockSQLRowIterator) HasNext() bool {
-	return m.idx < len(m.data)
-}
-
 type mockMetaIR struct {
 	tarName string
 	meta    string

@@ -70,7 +70,7 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 		AppendTables("db2", "t3", "t4", "t5").
 		AppendViews("db3", "t6", "t7", "t8")
 
-	var dbNames []databaseName
+	dbNames := make([]databaseName, 0, len(data))
 	rows := sqlmock.NewRows([]string{"table_schema", "table_name"})
 	for dbName, tableInfos := range data {
 		dbNames = append(dbNames, dbName)
@@ -115,14 +115,14 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 func (s *testPrepareSuite) TestConfigValidation(c *C) {
 	conf := DefaultConfig()
 	conf.Where = "id < 5"
-	conf.Sql = "select * from t where id > 3"
+	conf.SQL = "select * from t where id > 3"
 	c.Assert(validateSpecifiedSQL(conf), ErrorMatches, "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	conf.Where = ""
 	c.Assert(validateSpecifiedSQL(conf), IsNil)
 
-	conf.FileType = "sql"
+	conf.FileType = FileFormatSQLTextString
 	c.Assert(validateFileFormat(conf), IsNil)
-	conf.FileType = "csv"
+	conf.FileType = FileFormatCSVString
 	c.Assert(validateFileFormat(conf), IsNil)
 	conf.FileType = "rand_str"
 	c.Assert(validateFileFormat(conf), ErrorMatches, "unknown config.FileType 'rand_str'")

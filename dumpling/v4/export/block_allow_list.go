@@ -3,8 +3,9 @@
 package export
 
 import (
-	"github.com/pingcap/dumpling/v4/log"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 func filterTables(conf *Config) {

@@ -12,11 +12,14 @@ import (
 
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/utils"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
 )
 
+// Writer is the abstraction that keep pulling data from database and write to files.
+// Every writer owns a snapshot connection, and will try to get a task from task stream chan and work on it.
 type Writer struct {
 	id         int64
 	ctx        context.Context
@@ -32,7 +35,8 @@ type Writer struct {
 	finishTableCallBack func(Task)
 }
 
-func NewWriter(id int64, ctx context.Context, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
+// NewWriter returns a new Writer with given configurations
+func NewWriter(ctx context.Context, id int64, config *Config, conn *sql.Conn, externalStore storage.ExternalStorage) *Writer {
 	sw := &Writer{
 		id:                  id,
 		ctx:                 ctx,
@@ -43,9 +47,9 @@ func NewWriter(id int64, ctx context.Context, config *Config, conn *sql.Conn, ex
 		finishTableCallBack: func(Task) {},
 	}
 	switch strings.ToLower(config.FileType) {
-	case "sql":
+	case FileFormatSQLTextString:
 		sw.fileFmt = FileFormatSQLText
-	case "csv":
+	case FileFormatCSVString:
 		sw.fileFmt = FileFormatCSV
 	}
 	return sw
@@ -56,7 +60,7 @@ func (w *Writer) setFinishTaskCallBack(fn func(Task)) {
 }
 
 func (w *Writer) setFinishTableCallBack(fn func(Task)) {
-	w.finishTaskCallBack = fn
+	w.finishTableCallBack = fn
 }
 
 func countTotalTask(writers []*Writer) int {
@@ -111,6 +115,7 @@ func (w *Writer) handleTask(task Task) error {
 	}
 }
 
+// WriteDatabaseMeta writes database meta to a file
 func (w *Writer) WriteDatabaseMeta(db, createSQL string) error {
 	ctx, conf := w.ctx, w.conf
 	fileName, err := (&outputFileNamer{DB: db}).render(conf.OutputFileTemplate, outputFileTemplateSchema)
@@ -120,6 +125,7 @@ func (w *Writer) WriteDatabaseMeta(db, createSQL string) error {
 	return writeMetaToFile(ctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
+// WriteTableMeta writes table meta to a file
 func (w *Writer) WriteTableMeta(db, table, createSQL string) error {
 	ctx, conf := w.ctx, w.conf
 	fileName, err := (&outputFileNamer{DB: db, Table: table}).render(conf.OutputFileTemplate, outputFileTemplateTable)
@@ -129,6 +135,7 @@ func (w *Writer) WriteTableMeta(db, table, createSQL string) error {
 	return writeMetaToFile(ctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
+// WriteViewMeta writes view meta to a file
 func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) error {
 	ctx, conf := w.ctx, w.conf
 	fileNameTable, err := (&outputFileNamer{DB: db, Table: view}).render(conf.OutputFileTemplate, outputFileTemplateTable)
@@ -146,6 +153,7 @@ func (w *Writer) WriteViewMeta(db, view, createTableSQL, createViewSQL string) e
 	return writeMetaToFile(ctx, db, createViewSQL, w.extStorage, fileNameView+".sql", conf.CompressType)
 }
 
+// WriteTableData writes table data to a file with retry
 func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int) error {
 	ctx, conf, conn := w.ctx, w.conf, w.conn
 	retryTime := 0
@@ -157,9 +165,10 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				errorCount.With(conf.Labels).Inc()
 			}
 		}()
-		retryTime += 1
+		retryTime++
 		log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", meta.DatabaseName()),
 			zap.String("table", meta.TableName()), zap.Int("chunkIndex", currentChunk), zap.NamedError("lastError", lastErr))
+		// don't rebuild connection when dump for the first time
 		if retryTime > 1 {
 			conn, err = w.rebuildConnFn(conn)
 			if err != nil {
@@ -171,11 +180,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			return
 		}
 		defer ir.Close()
-		return w.writeTableData(ctx, meta, ir, currentChunk)
+		return w.tryToWriteTableData(ctx, meta, ir, currentChunk)
 	}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) writeTableData(ctx context.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
+func (w *Writer) tryToWriteTableData(ctx context.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
@@ -209,7 +218,7 @@ func (w *Writer) writeTableData(ctx context.Context, meta TableMeta, ir TableDat
 func writeMetaToFile(ctx context.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {
 	fileWriter, tearDown, err := buildFileWriter(ctx, s, path, compressType)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer tearDown(ctx)
 
@@ -243,11 +252,12 @@ func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outp
 	}
 	o.ChunkIndex = chunkIdx
 	o.FileIndex = 0
-	if rows && fileSize {
+	switch {
+	case rows && fileSize:
 		o.format = "%09d%04d"
-	} else if fileSize {
+	case fileSize:
 		o.format = "%09[2]d"
-	} else {
+	default:
 		o.format = "%09[1]d"
 	}
 	return o
@@ -256,7 +266,7 @@ func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outp
 func (namer *outputFileNamer) render(tmpl *template.Template, subName string) (string, error) {
 	var bf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&bf, subName, namer); err != nil {
-		return "", err
+		return "", errors.Trace(err)
 	}
 	return bf.String(), nil
 }

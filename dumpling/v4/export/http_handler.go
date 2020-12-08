@@ -17,9 +17,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	cmuxReadTimeout = 10 * time.Second
-)
+var cmuxReadTimeout = 10 * time.Second
 
 func startHTTPServer(lis net.Listener) {
 	router := http.NewServeMux()
@@ -35,6 +33,7 @@ func startHTTPServer(lis net.Listener) {
 		Handler: router,
 	}
 	err := httpServer.Serve(lis)
+	err = errors.Cause(err)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
 		log.Error("http server return with error", zap.Error(err))
 	}
@@ -60,9 +59,7 @@ func startDumplingService(addr string) error {
 	return err
 }
 
-var (
-	useOfClosedErrMsg = "use of closed network connection"
-)
+var useOfClosedErrMsg = "use of closed network connection"
 
 // isErrNetClosing checks whether is an ErrNetClosing error
 func isErrNetClosing(err error) bool {

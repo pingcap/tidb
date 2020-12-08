@@ -6,14 +6,15 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 type globalMetadata struct {
@@ -31,8 +32,6 @@ const (
 	fileFieldIndex    = 0
 	posFieldIndex     = 1
 	gtidSetFieldIndex = 4
-
-	mariadbShowMasterStatusFieldNum = 4
 )
 
 func newGlobalMetadata(s storage.ExternalStorage, snapshot string) *globalMetadata {
@@ -56,7 +55,7 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error {
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error { // revive:disable-line:flag-parameter
 	if afterConn {
 		m.afterConnBuffer.Reset()
 		return recordGlobalMetaData(db, &m.afterConnBuffer, serverType, afterConn, m.snapshot)
@@ -64,7 +63,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	return recordGlobalMetaData(db, &m.buffer, serverType, afterConn, m.snapshot)
 }
 
-func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerType, afterConn bool, snapshot string) error {
+func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerType, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
 	writeMasterStatusHeader := func() {
 		buffer.WriteString("SHOW MASTER STATUS:")
 		if afterConn {
@@ -143,7 +142,7 @@ func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerT
 			fmt.Fprintf(buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
 		}
 	default:
-		return errors.New("unsupported serverType" + serverType.String() + "for recordGlobalMetaData")
+		return errors.Errorf("unsupported serverType %s for recordGlobalMetaData", serverType.String())
 	}
 	buffer.WriteString("\n")
 	if serverType == ServerTypeTiDB {
@@ -173,7 +172,7 @@ func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerT
 	return simpleQuery(db, query, func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		data := make([]sql.NullString, len(cols))
 		args := make([]interface{}, 0, len(cols))
@@ -181,7 +180,7 @@ func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerT
 			args = append(args, &data[i])
 		}
 		if err := rows.Scan(args...); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		var connName, pos, logFile, host, gtidSet string
 		for i, col := range cols {

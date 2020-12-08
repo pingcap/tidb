@@ -8,6 +8,7 @@ install:
   - sh install.sh
 
 script:
+  - make check
   - make test WITH_RACE=1
   - make integration_test
 

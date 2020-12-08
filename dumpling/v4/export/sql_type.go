@@ -10,11 +10,13 @@ import (
 
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
 
-var nullValue = "NULL"
-var quotationMark = []byte{'\''}
-var doubleQuotationMark = []byte{'"'}
+var (
+	nullValue           = "NULL"
+	quotationMark       = []byte{'\''}
+	doubleQuotationMark = []byte{'"'}
+)
 
-func init() {
+func initColTypeRowReceiverMap() {
 	for _, s := range dataTypeString {
 		colTypeRowReceiverMap[s] = SQLTypeStringMaker
 	}
@@ -47,7 +49,7 @@ var dataTypeBin = []string{
 	"BIT",
 }
 
-func getEscapeQuotation(escapeBackSlash bool, escapeQuotation []byte) []byte {
+func getEscapeQuotation(escapeBackSlash bool, escapeQuotation []byte) []byte { // revive:disable-line:flag-parameter
 	if escapeBackSlash {
 		return nil
 	}
@@ -71,22 +73,16 @@ func escape(s []byte, bf *bytes.Buffer, escapeQuotation []byte) {
 		switch s[i] {
 		case 0: /* Must be escaped for 'mysql' */
 			escape = '0'
-			break
 		case '\n': /* Must be escaped for logs */
 			escape = 'n'
-			break
 		case '\r':
 			escape = 'r'
-			break
 		case '\\':
 			escape = '\\'
-			break
 		case '\'':
 			escape = '\''
-			break
 		case '"': /* Better safe than sorry */
 			escape = '"'
-			break
 		case '\032': /* This gives problems on Win32 */
 			escape = 'Z'
 		}
@@ -105,18 +101,22 @@ func escape(s []byte, bf *bytes.Buffer, escapeQuotation []byte) {
 	}
 }
 
+// SQLTypeStringMaker returns a SQLTypeString
 func SQLTypeStringMaker() RowReceiverStringer {
 	return &SQLTypeString{}
 }
 
+// SQLTypeBytesMaker returns a SQLTypeBytes
 func SQLTypeBytesMaker() RowReceiverStringer {
 	return &SQLTypeBytes{}
 }
 
+// SQLTypeNumberMaker returns a SQLTypeNumber
 func SQLTypeNumberMaker() RowReceiverStringer {
 	return &SQLTypeNumber{}
 }
 
+// MakeRowReceiver constructs RowReceiverArr from column types
 func MakeRowReceiver(colTypes []string) RowReceiverStringer {
 	rowReceiverArr := make([]RowReceiverStringer, len(colTypes))
 	for i, colTp := range colTypes {
@@ -132,11 +132,13 @@ func MakeRowReceiver(colTypes []string) RowReceiverStringer {
 	}
 }
 
+// RowReceiverArr is the combined RowReceiver array
 type RowReceiverArr struct {
 	bound     bool
 	receivers []RowReceiverStringer
 }
 
+// BindAddress implements RowReceiver.BindAddress
 func (r RowReceiverArr) BindAddress(args []interface{}) {
 	if r.bound {
 		return
@@ -147,6 +149,7 @@ func (r RowReceiverArr) BindAddress(args []interface{}) {
 	}
 }
 
+// WriteToBuffer implements Stringer.WriteToBuffer
 func (r RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	bf.WriteByte('(')
 	for i, receiver := range r.receivers {
@@ -158,6 +161,7 @@ func (r RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	bf.WriteByte(')')
 }
 
+// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (r RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
 	for i, receiver := range r.receivers {
 		receiver.WriteToBufferInCsv(bf, escapeBackslash, opt)
@@ -167,10 +171,12 @@ func (r RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 	}
 }
 
+// SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
 type SQLTypeNumber struct {
 	SQLTypeString
 }
 
+// WriteToBuffer implements Stringer.WriteToBuffer
 func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	if s.RawBytes != nil {
 		bf.Write(s.RawBytes)
@@ -179,6 +185,7 @@ func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	}
 }
 
+// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOption) {
 	if s.RawBytes != nil {
 		bf.Write(s.RawBytes)
@@ -187,14 +194,17 @@ func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOpti
 	}
 }
 
+// SQLTypeString implements RowReceiverStringer which represents string type columns in database
 type SQLTypeString struct {
 	sql.RawBytes
 }
 
+// BindAddress implements RowReceiver.BindAddress
 func (s *SQLTypeString) BindAddress(arg []interface{}) {
 	arg[0] = &s.RawBytes
 }
 
+// WriteToBuffer implements Stringer.WriteToBuffer
 func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	if s.RawBytes != nil {
 		bf.Write(quotationMark)
@@ -205,6 +215,7 @@ func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	}
 }
 
+// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
 	if s.RawBytes != nil {
 		bf.Write(opt.delimiter)
@@ -215,14 +226,17 @@ func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 	}
 }
 
+// SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
 type SQLTypeBytes struct {
 	sql.RawBytes
 }
 
+// BindAddress implements RowReceiver.BindAddress
 func (s *SQLTypeBytes) BindAddress(arg []interface{}) {
 	arg[0] = &s.RawBytes
 }
 
+// WriteToBuffer implements Stringer.WriteToBuffer
 func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	if s.RawBytes != nil {
 		fmt.Fprintf(bf, "x'%x'", s.RawBytes)
@@ -231,6 +245,7 @@ func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	}
 }
 
+// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
 	if s.RawBytes != nil {
 		bf.Write(opt.delimiter)

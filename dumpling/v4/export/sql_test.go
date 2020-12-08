@@ -156,7 +156,7 @@ func (s *testSQLSuite) TestBuildSelectAllQuery(c *C) {
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
-	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp += 1 {
+	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp++ {
 		mockConf.ServerInfo.ServerType = ServerType(tp)
 		cmt := Commentf("current server type: ", tp)
 
@@ -247,7 +247,7 @@ func (s *testSQLSuite) TestBuildOrderByClause(c *C) {
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
-	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp += 1 {
+	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp++ {
 		mockConf.ServerInfo.ServerType = ServerType(tp)
 		cmt := Commentf("current server type: ", tp)
 

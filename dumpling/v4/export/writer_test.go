@@ -4,7 +4,6 @@ package export
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"io/ioutil"
 	"os"
@@ -17,24 +16,7 @@ import (
 
 var _ = Suite(&testWriterSuite{})
 
-type testWriterSuite struct {
-	pool *connectionsPool
-}
-
-func (s *testWriterSuite) SetUpSuite(c *C) {
-	s.pool = newMockConnectPool(c)
-}
-
-func newMockConnectPool(c *C) *connectionsPool {
-	db, _, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
-	connectPool := &connectionsPool{conns: make(chan *sql.Conn, 1)}
-	connectPool.releaseConn(conn)
-	connectPool.createdConns = []*sql.Conn{conn}
-	return connectPool
-}
+type testWriterSuite struct{}
 
 func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
@@ -45,7 +27,7 @@ func (s *testWriterSuite) newWriter(conf *Config, c *C) *Writer {
 	c.Assert(err, IsNil)
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
-	return NewWriter(0, context.Background(), conf, conn, extStore)
+	return NewWriter(context.Background(), 0, conf, conn, extStore)
 }
 
 func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {
@@ -190,7 +172,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 	}
 
 	for p, expected := range cases {
-		p := path.Join(dir, p)
+		p = path.Join(dir, p)
 		_, err := os.Stat(p)
 		c.Assert(err, IsNil)
 		bytes, err := ioutil.ReadFile(p)
@@ -241,7 +223,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	}
 
 	for p, expected := range cases {
-		p := path.Join(dir, p)
+		p = path.Join(dir, p)
 		_, err = os.Stat(p)
 		c.Assert(err, IsNil)
 		bytes, err := ioutil.ReadFile(p)
@@ -291,11 +273,11 @@ func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	}
 
 	for p, expected := range cases {
-		p := path.Join(config.OutputDirPath, p)
+		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		c.Assert(err, IsNil)
-		bytes, err := ioutil.ReadFile(p)
-		c.Assert(err, IsNil)
+		bytes, err1 := ioutil.ReadFile(p)
+		c.Assert(err1, IsNil)
 		c.Assert(string(bytes), Equals, expected)
 	}
 
@@ -331,7 +313,7 @@ func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	c.Assert(writer.WriteTableData(tableIR, tableIR, 0), IsNil)
 	c.Assert(err, IsNil)
 	for p, expected := range cases {
-		p := path.Join(config.OutputDirPath, p)
+		p = path.Join(config.OutputDirPath, p)
 		_, err = os.Stat(p)
 		c.Assert(err, IsNil)
 		bytes, err := ioutil.ReadFile(p)

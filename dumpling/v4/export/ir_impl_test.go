@@ -74,6 +74,7 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 	mock.ExpectQuery("SELECT a, b FROM t").WillReturnRows(expectedRows)
 	rows, err := db.Query("SELECT a, b FROM t")
 	c.Assert(err, IsNil)
+	defer rows.Close()
 
 	var (
 		testFileSize      uint64 = 200

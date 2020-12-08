@@ -4,18 +4,18 @@ package export
 
 import (
 	"context"
-	"errors"
+	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
 
-	"database/sql/driver"
-
 	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 )
 
 func TestT(t *testing.T) {
+	initColTypeRowReceiverMap()
 	TestingT(t)
 }
 
@@ -119,7 +119,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	conf := configForWriteCSV(true, opt, UnspecifiedSize)
+	conf := configForWriteCSV(true, opt)
 	err := WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
@@ -132,7 +132,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	conf = configForWriteCSV(true, opt, UnspecifiedSize)
+	conf = configForWriteCSV(true, opt)
 	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
@@ -145,7 +145,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	conf = configForWriteCSV(true, opt, UnspecifiedSize)
+	conf = configForWriteCSV(true, opt)
 	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
@@ -160,7 +160,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	opt.delimiter = []byte("ma")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
-	conf = configForWriteCSV(false, opt, UnspecifiedSize)
+	conf = configForWriteCSV(false, opt)
 	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
@@ -217,12 +217,12 @@ func configForWriteSQL(fileSize, statementSize uint64) *Config {
 	return &Config{FileSize: fileSize, StatementSize: statementSize}
 }
 
-func configForWriteCSV(noHeader bool, opt *csvOption, fileSizeLimit uint64) *Config {
+func configForWriteCSV(noHeader bool, opt *csvOption) *Config {
 	return &Config{
 		NoHeader:     noHeader,
 		CsvNullValue: opt.nullValue,
 		CsvDelimiter: string(opt.delimiter),
 		CsvSeparator: string(opt.separator),
-		FileSize:     fileSizeLimit,
+		FileSize:     UnspecifiedSize,
 	}
 }

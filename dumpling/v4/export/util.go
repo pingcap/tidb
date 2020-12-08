@@ -9,23 +9,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"go.etcd.io/etcd/clientv3"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
 
-func GetPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
+func getPdDDLIDs(pCtx context.Context, cli *clientv3.Client) ([]string, error) {
 	ctx, cancel := context.WithTimeout(pCtx, 10*time.Second)
 	defer cancel()
 
-	var pdDDLIds []string
 	resp, err := cli.Get(ctx, tidbServerInformationPath, clientv3.WithPrefix())
 	if err != nil {
-		return pdDDLIds, err
+		return nil, errors.Trace(err)
 	}
-	for _, kv := range resp.Kvs {
+	pdDDLIds := make([]string, len(resp.Kvs))
+	for i, kv := range resp.Kvs {
 		items := strings.Split(string(kv.Key), "/")
-		pdDDLIds = append(pdDDLIds, items[len(items)-1])
+		pdDDLIds[i] = items[len(items)-1]
 	}
 	return pdDDLIds, nil
 }
@@ -36,13 +37,13 @@ func checkSameCluster(ctx context.Context, db *sql.DB, pdAddrs []string) (bool, 
 		DialTimeout: defaultEtcdDialTimeOut,
 	})
 	if err != nil {
-		return false, err
+		return false, errors.Trace(err)
 	}
 	tidbDDLIDs, err := GetTiDBDDLIDs(db)
 	if err != nil {
 		return false, err
 	}
-	pdDDLIDs, err := GetPdDDLIDs(ctx, cli)
+	pdDDLIDs, err := getPdDDLIDs(ctx, cli)
 	if err != nil {
 		return false, err
 	}
