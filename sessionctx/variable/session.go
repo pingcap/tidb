@@ -761,6 +761,9 @@ type SessionVars struct {
 	Enable1PC bool
 
 	GuaranteeExternalConsistency bool
+
+	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
+	AnalyzeVersion int
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -911,6 +914,7 @@ func NewSessionVars() *SessionVars {
 		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
 		Enable1PC:                    DefTiDBEnable1PC,
 		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
+		AnalyzeVersion:               DefTiDBAnalyzeVersion,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1627,6 +1631,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.Enable1PC = TiDBOptOn(val)
 	case TiDBGuaranteeExternalConsistency:
 		s.GuaranteeExternalConsistency = TiDBOptOn(val)
+	case TiDBAnalyzeVersion:
+		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 	}
 	s.systems[name] = val
 	return nil
