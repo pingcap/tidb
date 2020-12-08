@@ -1122,7 +1122,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder, _  := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{}, &SetVarCollectProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{}, &SetVarCollectProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
