@@ -45,7 +45,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20201130052818-5dfa7b1325a3
+	github.com/pingcap/kvproto v0.0.0-20201208043834-923c9609272c
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20201203085211-44f6be1df1c4
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
@@ -88,9 +88,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace (
-	github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201208032526-a859048e36eb
-	github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20201207083920-0f4b5eba03a9
-)
+replace github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201208051105-b859d885b138
 
 go 1.13
