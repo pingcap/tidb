@@ -84,17 +84,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}()
 
-	// for consistency lock, we should lock tables at first to get the tables we want to lock & dump
-	// for consistency lock, record meta pos before lock tables because other tables may still be modified while locking tables
+	// for consistency lock, we should get table list at first to generate the lock tables SQL
 	if conf.Consistency == consistencyTypeLock {
 		conn, err = createConnWithConsistency(ctx, pool)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		m.recordStartTime(time.Now())
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false)
-		if err != nil {
-			log.Info("get global metadata failed", zap.Error(err))
 		}
 		if err = prepareTableListToDump(conf, conn); err != nil {
 			conn.Close()
@@ -118,41 +112,29 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}()
 
-	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
-	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
-	if conf.Consistency != consistencyTypeLock {
-		conn, err = pool.Conn(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		m.recordStartTime(time.Now())
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false)
-		if err != nil {
-			log.Info("get global metadata failed", zap.Error(err))
-		}
-		conn.Close()
-	}
-
 	metaConn, err := createConnWithConsistency(ctx, pool)
 	if err != nil {
 		return err
 	}
-
-	if conf.PosAfterConnect {
-		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
-		if err != nil {
-			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
-		}
+	m.recordStartTime(time.Now())
+	// for consistency lock, we can write snapshot info after all tables are locked.
+	// the binlog pos may changed because there is still possible write between we lock tables and write master status.
+	// but for the locked tables doing replication that starts from metadata is safe.
+	// for consistency flush, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
+	// for consistency snapshot, we should use the snapshot that we get/set at first in metadata. TiDB will assure the snapshot of TSO.
+	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
+	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
+	if err != nil {
+		log.Info("get global metadata failed", zap.Error(err))
 	}
 
+	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
 	if conf.Consistency != consistencyTypeLock {
 		if err = prepareTableListToDump(conf, metaConn); err != nil {
 			return err
 		}
 	}
 
-	failpoint.Inject("ConsistencyCheck", nil)
 	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
 		// make sure that the lock connection is still alive
 		err1 := conCtrl.PingContext(ctx)
@@ -184,12 +166,23 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return err
 	}
 	defer tearDownWriters()
+
 	if conf.TransactionalConsistency {
 		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
 			log.Info("All the dumping transactions have started. Start to unlock tables")
 		}
 		if err = conCtrl.TearDown(ctx); err != nil {
 			return errors.Trace(err)
+		}
+	}
+	// Inject consistency failpoint test after we release the table lock
+	failpoint.Inject("ConsistencyCheck", nil)
+
+	if conf.PosAfterConnect {
+		// record again, to provide a location to exit safe mode for DM
+		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
+		if err != nil {
+			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
 		}
 	}
 
@@ -513,19 +506,19 @@ func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string
 	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
 }
 
-func prepareTableListToDump(conf *Config, pool *sql.Conn) error {
-	databases, err := prepareDumpingDatabases(conf, pool)
+func prepareTableListToDump(conf *Config, db *sql.Conn) error {
+	databases, err := prepareDumpingDatabases(conf, db)
 	if err != nil {
 		return err
 	}
 
-	conf.Tables, err = listAllTables(pool, databases)
+	conf.Tables, err = listAllTables(db, databases)
 	if err != nil {
 		return err
 	}
 
 	if !conf.NoViews {
-		views, err := listAllViews(pool, databases)
+		views, err := listAllViews(db, databases)
 		if err != nil {
 			return err
 		}
