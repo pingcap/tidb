@@ -2116,15 +2116,19 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 	return extractor.aggMapper, nil
 }
 
+// correlatedAggregateResolver visits Expr tree.
+// It finds and collects all correlated aggregates which should be evaluated in the outer query.
 type correlatedAggregateResolver struct {
 	ctx       context.Context
 	err       error
 	b         *PlanBuilder
 	outerPlan LogicalPlan
-	// outerAggMapper stores aggregate functions which belong to outer query
-	outerAggFuncs []*ast.AggregateFuncExpr
+
+	// correlatedAggFuncs stores aggregate functions which belong to outer query
+	correlatedAggFuncs []*ast.AggregateFuncExpr
 }
 
+// Enter implements Visitor interface.
 func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.SelectStmt:
@@ -2139,18 +2143,14 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 	return n, false
 }
 
-func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) error {
-	var (
-		p   LogicalPlan
-		err error
-	)
-
+func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
 	}
-
-	p, err = r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	// we cannot use cache if there are correlated aggregates inside FROM clause,
+	// since the plan we are building now is not correct and need to be rebuild later.
+	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
 	if err != nil {
 		return err
 	}
@@ -2177,23 +2177,25 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) error {
 		return err
 	}
 
-	// resolve correlated aggregates recursively
+	// find and collect correlated aggregates recursively
 	_, err = r.b.resolveCorrelatedAggregates(r.ctx, sel, p)
 	if err != nil {
 		return err
 	}
 
+	// collect from SELECT fields, HAVING, ORDER BY and window functions
 	err = r.collectFromSelectFields(r.ctx, p, sel)
 	if err != nil {
 		return err
 	}
 
+	// collect from WHERE clause
 	err = r.collectFromWhere(p, sel.Where)
 	if err != nil {
 		return err
 	}
 
-	// restore sub-query
+	// restore the sub-query
 	sel.Fields.Fields = originalFields
 	r.b.handleHelper.popMap()
 	return nil
@@ -2211,10 +2213,10 @@ func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, 
 	if !ok {
 		return false, subResolver.err
 	}
-	if len(subResolver.outerAggFuncs) == 0 {
+	if len(subResolver.correlatedAggFuncs) == 0 {
 		return true, nil
 	}
-	r.outerAggFuncs = append(r.outerAggFuncs, subResolver.outerAggFuncs...)
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, subResolver.correlatedAggFuncs...)
 	return false, nil
 }
 
@@ -2227,7 +2229,7 @@ func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
 	return nil
 }
 
@@ -2241,10 +2243,11 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 	if err != nil {
 		return err
 	}
-	r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
 	return nil
 }
 
+// Leave implements Visitor interface.
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.SelectStmt:
@@ -2256,6 +2259,8 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
+// in the outer query from all the sub-queries inside SELECT fields.
 func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
 	resolver := &correlatedAggregateResolver{
 		ctx:       ctx,
@@ -2264,12 +2269,12 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
-		resolver.outerAggFuncs = resolver.outerAggFuncs[:0]
+		resolver.correlatedAggFuncs = resolver.correlatedAggFuncs[:0]
 		_, ok := field.Expr.Accept(resolver)
 		if !ok {
 			return nil, resolver.err
 		}
-		correlatedAggList = append(correlatedAggList, resolver.outerAggFuncs...)
+		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
 	}
 	correlatedAggMap := make(map[*ast.AggregateFuncExpr]int)
 	for _, aggFunc := range correlatedAggList {
@@ -3071,6 +3076,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		gbyCols                       []expression.Expression
 	)
 
+	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
+	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
+	// existing ResultSetNode from the cache.
 	p, err = b.buildTableRefsWithCache(ctx, sel.From)
 	if err != nil {
 		return nil, err
@@ -3117,6 +3125,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	// We have to resolve correlated aggregate inside sub-queries before building aggregation and building projection,
+	// for instance, count(a) inside the sub-query of "select (select count(a)) from t" should be evaluated within
+	// the context of the outer query. So we have to extract such aggregates from sub-queries and put them into
+	// SELECT field list.
 	correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
 	if err != nil {
 		return nil, err
@@ -3150,6 +3162,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg || sel.GroupBy != nil {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
+		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
+		// of this sub-query are actually correlated aggregates from the outer querym And they have already been built
+		// in the outer query. The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
 		if len(aggFuncs) > 0 || sel.GroupBy != nil {
 			var aggIndexMap map[int]int
 			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)

@@ -346,10 +346,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			if index < 0 {
 				er.ctxStackAppend(&expression.Constant{}, types.EmptyName)
 			} else {
+				// index >= 0 indicates this is a regular aggregate column
 				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			}
 			return inNode, true
 		}
+		// replace correlated aggregate in sub-query with its corresponding correlated column
 		if col, ok := er.b.correlatedAggMapper[v]; ok {
 			er.ctxStackAppend(col, types.EmptyName)
 			return inNode, true
