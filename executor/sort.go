@@ -367,6 +367,15 @@ func (e *TopNExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
+// fixed Issues#21451
+func (e *TopNExec) initCompareFuncs() {
+	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
+	for i := range e.ByItems {
+		keyType := e.ByItems[i].Expr.GetType()
+		e.keyCmpFuncs[i] = chunk.GetCompareTopNFunc(keyType)
+	}
+}
+
 func (e *TopNExec) initPointers() {
 	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))

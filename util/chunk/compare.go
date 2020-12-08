@@ -25,6 +25,16 @@ import (
 // CompareFunc is a function to compare the two values in Row, the two columns must have the same type.
 type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
+// fixed Issues#21451
+func GetCompareTopNFunc(tp *types.FieldType) CompareFunc {
+	switch tp.Tp {
+	case mysql.TypeSet, mysql.TypeEnum:
+		return genCmpNameValueFunc(tp.Collate)
+	default:
+		return GetCompareFunc(tp)
+	}
+}
+
 // GetCompareFunc gets a compare function for the field type.
 func GetCompareFunc(tp *types.FieldType) CompareFunc {
 	switch tp.Tp {
@@ -147,6 +157,22 @@ func cmpNameValue(l Row, lCol int, r Row, rCol int) int {
 	_, lVal := l.getNameValue(lCol)
 	_, rVal := r.getNameValue(rCol)
 	return types.CompareUint64(lVal, rVal)
+}
+
+func cmpNameValueWithCollationInfo(l Row, lCol int, r Row, rCol int, collation string) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
+	}
+	lName, _ := l.getNameValue(lCol)
+	rName, _ := r.getNameValue(rCol)
+	return types.CompareString(lName, rName, collation)
+}
+
+func genCmpNameValueFunc(collation string) func(l Row, lCol int, r Row, rCol int) int {
+	return func(l Row, lCol int, r Row, rCol int) int {
+		return cmpNameValueWithCollationInfo(l, lCol, r, rCol, collation)
+	}
 }
 
 func cmpBit(l Row, lCol int, r Row, rCol int) int {
