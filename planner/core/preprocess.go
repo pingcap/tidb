@@ -855,6 +855,7 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"mgr_myisam": {},
 	"myisam":     {},
 	"ndb":        {},
+	"heap":       {},
 }
 
 func checkTableEngine(engineName string) error {
