@@ -290,7 +290,7 @@
         "SQL": "select a = (select a from t t2 where t1.b = t2.b order by a limit 1) from t t1",
         "Result": [
           "Group#0 Schema:[Column#25]",
-          "    Projection_2 input:[Group#1], eq(test.t.a, test.t.a)->Column#25",
+          "    Projection_3 input:[Group#1], eq(test.t.a, test.t.a)->Column#25",
           "Group#1 Schema:[test.t.a,test.t.b,test.t.a]",
           "    Apply_9 input:[Group#2,Group#3], left outer join",
           "Group#2 Schema:[test.t.a,test.t.b], UniqueKey:[test.t.a]",
