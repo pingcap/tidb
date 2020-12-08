@@ -1075,6 +1075,6 @@ func (b *builtinUUIDShortSig) evalInt(_ chunk.Row) (d int64, isNull bool, err er
 		return d, false, err
 	}
 	serverID := b.ctx.GetSessionManager().ServerID()
-	d = (serverID&255)<<56 + int64(now<<16) + int64(seq)
+	d = int64(serverID&255)<<56 + int64(now<<16) + int64(seq)
 	return d, false, nil
 }
