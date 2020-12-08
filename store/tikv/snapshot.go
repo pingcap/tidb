@@ -449,7 +449,6 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
 		})
-	req.RecordTimeStat = true
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {

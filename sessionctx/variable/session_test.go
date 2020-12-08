@@ -141,8 +141,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		ScanDetail: &execdetails.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
-			ProcessTime:  time.Second * time.Duration(2),
-			WaitTime:     time.Minute,
+			ProcessTime:   time.Second * time.Duration(2),
+			WaitTime:      time.Minute,
 		},
 	}
 	statsInfos := make(map[string]uint64)
