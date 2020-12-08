@@ -415,6 +415,10 @@ LOOP:
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
+				// Don't delete this row, otherwise error message would change.
+				if n == defaultBatchSize*2-10 {
+					continue
+				}
 				tk.MustExec("delete from t1 where c1 = ?", n)
 				tk.MustExec("insert into t1 values (?, ?, ?)", i+10, i, i)
 			}
@@ -1920,11 +1924,11 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 		c.Assert(err, IsNil)
 		c.Assert(d, DeepEquals, val)
 	}
-	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) // pid
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64(), Equals, pid)
 
-	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) // handle
 	c.Assert(err, IsNil)
 	h := kv.IntHandle(d.GetInt64())
 	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
@@ -4038,7 +4042,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
-	//varchar to varchar
+	// varchar to varchar
 	tk.MustExec("drop table if exists tt;")
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
@@ -4479,9 +4483,9 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 	}
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
-	//s.mustExec(c, "delete from t where y = 2155")
-	//s.mustExec(c, "alter table t add index idx_y(y1)")
-	//s.mustExec(c, "alter table t drop index idx_y")
+	// s.mustExec(c, "delete from t where y = 2155")
+	// s.mustExec(c, "alter table t add index idx_y(y1)")
+	// s.mustExec(c, "alter table t drop index idx_y")
 
 	// Fix issue 9311.
 	tk.MustExec("drop table if exists gcai_table")
@@ -6011,7 +6015,7 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			"insert into t2 values(11, 11, 11)",
 			"delete from t2 where c2 = 11",
 			"update t2 set c2 = 110 where c1 = 11"},
-			//"update t2 set c1 = 10 where c3 = 100"},
+			// "update t2 set c1 = 10 where c3 = 100"},
 			[]string{"alter table t1 add index k2(c2)",
 				"alter table t1 drop index k2",
 				"alter table t1 add index kk2(c2, c1)",
