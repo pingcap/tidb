@@ -274,9 +274,21 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildSelectFrom(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
+func (b *PlanBuilder) buildTableRefsWithoutCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
+	return b.buildTableRefs(ctx, from, false)
+}
+
+func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
+	return b.buildTableRefs(ctx, from, true)
+}
+
+func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause, useCache bool) (p LogicalPlan, err error) {
 	if from == nil {
 		p = b.buildTableDual()
+		return
+	}
+	if !useCache {
+		p, err = b.buildResultSetNode(ctx, from.TableRefs)
 		return
 	}
 	var ok bool
@@ -2093,7 +2105,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 	return extractor.aggMapper, nil
 }
 
-type subqueryResolver struct {
+type correlatedAggregateResolver struct {
 	ctx context.Context
 	b   *PlanBuilder
 	err error
@@ -2101,7 +2113,7 @@ type subqueryResolver struct {
 	outerAggFuncs []*ast.AggregateFuncExpr
 }
 
-func (r *subqueryResolver) Enter(n ast.Node) (ast.Node, bool) {
+func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.SelectStmt:
 		r.err = r.resolveSelect(v)
@@ -2110,13 +2122,18 @@ func (r *subqueryResolver) Enter(n ast.Node) (ast.Node, bool) {
 	return n, false
 }
 
-func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
+func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) error {
 	var (
 		p   LogicalPlan
 		err error
 	)
 
-	p, err = r.b.buildSelectFrom(r.ctx, sel.From)
+	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	if err != nil {
+		return err
+	}
+
+	p, err = r.b.buildTableRefs(r.ctx, sel.From, useCache)
 	if err != nil {
 		return err
 	}
@@ -2143,11 +2160,48 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 		return err
 	}
 
-	_, err = r.b.resolveSubquery(r.ctx, sel, p)
+	// resolve correlated aggregates recursively
+	_, err = r.b.resolveCorrelatedAggregates(r.ctx, sel, p)
 	if err != nil {
 		return err
 	}
 
+	err = r.collectFromSelectFields(r.ctx, p, sel)
+	if err != nil {
+		return err
+	}
+
+	err = r.collectFromWhere(p, sel.Where)
+	if err != nil {
+		return err
+	}
+
+	// restore sub-query
+	sel.Fields.Fields = originalFields
+	r.b.handleHelper.popMap()
+	return nil
+}
+
+func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, from *ast.TableRefsClause) (canCache bool, err error) {
+	if from == nil {
+		return true, nil
+	}
+	subResolver := &correlatedAggregateResolver{
+		ctx: r.ctx,
+		b:   r.b,
+	}
+	_, ok := from.TableRefs.Accept(subResolver)
+	if !ok {
+		return false, subResolver.err
+	}
+	if len(subResolver.outerAggFuncs) == 0 {
+		return true, nil
+	}
+	r.outerAggFuncs = append(r.outerAggFuncs, subResolver.outerAggFuncs...)
+	return false, nil
+}
+
+func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Context, p LogicalPlan, sel *ast.SelectStmt) error {
 	hasAgg := r.b.detectSelectAgg(sel)
 	if hasAgg {
 		_, _, outerAggFuncs, err := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
@@ -2156,21 +2210,21 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 		}
 		r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
 	}
+	return nil
+}
 
-	if sel.Where != nil {
-		outerAggFuncs, err := r.extractAggFromWhere(r.ctx, p, sel.Where)
+func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.ExprNode) error {
+	if where != nil {
+		outerAggFuncs, err := r.extractAggFromWhere(r.ctx, p, where)
 		if err != nil {
 			return err
 		}
 		r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
 	}
-
-	sel.Fields.Fields = originalFields
-	r.b.handleHelper.popMap()
 	return nil
 }
 
-func (r *subqueryResolver) extractAggFromWhere(ctx context.Context, p LogicalPlan, where ast.ExprNode) ([]*ast.AggregateFuncExpr, error) {
+func (r *correlatedAggregateResolver) extractAggFromWhere(ctx context.Context, p LogicalPlan, where ast.ExprNode) ([]*ast.AggregateFuncExpr, error) {
 	extractor := &AggregateFuncExtractor{}
 	_, _ = where.Accept(extractor)
 	_, outerAggList, err := r.b.splitOuterAggFuncs(ctx, p, extractor.AggFuncs)
@@ -2180,11 +2234,11 @@ func (r *subqueryResolver) extractAggFromWhere(ctx context.Context, p LogicalPla
 	return outerAggList, nil
 }
 
-func (r *subqueryResolver) Leave(n ast.Node) (ast.Node, bool) {
+func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-func (b *PlanBuilder) resolveSubquery(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
+func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
 	outerSchema := p.Schema().Clone()
 	b.outerSchemas = append(b.outerSchemas, outerSchema)
 	b.outerNames = append(b.outerNames, p.OutputNames())
@@ -2193,7 +2247,7 @@ func (b *PlanBuilder) resolveSubquery(ctx context.Context, sel *ast.SelectStmt, 
 		b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
 	}()
 
-	resolver := &subqueryResolver{
+	resolver := &correlatedAggregateResolver{
 		ctx: ctx,
 		b:   b,
 	}
@@ -3002,11 +3056,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
-		corAggMap                     map[*ast.AggregateFuncExpr]int
+		correlatedAggMap              map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 	)
 
-	p, err = b.buildSelectFrom(ctx, sel.From)
+	p, err = b.buildTableRefsWithCache(ctx, sel.From)
 	if err != nil {
 		return nil, err
 	}
@@ -3052,7 +3106,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
-	corAggMap, err = b.resolveSubquery(ctx, sel, p)
+	correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3089,14 +3143,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, corAggMap)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 		if err != nil {
 			return nil, err
 		}
 		for agg, idx := range totalMap {
 			totalMap[agg] = aggIndexMap[idx]
 		}
-		for agg, _ := range corAggMap {
+		for agg, _ := range correlatedAggMap {
 			idx := totalMap[agg]
 			b.corAggMapper[agg] = b.corAggMapper[aggFuncs[idx]]
 			agg.SetFlag(agg.GetFlag() &^ ast.FlagHasAggregateFunc)

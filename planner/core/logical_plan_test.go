@@ -538,7 +538,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("for %s", tt)
+		comment := Commentf("case:%v sql:\"%s\"", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -618,7 +618,7 @@ func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]s
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v %T ID %d Not found", comment, v, p.ID()))
+		c.Assert(ok, IsTrue, Commentf("For %s %T ID %d Not found", comment.CheckCommentString(), v, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, col := range p.Schema().Columns {
 			s.testData.OnRecord(func() {
