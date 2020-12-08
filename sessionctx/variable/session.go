@@ -572,8 +572,8 @@ type SessionVars struct {
 	// EnableChangeColumnType is used to control whether to enable the change column type.
 	EnableChangeColumnType bool
 
-	// EnableMultiSchemaChange is used to control whether to enable the multi schema change.
-	EnableMultiSchemaChange bool
+	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
+	EnableChangeMultiSchema bool
 
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
@@ -907,7 +907,7 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:          DefTiDBEnableParallelApply,
 		ShardAllocateStep:            DefTiDBShardAllocateStep,
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
-		EnableMultiSchemaChange:      DefTiDBMultiSchemaChange,
+		EnableChangeMultiSchema:      DefTiDBMultiSchemaChange,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
@@ -1617,8 +1617,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
 		s.EnableChangeColumnType = TiDBOptOn(val)
-	case TiDBEnableMultiSchemaChange:
-		s.EnableMultiSchemaChange = TiDBOptOn(val)
+	case TiDBEnableChangeMultiSchema:
+		s.EnableChangeMultiSchema = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:

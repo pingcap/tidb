@@ -2316,7 +2316,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
-		if !ctx.GetSessionVars().EnableMultiSchemaChange {
+		if !ctx.GetSessionVars().EnableChangeMultiSchema {
 			return errRunMultiSchemaChanges
 		}
 		if isSameTypeMultiSpecs(validSpecs) {

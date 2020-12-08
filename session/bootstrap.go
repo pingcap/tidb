@@ -1335,10 +1335,10 @@ func doDMLWorks(s Session) {
 					vVal = string(variable.DynamicOnly)
 				}
 			}
-			if v.Name == variable.TiDBEnableMultiSchemaChange {
+			if v.Name == variable.TiDBEnableChangeMultiSchema {
 				vVal = variable.BoolOff
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					// enable multi schema change in test case for compatibility with old cases.
+					// enable change multi schema in test case for compatibility with old cases.
 					vVal = variable.BoolOn
 				}
 			}
