@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"sync"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
