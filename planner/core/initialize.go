@@ -216,9 +216,9 @@ func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo,
 	return &p
 }
 
-// Init initializes PhysicalShuffleDataSourceStub.
-func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
+// Init initializes PhysicalShuffleReceiverStub.
+func (p PhysicalShuffleReceiverStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -239,6 +239,12 @@ func (p Delete) Init(ctx sessionctx.Context) *Delete {
 // Init initializes Insert.
 func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeInsert, 0)
+	return &p
+}
+
+// Init initializes LoadData.
+func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
 	return &p
 }
 
@@ -426,6 +432,13 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
+// Init initializes PhysicalTableSample.
+func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalTableSample {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
+	p.stats = &property.StatsInfo{RowCount: 1}
+	return &p
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
@@ -475,6 +488,11 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 	p.stats = stats
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
+}
+
+// InitBasePlan only assigns type and context.
+func (p *PhysicalExchangerBase) InitBasePlan(ctx sessionctx.Context, tp string) {
+	p.basePlan = newBasePlan(ctx, tp, 0)
 }
 
 func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {

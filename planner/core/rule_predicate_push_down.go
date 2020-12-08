@@ -99,6 +99,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	predicates = expression.PropagateConstant(ds.ctx, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
 	return predicates, ds
@@ -395,7 +396,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
-	groupByColumns := expression.NewSchema(la.groupByCols...)
+	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:

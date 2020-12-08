@@ -82,6 +82,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "TiDB current connection counts",
 	},
+	"tidb_connection_idle_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,in_txn,instance))`,
+		Labels:   []string{"instance", "in_txn"},
+		Quantile: 0.90,
+		Comment:  "The quantile of TiDB connection idle durations(second)",
+	},
+	"tidb_connection_idle_total_count": {
+		PromQL:  `sum(increase(tidb_server_conn_idle_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (in_txn,instance)`,
+		Labels:  []string{"instance", "in_txn"},
+		Comment: "The total count of TiDB connection idle",
+	},
+	"tidb_connection_idle_total_time": {
+		PromQL:  `sum(increase(tidb_server_conn_idle_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (in_txn,instance)`,
+		Labels:  []string{"instance", "in_txn"},
+		Comment: "The total time of TiDB connection idle",
+	},
 	"node_process_open_fd_count": {
 		PromQL:  "process_open_fds{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "job"},
@@ -605,8 +621,8 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tidb_gc_duration": {
 		Comment:  "The quantile of kv storage garbage collection time durations",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_gc_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
-		Labels:   []string{"instance"},
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_gc_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance,stage))",
+		Labels:   []string{"instance", "stage"},
 		Quantile: 0.95,
 	},
 	"tidb_gc_config": {
@@ -650,7 +666,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "store"},
 	},
 	"tidb_batch_client_wait_duration": {
-		Comment:  "The quantile of kv storage batch processing durations",
+		Comment:  "The quantile of kv storage batch processing durations, the unit is nanosecond",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))",
 		Labels:   []string{"instance"},
 		Quantile: 0.95,
@@ -1827,7 +1843,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The flow rate of compaction operations per type",
 	},
 	"tikv_compaction_pending_bytes": {
-		PromQL:  `sum(rate(tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (cf,instance,db)`,
+		PromQL:  `tikv_engine_pending_compaction_bytes{$LABEL_CONDITIONS}`,
 		Labels:  []string{"instance", "cf", "db"},
 		Comment: "The pending bytes to be compacted",
 	},
@@ -2413,7 +2429,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_batch_client_wait_total_time": {
 		PromQL:  "sum(increase(tidb_tikvclient_batch_wait_duration_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of kv storage batch processing durations",
+		Comment: "The total time of kv storage batch processing durations, the unit is nanosecond",
 	},
 	"tidb_compile_total_count": {
 		PromQL:  "sum(increase(tidb_session_compile_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,sql_type)",
@@ -2522,13 +2538,13 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment: "The total time of kv storage range worker processing one task duration",
 	},
 	"tidb_gc_total_count": {
-		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
-		Labels:  []string{"instance"},
+		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,stage)",
+		Labels:  []string{"instance", "stage"},
 		Comment: "The total count of kv storage garbage collection",
 	},
 	"tidb_gc_total_time": {
-		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
-		Labels:  []string{"instance"},
+		PromQL:  "sum(increase(tidb_tikvclient_gc_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,stage)",
+		Labels:  []string{"instance", "stage"},
 		Comment: "The total time of kv storage garbage collection time durations",
 	},
 	"tidb_get_token_total_count": {

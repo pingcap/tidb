@@ -557,21 +557,21 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	//There is no underlying netCon, use failpoint to avoid panic
+	// There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
-	connID := 1
-	se.SetConnectionID(uint64(connID))
+	connID := uint64(1)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: uint32(connID),
+		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
@@ -579,8 +579,8 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
-		clients: map[uint32]*clientConn{
-			uint32(connID): cc,
+		clients: map[uint64]*clientConn{
+			connID: cc,
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
@@ -680,6 +680,11 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"

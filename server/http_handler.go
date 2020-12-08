@@ -417,6 +417,7 @@ type valueHandler struct {
 
 const (
 	opTableRegions     = "regions"
+	opTableRanges      = "ranges"
 	opTableDiskUsage   = "disk-usage"
 	opTableScatter     = "scatter-table"
 	opStopTableScatter = "stop-scatter-table"
@@ -521,6 +522,34 @@ type TableRegions struct {
 	Indices       []IndexRegions `json:"indices"`
 }
 
+// RangeDetail contains detail information about a particular range
+type RangeDetail struct {
+	StartKey    []byte `json:"start_key"`
+	EndKey      []byte `json:"end_key"`
+	StartKeyHex string `json:"start_key_hex"`
+	EndKeyHex   string `json:"end_key_hex"`
+}
+
+func createRangeDetail(start, end []byte) RangeDetail {
+	return RangeDetail{
+		StartKey:    start,
+		EndKey:      end,
+		StartKeyHex: hex.EncodeToString(start),
+		EndKeyHex:   hex.EncodeToString(end),
+	}
+}
+
+// TableRanges is the response data for list table's ranges.
+// It contains ranges list for record and indices as well as the whole table.
+type TableRanges struct {
+	TableName string                 `json:"name"`
+	TableID   int64                  `json:"id"`
+	Range     RangeDetail            `json:"table"`
+	Record    RangeDetail            `json:"record"`
+	Index     RangeDetail            `json:"index"`
+	Indices   map[string]RangeDetail `json:"indices,omitempty"`
+}
+
 // RegionMeta contains a region's peer detail
 type RegionMeta struct {
 	ID          uint64              `json:"region_id"`
@@ -539,10 +568,9 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID uint64              `json:"region_id"`
-	StartKey []byte              `json:"start_key"`
-	EndKey   []byte              `json:"end_key"`
-	Frames   []*helper.FrameItem `json:"frames"`
+	RangeDetail `json:",inline"`
+	RegionID    uint64              `json:"region_id"`
+	Frames      []*helper.FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
@@ -562,12 +590,9 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 					rt.Frames = append(rt.Frames, f)
 				}
 			}
-		} else {
-			if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
-				rt.Frames = append(rt.Frames, f)
-			}
+		} else if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
-
 	}
 
 	if pi != nil {
@@ -576,10 +601,8 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 				rt.Frames = append(rt.Frames, f)
 			}
 		}
-	} else {
-		if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
-			rt.Frames = append(rt.Frames, f)
-		}
+	} else if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
@@ -657,9 +680,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
-				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+				variable.ProcessGeneralLog.Store(false)
 			case "1":
-				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+				variable.ProcessGeneralLog.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -968,6 +991,8 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch h.op {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
+	case opTableRanges:
+		h.handleRangeRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
 		h.handleDiskUsageRequest(tableVal, w)
 	case opTableScatter:
@@ -1223,6 +1248,45 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 	writeData(w, tableRegions)
 }
 
+func createTableRanges(tblID int64, tblName string, indices []*model.IndexInfo) *TableRanges {
+	indexPrefix := tablecodec.GenTableIndexPrefix(tblID)
+	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
+	tableEnd := tablecodec.EncodeTablePrefix(tblID + 1)
+	ranges := &TableRanges{
+		TableName: tblName,
+		TableID:   tblID,
+		Range:     createRangeDetail(tablecodec.EncodeTablePrefix(tblID), tableEnd),
+		Record:    createRangeDetail(recordPrefix, tableEnd),
+		Index:     createRangeDetail(indexPrefix, recordPrefix),
+	}
+	if len(indices) != 0 {
+		indexRanges := make(map[string]RangeDetail)
+		for _, index := range indices {
+			start := tablecodec.EncodeTableIndexPrefix(tblID, index.ID)
+			end := tablecodec.EncodeTableIndexPrefix(tblID, index.ID+1)
+			indexRanges[index.Name.String()] = createRangeDetail(start, end)
+		}
+		ranges.Indices = indexRanges
+	}
+	return ranges
+}
+
+func (h tableHandler) handleRangeRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+	meta := tbl.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi != nil {
+		// Partitioned table.
+		var data []*TableRanges
+		for _, def := range pi.Definitions {
+			data = append(data, createTableRanges(def.ID, def.Name.String(), meta.Indices))
+		}
+		writeData(w, data)
+		return
+	}
+
+	writeData(w, createTableRanges(meta.ID, meta.Name.String(), meta.Indices))
+}
+
 func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*TableRegions, error) {
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
@@ -1376,9 +1440,8 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// create RegionDetail from RegionFrameRange
 	regionDetail := &RegionDetail{
-		RegionID: regionID,
-		StartKey: region.StartKey,
-		EndKey:   region.EndKey,
+		RegionID:    regionID,
+		RangeDetail: createRangeDetail(region.StartKey, region.EndKey),
 	}
 	schema, err := h.schema()
 	if err != nil {
@@ -1729,7 +1792,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	tbl, dbInfo, _ := schema.FindTableByPartitionID(int64(physicalID))
 	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return

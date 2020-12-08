@@ -110,7 +110,7 @@
         "Result": [
           "HashJoin_6 100000.00 root  CARTESIAN left outer join, other cond:gt(test.t1.a, test.t2.a)",
           "├─TableReader_12(Build) 10.00 root  data:Selection_11",
-          "│ └─Selection_11 10.00 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│ └─Selection_11 10.00 cop[tikv]  eq(test.t2.a, 1)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader_9(Probe) 10000.00 root  data:TableFullScan_8",
           "  └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -121,7 +121,7 @@
         "Result": [
           "HashJoin_6 100000.00 root  CARTESIAN right outer join, other cond:gt(test.t1.a, test.t2.a)",
           "├─TableReader_10(Build) 10.00 root  data:Selection_9",
-          "│ └─Selection_9 10.00 cop[tikv]  eq(test.t1.a, 1), not(isnull(test.t1.a))",
+          "│ └─Selection_9 10.00 cop[tikv]  eq(test.t1.a, 1)",
           "│   └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader_12(Probe) 10000.00 root  data:TableFullScan_11",
           "  └─TableFullScan_11 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
@@ -151,9 +151,9 @@
       {
         "SQL": "explain select * from t1 left join t2 on t2.a = t2.b and t2.a > 1",
         "Result": [
-          "HashJoin_6 26666666.67 root  CARTESIAN left outer join",
-          "├─TableReader_12(Build) 2666.67 root  data:Selection_11",
-          "│ └─Selection_11 2666.67 cop[tikv]  eq(test.t2.a, test.t2.b), gt(test.t2.a, 1)",
+          "HashJoin_6 8888888.89 root  CARTESIAN left outer join",
+          "├─TableReader_12(Build) 888.89 root  data:Selection_11",
+          "│ └─Selection_11 888.89 cop[tikv]  eq(test.t2.a, test.t2.b), gt(test.t2.a, 1), gt(test.t2.b, 1)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader_9(Probe) 10000.00 root  data:TableFullScan_8",
           "  └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
@@ -234,10 +234,8 @@
       {
         "SQL": "explain select * from t1 left join t2 on t2.a = 1 and t2.a = 2",
         "Result": [
-          "HashJoin_6 10000.00 root  CARTESIAN left outer join",
-          "├─TableReader_12(Build) 0.00 root  data:Selection_11",
-          "│ └─Selection_11 0.00 cop[tikv]  eq(test.t2.a, 1), eq(test.t2.a, 2)",
-          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "HashJoin_6 80000000.00 root  CARTESIAN left outer join",
+          "├─TableDual_10(Build) 8000.00 root  rows:0",
           "└─TableReader_9(Probe) 10000.00 root  data:TableFullScan_8",
           "  └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
