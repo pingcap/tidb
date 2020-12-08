@@ -1523,7 +1523,6 @@ func (s *Store) reResolve(c *RegionCache) {
 
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
-	store.GetLabels()
 	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
 		state := resolved
 		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels()}
