@@ -1895,10 +1895,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
-	if prop.IsFlashProp() {
-		return nil, false
-	}
-	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
+	newProp := &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: prop.ExpectedCnt}
 	newCols := make([]property.SortItem, 0, len(prop.SortItems))
 	for _, col := range prop.SortItems {
 		idx := p.schema.ColumnIndex(col.Col)
@@ -1914,7 +1911,12 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	allTaskTypes := []property.TaskType{prop.TaskTp}
+	// TODO: only for TiFlash now, support push down projection in TiKV later
+	_, tikv := p.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
+	if prop.TaskTp == property.RootTaskType && !tikv {
+		allTaskTypes = prop.GetAllPossibleChildTaskTypes()
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		newProp, ok := p.TryToGetChildProp(prop)
