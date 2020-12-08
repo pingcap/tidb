@@ -496,7 +496,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk3.MustQuery("select * from tk where c1 > 3 for update nowait").Check(testkit.Rows("4 14", "5 15"))
 	tk3.MustExec("commit")
 
-	//delete
+	// delete
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("delete from tk where c1 <= 2")
 	tk.MustExec("begin pessimistic")
