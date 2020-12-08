@@ -564,14 +564,11 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 }
 
 func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyCount int64) float64 {
-	if modifyCount == 0 {
-		return 0
-	}
 	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
 	hgWidth := hg.calcWidth(0, hgLow, hgHigh)
 	rangeWidth := calcWidthDatums(low, high, hg)
-	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
-	return math.Min(rangeCount, float64(modifyCount) / hg.TotalRowCount())
+	selectivity := hg.TotalRowCount() * (rangeWidth / hgWidth)
+	return math.Min(selectivity, float64(modifyCount)/hg.TotalRowCount())
 }
 
 func calcWidthDatums(low, high types.Datum, hg *Histogram) float64 {
@@ -591,7 +588,7 @@ func calcWidthDatums(low, high types.Datum, hg *Histogram) float64 {
 	case types.KindBytes, types.KindString:
 		lower, upper := hg.GetLower(0), hg.GetUpper(0)
 		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-		return  convertDatumToScalar(&high, commonPfxLen) - convertDatumToScalar(&low, commonPfxLen)
+		return convertDatumToScalar(&high, commonPfxLen) - convertDatumToScalar(&low, commonPfxLen)
 	}
 	return 0.0
 }
