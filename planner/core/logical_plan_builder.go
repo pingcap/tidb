@@ -1884,7 +1884,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 						// For SQLs like:
 						//   select a+1 from t having t.a;
 						field := a.selectFields[index]
-						if field.Auxiliary { //having can't use auxiliary field
+						if field.Auxiliary { // having can't use auxiliary field
 							index = -1
 						}
 					}
