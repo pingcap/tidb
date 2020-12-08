@@ -564,11 +564,14 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 }
 
 func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyCount int64) float64 {
+	if modifyCount == 0 {
+		return 0
+	}
 	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
 	hgWidth := hg.calcWidth(0, hgLow, hgHigh)
 	rangeWidth := calcWidthDatums(low, high, hg)
 	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
-	return math.Min(rangeCount, float64(modifyCount))
+	return math.Min(rangeCount, float64(modifyCount) / hg.TotalRowCount())
 }
 
 func calcWidthDatums(low, high types.Datum, hg *Histogram) float64 {
