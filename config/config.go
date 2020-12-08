@@ -51,6 +51,10 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefIndexLimit is the limitation of index on a single table. This value is consistent with MySQL.
+	DefIndexLimit = 64
+	// DefMaxOfIndexLimit is the maximum limitation of index on a single table for TiDB.
+	DefMaxOfIndexLimit = 64 * 8
 	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
 	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
@@ -124,6 +128,7 @@ type Config struct {
 	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                 int               `toml:"index-limit" json:"index-limit"`
 	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
@@ -556,6 +561,8 @@ type CoprocessorCache struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The capacity in MB of the cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+	// Only cache requests that containing small number of ranges. May to be changed in future.
+	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"admission-max-ranges"`
 	// Only cache requests whose result set is small.
 	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
 	// Only cache requests takes notable time to process.
@@ -636,6 +643,7 @@ var defaultConf = Config{
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
 	MaxIndexLength:               3072,
+	IndexLimit:                   64,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -744,6 +752,7 @@ var defaultConf = Config{
 		CoprCache: CoprocessorCache{
 			Enable:                true,
 			CapacityMB:            1000,
+			AdmissionMaxRanges:    500,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
 		},
@@ -932,6 +941,9 @@ func (c *Config) Valid() error {
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
 		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
+	}
+	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
+		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
