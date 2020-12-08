@@ -821,7 +821,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 
 	// Test it would get null set when get the sys schema.
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('mysql', 'metrics_schema');").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]interface{}{})
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
 
 	tk.MustExec("use test")
