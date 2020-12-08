@@ -1991,3 +1991,14 @@ func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
 		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
 }
+
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
+}

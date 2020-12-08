@@ -83,7 +83,7 @@ func (s *testCoprocessorSuite) TestDisable(c *C) {
 	v2 := cache.Get([]byte("foo"))
 	c.Assert(v2, IsNil)
 
-	v = cache.CheckAdmission(1024, time.Second*5)
+	v = cache.CheckResponseAdmission(1024, time.Second*5)
 	c.Assert(v, Equals, false)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, CapacityMB: 0, AdmissionMaxResultMB: 1})
@@ -104,34 +104,53 @@ func (s *testCoprocessorSuite) TestAdmission(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(cache, NotNil)
 
-	v := cache.CheckAdmission(0, 0)
-	c.Assert(v, Equals, false)
-
-	v = cache.CheckAdmission(0, 4*time.Millisecond)
-	c.Assert(v, Equals, false)
-
-	v = cache.CheckAdmission(0, 5*time.Millisecond)
-	c.Assert(v, Equals, false)
-
-	v = cache.CheckAdmission(1, 0)
-	c.Assert(v, Equals, false)
-
-	v = cache.CheckAdmission(1, 4*time.Millisecond)
-	c.Assert(v, Equals, false)
-
-	v = cache.CheckAdmission(1, 5*time.Millisecond)
+	v := cache.CheckRequestAdmission(0)
 	c.Assert(v, Equals, true)
 
-	v = cache.CheckAdmission(1024, 5*time.Millisecond)
+	v = cache.CheckRequestAdmission(1000)
 	c.Assert(v, Equals, true)
 
-	v = cache.CheckAdmission(1024*1024, 5*time.Millisecond)
-	c.Assert(v, Equals, true)
-
-	v = cache.CheckAdmission(1024*1024+1, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 0)
 	c.Assert(v, Equals, false)
 
-	v = cache.CheckAdmission(1024*1024+1, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckResponseAdmission(0, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckResponseAdmission(1, 0)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckResponseAdmission(1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckResponseAdmission(1, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond)
+	c.Assert(v, Equals, false)
+
+	cache, err = newCoprCache(&config.CoprocessorCache{Enable: true, AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
+	c.Assert(err, IsNil)
+	c.Assert(cache, NotNil)
+
+	v = cache.CheckRequestAdmission(0)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckRequestAdmission(5)
+	c.Assert(v, Equals, true)
+
+	v = cache.CheckRequestAdmission(6)
 	c.Assert(v, Equals, false)
 }
 

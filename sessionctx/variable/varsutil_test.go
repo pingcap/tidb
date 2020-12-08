@@ -105,6 +105,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
+	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -488,6 +489,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
+
+	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, types.NewStringDatum("3"))
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_analyze_version' can't be set to the value of '3'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
