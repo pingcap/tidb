@@ -276,6 +276,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
+		if _, isShow := x.Stmt.(*ast.ShowStmt); isShow {
+			// "EXPLAIN `table_name`" is encoded in AST as explaining a ShowStmt.
+			// The ShowStmt cannot have any bind records.
+			return nil, "", ""
+		}
 		plannercore.EraseLastSemicolon(x)
 		normalizeExplainSQL := parser.Normalize(x.Text())
 		keyword, err := hint.ExplainableStmtKeyword(x.Stmt)

@@ -478,21 +478,25 @@ func GenerateQBName(nodeType NodeType, blockOffset int) model.CIStr {
 // ExplainableStmtKeyword returns the first keyword for an explainable statement
 // (SELECT, TABLE, VALUES, UPDATE, DELETE, INSERT, REPLACE).
 func ExplainableStmtKeyword(stmt ast.Node) (string, error) {
-	switch n := stmt.(type) {
-	case *ast.SelectStmt:
-		return n.Kind.String(), nil
-	case *ast.DeleteStmt:
-		return "DELETE", nil
-	case *ast.UpdateStmt:
-		return "UPDATE", nil
-	case *ast.InsertStmt:
-		if n.IsReplace {
-			return "REPLACE", nil
+	for {
+		switch n := stmt.(type) {
+		case *ast.SelectStmt:
+			return n.Kind.String(), nil
+		case *ast.DeleteStmt:
+			return "DELETE", nil
+		case *ast.UpdateStmt:
+			return "UPDATE", nil
+		case *ast.InsertStmt:
+			if n.IsReplace {
+				return "REPLACE", nil
+			}
+			return "INSERT", nil
+		case *ast.SetOprStmt:
+			stmt = n.SelectList.Selects[0]
+		case *ast.SetOprSelectList:
+			stmt = n.Selects[0]
+		default:
+			return "", errors.Errorf("Unexpected statement type: %T", stmt)
 		}
-		return "INSERT", nil
-	case *ast.SetOprStmt:
-		return ExplainableStmtKeyword(n.SelectList.Selects[0])
-	default:
-		return "", errors.Errorf("Unexpected statement type: %T", stmt)
 	}
 }

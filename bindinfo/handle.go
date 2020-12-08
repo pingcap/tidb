@@ -699,6 +699,10 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	idx := strings.Index(bindSQL, keyword)
 	// Remove possible `explain` prefix.
 	bindSQL = bindSQL[idx:]
+	if keyword == "INSERT" || keyword == "REPLACE" {
+		// for INSERT ... SELECT, the hint is placed after the SELECT, not the INSERT.
+		keyword = "SELECT"
+	}
 	return strings.Replace(bindSQL, keyword, fmt.Sprintf("%s /*+ %s*/", keyword, planHint), 1)
 }
 
