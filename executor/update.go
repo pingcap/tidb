@@ -249,7 +249,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 			continue
 		}
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
+		if err != nil {
 			return nil, err
 		}
 
