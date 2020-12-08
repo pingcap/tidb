@@ -268,7 +268,19 @@ txn-total-size-limit = 104857600
 committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
+<<<<<<< HEAD
 max-txn-ttl = 600000
+=======
+max-txn-ttl = 3600000
+
+# the interval duration between two memory profile into global tracker
+mem-profile-interval = "1m"
+
+# Index usage sync lease duration, which influences the time of dump index usage information to KV.
+# Here we set to 0 to not dump index usage information to KV,
+# because we have not completed GC and other functions.
+index-usage-sync-lease = "0s"
+>>>>>>> 1b12071e5... coprocessor: Support changing maxRanges (#21542)
 
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
@@ -386,6 +398,8 @@ enable = false
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
