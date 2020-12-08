@@ -605,7 +605,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		logutil.BgLogger().Warn("tikv reports `StoreNotMatch` retry later",
 			zap.Stringer("storeNotMatch", storeNotMatch),
 			zap.Stringer("ctx", ctx))
-		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh)
+		ctx.Store.markNeedCheck(s.regionCache.notifyCheckCh, true)
 		return true, nil
 	}
 

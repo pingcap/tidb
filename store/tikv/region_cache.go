@@ -297,6 +297,8 @@ func (c *RegionCache) Close() {
 
 // asyncCheckAndResolveLoop with
 func (c *RegionCache) asyncCheckAndResolveLoop() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
 	var needCheckStores []*Store
 	for {
 		select {
@@ -305,8 +307,24 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
+		case <-ticker.C:
+			// refresh store once a minute to update labels
+			c.markAllNeedCheck()
 		}
 	}
+}
+
+func (c *RegionCache) markAllNeedCheck() {
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+	if len(c.storeMu.stores) < 1 {
+		return
+	}
+	// we only send notify once
+	for _, s := range c.storeMu.stores {
+		s.markNeedCheck(c.notifyCheckCh, false)
+	}
+	c.notifyCheckCh <- struct{}{}
 }
 
 // checkAndResolve checks and resolve addr of failed stores.
@@ -583,7 +601,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			}
 
 			// schedule a store addr resolve.
-			s.markNeedCheck(c.notifyCheckCh)
+			s.markNeedCheck(c.notifyCheckCh, true)
 		}
 
 		// try next peer to found new leader.
@@ -1130,6 +1148,18 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
+func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
+	c.storeMu.RLock()
+	defer c.storeMu.RUnlock()
+	s := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.isLabelsMatch(labels) {
+			s = append(s, store)
+		}
+	}
+	return s
+}
+
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
@@ -1385,14 +1415,15 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string        // loaded store address
-	saddr        string        // loaded store status address
-	storeID      uint64        // store's id
-	state        uint64        // unsafe store storeState
-	resolveMutex sync.Mutex    // protect pd from concurrent init requests
-	epoch        uint32        // store fail epoch, see RegionStore.storeEpochs
-	storeType    kv.StoreType  // type of the store
-	tokenCount   atomic2.Int64 // used store token count
+	addr         string               // loaded store address
+	saddr        string               // loaded store status address
+	storeID      uint64               // store's id
+	state        uint64               // unsafe store storeState
+	labels       []*metapb.StoreLabel // stored store labels
+	resolveMutex sync.Mutex           // protect pd from concurrent init requests
+	epoch        uint32               // store fail epoch, see RegionStore.storeEpochs
+	storeType    kv.StoreType         // type of the store
+	tokenCount   atomic2.Int64        // used store token count
 }
 
 type resolveState uint64
@@ -1439,6 +1470,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.addr = addr
 		s.saddr = store.GetStatusAddress()
 		s.storeType = GetStoreTypeByMeta(store)
+		s.labels = store.GetLabels()
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1491,9 +1523,10 @@ func (s *Store) reResolve(c *RegionCache) {
 
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
-	if s.addr != addr {
+	store.GetLabels()
+	if s.addr != addr || s.isSameLabels(store.GetLabels()) {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels()}
 		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
@@ -1534,7 +1567,7 @@ func (s *Store) compareAndSwapState(oldState, newState resolveState) bool {
 }
 
 // markNeedCheck marks resolved store to be async resolve to check store addr change.
-func (s *Store) markNeedCheck(notifyCheckCh chan struct{}) {
+func (s *Store) markNeedCheck(notifyCheckCh chan struct{}, notify bool) {
 retry:
 	oldState := s.getResolveState()
 	if oldState != resolved {
@@ -1543,11 +1576,35 @@ retry:
 	if !s.compareAndSwapState(oldState, needCheck) {
 		goto retry
 	}
-	select {
-	case notifyCheckCh <- struct{}{}:
-	default:
+	if notify {
+		select {
+		case notifyCheckCh <- struct{}{}:
+		default:
+		}
 	}
+}
 
+func (s *Store) isSameLabels(labels []*metapb.StoreLabel) bool {
+	if len(s.labels) != len(labels) {
+		return false
+	}
+	return s.isLabelsMatch(labels)
+}
+
+func (s *Store) isLabelsMatch(labels []*metapb.StoreLabel) bool {
+	for _, targetLabel := range labels {
+		match := false
+		for _, label := range s.labels {
+			if targetLabel.Key == label.Key && targetLabel.Value == label.Value {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
 }
 
 type livenessState uint32

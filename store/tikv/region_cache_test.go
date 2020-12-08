@@ -121,6 +121,34 @@ func (s *testRegionCacheSuite) getAddr(c *C, key []byte, replicaRead kv.ReplicaR
 	return ctx.Addr
 }
 
+func (s *testRegionCacheSuite) TestStoreLabels(c *C) {
+	testcases := []struct {
+		storeID uint64
+	}{
+		{
+			storeID: s.store1,
+		},
+		{
+			storeID: s.store2,
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.storeID)
+		store := s.cache.getStoreByStoreID(testcase.storeID)
+		_, err := store.initResolve(s.bo, s.cache)
+		c.Assert(err, IsNil)
+		labels := []*metapb.StoreLabel{
+			{
+				Key:   "id",
+				Value: fmt.Sprintf("%v", testcase.storeID),
+			},
+		}
+		stores := s.cache.getStoresByLabels(labels)
+		c.Assert(len(stores), Equals, 1)
+		c.Assert(stores[0].labels, DeepEquals, labels)
+	}
+}
+
 func (s *testRegionCacheSuite) TestSimple(c *C) {
 	seed := rand.Uint32()
 	r := s.getRegion(c, []byte("a"))
