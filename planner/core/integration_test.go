@@ -1995,3 +1995,14 @@ func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk.MustQuery("select distinct count(v1) from ttest group by v2 order by count(v1)").Check(testkit.Rows("1"))
 	tk.MustQuery("select distinct sum(v1) from ttest group by v2 order by sum(v1)").Check(testkit.Rows("1", "4"))
 }
+
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
+}
