@@ -1473,21 +1473,6 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if e.concurrency > len(e.children) {
-		e.concurrency = len(e.children)
-	}
-	e.childIDChan = make(chan int, len(e.children))
-	for i := 0; i < e.concurrency; i++ {
-		if err := e.children[i].Open(ctx); err != nil {
-			return err
-		}
-		e.lastOpenedChildID.Store(i)
-		e.childIDChan <- i
-		failpoint.Inject("issue21441", func() {
-			atomic.AddInt32(&(e.childExecInFlightForTest), 1)
-		})
-	}
-	e.openNewChild = make(chan struct{}, e.concurrency)
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1530,7 +1515,22 @@ func (e *UnionExec) childExecLauncher(ctx context.Context) {
 	}
 }
 
-func (e *UnionExec) initialize(ctx context.Context) {
+func (e *UnionExec) initialize(ctx context.Context) error {
+	if e.concurrency > len(e.children) {
+		e.concurrency = len(e.children)
+	}
+	e.childIDChan = make(chan int, len(e.children))
+	for i := 0; i < e.concurrency; i++ {
+		if err := e.children[i].Open(ctx); err != nil {
+			return err
+		}
+		e.lastOpenedChildID.Store(i)
+		e.childIDChan <- i
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&(e.childExecInFlightForTest), 1)
+		})
+	}
+	e.openNewChild = make(chan struct{}, e.concurrency)
 	for i := 0; i < e.concurrency; i++ {
 		e.results = append(e.results, newFirstChunk(e.children[0]))
 	}
@@ -1544,6 +1544,7 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	}
 	go e.childExecLauncher(ctx)
 	go e.waitAllFinished()
+	return nil
 }
 
 func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
@@ -1605,7 +1606,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
-		e.initialize(ctx)
+		if err := e.initialize(ctx); err != nil {
+			return err
+		}
 		e.initialized = true
 	}
 	result, ok := <-e.resultPool
