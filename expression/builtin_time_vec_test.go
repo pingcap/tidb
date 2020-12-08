@@ -616,9 +616,9 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
 	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
 	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
-	c.Assert(f.vecEvalInt(input, result), NotNil)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
 }
