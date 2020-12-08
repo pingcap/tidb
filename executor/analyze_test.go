@@ -251,6 +251,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(1, 1), (1, 1), (1, 2), (1, 2)")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t with 10 cmsketch width")
 
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
@@ -275,6 +276,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		cms.InsertBytes(prefixKey)
 		cms.InsertBytes(prefixKey)
 		cms.InsertBytes(prefixKey)
+		cms.CalcDefaultValForAnalyze(2)
 	}
 	for _, idx := range tbl.Indices {
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
@@ -671,6 +673,7 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
@@ -688,11 +691,22 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	item := colStats.TopN.TopN[0]
 	c.Assert(item.Count, Equals, uint64(11))
 	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
-	c.Assert(len(idxStats.TopN.TopN), Equals, 1)
+	c.Assert(len(idxStats.TopN.TopN), Equals, 10)
 	idxItem := idxStats.TopN.TopN[0]
 	c.Assert(idxItem.Count, Equals, uint64(11))
 	// The columns are: DBName, table name, column name, is index, value, count.
-	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11", "test t  index_b 1 0 11"))
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11",
+		"test t  index_b 1 0 11",
+		"test t  index_b 1 1 1",
+		"test t  index_b 1 2 1",
+		"test t  index_b 1 3 1",
+		"test t  index_b 1 4 1",
+		"test t  index_b 1 5 1",
+		"test t  index_b 1 6 1",
+		"test t  index_b 1 7 1",
+		"test t  index_b 1 8 1",
+		"test t  index_b 1 9 1",
+	))
 }
 
 func (s *testSuite1) TestHashInTopN(c *C) {

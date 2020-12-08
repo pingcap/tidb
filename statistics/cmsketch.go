@@ -306,7 +306,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 
 // MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
 func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopNMeta {
-	if dst.TotalCount() + src.TotalCount() == 0 {
+	if dst.TotalCount()+src.TotalCount() == 0 {
 		return nil
 	}
 	popedTopNPair := make([]TopNMeta, 0, 4)
@@ -578,7 +578,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	return idx, match
 }
 
-// BetweenRowCount estimates the row count for interval [l, r).
+// BetweenCount estimates the row count for interval [l, r).
 func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	if c == nil {
 		return 0
@@ -591,7 +591,6 @@ func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	}
 	return ret
 }
-
 
 // Sort sorts the topn items.
 func (c *TopN) Sort() {
@@ -615,6 +614,7 @@ func (c *TopN) TotalCount() uint64 {
 	return total
 }
 
+// Equal checks whether the two TopN are equal.
 func (c *TopN) Equal(cc *TopN) bool {
 	if c == nil && cc == nil {
 		return true

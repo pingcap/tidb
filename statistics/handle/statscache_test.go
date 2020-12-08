@@ -114,6 +114,7 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	h.SetBytesLimit4Test(BytesLimit)
 
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t1(c int)")
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)

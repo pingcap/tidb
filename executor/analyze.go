@@ -112,7 +112,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], statistics.CurStatsVersion, 1)
+			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
@@ -234,13 +234,13 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
 	result := analyzeResult{
-		TableID: idxExec.tableID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{cms},
-		TopNs:   []*statistics.TopN{topN},
-		IsIndex: 1,
-		job:     idxExec.job,
-		StatsVer: statistics.Version2,
+		TableID:  idxExec.tableID,
+		Hist:     []*statistics.Histogram{hist},
+		Cms:      []*statistics.CMSketch{cms},
+		TopNs:    []*statistics.TopN{topN},
+		IsIndex:  1,
+		job:      idxExec.job,
+		StatsVer: idxExec.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -424,7 +424,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		TopNs:    topNs,
 		ExtStats: extStats,
 		job:      colExec.job,
-		StatsVer: statistics.Version2,
+		StatsVer: colExec.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -624,13 +624,13 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	if len(exec.idxsInfo) > 0 {
 		for i := pkColCount + len(exec.colsInfo); i < len(hists); i++ {
 			idxResult := analyzeResult{
-				TableID: exec.tableID,
-				Hist:    []*statistics.Histogram{hists[i]},
-				Cms:     []*statistics.CMSketch{cms[i]},
-				TopNs:   []*statistics.TopN{topNs[i]},
-				IsIndex: 1,
-				Count:   hists[i].NullCount,
-				job:     exec.job,
+				TableID:  exec.tableID,
+				Hist:     []*statistics.Histogram{hists[i]},
+				Cms:      []*statistics.CMSketch{cms[i]},
+				TopNs:    []*statistics.TopN{topNs[i]},
+				IsIndex:  1,
+				Count:    hists[i].NullCount,
+				job:      exec.job,
 				StatsVer: statistics.Version1,
 			}
 			if hists[i].Len() > 0 {
@@ -644,13 +644,13 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	}
 	hist := hists[0]
 	colResult := analyzeResult{
-		TableID: exec.tableID,
-		Hist:    hists[:pkColCount+len(exec.colsInfo)],
-		Cms:     cms[:pkColCount+len(exec.colsInfo)],
-		TopNs:   topNs[:pkColCount+len(exec.colsInfo)],
-		Count:   hist.NullCount,
-		job:     exec.job,
-		StatsVer: statistics.Version0,
+		TableID:  exec.tableID,
+		Hist:     hists[:pkColCount+len(exec.colsInfo)],
+		Cms:      cms[:pkColCount+len(exec.colsInfo)],
+		TopNs:    topNs[:pkColCount+len(exec.colsInfo)],
+		Count:    hist.NullCount,
+		job:      exec.job,
+		StatsVer: exec.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
@@ -1226,13 +1226,13 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
 	result := analyzeResult{
-		TableID: idxExec.tableID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{cms},
-		TopNs:   []*statistics.TopN{topN},
-		IsIndex: 1,
-		job:     idxExec.job,
-		StatsVer: statistics.Version2,
+		TableID:  idxExec.tableID,
+		Hist:     []*statistics.Histogram{hist},
+		Cms:      []*statistics.CMSketch{cms},
+		TopNs:    []*statistics.TopN{topN},
+		IsIndex:  1,
+		job:      idxExec.job,
+		StatsVer: idxExec.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -1266,12 +1266,12 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	result := analyzeResult{
-		TableID: colExec.tableID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{nil},
-		TopNs:   []*statistics.TopN{nil},
-		job:     colExec.job,
-		StatsVer: statistics.Version0,
+		TableID:  colExec.tableID,
+		Hist:     []*statistics.Histogram{hist},
+		Cms:      []*statistics.CMSketch{nil},
+		TopNs:    []*statistics.TopN{nil},
+		job:      colExec.job,
+		StatsVer: colExec.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count

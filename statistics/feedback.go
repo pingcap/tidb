@@ -967,7 +967,7 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 
 // CleanRangeFeedbackByTopN will not update the part containing the TopN.
 func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
-	for i := len(feedbacks)-1; i >= 0; i-- {
+	for i := len(feedbacks) - 1; i >= 0; i-- {
 		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
 		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
 		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,

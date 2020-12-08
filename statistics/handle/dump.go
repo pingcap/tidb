@@ -97,7 +97,7 @@ type jsonColumn struct {
 	LastUpdateVersion uint64          `json:"last_update_version"`
 	Correlation       float64         `json:"correlation"`
 	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64            `json:"stats_ver"`
+	StatsVer *int64 `json:"stats_ver"`
 }
 
 func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, statsVer *int64) *jsonColumn {

@@ -470,6 +470,7 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	hg.Buckets = hg.Buckets[:curBuck]
 }
 
+// GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
 func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
 	columnCount := idx.TotalRowCount()
 	if columnCount == 0 {
@@ -956,8 +957,9 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
+// TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	if idx.StatsVer == CurStatsVersion {
+	if idx.StatsVer == Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
 	return idx.Histogram.TotalRowCount()

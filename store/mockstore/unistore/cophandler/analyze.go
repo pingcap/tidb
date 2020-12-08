@@ -77,9 +77,14 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 }
 
 func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := int32(statistics.Version1)
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = *analyzeReq.IdxReq.Version
+	}
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsVer:     statsVer,
 	}
 	if analyzeReq.IdxReq.TopNSize != nil {
 		processor.topNCount = *analyzeReq.IdxReq.TopNSize
@@ -93,26 +98,30 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			return nil, err
 		}
 	}
-	if processor.topNCurValuePair.Count != 0 {
-		processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
-	}
-	sort.Slice(processor.topNValuePairs, func(i, j int) bool {
-		if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
-			return true
-		} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
-			return false
+	if statsVer == statistics.Version2 {
+		if processor.topNCurValuePair.Count != 0 {
+			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
-		return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
-	})
-	if len(processor.topNValuePairs) > int(processor.topNCount) {
-		processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+		sort.Slice(processor.topNValuePairs, func(i, j int) bool {
+			if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
+				return true
+			} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
+				return false
+			}
+			return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
+		})
+		if len(processor.topNValuePairs) > int(processor.topNCount) {
+			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+		}
 	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		for _, valueCnt := range processor.topNValuePairs {
-			h1, h2 := murmur3.Sum128(valueCnt.Encoded)
-			processor.cms.SubValue(h1, h2, valueCnt.Count)
+		if statsVer == statistics.Version2 {
+			for _, valueCnt := range processor.topNValuePairs {
+				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
+				processor.cms.SubValue(h1, h2, valueCnt.Count)
+			}
 		}
 		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
@@ -157,6 +166,7 @@ type analyzeIndexProcessor struct {
 	cms          *statistics.CMSketch
 	rowBuf       []byte
 
+	statsVer         int32
 	topNCount        int32
 	topNValuePairs   []statistics.TopNMeta
 	topNCurValuePair statistics.TopNMeta
@@ -175,14 +185,16 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 			p.cms.InsertBytes(p.rowBuf)
 		}
 	}
-	if bytes.Compare(p.topNCurValuePair.Encoded, p.rowBuf) == 0 {
-		p.topNCurValuePair.Count++
-	} else {
-		if p.topNCurValuePair.Count > 0 {
-			p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+	if p.statsVer == statistics.Version2 {
+		if bytes.Compare(p.topNCurValuePair.Encoded, p.rowBuf) == 0 {
+			p.topNCurValuePair.Count++
+		} else {
+			if p.topNCurValuePair.Count > 0 {
+				p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+			}
+			p.topNCurValuePair.Encoded = safeCopy(p.rowBuf)
+			p.topNCurValuePair.Count = 1
 		}
-		p.topNCurValuePair.Encoded = safeCopy(p.rowBuf)
-		p.topNCurValuePair.Count = 1
 	}
 	rowData := safeCopy(p.rowBuf)
 	err = p.statsBuilder.Iterate(types.NewBytesDatum(rowData))
