@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1304,7 +1306,7 @@ func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Hand
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion()
+	curVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
@@ -2246,6 +2248,7 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
+	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))));", errno.ErrFunctionalIndexPrimaryKey)
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
@@ -2589,4 +2592,59 @@ func (s *testIntegrationSuite3) TestStrictDoubleTypeCheck(c *C) {
 	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'OFF'")
 	defer tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
 	tk.MustExec(sql)
+}
+
+func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	type testdata struct {
+		types  []string
+		values []string
+	}
+	tests := []testdata{
+		{[]string{"int"}, []string{"1"}},
+		{[]string{"datetime"}, []string{"'2020-01-01 00:00:00'"}},
+		{[]string{"varchar(10)"}, []string{"'qwe'"}},
+		{[]string{"enum('r', 'g', 'b')"}, []string{"'r'"}},
+		{[]string{"int", "datetime", "varchar(10)", "enum('r', 'g', 'b')"}, []string{"1", "'2020-01-01 00:00:00'", "'qwe'", "'r'"}},
+	}
+
+	for _, newCollate := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(newCollate)
+		for _, globalIndex := range []bool{false, true} {
+			restoreConfig := config.RestoreFunc()
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.EnableGlobalIndex = globalIndex
+			})
+			for _, clusteredIndex := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", clusteredIndex))
+				for _, t := range tests {
+					tk.MustExec("drop table if exists t;")
+					fields := make([]string, len(t.types))
+
+					for i, tp := range t.types {
+						fields[i] = fmt.Sprintf("a%d %s", i, tp)
+					}
+					tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
+						"collate utf8mb4_general_ci " +
+						"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
+
+					vals := strings.Join(t.values, ",")
+					tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
+					for i := range t.types {
+						fields[i] = fmt.Sprintf("a%d", i)
+					}
+					index := strings.Join(fields, ",")
+					for i, val := range t.values {
+						fields[i] = strings.Replace(val, "'", "", -1)
+					}
+					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
+						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't_idx'", strings.Join(fields, "-")))
+				}
+			}
+			restoreConfig()
+		}
+	}
 }

@@ -15,9 +15,11 @@ package bindinfo_test
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/testkit"
@@ -57,6 +60,40 @@ type testSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
+}
+
+type mockSessionManager struct {
+	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
+}
+
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return &util.ProcessInfo{}, false
+}
+
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
+
+func (msm *mockSessionManager) KillAllConnections() {
+}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return 1
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in bind test")
@@ -602,7 +639,7 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
 	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
 
@@ -883,6 +920,27 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+}
+
+func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("drop database if exists SPM")
+	tk.MustExec("create database SPM")
+	tk.MustExec("use SPM")
+	tk.MustExec("create table t(a int, b int, key(b))")
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("admin capture bindings")
+	// The capture should ignore the case sensitivity for DB name when checking if any binding exists,
+	// so there would be no new binding captured.
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select /*+ use_index(t) */ * from t")
+	c.Assert(rows[0][8], Equals, "manual")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
@@ -1604,4 +1662,94 @@ func (s *testSuite) TestBindingSource(c *C) {
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
 	c.Assert(bind.Source, Equals, bindinfo.Capture)
+}
+
+func (s *testSuite) TestSPMHitInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
+	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
+	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
+
+	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+}
+
+func (s *testSuite) TestIssue19836(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key (a));")
+	tk.MustExec("CREATE SESSION BINDING FOR select * from t where a = 1 limit 5, 5 USING select * from t ignore index (a) where a = 1 limit 5, 5;")
+	tk.MustExec("PREPARE stmt FROM 'select * from t where a = 40 limit ?, ?';")
+	tk.MustExec("set @a=1;")
+	tk.MustExec("set @b=2;")
+	tk.MustExec("EXECUTE stmt USING @a, @b;")
+	tk.Se.SetSessionManager(&mockSessionManager{
+		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	})
+	explainResult := testkit.Rows(
+		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
+		"└─TableReader_14 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
+		"  └─Limit_13 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
+		"    └─Selection_12 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
+		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
+	)
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
+}
+
+func (s *testSuite) TestReCreateBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+
+	tk.MustQuery("select * from mysql.bind_info").Check(testkit.Rows())
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+}
+
+func (s *testSuite) TestDMLIndexHintBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
+
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 }

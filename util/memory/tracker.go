@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -121,8 +122,31 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	a.SetFallback(t.actionMu.actionOnExceed)
-	t.actionMu.actionOnExceed = a
+	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
+}
+
+// GetFallbackForTest get the oom action used by test.
+func (t *Tracker) GetFallbackForTest() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.actionOnExceed
+}
+
+// reArrangeFallback merge two action chains and rearrange them by priority in descending order.
+func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.GetPriority() < b.GetPriority() {
+		a, b = b, a
+		a.SetFallback(b)
+	} else {
+		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
+	}
+	return a
 }
 
 // SetLabel sets the label of a Tracker.
@@ -294,9 +318,9 @@ func (t *Tracker) String() string {
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(t.bytesLimit))
 	}
-	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.FormatBytes(t.BytesConsumed()))
 
 	t.mu.Lock()
 	labels := make([]int, 0, len(t.mu.children))
@@ -314,29 +338,66 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	buffer.WriteString(indent + "}\n")
 }
 
-// BytesToString converts the memory consumption to a readable string.
-func (t *Tracker) BytesToString(numBytes int64) string {
-	return BytesToString(numBytes)
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func (t *Tracker) FormatBytes(numBytes int64) string {
+	return FormatBytes(numBytes)
 }
 
 // BytesToString converts the memory consumption to a readable string.
 func BytesToString(numBytes int64) string {
-	GB := float64(numBytes) / float64(1<<30)
+	GB := float64(numBytes) / float64(byteSizeGB)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
 	}
 
-	MB := float64(numBytes) / float64(1<<20)
+	MB := float64(numBytes) / float64(byteSizeMB)
 	if MB > 1 {
 		return fmt.Sprintf("%v MB", MB)
 	}
 
-	KB := float64(numBytes) / float64(1<<10)
+	KB := float64(numBytes) / float64(byteSizeKB)
 	if KB > 1 {
 		return fmt.Sprintf("%v KB", KB)
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
+}
+
+const (
+	byteSizeGB = int64(1 << 30)
+	byteSizeMB = int64(1 << 20)
+	byteSizeKB = int64(1 << 10)
+	byteSizeBB = int64(1)
+)
+
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func FormatBytes(numBytes int64) string {
+	if numBytes <= byteSizeKB {
+		return BytesToString(numBytes)
+	}
+	unit, unitStr := getByteUnit(numBytes)
+	if unit == byteSizeBB {
+		return BytesToString(numBytes)
+	}
+	v := float64(numBytes) / float64(unit)
+	decimal := 1
+	if numBytes%unit == 0 {
+		decimal = 0
+	} else if v < 10 {
+		decimal = 2
+	}
+	return fmt.Sprintf("%v %s", strconv.FormatFloat(v, 'f', decimal, 64), unitStr)
+}
+
+func getByteUnit(b int64) (int64, string) {
+	if b > byteSizeGB {
+		return byteSizeGB, "GB"
+	} else if b > byteSizeMB {
+		return byteSizeMB, "MB"
+	} else if b > byteSizeKB {
+		return byteSizeKB, "KB"
+	}
+	return byteSizeBB, "Bytes"
 }
 
 // AttachToGlobalTracker attach the tracker to the global tracker
