@@ -880,6 +880,21 @@ func ContainVirtualColumn(exprs []Expression) bool {
 	return false
 }
 
+// ContainCorrelatedColumn checks if the expressions contain a correlated column
+func ContainCorrelatedColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *CorrelatedColumn:
+			return true
+		case *ScalarFunction:
+			if ContainCorrelatedColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ContainMutableConst checks if the expressions contain a lazy constant.
 func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	// Treat all constants immutable if plan cache is not enabled for this query.

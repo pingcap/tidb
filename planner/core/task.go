@@ -1034,7 +1034,8 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
-		if expression.ContainVirtualColumn(aggFunc.Args) {
+		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
+		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
