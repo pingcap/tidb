@@ -1608,7 +1608,7 @@ func (b *builtinCastJSONAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToInt(sc, val, mysql.HasUnsignedFlag(b.tp.Flag))
+	res, err = types.ConvertJSONToInt64(sc, val, mysql.HasUnsignedFlag(b.tp.Flag))
 	return
 }
 
@@ -1870,6 +1870,10 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
+	}
+	// because we can't control the length of cast(float as char) for now, we can't determine the argLen
+	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
+		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
