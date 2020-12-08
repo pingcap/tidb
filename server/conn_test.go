@@ -557,7 +557,7 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	//There is no underlying netCon, use failpoint to avoid panic
+	// There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()

@@ -2250,8 +2250,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	for i := len(options) - 1; i >= 0; i-- {
 		opt := options[i]
-		switch opt.Tp {
-		case ast.TableOptionCharset:
+		if opt.Tp == ast.TableOptionCharset {
 			// Only overwrite columns charset if the option contains `CONVERT TO`.
 			return opt.UintValue == ast.TableOptionCharsetWithConvertTo
 		}
@@ -4576,7 +4575,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
-		//oldIdent is equal to newIdent, do nothing
+		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
@@ -4710,7 +4709,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
@@ -4883,7 +4882,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
