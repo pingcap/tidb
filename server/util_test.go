@@ -140,7 +140,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
-	columns[0].Flag = columns[0].Flag | uint16(mysql.UnsignedFlag)
+	columns[0].Flag |= uint16(mysql.UnsignedFlag)
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
