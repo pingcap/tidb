@@ -68,6 +68,8 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
+	// 0 indicates not set, 1 indicates already set.
+	alreadySetOptionForSnapshot int32
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -101,18 +103,20 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
+	if atomic.CompareAndSwapInt32(&e.alreadySetOptionForSnapshot, 0, 1) {
+		if e.runtimeStats != nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+			snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
+		snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		if e.lock {
