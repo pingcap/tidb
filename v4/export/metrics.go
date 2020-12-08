@@ -63,6 +63,7 @@ func RegisterMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(taskChannelCapacity)
 }
 
+// RemoveLabelValuesWithTaskInMetrics removes metrics of specified labels.
 func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
 	finishedSizeCounter.Delete(labels)
 	finishedRowsCounter.Delete(labels)

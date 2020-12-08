@@ -8,11 +8,11 @@ import (
 	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testSqlByteSuite{})
+var _ = Suite(&testSQLByteSuite{})
 
-type testSqlByteSuite struct{}
+type testSQLByteSuite struct{}
 
-func (s *testSqlByteSuite) TestEscape(c *C) {
+func (s *testSQLByteSuite) TestEscape(c *C) {
 	var bf bytes.Buffer
 	str := []byte(`MWQeWw""'\rNmtGxzGp`)
 	expectStrBackslash := `MWQeWw\"\"\'\\rNmtGxzGp`

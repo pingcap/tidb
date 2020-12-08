@@ -14,6 +14,12 @@ import (
 
 var _ = Suite(&testMetaDataSuite{})
 
+const (
+	logFile = "ON.000001"
+	pos     = "7502"
+	gtidSet = "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
+)
+
 type testMetaDataSuite struct{}
 
 func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
@@ -23,9 +29,6 @@ func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	logFile := "ON.000001"
-	pos := "7502"
-	gtidSet := "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
@@ -57,9 +60,6 @@ func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	logFile := "ON.000001"
-	pos := "7502"
-	gtidSet := "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
 	pos2 := "7510"
@@ -94,9 +94,6 @@ func (s *testMetaDataSuite) TestMysqlWithFollowersMetaData(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	logFile := "ON.000001"
-	pos := "7502"
-	gtidSet := "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
 	followerRows := sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}).
@@ -127,9 +124,6 @@ func (s *testMetaDataSuite) TestMysqlWithNullFollowersMetaData(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	logFile := "ON.000001"
-	pos := "7502"
-	gtidSet := "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
@@ -176,9 +170,6 @@ func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
 	conn, err := db.Conn(context.Background())
 	c.Assert(err, IsNil)
 
-	logFile := "ON.000001"
-	pos := "7502"
-	gtidSet := "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
 	followerRows := sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "connection_name", "Seconds_Behind_Master"}).
