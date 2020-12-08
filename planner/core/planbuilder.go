@@ -565,7 +565,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, blockHint
 	if blockHintProcessor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, blockHintProcessor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
 		ctx:                    sctx,
