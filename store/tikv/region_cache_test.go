@@ -623,6 +623,33 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 }
 
+func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
+	dc1Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-1",
+		},
+	}
+	dc2Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-2",
+		},
+	}
+	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
+	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
+
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	seed := rand.Uint32()
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadByLabels, seed, WithMatchLabels(dc1Label))
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Store.storeID, Equals, s.store1)
+	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadByLabels, seed, WithMatchLabels(dc2Label))
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Store.storeID, Equals, s.store2)
+}
+
 func (s *testRegionCacheSuite) TestSplit(c *C) {
 	seed := rand.Uint32()
 	r := s.getRegion(c, []byte("x"))

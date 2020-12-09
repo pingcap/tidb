@@ -178,6 +178,24 @@ func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
 	return candidates[int32(seed)%int32(len(candidates))]
 }
 
+func (r *RegionStore) labelMatchedKvPeer(seed uint32, labels []*metapb.StoreLabel) AccessIndex {
+	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
+	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
+		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) {
+			continue
+		}
+		if !s.IsLabelsMatch(labels) {
+			continue
+		}
+		candidates = append(candidates, AccessIndex(i))
+	}
+	if len(candidates) == 0 {
+		return r.workTiKVIdx
+	}
+	return candidates[int32(seed)%int32(len(candidates))]
+}
+
 // init initializes region after constructed.
 func (r *Region) init(c *RegionCache) error {
 	// region store pull used store from global store map
@@ -371,9 +389,23 @@ func (c *RPCContext) String() string {
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessIdx, c.AccessMode, runStoreType)
 }
 
+type storeSelectorOp struct {
+	labels []*metapb.StoreLabel
+}
+
+// StoreSelectorOption configures storeSelectorOp.
+type StoreSelectorOption func(*storeSelectorOp)
+
+// WithMatchLabels indicates selecting stores with matched labels
+func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		op.labels = labels
+	}
+}
+
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -392,11 +424,17 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		storeIdx  int
 		accessIdx AccessIndex
 	)
+	options := &storeSelectorOp{}
+	for _, op := range opts {
+		op(options)
+	}
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
 		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
 	case kv.ReplicaReadMixed:
 		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
+	case kv.ReplicaReadByLabels:
+		store, peer, accessIdx, storeIdx = cachedRegion.AnyLabelMatchedStorePeer(regionStore, followerStoreSeed, options.labels)
 	default:
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -1286,6 +1324,10 @@ func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (s
 // AnyStorePeer returns a leader or follower store with the associated peer.
 func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
 	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed))
+}
+
+func (r *Region) AnyLabelMatchedStorePeer(rs *RegionStore, followerStoreSeed uint32, labels []*metapb.StoreLabel) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.labelMatchedKvPeer(followerStoreSeed, labels))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.

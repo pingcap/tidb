@@ -431,6 +431,12 @@ func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
 	c.delayMu.Unlock()
 }
 
+func (c *Cluster) UpdateStoreLabels(storeID uint64, labels []*metapb.StoreLabel) {
+	c.Lock()
+	defer c.Unlock()
+	c.stores[storeID].mergeLabels(labels)
+}
+
 func (c *Cluster) handleDelay(startTS, regionID uint64) {
 	key := delayKey{startTS: startTS, regionID: regionID}
 	c.delayMu.Lock()
@@ -664,4 +670,26 @@ func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store 
 			Labels:  labels,
 		},
 	}
+}
+
+func (s *Store) mergeLabels(labels []*metapb.StoreLabel) {
+	if len(s.meta.Labels) < 0 {
+		s.meta.Labels = labels
+		return
+	}
+	kv := make(map[string]string, len(s.meta.Labels))
+	for _, label := range s.meta.Labels {
+		kv[label.Key] = label.Value
+	}
+	for _, label := range labels {
+		kv[label.Key] = label.Value
+	}
+	mergedLabels := make([]*metapb.StoreLabel, 0, len(kv))
+	for k, v := range kv {
+		mergedLabels = append(mergedLabels, &metapb.StoreLabel{
+			Key:   k,
+			Value: v,
+		})
+	}
+	s.meta.Labels = mergedLabels
 }

@@ -108,6 +108,8 @@ const (
 	ReplicaReadFollower
 	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
 	ReplicaReadMixed
+	// ReplicaReadByLabels stands for `read from leader/following/learner which have the matched label`
+	ReplicaReadByLabels
 )
 
 // IsFollowerRead checks if leader is going to be used to read data.
