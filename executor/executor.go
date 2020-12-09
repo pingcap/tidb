@@ -1515,6 +1515,11 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
+		e.mu.Lock()
+		if childID > e.mu.maxOpenedChildID {
+			e.mu.maxOpenedChildID = childID
+		}
+		e.mu.Unlock()
 		if err := e.children[childID].Open(ctx); err != nil {
 			result.err = err
 			e.stopFetchData.Store(true)
@@ -1523,11 +1528,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, 1)
 		})
-		e.mu.Lock()
-		if childID > e.mu.maxOpenedChildID {
-			e.mu.maxOpenedChildID = childID
-		}
-		e.mu.Unlock()
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
