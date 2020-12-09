@@ -2225,6 +2225,7 @@ func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Contex
 	if !hasAgg {
 		return nil
 	}
+	r.b.curClause = fieldList
 	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, sel.Fields.Fields)
 	if err != nil {
 		return err
@@ -2237,6 +2238,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 	if where == nil {
 		return nil
 	}
+	r.b.curClause = whereClause
 	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
 	_, _ = where.Accept(extractor)
 	_, outerAggFuncs, err := r.b.splitOuterAggFuncs(r.ctx, p, extractor.AggFuncs)
