@@ -385,21 +385,22 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
-	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
+	protoSketch := &tipb.CMSketch{}
 	if c != nil {
+		protoSketch.Rows = make([]*tipb.CMSketchRow, c.depth)
 		for i := range c.table {
 			protoSketch.Rows[i] = &tipb.CMSketchRow{Counters: make([]uint32, c.width)}
 			for j := range c.table[i] {
 				protoSketch.Rows[i].Counters[j] = c.table[i][j]
 			}
 		}
+		protoSketch.DefaultValue = c.defaultValue
 	}
 	if topn != nil {
 		for _, dataMeta := range topn.TopN {
 			protoSketch.TopN = append(protoSketch.TopN, &tipb.CMSketchTopN{Data: dataMeta.Encoded, Count: dataMeta.Count})
 		}
 	}
-	protoSketch.DefaultValue = c.defaultValue
 	return protoSketch
 }
 
@@ -625,7 +626,7 @@ func (c *TopN) Equal(cc *TopN) bool {
 		return false
 	}
 	for i := range c.TopN {
-		if bytes.Compare(c.TopN[i].Encoded, cc.TopN[i].Encoded) != 0 {
+		if !bytes.Equal(c.TopN[i].Encoded, cc.TopN[i].Encoded) {
 			return false
 		}
 		if c.TopN[i].Count != cc.TopN[i].Count {

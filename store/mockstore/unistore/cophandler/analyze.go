@@ -186,7 +186,7 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 		}
 	}
 	if p.statsVer == statistics.Version2 {
-		if bytes.Compare(p.topNCurValuePair.Encoded, p.rowBuf) == 0 {
+		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
 			p.topNCurValuePair.Count++
 		} else {
 			if p.topNCurValuePair.Count > 0 {

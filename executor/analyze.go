@@ -349,9 +349,6 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			return nil, nil, nil, err
 		}
 		if needCMS {
-			var (
-				poped []statistics.TopNMeta
-			)
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
 			} else {
@@ -359,14 +356,11 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 				if err := cms.MergeCMSketch(cm); err != nil {
 					return nil, nil, nil, err
 				}
-				poped = statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
-				for _, pop := range poped {
-					cms.InsertBytesByCount(pop.Encoded, pop.Count)
-				}
+				statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
 			}
 		}
 	}
-	if topn.TotalCount() > 0 {
+	if needCMS && topn.TotalCount() > 0 {
 		hist.RemoveIdxVals(topn.TopN)
 	}
 	if needCMS && cms != nil {

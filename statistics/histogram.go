@@ -23,7 +23,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -343,9 +342,6 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 				break
 			}
 		}
-		log.Warn("xxxx", zap.Int64("cur count", hg.Buckets[bktIdx].Count),
-			zap.Int64("cur topn count", totalSubCnt),
-		)
 		hg.Buckets[bktIdx].Count -= totalSubCnt
 	}
 }
