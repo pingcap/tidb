@@ -370,7 +370,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"

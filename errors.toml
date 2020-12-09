@@ -271,6 +271,11 @@ error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
 '''
 
+["ddl:1697"]
+error = '''
+VALUES value for partition '%-.64s' must have type INT
+'''
+
 ["ddl:1731"]
 error = '''
 Non matching attribute '%-.64s' between partition and table
