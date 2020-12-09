@@ -269,7 +269,7 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 
 	// partition by range columns (c1)
 	if len(pi.Columns) == 1 {
-		return pi.Columns[0].L
+		return fmt.Sprintf("`%s`", pi.Columns[0].L)
 	}
 
 	// partition by range columns (c1, c2, ...)
@@ -308,7 +308,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	// build column offset.
 	partExp := pi.Expr
 	if len(pi.Columns) == 1 {
-		partExp = pi.Columns[0].L
+		partExp = fmt.Sprintf("`%s`", pi.Columns[0].L)
 	}
 	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
 	if err != nil {
@@ -451,7 +451,7 @@ func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.Parti
 	if len(pi.Columns) == 0 {
 		partStr = pi.Expr
 	} else if len(pi.Columns) == 1 {
-		partStr = pi.Columns[0].L
+		partStr = fmt.Sprintf("`%s`", pi.Columns[0].L)
 	} else {
 		return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 	}
