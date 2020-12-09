@@ -141,7 +141,7 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) AccessIndex {
+func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 	l := uint32(r.accessStoreNum(TiKvOnly))
 	if l <= 1 {
 		return r.workTiKVIdx
@@ -153,7 +153,7 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 			followerIdx++
 		}
 		storeIdx, s := r.accessStore(TiKvOnly, followerIdx)
-		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) && r.filterStoreCandidate(op, followerIdx) {
 			return followerIdx
 		}
 		seed++
@@ -162,7 +162,7 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 }
 
 // return next leader or follower store's index
-func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
+func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
 	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
 		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
@@ -171,29 +171,31 @@ func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
 		}
 		candidates = append(candidates, AccessIndex(i))
 	}
-
+	candidates = r.filterStoreCandidates(op, candidates...)
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
 	return candidates[int32(seed)%int32(len(candidates))]
 }
 
-func (r *RegionStore) labelMatchedKvPeer(seed uint32, labels []*metapb.StoreLabel) AccessIndex {
-	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
-	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
-		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) {
+func (r *RegionStore) filterStoreCandidates(op *storeSelectorOp, aidxs ...AccessIndex) []AccessIndex {
+	candidates := make([]AccessIndex, 0, len(aidxs))
+	for _, aidx := range aidxs {
+		if !r.filterStoreCandidate(op, aidx) {
 			continue
 		}
-		if !s.IsLabelsMatch(labels) {
-			continue
-		}
-		candidates = append(candidates, AccessIndex(i))
+		candidates = append(candidates, aidx)
 	}
-	if len(candidates) == 0 {
-		return r.workTiKVIdx
+	return candidates
+}
+
+func (r *RegionStore) filterStoreCandidate(op *storeSelectorOp, aidx AccessIndex) bool {
+	_, s := r.accessStore(TiKvOnly, aidx)
+	// filter label unmatched store
+	if !s.IsLabelsMatch(op.labels) {
+		return false
 	}
-	return candidates[int32(seed)%int32(len(candidates))]
+	return true
 }
 
 // init initializes region after constructed.
@@ -430,11 +432,9 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
 	case kv.ReplicaReadMixed:
-		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
-	case kv.ReplicaReadByLabels:
-		store, peer, accessIdx, storeIdx = cachedRegion.AnyLabelMatchedStorePeer(regionStore, followerStoreSeed, options.labels)
+		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed, options)
 	default:
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -1317,17 +1317,13 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed))
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed, op))
 }
 
 // AnyStorePeer returns a leader or follower store with the associated peer.
-func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed))
-}
-
-func (r *Region) AnyLabelMatchedStorePeer(rs *RegionStore, followerStoreSeed uint32, labels []*metapb.StoreLabel) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.labelMatchedKvPeer(followerStoreSeed, labels))
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed, op))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
