@@ -257,7 +257,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 	return dbLabelSet
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have duplicate db name
 	var dbLabels []string
 
 	if resultNode == nil {

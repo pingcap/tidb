@@ -699,7 +699,7 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 
