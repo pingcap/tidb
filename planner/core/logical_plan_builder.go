@@ -2959,7 +2959,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	var windowMapper map[*ast.WindowFuncExpr]int
-	if hasWindowFuncField {
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
 		// we need to check the func args first before we check the window spec
 		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
@@ -2974,9 +2974,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		// len(windowMapper) == 0 means there's only unused named window specs without window functions.
+		// `hasWindowFuncField == false` means there's only unused named window specs without window functions.
 		// In such case plan `p` is not changed, so we don't have to build another projection.
-		if len(windowMapper) > 0 {
+		if hasWindowFuncField {
 			// Now we build the window function fields.
 			p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 			if err != nil {

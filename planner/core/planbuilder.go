@@ -805,9 +805,6 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 			}
 		}
 	}
-	if sel.WindowSpecs != nil {
-		return true
-	}
 	return false
 }
 
