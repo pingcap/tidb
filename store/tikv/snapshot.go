@@ -639,18 +639,6 @@ func (s *KVSnapshot) SetResourceGroupTag(tag []byte) {
 	s.resourceGroupTag = tag
 }
 
-// SnapCacheHitCount gets the snapshot cache hit count. Only for test.
-func (s *KVSnapshot) SnapCacheHitCount() int {
-	return int(atomic.LoadInt64(&s.mu.hitCnt))
-}
-
-// SnapCacheSize gets the snapshot cache size. Only for test.
-func (s *KVSnapshot) SnapCacheSize() int {
-	s.mu.RLock()
-	defer s.mu.RLock()
-	return len(s.mu.cached)
-}
-
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
