@@ -204,6 +204,7 @@ type ForListPruning struct {
 	ColPrunes []ForListColumnPruning
 }
 
+// ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
 	Exprs   []expression.Expression
 	ExprCol *expression.Column

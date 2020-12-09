@@ -236,7 +236,14 @@ type listPartitionPruner struct {
 }
 
 func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	s *partitionProcessor, colIDToUniqueID map[int64]int64, pruneList *tables.ForListPruning) *listPartitionPruner {
+	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning) *listPartitionPruner {
+	colIDToUniqueID := make(map[int64]int64)
+	for _, cond := range conds {
+		condCols := expression.ExtractColumns(cond)
+		for _, c := range condCols {
+			colIDToUniqueID[c.ID] = c.UniqueID
+		}
+	}
 	return &listPartitionPruner{
 		partitionProcessor: s,
 		ctx:                ctx,
@@ -266,7 +273,7 @@ func (l *listPartitionPruner) locatePartition(cond expression.Expression) (map[i
 		cnfItems := expression.FlattenCNFConditions(sf)
 		return l.locatePartitionByCNFCondition(cnfItems)
 	}
-	return l.locateUsedPartitionByCondition(sf)
+	return l.locatePartitionByColumn(sf)
 }
 
 func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
@@ -341,7 +348,10 @@ func (l *listPartitionPruner) merge(subUseds []map[int]struct{}) map[int]struct{
 	return used
 }
 
-func (l *listPartitionPruner) locateUsedPartitionByCondition(cond *expression.ScalarFunction) (map[int]struct{}, bool, error) {
+// locatePartitionByColumn uses to locate partition by the one of the list columns value.
+// Such as: partition by list columns(a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((6,6),(7,7)));
+// and if the condition is `a=1`, then we can use `a=1` and the expression `(a in (1,2))` to locate partition `p0`.
+func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFunction) (map[int]struct{}, bool, error) {
 	condCols := expression.ExtractColumns(cond)
 	if len(condCols) != 1 {
 		return nil, false, nil
@@ -357,7 +367,7 @@ func (l *listPartitionPruner) locateUsedPartitionByCondition(cond *expression.Sc
 	if len(pruneExprs) == 0 {
 		return nil, false, nil
 	}
-	return l.locateUsedPartitionsByConditions([]expression.Expression{cond}, []*expression.Column{pruneCol}, pruneExprs)
+	return l.locatePartitionsByConditions([]expression.Expression{cond}, []*expression.Column{pruneCol}, pruneExprs)
 }
 
 func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
@@ -372,7 +382,7 @@ func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.E
 }
 
 func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expression) (map[int]struct{}, error) {
-	used, ok, err := l.locateUsedPartitionsByConditions(conds, l.pruneList.ExprCols, l.pruneList.Exprs)
+	used, ok, err := l.locatePartitionsByConditions(conds, l.pruneList.ExprCols, l.pruneList.Exprs)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +392,8 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	return used, nil
 }
 
-func (l *listPartitionPruner) locateUsedPartitionsByConditions(conds []expression.Expression, exprCols []*expression.Column, locateExprs []expression.Expression) (map[int]struct{}, bool, error) {
+func (l *listPartitionPruner) locatePartitionsByConditions(conds []expression.Expression,
+	exprCols []*expression.Column, locateExprs []expression.Expression) (map[int]struct{}, bool, error) {
 	cols := make([]*expression.Column, 0, len(exprCols))
 	colLen := make([]int, 0, len(exprCols))
 	for _, c := range exprCols {
@@ -442,16 +453,8 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 		return nil, err
 	}
 
-	colIDToUniqueID := make(map[int64]int64)
-	for _, cond := range conds {
-		condCols := expression.ExtractColumns(cond)
-		for _, c := range condCols {
-			colIDToUniqueID[c.ID] = c.UniqueID
-		}
-	}
-
 	pruneList := partExpr.ForListPruning
-	lc := newListPartitionPruner(ctx, tbl, partitionNames, s, colIDToUniqueID, pruneList)
+	lc := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, pruneList)
 	used, err := lc.findUsedListPartitions(conds)
 	if err != nil {
 		return nil, err
