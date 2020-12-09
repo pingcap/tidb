@@ -502,9 +502,13 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
+		s.mu.Lock()
 		s.replicaRead = val.(kv.ReplicaReadType)
+		s.mu.Unlock()
 	case kv.TaskID:
+		s.mu.Lock()
 		s.taskID = val.(uint64)
+		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
