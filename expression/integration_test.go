@@ -8109,3 +8109,17 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
+
+func (s *testIntegrationSuite) TestIssue21486(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var err error
+	tk.MustExec("use test")
+	_, err = tk.Exec("values row(1)")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	_, err = tk.Exec("table t")
+	c.Assert(err, NotNil)
+}
