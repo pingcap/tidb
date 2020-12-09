@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression_test
+package core_test
 
 import (
 	"fmt"
@@ -26,16 +26,16 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testSuite2{})
+var _ = Suite(&testPartitionPruneSuit{})
 
-type testSuite2 struct {
+type testPartitionPruneSuit struct {
 	store    kv.Storage
 	dom      *domain.Domain
 	ctx      sessionctx.Context
 	testData testutil.TestData
 }
 
-func (s *testSuite2) cleanEnv(c *C) {
+func (s *testPartitionPruneSuit) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_partition")
 	r := tk.MustQuery("show tables")
@@ -45,7 +45,7 @@ func (s *testSuite2) cleanEnv(c *C) {
 	}
 }
 
-func (s *testSuite2) SetUpSuite(c *C) {
+func (s *testPartitionPruneSuit) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -54,13 +54,13 @@ func (s *testSuite2) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite2) TearDownSuite(c *C) {
+func (s *testPartitionPruneSuit) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testSuite2) TestHashPartitionPruner(c *C) {
+func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
@@ -89,7 +89,7 @@ func (s *testSuite2) TestHashPartitionPruner(c *C) {
 	}
 }
 
-func (s *testSuite2) TestListPartitionPruner(c *C) {
+func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
@@ -156,7 +156,7 @@ func (s *testSuite2) TestListPartitionPruner(c *C) {
 	}
 }
 
-func (s *testSuite2) TestListColumnsPartitionPruner(c *C) {
+func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
