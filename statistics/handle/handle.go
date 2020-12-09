@@ -59,7 +59,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache StatsCache
+	statsCache *statsCache
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
@@ -112,14 +112,10 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	var err error
-	handle.statsCache, err = newStatsCacheWithMemCap(ctx.GetSessionVars().MemQuotaStatistics, defaultStatsCacheType)
-	if err != nil {
-		return nil, err
-	}
+	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistics)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	err = handle.RefreshVars()
+	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
 	}
@@ -236,14 +232,17 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	return h.statsCache.BytesConsumed()
+	h.statsCache.mu.Lock()
+	size = h.statsCache.memTracker.BytesConsumed()
+	h.statsCache.mu.Unlock()
+	return
 }
 
 // EraseTable4Test erase a table by ID and add new empty (with Meta) table.
 // ONLY used for test.
 func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Update([]*statistics.Table{table.CopyWithoutBucketsAndCMS()}, nil, h.statsCache.GetVersion())
+	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
 }
 
 // GetAllTableStatsMemUsage4Test get all the mem usage with true table.
@@ -277,7 +276,10 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 // SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 // Only used for test.
 func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {
-	h.statsCache.SetBytesLimit(bytesLimit)
+	h.statsCache.mu.Lock()
+	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
+	h.statsCache.memCapacity = bytesLimit
+	h.statsCache.mu.Unlock()
 }
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
@@ -962,6 +964,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	tables := make([]*statistics.Table, 0, len(allTables))
 	for _, tbl := range allTables {
 		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
+
 		if err != nil {
 			return err
 		}

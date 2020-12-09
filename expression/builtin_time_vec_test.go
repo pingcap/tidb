@@ -205,13 +205,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	// This test case may fail due to the issue: https://github.com/pingcap/tidb/issues/13638.
 	// We remove this case to stabilize CI, and will reopen this when we fix the issue above.
-	//ast.TimestampAdd: {
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
-	//		geners:        []dataGenerator{&unitStrGener{newDefaultRandGen()}, nil, nil},
-	//	},
-	//},
+	// ast.TimestampAdd: {
+	// 	{
+	// 		retEvalType:   types.ETString,
+	// 		childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+	// 		geners:        []dataGenerator{&unitStrGener{newDefaultRandGen()}, nil, nil},
+	// 	},
+	// },
 	ast.UnixTimestamp: {
 		{
 			retEvalType:   types.ETInt,
@@ -616,9 +616,9 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
 	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
 	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
-	c.Assert(f.vecEvalInt(input, result), NotNil)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
 }

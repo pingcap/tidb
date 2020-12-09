@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -522,4 +523,115 @@ add placement policy
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
+}
+
+func (s *testDBSuite1) TestGlobalTxnState(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
+	c.Assert(err, IsNil)
+	groupID := placement.GroupID(pid)
+	bundles[groupID] = &placement.Bundle{
+		ID: groupID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: groupID,
+				Role:    placement.Leader,
+				Count:   1,
+				LabelConstraints: []placement.LabelConstraint{
+					{
+						Key:    placement.DCLabelKey,
+						Op:     placement.In,
+						Values: []string{"bj"},
+					},
+				},
+			},
+		},
+	}
+	dbInfo := testGetSchemaByName(c, tk.Se, "test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	var chkErr error
+	done := false
+	testcases := []struct {
+		name      string
+		hook      *ddl.TestDDLCallback
+		expectErr error
+	}{
+		{
+			name: "write partition p0 during StateGlobalTxnOnly",
+			hook: func() *ddl.TestDDLCallback {
+				hook := &ddl.TestDDLCallback{}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+						job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+						done = true
+						tk2.MustExec("use test")
+						tk2.MustExec("set @@txn_scope=bj")
+						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+					}
+				}
+				return hook
+			}(),
+			expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
+		},
+		// FIXME: support abort read txn during StateGlobalTxnOnly
+		// {
+		//	name: "read partition p0 during middle state",
+		//	hook: func() *ddl.TestDDLCallback {
+		//		hook := &ddl.TestDDLCallback{}
+		//		hook.OnJobUpdatedExported = func(job *model.Job) {
+		//			if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+		//				job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+		//				done = true
+		//				tk2.MustExec("use test")
+		//				tk2.MustExec("set @@txn_scope=bj")
+		//				tk2.MustExec("begin;")
+		//				tk2.MustExec("select * from t1 where c < 6;")
+		//				_, chkErr = tk2.Exec("commit")
+		//			}
+		//		}
+		//		return hook
+		//	}(),
+		//	expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
+		// },
+	}
+	originalHook := s.dom.DDL().GetHook()
+	testFunc := func(name string, hook *ddl.TestDDLCallback, expectErr error) {
+		c.Log(name)
+		done = false
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		defer func() {
+			s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+		}()
+		_, err = tk.Exec(`alter table t1 alter partition p0
+alter placement policy
+	constraints='["+zone=bj"]'
+	role=leader
+	replicas=1`)
+		c.Assert(err, IsNil)
+		c.Assert(done, Equals, true)
+		if expectErr != nil {
+			c.Assert(chkErr, NotNil)
+			c.Assert(chkErr.Error(), Matches, expectErr.Error())
+		} else {
+			c.Assert(chkErr, IsNil)
+		}
+	}
+
+	for _, testcase := range testcases {
+		testFunc(testcase.name, testcase.hook, testcase.expectErr)
+	}
 }
