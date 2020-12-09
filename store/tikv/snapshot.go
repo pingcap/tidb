@@ -472,12 +472,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.ReplicaRead:
 		s.mu.Lock()
 		s.replicaRead = val.(kv.ReplicaReadType)
-<<<<<<< HEAD
+		s.mu.Unlock()
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
-=======
-		s.mu.Unlock()
->>>>>>> 0eb8ff97b... executor: open childExec during execution for UnionExec (#21561)
 	case kv.TaskID:
 		s.mu.Lock()
 		s.taskID = val.(uint64)
