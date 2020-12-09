@@ -763,7 +763,7 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
-func (s *testSuite1) TestIssue20874(c *C) {
+func (s *testSerialSuite2) TestIssue20874(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
