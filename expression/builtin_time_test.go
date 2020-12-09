@@ -838,7 +838,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		// we canot use a constant value to check timestamp funcs, so here
 		// just to check the fractional seconds part and the time delta.
 		c.Assert(strings.Contains(t.String(), "."), IsFalse)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 		c.Assert(err, IsNil)
@@ -848,7 +848,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		t = v.GetMysqlTime()
 		c.Assert(strings.Contains(t.String(), "."), IsTrue)
-		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, time.Second)
+		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		resetStmtContext(s.ctx)
 		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
@@ -1612,8 +1612,8 @@ func (s *testEvaluatorSuite) TestWeekWithoutModeSig(c *C) {
 	}{
 		{"2008-02-20", 7},
 		{"2000-12-31", 53},
-		{"2000-12-31", 1}, //set default week mode
-		{"2005-12-3", 48}, //set default week mode
+		{"2000-12-31", 1}, // set default week mode
+		{"2005-12-3", 48}, // set default week mode
 		{"2008-02-20", 7},
 	}
 
@@ -1778,9 +1778,9 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		{0, types.NewStringDatum("1969-12-31 23:59:59.999999"), types.KindMysqlDecimal, "0"},                 // Invalid timestamp
 		{0, types.NewStringDatum("2038-01-19 03:14:08"), types.KindInt64, "0"},                               // Invalid timestamp
 		// Below tests irregular inputs.
-		//{0, types.NewIntDatum(0), types.KindInt64, "0"},
-		//{0, types.NewIntDatum(-1), types.KindInt64, "0"},
-		//{0, types.NewIntDatum(12345), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(0), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(-1), types.KindInt64, "0"},
+		// {0, types.NewIntDatum(12345), types.KindInt64, "0"},
 	}
 
 	for _, test := range tests {

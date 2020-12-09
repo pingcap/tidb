@@ -180,7 +180,7 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 
 	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aa' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
 }
 
@@ -191,6 +191,14 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
 	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
 	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21502.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
+	tk.MustExec("delete from t where c_int = 5;")
+	tk.MustExec("commit;")
 }
 
 func (s *testClusteredSuite) TestIssue20002(c *C) {

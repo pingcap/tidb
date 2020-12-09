@@ -192,10 +192,8 @@ func (s *Server) forwardUnixSocketToTCP() {
 		if uconn, err := s.socket.Accept(); err == nil {
 			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
-		} else {
-			if s.listener != nil {
-				logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
-			}
+		} else if s.listener != nil {
+			logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 		}
 	}
 }
@@ -524,9 +522,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -539,7 +534,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
-	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+	if !ok {
 		return &util.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
@@ -558,7 +553,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	}
 
 	if !query {
-		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}

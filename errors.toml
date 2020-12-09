@@ -271,6 +271,11 @@ error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
 '''
 
+["ddl:1697"]
+error = '''
+VALUES value for partition '%-.64s' must have type INT
+'''
+
 ["ddl:1731"]
 error = '''
 Non matching attribute '%-.64s' between partition and table
@@ -634,6 +639,11 @@ Invalid argument for logarithm
 ["expression:3064"]
 error = '''
 Incorrect type for argument %s in function %s.
+'''
+
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
 '''
 
 ["json:3069"]
@@ -1389,6 +1399,16 @@ TiKV server reports stale command
 ["tikv:9011"]
 error = '''
 TiKV max timestamp is not synced
+'''
+
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
 '''
 
 ["types:1063"]
