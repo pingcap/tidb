@@ -531,6 +531,42 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT CONV('a', 37, 10);")
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT CONV(0x0020, 2, 2);")
+	result.Check(testkit.Rows("100000"))
+	result = tk.MustQuery("SELECT CONV(0b10, 16, 2)")
+	result.Check(testkit.Rows("10"))
+	result = tk.MustQuery("SELECT CONV(0b10, 16, 8)")
+	result.Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists bit")
+	tk.MustExec("create table bit(b bit(10))")
+	tk.MustExec(`INSERT INTO bit (b) VALUES
+			(0b0000010101),
+			(0b0000010101),
+			(NULL),
+			(0b0000000001),
+			(0b0000000000),
+			(0b1111111111),
+			(0b1111111111),
+			(0b1111111111),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000100000);`)
+	tk.MustQuery("select conv(b, 2, 2) from `bit`").Check(testkit.Rows(
+		"10101",
+		"10101",
+		"<nil>",
+		"1",
+		"0",
+		"1111111111",
+		"1111111111",
+		"1111111111",
+		"0",
+		"0",
+		"0",
+		"0",
+		"100000"))
 
 	// for abs
 	result = tk.MustQuery("SELECT ABS(-1);")
@@ -8123,4 +8159,17 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustExec("insert into t values ('#', 'C', 10), ('$', 'c', 20), ('$', 'c', 30), ('a', 'a', 10), ('A', 'A', 30)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
+}
+
+func (s *testSuite2) TestIssue12205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12205;")
+	tk.MustExec("create table t12205(\n    `col_varchar_64` varchar(64) DEFAULT NULL,\n    `col_varchar_64_key` varchar(64) DEFAULT NULL\n);")
+	tk.MustExec("insert into t12205 values('-1038024704','-527892480');")
+	tk.MustQuery("select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ").Check(
+		testkit.Rows("838:59:59 18446744072635875328"))
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
 }
