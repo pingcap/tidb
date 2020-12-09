@@ -463,7 +463,7 @@ func (alloc *allocator) Alloc(ctx context.Context, tableID int64, n uint64, incr
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("autoid.Alloc", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
+		opentracing.ContextWithSpan(ctx, span1)
 	}
 
 	if tableID == 0 {

@@ -409,7 +409,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
-func (*testSuite) TestConcurrentAlloc(ctx, c *C) {
+func (*testSuite) TestConcurrentAlloc(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
