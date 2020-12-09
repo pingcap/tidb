@@ -588,7 +588,7 @@ PARTITION BY RANGE (c) (
 			expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
 		},
 		// FIXME: support abort read txn during StateGlobalTxnOnly
-		//{
+		// {
 		//	name: "read partition p0 during middle state",
 		//	hook: func() *ddl.TestDDLCallback {
 		//		hook := &ddl.TestDDLCallback{}
@@ -606,7 +606,7 @@ PARTITION BY RANGE (c) (
 		//		return hook
 		//	}(),
 		//	expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
-		//},
+		// },
 	}
 	originalHook := s.dom.DDL().GetHook()
 	testFunc := func(name string, hook *ddl.TestDDLCallback, expectErr error) {
