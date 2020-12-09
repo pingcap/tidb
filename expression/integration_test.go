@@ -531,6 +531,42 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT CONV('a', 37, 10);")
 	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("SELECT CONV(0x0020, 2, 2);")
+	result.Check(testkit.Rows("100000"))
+	result = tk.MustQuery("SELECT CONV(0b10, 16, 2)")
+	result.Check(testkit.Rows("10"))
+	result = tk.MustQuery("SELECT CONV(0b10, 16, 8)")
+	result.Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists bit")
+	tk.MustExec("create table bit(b bit(10))")
+	tk.MustExec(`INSERT INTO bit (b) VALUES
+			(0b0000010101),
+			(0b0000010101),
+			(NULL),
+			(0b0000000001),
+			(0b0000000000),
+			(0b1111111111),
+			(0b1111111111),
+			(0b1111111111),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000000000),
+			(0b0000100000);`)
+	tk.MustQuery("select conv(b, 2, 2) from `bit`").Check(testkit.Rows(
+		"10101",
+		"10101",
+		"<nil>",
+		"1",
+		"0",
+		"1111111111",
+		"1111111111",
+		"1111111111",
+		"0",
+		"0",
+		"0",
+		"0",
+		"100000"))
 
 	// for abs
 	result = tk.MustQuery("SELECT ABS(-1);")
@@ -1484,6 +1520,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2003-12-31 00:00:00 2004-01-01 00:00:00"))
 	result = tk.MustQuery("select timestamp(20170118123950.123), timestamp(20170118123950.999);")
 	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
+	// Issue https://github.com/pingcap/tidb/issues/20003
+	result = tk.MustQuery("select timestamp(0.0001, 0.00001);")
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31 12:34', '01:01:01.01')," +
 		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
 
