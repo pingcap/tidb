@@ -318,6 +318,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		fsp1 := int8(b.args[1].GetType().Decimal)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 
 			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
@@ -332,10 +333,14 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 			}
 		} else {
 
-			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				continue
 			}
 		}
 
@@ -410,6 +415,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		}
 
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 
 			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
@@ -424,10 +430,14 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 			}
 		} else {
 
-			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				continue
 			}
 		}
 
@@ -930,6 +940,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		fsp1 := int8(b.args[1].GetType().Decimal)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 
 			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
@@ -944,10 +955,14 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 			}
 		} else {
 
-			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				continue
 			}
 		}
 
@@ -1022,6 +1037,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 		}
 
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 
 			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
@@ -1036,10 +1052,14 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 			}
 		} else {
 
-			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				continue
 			}
 		}
 
