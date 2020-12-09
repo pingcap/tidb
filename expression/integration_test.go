@@ -2027,7 +2027,6 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
 	result.Check(testkit.Rows("112 36 12 24"))
 
-
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
 		Date      string
