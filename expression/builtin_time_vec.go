@@ -1873,14 +1873,19 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			negative = "-"
 			secondsFloat = math.Abs(secondsFloat)
 		}
-		seconds := int64(secondsFloat)
+		seconds := uint64(secondsFloat)
 		demical := secondsFloat - float64(seconds)
-		var minute, second int64
+		var minute, second uint64
 		hour := seconds / 3600
 		if hour > 838 {
 			hour = 838
 			minute = 59
 			second = 59
+			demical = 0
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+			if err != nil {
+				return err
+			}
 		} else {
 			minute = seconds % 3600 / 60
 			second = seconds % 60

@@ -5024,7 +5024,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeTimestamp, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -6124,9 +6124,9 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		return types.Duration{}, isNull, err
 	}
 	var (
-		hour          int64
-		minute        int64
-		second        int64
+		hour          uint64
+		minute        uint64
+		second        uint64
 		demical       float64
 		secondDemical float64
 		negative      string
@@ -6136,7 +6136,7 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		negative = "-"
 		secondsFloat = math.Abs(secondsFloat)
 	}
-	seconds := int64(secondsFloat)
+	seconds := uint64(secondsFloat)
 	demical = secondsFloat - float64(seconds)
 
 	hour = seconds / 3600
@@ -6144,6 +6144,11 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		hour = 838
 		minute = 59
 		second = 59
+		demical = 0
+		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+		if err != nil {
+			return types.Duration{}, err != nil, err
+		}
 	} else {
 		minute = seconds % 3600 / 60
 		second = seconds % 60
