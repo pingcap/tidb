@@ -78,9 +78,6 @@ const (
 )
 
 var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = uint32(512)
 	// TableIndexCountLimit is limit of the number of indexes in a table.
 	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for

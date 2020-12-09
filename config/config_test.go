@@ -491,7 +491,7 @@ func (s *testConfigSuite) TestIndexLimit(c *C) {
 func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
-		conf.TableColumnLimit = tableColumnLimit
+		conf.TableColumnLimit = uint32(tableColumnLimit)
 		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
 	}
 	checkValid(DefTableColumnCountLimit, true)
