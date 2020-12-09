@@ -525,5 +525,7 @@ func (ts *testSuite) TestIssue21574(c *C) {
 	tk.MustExec("drop tables if exists t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
 	tk.MustExec("drop table t_21574")
-	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));\n")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
 }
