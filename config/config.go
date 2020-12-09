@@ -176,6 +176,9 @@ type Config struct {
 	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
+	// EnableTCP4Only enables net.Listen("tcp4",...)
+	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
+	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
