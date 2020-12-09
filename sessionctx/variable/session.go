@@ -1270,7 +1270,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return returnErr
 			}
-			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
 			// 1. tx_isolation
 			// 2. transaction_isolation
 			// The following if condition is used to deduplicate two same warnings.

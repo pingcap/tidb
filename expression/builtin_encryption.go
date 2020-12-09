@@ -84,7 +84,7 @@ type aesModeAttr struct {
 }
 
 var aesModes = map[string]*aesModeAttr{
-	//TODO support more modes, permitted mode values are: ECB, CBC, CFB1, CFB8, CFB128, OFB
+	// TODO support more modes, permitted mode values are: ECB, CBC, CFB1, CFB8, CFB128, OFB
 	"aes-128-ecb": {"ecb", 16, false},
 	"aes-192-ecb": {"ecb", 24, false},
 	"aes-256-ecb": {"ecb", 32, false},

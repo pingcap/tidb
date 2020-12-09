@@ -960,11 +960,11 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[-inf,1) (2,+inf]]",
 			length:      types.UnspecifiedLength,
 		},
-		//{
-		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
-		//	exprStr:   "a not between null and 0",
-		//	resultStr[(0,+inf]]
-		//},
+		// {
+		//  `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
+		// 	exprStr:   "a not between null and 0",
+		// 	resultStr[(0,+inf]]
+		// },
 		{
 			colPos:      0,
 			exprStr:     "a between 2 and 1",
