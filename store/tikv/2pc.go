@@ -1535,6 +1535,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 				pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 				err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
 				if err != nil {
+					// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
 					if terror.ErrorEqual(kv.ErrWriteConflict, err) {
 						newForUpdateTSVer, err := c.store.CurrentVersion()
 						if err != nil {
