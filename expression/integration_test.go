@@ -7263,6 +7263,16 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
+func (s *testIntegrationSuite) TestIssue20369(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("insert into t select values(a) from t;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "<nil>"))
+}
+
 func (s *testIntegrationSuite) TestIssue20730(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
