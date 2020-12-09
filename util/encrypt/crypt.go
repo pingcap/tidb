@@ -106,7 +106,7 @@ func (sc *sqlCrypt) decode(str []byte, length int) {
 	}
 }
 
-//SQLDecode Function to handle the decode() function
+// SQLDecode Function to handle the decode() function
 func SQLDecode(str string, password string) (string, error) {
 	var sc sqlCrypt
 
