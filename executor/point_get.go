@@ -466,20 +466,20 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
 			if col.ID == hid {
-				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
