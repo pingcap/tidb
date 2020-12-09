@@ -1872,14 +1872,19 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			negative = "-"
 			secondsFloat = math.Abs(secondsFloat)
 		}
-		seconds := int64(secondsFloat)
+		seconds := uint64(secondsFloat)
 		demical := secondsFloat - float64(seconds)
-		var minute, second int64
+		var minute, second uint64
 		hour := seconds / 3600
 		if hour > 838 {
 			hour = 838
 			minute = 59
 			second = 59
+			demical = 0
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+			if err != nil {
+				return err
+			}
 		} else {
 			minute = seconds % 3600 / 60
 			second = seconds % 60
@@ -2669,6 +2674,12 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
+		}
+		if tm.Year() == 0 {
+			// MySQL won't evaluate add for date with zero year.
+			// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
 			result.SetNull(i, true)
 			continue
 		}

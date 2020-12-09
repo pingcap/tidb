@@ -51,7 +51,7 @@ import (
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
 var ParseSlowLogBatchSize = 64
 
-//slowQueryRetriever is used to read slow log data.
+// slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo

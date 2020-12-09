@@ -173,8 +173,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
 		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
-		//TODO: Check it out and reopen this case.
-		//{"SYSTEM", "Local", false, 0},
+		// TODO: Check it out and reopen this case.
+		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
 		{"-6:00", "", true, 6 * time.Hour, nil},
 		{"+14:00", "", true, -14 * time.Hour, nil},
