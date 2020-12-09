@@ -3994,6 +3994,9 @@ func (b *PlanBuilder) buildUpdateLists(
 				expr.Name = assign.Column
 			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
+			if err != nil {
+				return nil, nil, false, 0, err
+			}
 			dependentColumnsModified[col.UniqueID] = true
 		} else {
 			// rewrite with generation expression
@@ -4010,6 +4013,9 @@ func (b *PlanBuilder) buildUpdateLists(
 				}
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
+			if err != nil {
+				return nil, nil, false, 0, err
+			}
 			// check if the column is modified
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
 			var isModified bool
@@ -4023,9 +4029,6 @@ func (b *PlanBuilder) buildUpdateLists(
 			if !isModified {
 				continue
 			}
-		}
-		if err != nil {
-			return nil, nil, false, 0, err
 		}
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false
