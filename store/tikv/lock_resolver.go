@@ -246,11 +246,13 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 				txnInfos[l.TxnID] = resolveData.commitTs
 				continue
 			}
-			if _, ok := err.(*nonAsyncCommitLock); ok {
+			if _, ok := errors.Cause(err).(*nonAsyncCommitLock); ok {
 				status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, true)
 				if err != nil {
 					return false, err
 				}
+			} else {
+				return false, err
 			}
 		}
 
@@ -367,7 +369,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 			if status.primaryLock != nil && !forceSyncCommit && status.primaryLock.UseAsyncCommit && !exists {
 				err = lr.resolveLockAsync(bo, l, status)
-				if _, ok := err.(*nonAsyncCommitLock); ok {
+				if _, ok := errors.Cause(err).(*nonAsyncCommitLock); ok {
 					err = resolve(l, true)
 				}
 			} else if l.LockType == kvrpcpb.Op_PessimisticLock {
