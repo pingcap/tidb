@@ -1543,18 +1543,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharacterSetConnection:
 			s.systems[CollationConnection] = coll
 			s.systems[CharacterSetConnection] = cht
-			val = cht
 		case CharsetDatabase:
 			s.systems[CollationDatabase] = coll
 			s.systems[CharsetDatabase] = cht
-			val = cht
 		case CharacterSetServer:
 			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
-			val = cht
-		default:
-			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
