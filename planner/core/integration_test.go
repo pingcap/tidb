@@ -724,6 +724,20 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));")
+	tk.MustExec("insert into t values ('20000201'), ('19000101');")
+
+	// cannot get the statistical information immediately
+	// tk.MustQuery(`SELECT PARTITION_NAME,TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 't';`).Check(testkit.Rows("p1 1", "p2 1"))
+	str := tk.MustQuery(`desc select * from t where a < '2000-01-01';`).Rows()[0][3].(string)
+	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1252,19 +1266,17 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, unique key(a), unique key(b))")
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
-		"Projection_4 1.80 root  test.t.a, test.t.b",
-		"└─IndexMerge_9 2.00 root  ",
-		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.80 cop[tikv]  gt(plus(test.t.b, 2), 1)",
-		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.b, 1), 1))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection_4 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge_9 2.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(test.t.b)), 1)",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1272,9 +1284,9 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection_4 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge_10 2.00 root  ",
-		"  ├─Selection_6(Build) 0.80 cop[tikv]  eq(length(cast(test.t.a)), 1)",
+		"  ├─Selection_6(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_8(Build) 0.80 cop[tikv]  eq(length(cast(test.t.b)), 1)",
+		"  ├─Selection_8(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_7 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_9(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1820,7 +1832,33 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"2890 LE1300_r5",
 			"3150 LE1323_r5",
 			"3290 LE1327_r5"))
+}
 
+func (s *testIntegrationSuite) TestIssue20139(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7))")
+	tk.MustExec("insert into t values(3, 3), (5, 5)")
+	plan := tk.MustQuery("explain select * from t where c = 1 and id = c")
+	plan.Check(testkit.Rows(
+		"TableReader_7 0.01 root partition:p0 data:Selection_6",
+		"└─Selection_6 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) TestIssue14481(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
+	plan := tk.MustQuery("explain select * from t where a = 1 and a = 2")
+	plan.Check(testkit.Rows("TableDual_5 8000.00 root  rows:0"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
@@ -1846,6 +1884,17 @@ func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestQueryBlockTableAliasInHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	c.Assert(tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"), IsTrue)
+	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
+		"1 2",
+	))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 }
 
 func (s *testIntegrationSuite) TestIssue10448(c *C) {
@@ -1891,4 +1940,65 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+}
+
+func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
+	// #20598
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
+	tk.MustExec("insert into tt(x) values (1)")
+	tk.MustExec("update tt set x=2, z = default")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
+
+	tk.MustGetErrMsg("update tt set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set x = 3, z = 13",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as s1, tt as s2 set s1.z = default, s2.z = 456",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+}
+
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"TableReader_7 2048.00 root  data:Selection_6",
+		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"IndexLookUp_7 2048.00 root  ",
+		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
+}
+
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
 }

@@ -543,8 +543,13 @@ func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (floa
 	return f, errors.Trace(err)
 }
 
-// ConvertJSONToInt casts JSON into int64.
-func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
+// ConvertJSONToInt64 casts JSON into int64.
+func ConvertJSONToInt64(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
+	return ConvertJSONToInt(sc, j, unsigned, mysql.TypeLonglong)
+}
+
+// ConvertJSONToInt casts JSON into int by type.
+func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
 		return 0, nil
@@ -555,18 +560,39 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		default:
 			return 1, nil
 		}
-	case json.TypeCodeInt64, json.TypeCodeUint64:
-		return j.GetInt64(), nil
+	case json.TypeCodeInt64:
+		i := j.GetInt64()
+		if unsigned {
+			uBound := IntergerUnsignedUpperBound(tp)
+			u, err := ConvertIntToUint(sc, i, uBound, tp)
+			return int64(u), sc.HandleOverflow(err, err)
+		}
+
+		lBound := IntergerSignedLowerBound(tp)
+		uBound := IntergerSignedUpperBound(tp)
+		i, err := ConvertIntToInt(i, lBound, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
+	case json.TypeCodeUint64:
+		u := j.GetUint64()
+		if unsigned {
+			uBound := IntergerUnsignedUpperBound(tp)
+			u, err := ConvertUintToUint(u, uBound, tp)
+			return int64(u), sc.HandleOverflow(err, err)
+		}
+
+		uBound := IntergerSignedUpperBound(tp)
+		i, err := ConvertUintToInt(u, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
 	case json.TypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
-			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
-			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			u, e := ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			lBound := IntergerSignedLowerBound(tp)
+			uBound := IntergerSignedUpperBound(tp)
+			u, e := ConvertFloatToInt(f, lBound, uBound, tp)
 			return u, sc.HandleOverflow(e, e)
 		}
-		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
+		bound := IntergerUnsignedUpperBound(tp)
+		u, err := ConvertFloatToUint(sc, f, bound, tp)
 		return int64(u), sc.HandleOverflow(err, err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))

@@ -47,6 +47,7 @@ var (
 	errUnsupportedShardRowIDBits              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "shard_row_id_bits for table with primary key as row id"), nil))
 	errUnsupportedAlterTableWithValidation    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITH VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
+	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
@@ -184,7 +185,8 @@ var (
 	ErrPartitionFuncNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFuncNotAllowed)
 	// ErrUniqueKeyNeedAllFieldsInPf returns must include all columns in the table's partitioning function.
 	ErrUniqueKeyNeedAllFieldsInPf = dbterror.ClassDDL.NewStd(mysql.ErrUniqueKeyNeedAllFieldsInPf)
-	errWrongExprInPartitionFunc   = dbterror.ClassDDL.NewStd(mysql.ErrWrongExprInPartitionFunc)
+	// ErrWrongExprInPartitionFunc Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed.
+	ErrWrongExprInPartitionFunc = dbterror.ClassDDL.NewStd(mysql.ErrWrongExprInPartitionFunc)
 	// ErrWarnDataTruncated returns data truncated error.
 	ErrWarnDataTruncated = dbterror.ClassDDL.NewStd(mysql.WarnDataTruncated)
 	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.
@@ -201,6 +203,8 @@ var (
 	ErrFieldNotFoundPart = dbterror.ClassDDL.NewStd(mysql.ErrFieldNotFoundPart)
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = dbterror.ClassDDL.NewStd(mysql.ErrWrongTypeColumnValue)
+	// ErrValuesIsNotIntType returns 'VALUES value for partition '%-.64s' must have type INT'
+	ErrValuesIsNotIntType = dbterror.ClassDDL.NewStd(mysql.ErrValuesIsNotIntType)
 	// ErrFunctionalIndexPrimaryKey returns 'The primary key cannot be a functional index'
 	ErrFunctionalIndexPrimaryKey = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexPrimaryKey)
 	// ErrFunctionalIndexOnField returns 'Functional index on a column is not supported. Consider using a regular index instead'
@@ -266,4 +270,7 @@ var (
 
 	// ErrTooLongValueForType is returned when the individual enum element length is too long.
 	ErrTooLongValueForType = dbterror.ClassDDL.NewStd(mysql.ErrTooLongValueForType)
+
+	// ErrUnknownEngine is returned when the table engine is unknown.
+	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 )

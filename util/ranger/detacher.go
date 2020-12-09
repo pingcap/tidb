@@ -455,6 +455,10 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		}
 	}
 
+	// Take prefix index into consideration.
+	if hasPrefix(d.lengths) {
+		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
+	}
 	totalRanges, err := UnionRanges(sc, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)

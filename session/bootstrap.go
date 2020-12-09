@@ -362,6 +362,9 @@ const (
 	tidbSystemTZ = "system_tz"
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
+	// The variable name in mysql.tidb table and it records the default value of
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -400,7 +403,7 @@ const (
 	version36 = 36
 	version37 = 37
 	version38 = 38
-	version39 = 39
+	// version39 will be redone in version46 so it's skipped here.
 	// version40 is the version that introduce new collation in TiDB,
 	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
@@ -418,9 +421,8 @@ const (
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
 	// version48 reset all deprecated concurrency related system-variables if they were all default value.
-	version48 = 48
 	// version49 introduces mysql.stats_extended table.
-	version49 = 49
+	// Both version48 and version49 will be redone in version55 and version56 so they're skipped here.
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
@@ -429,6 +431,12 @@ const (
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
 	version53 = 53
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
 )
 
 var (
@@ -470,7 +478,8 @@ var (
 		upgradeToVer36,
 		upgradeToVer37,
 		upgradeToVer38,
-		upgradeToVer39,
+		// We will redo upgradeToVer39 in upgradeToVer46,
+		// so upgradeToVer39 is skipped here.
 		upgradeToVer40,
 		upgradeToVer41,
 		upgradeToVer42,
@@ -479,12 +488,15 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
-		upgradeToVer48,
-		upgradeToVer49,
+		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
+		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
 		upgradeToVer53,
+		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
 	}
 )
 
@@ -1011,16 +1023,6 @@ func upgradeToVer38(s Session, ver int64) {
 	}
 }
 
-func upgradeToVer39(s Session, ver int64) {
-	if ver >= version39 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
-}
-
 func writeNewCollationParameter(s Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
 	b := varFalse
@@ -1116,8 +1118,60 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer48(s Session, ver int64) {
-	if ver >= version48 {
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer53(s Session, ver int64) {
+	if ver >= version53 {
+		return
+	}
+	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
+	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer54(s Session, ver int64) {
+	if ver >= version54 {
+		return
+	}
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
+	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
+	// default value of mem-quota-query, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	if ver <= version38 {
+		writeMemoryQuotaQuery(s)
+	}
+}
+
+// When cherry-pick upgradeToVer52 to v4.0, we wrongly name it upgradeToVer48.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer48 will be missed.
+// So we redo upgradeToVer48 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer55(s Session, ver int64) {
+	if ver >= version55 {
 		return
 	}
 	defValues := map[string]string{
@@ -1164,42 +1218,20 @@ func upgradeToVer48(s Session, ver int64) {
 	mustExecute(s, "COMMIT")
 }
 
-func upgradeToVer49(s Session, ver int64) {
-	if ver >= version49 {
+// When cherry-pick upgradeToVer54 to v4.0, we wrongly name it upgradeToVer49.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
+// So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer56(s Session, ver int64) {
+	if ver >= version56 {
 		return
 	}
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
-func upgradeToVer50(s Session, ver int64) {
-	if ver >= version50 {
-		return
-	}
-	doReentrantDDL(s, CreateSchemaIndexUsageTable)
-}
-
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
-}
-
-func upgradeToVer52(s Session, ver int64) {
-	if ver >= version52 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
-}
-
-func upgradeToVer53(s Session, ver int64) {
-	if ver >= version53 {
-		return
-	}
-	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
-	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+func writeMemoryQuotaQuery(s Session) {
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
 }
 

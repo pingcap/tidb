@@ -458,6 +458,7 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
@@ -561,4 +562,39 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 		"└─Selection_6 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
+}
+
+func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
+	tk.MustExec("create table t1(id varchar(20) primary key)")
+	tk.MustExec("create table t2(id varchar(20), unique(id))")
+	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
+	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+	tk.MustExec("create table t5(id bit(64) primary key)")
+	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
+	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
+	tk.MustExec("insert into t5 values(48)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain " + sql)
+		res := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
+	}
 }

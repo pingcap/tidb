@@ -498,11 +498,15 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := range p.HashByItems {
-		// "Shuffle" get value of items from `DataSource`, other than children[0].
-		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.DataSource.Schema())
-		if err != nil {
-			return err
+	// There may be one or more DataSource
+	for i := range p.ByItemArrays {
+		// Each DataSource has an array of HashByItems
+		for j := range p.ByItemArrays[i] {
+			// "Shuffle" get value of items from `DataSource`, other than children[0].
+			p.ByItemArrays[i][j], err = p.ByItemArrays[i][j].ResolveIndices(p.DataSources[i].Schema())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return err

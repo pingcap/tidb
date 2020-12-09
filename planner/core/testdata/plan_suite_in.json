@@ -662,17 +662,5 @@
       "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
       "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
     ]
-  },
-  {
-    "name": "TestPreferRangeScanOff",
-    "cases": [
-      "select * from test where age=5;"
-    ]
-  },
-  {
-    "name": "TestPreferRangeScanOn",
-    "cases": [
-      "select * from test where age=5;"
-    ]
   }
 ]
