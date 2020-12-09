@@ -451,7 +451,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 			m[id] = struct{}{}
 			mu.Unlock()
 
-			//test Alloc N
+			// test Alloc N
 			N := rand.Uint64() % 100
 			min, max, err1 := alloc.Alloc(tblID, N, 1, 1)
 			if err1 != nil {
