@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -286,7 +287,8 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
-	go c.asyncCheckAndResolveLoop()
+	interval := config.GetGlobalConfig().StoresRefreshInterval
+	go c.asyncCheckAndResolveLoop(time.Duration(interval) * time.Second)
 	return c
 }
 
@@ -296,8 +298,8 @@ func (c *RegionCache) Close() {
 }
 
 // asyncCheckAndResolveLoop with
-func (c *RegionCache) asyncCheckAndResolveLoop() {
-	ticker := time.NewTicker(time.Minute)
+func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var needCheckStores []*Store
 	for {
