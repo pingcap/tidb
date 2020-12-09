@@ -736,9 +736,9 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
 		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 		// TODO: fix admin recover for partition table.
-		//r := tk.MustQuery("admin recover index admin_test_p idx")
-		//r.Check(testkit.Rows("0 0"))
-		//tk.MustExec("admin check table admin_test_p")
+		// r := tk.MustQuery("admin recover index admin_test_p idx")
+		// r.Check(testkit.Rows("0 0"))
+		// tk.MustExec("admin check table admin_test_p")
 		// Manual recover index.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)

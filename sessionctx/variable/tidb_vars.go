@@ -485,6 +485,9 @@ const (
 
 	// TiDBGuaranteeExternalConsistency indicates whether maintain the external consistency.
 	TiDBGuaranteeExternalConsistency = "tidb_guarantee_external_consistency"
+
+	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
+	TiDBAnalyzeVersion = "tidb_analyze_version"
 )
 
 // Default TiDB system variable values.
@@ -601,6 +604,7 @@ const (
 	DefTiDBEnableAsyncCommit            = false
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
+	DefTiDBAnalyzeVersion               = 1
 )
 
 // Process global variables.
@@ -611,6 +615,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
@@ -621,7 +626,7 @@ var (
 	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)

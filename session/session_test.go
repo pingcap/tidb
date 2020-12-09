@@ -222,11 +222,12 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
 		tableType := tb[1]
-		if tableType == "VIEW" {
+		switch tableType {
+		case "VIEW":
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tableType == "BASE TABLE" {
+		case "BASE TABLE":
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		} else {
+		default:
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
@@ -3701,7 +3702,7 @@ func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
-	//Assert Coprocessor OOMAction
+	// Assert Coprocessor OOMAction
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
