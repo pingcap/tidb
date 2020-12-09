@@ -198,8 +198,8 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
 	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
-	// Test for issue https://github.com/pingcap/tidb/issues/21502.
 
+	// Test for issue https://github.com/pingcap/tidb/issues/21502.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
 	tk.MustExec("begin;")
