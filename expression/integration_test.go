@@ -5265,3 +5265,411 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestIssue20730(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS tmp;")
+	tk.MustExec("CREATE TABLE tmp (id int(11) NOT NULL,value int(1) NOT NULL,PRIMARY KEY (id))")
+	tk.MustExec("INSERT INTO tmp VALUES (1, 1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("SET @sum := 10")
+	tk.MustQuery("SELECT @sum := IF(@sum=20,4,@sum + tmp.value) sum FROM tmp ORDER BY tmp.id").Check(testkit.Rows("11", "13", "16", "20", "4"))
+}
+
+func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
+		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
+		"`c` int(11) NOT NULL," +
+		"PRIMARY KEY (`a`,`b`,`c`)," +
+		"KEY `idx` (`a`))")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ('a6', 'b6', 3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a6 b6 3"))
+	tk.MustQuery("select * from t where a='a6'").Check(testkit.Rows("a6 b6 3"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key)")
+	tk.MustExec("insert into t values ('&');")
+	tk.MustExec("replace into t values ('&');")
+	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
+}
+
+func (s *testIntegrationSuite) TestIssue20860(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int primary key, c int, d timestamp null default null)")
+	tk.MustExec("insert into t values(1, 2, '2038-01-18 20:20:30')")
+	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestIssue10462(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select json_array(true)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1=2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(1!=2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1<2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1<=2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1>2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(1>=2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_object(true, null <=> null)").Check(testkit.Rows("{\"1\": true}"))
+	tk.MustQuery("select json_object(false, 1 and 2)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 and 0)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_object(false, 1 or 0)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 xor 0)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 xor 1)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_object(false, not 1)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_array(null and 1)").Check(testkit.Rows("[null]"))
+	tk.MustQuery("select json_array(null and 0)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(null or 1)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(null or 0)").Check(testkit.Rows("[null]"))
+	tk.MustQuery("select json_array(1.15 or 0)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array('abc' or 0)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array('1abc' or 0)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(null is true)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(null is null)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 in (1, 2))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(0 in (1, 2))").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(0 not in (1, 2))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 between 0 and 2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 not between 0 and 2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array('123' like '123')").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array('abcdef' rlike 'a.*c.*')").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(is_ipv4('127.0.0.1'))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(is_ipv6('1a6b:8888:ff66:77ee:0000:1234:5678:bcde'))").Check(testkit.Rows("[true]"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a date);")
+	tk.MustExec("insert into t1 values (20100202);")
+	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestIssue17868(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t7")
+	tk.MustExec("create table t7 (col0 SMALLINT, col1 VARBINARY(1), col2 DATE, col3 BIGINT, col4 BINARY(166))")
+	tk.MustExec("insert into t7 values ('32767', '', '1000-01-03', '-0', '11101011')")
+	tk.MustQuery("select col2 = 1 from t7").Check(testkit.Rows("0"))
+	tk.MustQuery("select col2 != 1 from t7").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b char(10), key(b)) collate utf8mb4_general_ci")
+	tk.MustExec("create table t2(a int, b char(10), key(b)) collate ascii_bin")
+	tk.MustExec("insert into t1 values (1, 'a')")
+	tk.MustExec("insert into t2 values (1, 'A')")
+
+	tk.MustQuery("select /*+ inl_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
+}
+
+func (s *testIntegrationSuite) TestIssue19892(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec("CREATE TABLE dd(a date, b datetime, c timestamp)")
+
+	// check NO_ZERO_DATE
+	{
+		tk.MustExec("SET sql_mode=''")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(a) values('0000-00-00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
+			tk.MustExec("UPDATE dd SET b = '0000-00-00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('0000-00-00 20:00:00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 20:00:00')")
+			tk.MustExec("UPDATE dd SET c = '0000-00-00 20:00:00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+
+		tk.MustExec("SET sql_mode='NO_ZERO_DATE'")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(b) values('0000-0-00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(a) values('2000-10-01')")
+			tk.MustExec("UPDATE dd SET a = '0000-00-00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '0000-00-00'"))
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
+			tk.MustExec("UPDATE dd SET c = '0000-00-00 10:00:00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 10:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+
+		tk.MustExec("SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00')", "[table:1292]Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1")
+			tk.MustExec("INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
+			tk.MustGetErrMsg("UPDATE dd SET b = '0000-00-00'", "[types:1292]Incorrect datetime value: '0000-00-00'")
+			tk.MustExec("UPDATE IGNORE dd SET b = '0000-00-00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-00-00'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
+			tk.MustGetErrMsg("UPDATE dd SET c = '0000-00-00 00:00:00'", "[types:1292]Incorrect timestamp value: '0000-00-00 00:00:00'")
+			tk.MustExec("UPDATE IGNORE dd SET c = '0000-00-00 00:00:00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 00:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+	}
+
+	// check NO_ZERO_IN_DATE
+	{
+		tk.MustExec("SET sql_mode=''")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00"))
+			tk.MustExec("INSERT INTO dd(a) values('2000-00-01')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01"))
+			tk.MustExec("INSERT INTO dd(a) values('0-01-02')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01", "0000-01-02"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(b) values('2000-01-02')")
+			tk.MustExec("UPDATE dd SET b = '2000-00-02'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-00-02 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('2000-01-02 20:00:00')")
+			tk.MustExec("UPDATE dd SET c = '0000-01-02 20:00:00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-02 20:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+
+		tk.MustExec("SET sql_mode='NO_ZERO_IN_DATE'")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00'"))
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(a) values('2000-01-02')")
+			tk.MustExec("UPDATE dd SET a = '2000-00-02'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-00-02'"))
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+			tk.MustExec("UPDATE dd SET b = '2000-01-0'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+			// consistent with Mysql8
+			tk.MustExec("UPDATE dd SET b = '0-01-02'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(c) values('2000-01-02 20:00:00')")
+			tk.MustExec("UPDATE dd SET c = '2000-00-02 20:00:00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-00-02 20:00:00'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+
+		tk.MustExec("SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES'")
+		{
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
+			tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustExec("INSERT INTO dd(b) VALUES ('2000-01-02')")
+			tk.MustGetErrMsg("UPDATE dd SET b = '2000-01-00'", "[types:1292]Incorrect datetime value: '2000-01-00'")
+			tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-0'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+			tk.MustExec("UPDATE dd SET b = '0000-1-2'")
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
+			tk.MustGetErrMsg("UPDATE dd SET c = '0000-01-05'", "[types:1292]Incorrect timestamp value: '0000-01-05'")
+			tk.MustExec("UPDATE IGNORE dd SET c = '0000-01-5'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-5'"))
+			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+			tk.MustExec("TRUNCATE TABLE dd")
+			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00')", "[table:1292]Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1")
+			tk.MustExec("INSERT INTO dd(c) VALUES ('2000-01-02')")
+			tk.MustGetErrMsg("UPDATE dd SET c = '2000-01-00 20:00:00'", "[types:1292]Incorrect timestamp value: '2000-01-00 20:00:00'")
+			tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-00'")
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-00'"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		}
+	}
+
+	// check !NO_ZERO_DATE
+	tk.MustExec("SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	{
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(a) values('0000-00-00')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
+		tk.MustExec("UPDATE dd SET b = '0000-00-00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(c) values('0000-00-00 00:00:00')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
+		tk.MustExec("UPDATE dd SET c = '0000-00-00 00:00:00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
+		tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(b) VALUES ('2000-01-02')")
+		tk.MustGetErrMsg("UPDATE dd SET b = '2000-01-00'", "[types:1292]Incorrect datetime value: '2000-01-00'")
+		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-0'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		tk.MustExec("UPDATE dd SET b = '0000-1-2'")
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
+		tk.MustGetErrMsg("UPDATE dd SET c = '0000-01-05'", "[types:1292]Incorrect timestamp value: '0000-01-05'")
+		tk.MustExec("UPDATE IGNORE dd SET c = '0000-01-5'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-5'"))
+		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00')", "[table:1292]Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1")
+		tk.MustExec("INSERT INTO dd(c) VALUES ('2000-01-02')")
+		tk.MustGetErrMsg("UPDATE dd SET c = '2000-01-00 20:00:00'", "[types:1292]Incorrect timestamp value: '2000-01-00 20:00:00'")
+		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-00'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+	}
+
+	// check !NO_ZERO_IN_DATE
+	tk.MustExec("SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	{
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(a) values('2000-00-10')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-00-10"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
+		tk.MustExec("UPDATE dd SET b = '2000-00-10'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-00-10 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
+		tk.MustGetErrMsg("UPDATE dd SET c = '2000-00-10 00:00:00'", "[types:1292]Incorrect timestamp value: '2000-00-10 00:00:00'")
+		tk.MustExec("UPDATE IGNORE dd SET c = '2000-01-00 00:00:00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
+		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
+		"  `b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
+		"  `c` int(11) NOT NULL," +
+		"  PRIMARY KEY (`a`,`b`,`c`)," +
+		"  KEY `idx` (`a`)" +
+		")")
+	tk.MustExec("insert into t values ('#', 'C', 10), ('$', 'c', 20), ('$', 'c', 30), ('a', 'a', 10), ('A', 'A', 30)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
+}
+
+func (s *testSuite2) TestIssue12205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12205;")
+	tk.MustExec("create table t12205(\n    `col_varchar_64` varchar(64) DEFAULT NULL,\n    `col_varchar_64_key` varchar(64) DEFAULT NULL\n);")
+	tk.MustExec("insert into t12205 values('-1038024704','-527892480');")
+	tk.MustQuery("select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ").Check(
+		testkit.Rows("838:59:59 18446744072635875328"))
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
+}
+>>>>>>> 340ba78f0... expression: fix compatibility behaviors in sec_to_time with MySQL (#21555)
