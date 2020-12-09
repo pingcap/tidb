@@ -74,7 +74,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil
 	}
 
-	//Cache the ret full rows in schemataRetriever
+	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
 		is := infoschema.GetInfoSchema(sctx)
 		dbs := is.AllSchemas()
@@ -149,7 +149,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		e.initialized = true
 	}
 
-	//Adjust the amount of each return
+	// Adjust the amount of each return
 	maxCount := 1024
 	retCount := maxCount
 	if e.rowIdx+maxCount > len(e.rows) {
