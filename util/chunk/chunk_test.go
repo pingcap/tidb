@@ -201,7 +201,7 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	c.Assert(dst.columns[2].nullCount(), check.Equals, 6)
 	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(dst.columns[2].offsets), check.Equals, 13)
-	c.Assert(len(dst.columns[2].data), check.Equals, 150)
+	c.Assert(len(dst.columns[2].data), check.Equals, 162)
 	c.Assert(len(dst.columns[2].elemBuf), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		jsonElem := dst.GetRow(i).GetJSON(2)
@@ -254,7 +254,7 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(src.columns[2].nullCount(), check.Equals, 6)
 	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
-	c.Assert(len(src.columns[2].data), check.Equals, 150)
+	c.Assert(len(src.columns[2].data), check.Equals, 162)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
 	for i := 0; i < 12; i += 2 {
 		row := src.GetRow(i)

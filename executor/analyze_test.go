@@ -232,7 +232,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tableInfo := table.Meta()
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 0)
-	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
+	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65561))
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
