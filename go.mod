@@ -89,3 +89,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/hidehalo/parser v0.0.0-20201209093707-d608bbc0e13e
