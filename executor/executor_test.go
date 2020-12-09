@@ -6444,4 +6444,12 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("update t set a=3")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+
+	// Check retry will activate the txn immediately.
+	tk.MustExec("set @var=10")
+	tk.MustExec("update t set a=@var")
+	tk2.MustExec("update t set a=2")
+	tk.MustExec("set @var=7")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }

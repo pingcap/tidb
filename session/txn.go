@@ -590,9 +590,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	if st != nil && st.Valid() {
-		st.MergeStmtKeyExistErrs()
-	}
+	st.MergeStmtKeyExistErrs()
 	return nil
 }
 

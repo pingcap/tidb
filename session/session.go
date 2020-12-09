@@ -656,7 +656,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
-		s.PrepareTxnCtx(ctx)
+		err = s.NewTxn(ctx)
+		if err != nil {
+			return err
+		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -1504,6 +1507,14 @@ func (s *session) NewTxn(ctx context.Context) error {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
+	}
+	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
+		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+		if pessTxnConf.Enable {
+			if s.sessionVars.TxnMode == ast.Pessimistic {
+				s.sessionVars.TxnCtx.IsPessimistic = true
+			}
+		}
 	}
 	return nil
 }
