@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
@@ -69,12 +68,6 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
-	// mu protect from data race since there may exist multiple
-	// BatchPointGetExec set option for the same snapshot simultaneously.
-	mu struct {
-		sync.Mutex
-		alreadySetOptionForSnapshot bool
-	}
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -108,23 +101,18 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
-	e.mu.Lock()
-	if !e.mu.alreadySetOptionForSnapshot {
-		if e.runtimeStats != nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
-			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
 		}
-		if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-			snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-		}
-		snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-		e.mu.alreadySetOptionForSnapshot = true
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	e.mu.Unlock()
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		if e.lock {
