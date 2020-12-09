@@ -113,13 +113,12 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsTrue)
-	testKit.MustExec("analyze table t")
-
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 
+	c.Assert(statsTbl.Pseudo, IsTrue)
+
+	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -144,9 +143,8 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	do.StatsHandle().Update(is)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
-
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
@@ -157,7 +155,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {

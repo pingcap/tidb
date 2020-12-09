@@ -238,24 +238,6 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return
 }
 
-// EraseTable4Test erase a table by ID and add new empty (with Meta) table.
-// ONLY used for test.
-func (h *Handle) EraseTable4Test(ID int64) {
-	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
-}
-
-// GetAllTableStatsMemUsage4Test get all the mem usage with true table.
-// ONLY used for test.
-func (h *Handle) GetAllTableStatsMemUsage4Test() int64 {
-	data := h.statsCache.GetAll()
-	allUsage := int64(0)
-	for _, t := range data {
-		allUsage += t.MemoryUsage()
-	}
-	return allUsage
-}
-
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
