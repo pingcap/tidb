@@ -716,7 +716,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(2, 2, 2)", tableName))
 		go func() {
 			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
-			//tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
+			// tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
 			doneCh <- struct{}{}
 		}()
 		time.Sleep(150 * time.Millisecond)
