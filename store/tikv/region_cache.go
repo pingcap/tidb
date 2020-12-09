@@ -592,7 +592,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			}
 
 			// schedule a store addr resolve.
-			s.markNeedCheck(c.notifyCheckCh, true)
+			s.markNeedCheck(c.notifyCheckCh)
 		}
 
 		// try next peer to found new leader.
@@ -1557,7 +1557,7 @@ func (s *Store) compareAndSwapState(oldState, newState resolveState) bool {
 }
 
 // markNeedCheck marks resolved store to be async resolve to check store addr change.
-func (s *Store) markNeedCheck(notifyCheckCh chan struct{}, notify bool) {
+func (s *Store) markNeedCheck(notifyCheckCh chan struct{}) {
 retry:
 	oldState := s.getResolveState()
 	if oldState != resolved {
@@ -1566,11 +1566,9 @@ retry:
 	if !s.compareAndSwapState(oldState, needCheck) {
 		goto retry
 	}
-	if notify {
-		select {
-		case notifyCheckCh <- struct{}{}:
-		default:
-		}
+	select {
+	case notifyCheckCh <- struct{}{}:
+	default:
 	}
 }
 
