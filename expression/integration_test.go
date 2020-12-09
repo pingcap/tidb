@@ -8124,3 +8124,16 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
+
+func (s *testSuite2) TestIssue12205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t12205;")
+	tk.MustExec("create table t12205(\n    `col_varchar_64` varchar(64) DEFAULT NULL,\n    `col_varchar_64_key` varchar(64) DEFAULT NULL\n);")
+	tk.MustExec("insert into t12205 values('-1038024704','-527892480');")
+	tk.MustQuery("select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ").Check(
+		testkit.Rows("838:59:59 18446744072635875328"))
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
+}
