@@ -18,8 +18,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/domain"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -42,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -452,6 +455,11 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 type handleColHelper struct {
@@ -550,11 +558,12 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
-		hintProcessor: processor,
+		ctx:             sctx,
+		is:              is,
+		colMapper:       make(map[*ast.ColumnNameExpr]int),
+		handleHelper:    &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor:   processor,
+		isForUpdateRead: sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}
 }
 
@@ -817,20 +826,41 @@ func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPat
 	return tiFlashPath
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
+	is, err := domain.GetDomain(ctx).GetSnapshotInfoSchema(math.MaxUint64)
+	if err != nil {
+		return nil, err
+	}
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
+
+	latestIndexes := make(map[int64]*model.IndexInfo)
+	if check {
+		latestTbl, exist := is.TableByID(tbl.Meta().ID)
+		if exist {
+			latestTblInfo := latestTbl.Meta()
+			for _, index := range latestTblInfo.Indices {
+				latestIndexes[index.ID] = index
+			}
+		}
+	}
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			if check {
+				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
+			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
@@ -966,6 +996,7 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) 
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
+	b.isForUpdateRead = true
 	return selectLock
 }
 
@@ -2408,6 +2439,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
+	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
