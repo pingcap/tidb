@@ -2631,7 +2631,7 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -2665,9 +2665,25 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	dt, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	dtStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dt, err := types.ParseDatetime(sc, dtStr)
+	if err != nil {
+		if !terror.ErrorEqual(err, types.ErrWrongValue) {
+			return 0, true, err
+		}
+		switch strings.ToUpper(unit) {
+		case "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+			dur, err := types.ParseDuration(sc, dtStr, types.GetFsp(dtStr))
+			if err != nil {
+				return 0, true, err
+			}
+			res, err := types.ExtractDurationNum(&dur, unit)
+			return res, err != nil, err
+		}
 	}
 	if dt.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
