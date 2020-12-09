@@ -23,12 +23,14 @@ import (
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
+	/* TODO: Because of https://github.com/pingcap/tidb/issues/5817, we don't enable it now.
 	ast.Conv: {
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETInt},
 		},
 	},
+	*/
 	ast.Sign: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 	},
