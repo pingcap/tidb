@@ -380,7 +380,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("select log10(NULL)")
 	result.Check(testkit.Rows("<nil>"))
 
-	//for log
+	// for log
 	result = tk.MustQuery("select log(0.0)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select log(100)")
@@ -494,7 +494,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
-	//for exp
+	// for exp
 	result = tk.MustQuery("select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL)")
 	result.Check(testkit.Rows("1 2.718281828459045 0.36787944117144233 3.3201169227365472 <nil>"))
 	result = tk.MustQuery("select exp('tidb'), exp('1tidb')")
@@ -1657,7 +1657,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
 	// result.Check(testkit.Rows("00:20:03")
 
-	//for hour
+	// for hour
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
 
@@ -1857,10 +1857,10 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(0);")
 	result.Check(testkit.Rows("0"))
-	//result = tk.MustQuery("SELECT UNIX_TIMESTAMP(-1);")
-	//result.Check(testkit.Rows("0"))
-	//result = tk.MustQuery("SELECT UNIX_TIMESTAMP(12345);")
-	//result.Check(testkit.Rows("0"))
+	// result = tk.MustQuery("SELECT UNIX_TIMESTAMP(-1);")
+	// result.Check(testkit.Rows("0"))
+	// result = tk.MustQuery("SELECT UNIX_TIMESTAMP(12345);")
+	// result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2017-01-01')")
 	result.Check(testkit.Rows("1483228800"))
 	// Test different time zone.
@@ -2131,7 +2131,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		{"\"2009-01-01\"", "6/4", "HOUR_MINUTE", "2009-01-04 12:20:00", "2008-12-28 11:40:00"},
 		{"\"2009-01-01\"", "6/0", "HOUR_MINUTE", "<nil>", "<nil>"},
 		{"\"1970-01-01 12:00:00\"", "CAST(6/4 AS DECIMAL(3,1))", "HOUR_MINUTE", "1970-01-01 13:05:00", "1970-01-01 10:55:00"},
-		//for issue #8077
+		// for issue #8077
 		{"\"2012-01-02\"", "\"prefix8\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 		{"\"2012-01-02\"", "\"prefix8prefix\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 		{"\"2012-01-02\"", "\"8:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
@@ -2316,7 +2316,7 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 	}
 	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
 
-	//Fix ISSUE 11256
+	// Fix ISSUE 11256
 	tk.MustQuery(`select DATE_ADD('2000-04-13 07:17:02',INTERVAL -1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select DATE_ADD('2008-11-23 22:47:31',INTERVAL 266076160 QUARTER);`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select DATE_SUB('2000-04-13 07:17:02',INTERVAL 1465647104 YEAR);`).Check(testkit.Rows("<nil>"))
@@ -3384,8 +3384,8 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 	// FIXME: There is something wrong in showing float number.
-	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * 1").Check(testkit.Rows("1.7976931348623157e308"))
-	//tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * -1").Check(testkit.Rows("-1.7976931348623157e308"))
+	// tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * 1").Check(testkit.Rows("1.7976931348623157e308"))
+	// tk.MustQuery("select 1.797693134862315708145274237317043567981e+308 * -1").Check(testkit.Rows("-1.7976931348623157e308"))
 	rs, err = tk.Exec("select 1.797693134862315708145274237317043567981e+308 * 1.1")
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)

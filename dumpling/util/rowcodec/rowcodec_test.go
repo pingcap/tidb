@@ -589,7 +589,7 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 			}
 		}
 
-		//decode to chunk.
+		// decode to chunk.
 		chk := chunk.New(fts, 1, 1)
 		cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, sc.TimeZone)
 		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)

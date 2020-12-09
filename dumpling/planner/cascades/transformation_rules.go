@@ -2260,7 +2260,7 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	for _, aggFunc := range agg.AggFuncs {
 		copyFunc := aggFunc.Clone()
-		//WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
+		// WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
 		copyFunc.WrapCastForAggArgs(agg.SCtx())
 		copyFuncs = append(copyFuncs, copyFunc)
 		for _, arg := range copyFunc.Args {
