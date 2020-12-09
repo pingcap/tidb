@@ -196,9 +196,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return err
 		}
 	} else {
-		if err = d.dumpSQL(metaConn, taskChan); err != nil {
-			return err
-		}
+		d.dumpSQL(taskChan)
 	}
 	close(taskChan)
 	if err := wg.Wait(); err != nil {
@@ -374,7 +372,7 @@ func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan ch
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
 		}
-		task := NewTaskTableData(meta, newTableData(query, selectLen), chunkIndex, int(totalChunks))
+		task := NewTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks))
 		ctxDone := d.sendTaskToChan(task, taskChan)
 		if ctxDone {
 			break
@@ -453,7 +451,7 @@ func (d *Dumper) concurrentDumpTiDBTables(conn *sql.Conn, meta TableMeta, taskCh
 
 	for i, w := range where {
 		query := buildSelectQuery(db, tbl, selectField, buildWhereCondition(conf, w), orderByClause)
-		task := NewTaskTableData(meta, newTableData(query, selectLen), i, len(where))
+		task := NewTaskTableData(meta, newTableData(query, selectLen, false), i, len(where))
 		ctxDone := d.sendTaskToChan(task, taskChan)
 		if ctxDone {
 			break
@@ -578,16 +576,12 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 	return meta, nil
 }
 
-func (d *Dumper) dumpSQL(metaConn *sql.Conn, taskChan chan<- Task) error {
+func (d *Dumper) dumpSQL(taskChan chan<- Task) {
 	conf := d.conf
-	meta, tableIR, err := SelectFromSQL(conf, metaConn)
-	if err != nil {
-		return err
-	}
-
-	task := NewTaskTableData(meta, tableIR, 0, 1)
+	meta := &tableMeta{}
+	data := newTableData(conf.SQL, 0, true)
+	task := NewTaskTableData(meta, data, 0, 1)
 	d.sendTaskToChan(task, taskChan)
-	return nil
 }
 
 func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {

@@ -75,16 +75,19 @@ func (m *stringIter) HasNext() bool {
 }
 
 type tableData struct {
-	query  string
-	rows   *sql.Rows
-	colLen int
+	query        string
+	rows         *sql.Rows
+	colLen       int
+	needColTypes bool
+	colTypes     []string
 	SQLRowIter
 }
 
-func newTableData(query string, colLen int) *tableData {
+func newTableData(query string, colLength int, needColTypes bool) *tableData {
 	return &tableData{
-		query:  query,
-		colLen: colLen,
+		query:        query,
+		colLen:       colLength,
+		needColTypes: needColTypes,
 	}
 }
 
@@ -98,6 +101,22 @@ func (td *tableData) Start(ctx context.Context, conn *sql.Conn) error {
 	}
 	td.SQLRowIter = nil
 	td.rows = rows
+	ns, err := rows.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if td.needColTypes {
+		td.colLen = len(ns)
+		td.colTypes = make([]string, 0, td.colLen)
+		colTps, err := rows.ColumnTypes()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, c := range colTps {
+			td.colTypes = append(td.colTypes, c.DatabaseTypeName())
+		}
+	}
+
 	return nil
 }
 
@@ -110,6 +129,10 @@ func (td *tableData) Rows() SQLRowIter {
 
 func (td *tableData) Close() error {
 	return td.rows.Close()
+}
+
+func (td *tableData) RawRows() *sql.Rows {
+	return td.rows
 }
 
 type tableMeta struct {

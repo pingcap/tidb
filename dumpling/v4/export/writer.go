@@ -176,6 +176,12 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			}
 		}
 		err = ir.Start(ctx, conn)
+		if conf.SQL != "" {
+			meta, err = setTableMetaFromRows(ir.RawRows())
+			if err != nil {
+				return err
+			}
+		}
 		if err != nil {
 			return
 		}

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
@@ -16,6 +17,7 @@ type TableDataIR interface {
 	Start(context.Context, *sql.Conn) error
 	Rows() SQLRowIter
 	Close() error
+	RawRows() *sql.Rows
 }
 
 // TableMeta contains the meta information of a table.
@@ -86,4 +88,23 @@ type Logger interface {
 	Info(format string, args ...interface{})
 	Warn(format string, args ...interface{})
 	Error(format string, args ...interface{})
+}
+
+func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
+	tps, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	nms, err := rows.Columns()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i := range nms {
+		nms[i] = wrapBackTicks(nms[i])
+	}
+	return &tableMeta{
+		colTypes:      tps,
+		selectedField: strings.Join(nms, ","),
+		specCmts:      []string{"/*!40101 SET NAMES binary*/;"},
+	}, nil
 }
