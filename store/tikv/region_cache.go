@@ -1598,6 +1598,9 @@ func (s *Store) IsSameLabels(labels []*metapb.StoreLabel) bool {
 
 // IsLabelsMatch return whether the store's labels match the target labels
 func (s *Store) IsLabelsMatch(labels []*metapb.StoreLabel) bool {
+	if len(labels) < 1 {
+		return true
+	}
 	for _, targetLabel := range labels {
 		match := false
 		for _, label := range s.labels {
