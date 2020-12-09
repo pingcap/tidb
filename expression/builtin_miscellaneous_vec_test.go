@@ -43,7 +43,7 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			newSelectStringGener(
 				[]string{
 					"192.168.0.1",
-					"2001:db8::68", //ipv6
+					"2001:db8::68", // ipv6
 				},
 			)}},
 	},
@@ -187,7 +187,7 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(result.GetInt64(0), Equals, int64(0))
 
-	//// strict model
+	// strict model
 	input.Reset()
 	input.AppendFloat64(0, 0.5)
 	start := time.Now()

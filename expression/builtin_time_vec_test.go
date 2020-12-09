@@ -205,13 +205,13 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 	// This test case may fail due to the issue: https://github.com/pingcap/tidb/issues/13638.
 	// We remove this case to stabilize CI, and will reopen this when we fix the issue above.
-	//ast.TimestampAdd: {
-	//	{
-	//		retEvalType:   types.ETString,
-	//		childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
-	//		geners:        []dataGenerator{&unitStrGener{newDefaultRandGen()}, nil, nil},
-	//	},
-	//},
+	// ast.TimestampAdd: {
+	// 	{
+	// 		retEvalType:   types.ETString,
+	// 		childrenTypes: []types.EvalType{types.ETString, types.ETInt, types.ETDatetime},
+	// 		geners:        []dataGenerator{&unitStrGener{newDefaultRandGen()}, nil, nil},
+	// 	},
+	// },
 	ast.UnixTimestamp: {
 		{
 			retEvalType:   types.ETInt,
