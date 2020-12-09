@@ -826,13 +826,41 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	var err error = nil
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			return ddl.ErrTableOptionUnionUnsupported
+			err = ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			return ddl.ErrTableOptionInsertMethodUnsupported
+			err = ddl.ErrTableOptionInsertMethodUnsupported
+		case ast.TableOptionEngine:
+			err = checkTableEngine(option.StrValue)
 		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var mysqlValidTableEngineNames = map[string]struct{}{
+	"archive":    {},
+	"blackhole":  {},
+	"csv":        {},
+	"example":    {},
+	"federated":  {},
+	"innodb":     {},
+	"memory":     {},
+	"merge":      {},
+	"mgr_myisam": {},
+	"myisam":     {},
+	"ndb":        {},
+	"heap":       {},
+}
+
+func checkTableEngine(engineName string) error {
+	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
+		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
