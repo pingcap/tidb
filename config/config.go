@@ -133,7 +133,7 @@ type Config struct {
 	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
 	IndexLimit                 int               `toml:"index-limit" json:"index-limit"`
-	TableColumnLimit           uint32               `toml:"table-column-limit" json:"table-column-limit"`
+	TableColumnCountLimit      uint32            `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
@@ -652,7 +652,7 @@ var defaultConf = Config{
 	CheckMb4ValueInUTF8:          true,
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
-	TableColumnLimit:             512,
+	TableColumnCountLimit:        512,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -961,7 +961,7 @@ func (c *Config) Valid() error {
 	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
 		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
 	}
-	if c.TableColumnLimit < DefTableColumnCountLimit || c.TableColumnLimit > DefMaxOfTableColumnCountLimit {
+	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
 

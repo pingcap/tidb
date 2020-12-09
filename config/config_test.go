@@ -266,7 +266,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.IndexLimit, Equals, 70)
-	c.Assert(conf.TableColumnLimit, Equals, 4000)
+	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
@@ -491,7 +491,7 @@ func (s *testConfigSuite) TestIndexLimit(c *C) {
 func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
-		conf.TableColumnLimit = uint32(tableColumnLimit)
+		conf.TableColumnCountLimit = uint32(tableColumnLimit)
 		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
 	}
 	checkValid(DefTableColumnCountLimit, true)

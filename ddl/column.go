@@ -1604,7 +1604,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(colNum int) error {
-	if uint32(colNum) > config.GetGlobalConfig().TableColumnLimit {
+	if uint32(colNum) > config.GetGlobalConfig().TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
