@@ -1163,8 +1163,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
+	sd := &execdetails.ScanDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
-		sd := &execdetails.ScanDetail{}
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
 			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
@@ -1179,9 +1179,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			sd.RocksdbBlockReadCount = scanDetailV2.RocksdbBlockReadCount
 			sd.RocksdbBlockReadByte = scanDetailV2.RocksdbBlockReadByte
 		}
-		resp.detail.ScanDetail = sd
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		sd := &execdetails.ScanDetail{}
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
 			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 			sd.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
@@ -1192,8 +1190,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				sd.TotalKeys = scanDetail.Write.Total
 			}
 		}
-		resp.detail.ScanDetail = sd
 	}
+	resp.detail.ScanDetail = sd
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")

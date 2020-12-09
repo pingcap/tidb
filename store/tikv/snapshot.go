@@ -751,7 +751,6 @@ type SnapshotRuntimeStats struct {
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
 	scanDetail     *execdetails.ScanDetail
-	timeDetail     *pb.TimeDetail
 }
 
 // Tp implements the RuntimeStats interface.
