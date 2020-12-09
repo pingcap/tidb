@@ -632,10 +632,6 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 	if err != nil {
 		return res, errors.Trace(err)
 	}
-<<<<<<< HEAD
-	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
-=======
->>>>>>> 3b1e1027f... expression, json: fix converting from string to decimal (#21592)
 	return res, errors.Trace(err)
 }
 

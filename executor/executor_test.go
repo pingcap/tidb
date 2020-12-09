@@ -6455,14 +6455,6 @@ func (s *testSuite) Test17780(c *C) {
 	// the update should not affect c0
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite) Test13004(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
-	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
-}
 
 func (s *testSuite) Test12178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6472,4 +6464,3 @@ func (s *testSuite) Test12178(c *C) {
 	tk.MustExec("insert into ta values (JSON_EXTRACT('{\"c\": \"1234567890123456789012345678901234567890123456789012345\"}', '$.c'))")
 	tk.MustQuery("select * from ta").Check(testkit.Rows("1234567890123456789012345678901234567890123456789012345.00"))
 }
->>>>>>> 3b1e1027f... expression, json: fix converting from string to decimal (#21592)
