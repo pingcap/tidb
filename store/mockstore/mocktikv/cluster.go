@@ -152,7 +152,7 @@ func (c *Cluster) CancelStore(storeID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	//A store returns context.Cancelled Error when cancel is true.
+	// A store returns context.Cancelled Error when cancel is true.
 	if store := c.stores[storeID]; store != nil {
 		store.cancel = true
 	}
@@ -198,11 +198,11 @@ func (c *Cluster) GetAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 }
 
 // AddStore add a new Store to the cluster.
-func (c *Cluster) AddStore(storeID uint64, addr string) {
+func (c *Cluster) AddStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.stores[storeID] = newStore(storeID, addr)
+	c.stores[storeID] = newStore(storeID, addr, labels...)
 }
 
 // RemoveStore removes a Store from the cluster.

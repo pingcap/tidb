@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -172,7 +172,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
-	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
@@ -332,5 +332,5 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(errno.ErrForUpdateCantRetry, errno.MySQLErrName[errno.ErrForUpdateCantRetry])
+	ErrForUpdateCantRetry = dbterror.ClassSession.NewStd(errno.ErrForUpdateCantRetry)
 )

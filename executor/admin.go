@@ -76,14 +76,18 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		appendRows := make([]chunk.Row, 0, e.srcChunk.NumRows())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					req.AppendRow(row)
+					appendRows = append(appendRows, row)
 					break
 				}
 			}
+		}
+		if len(appendRows) > 0 {
+			req.AppendRows(appendRows)
 		}
 		if req.NumRows() > 0 {
 			return nil
@@ -571,7 +575,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++

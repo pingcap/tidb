@@ -198,12 +198,13 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 			if idx == nil {
 				continue
 			}
-			cms, err := statistics.DecodeCMSketch(row.GetBytes(3), nil)
+			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(3), nil)
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))
 			}
 			idx.CMSketch = cms
+			idx.TopN = topN
 		}
 	}
 }
@@ -237,6 +238,7 @@ func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64
 }
 
 func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+	affectedIndexes := make(map[int64]*statistics.Index)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
@@ -247,9 +249,16 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 		if !ok || idx.CMSketch == nil {
 			continue
 		}
+		if idx.TopN == nil {
+			idx.TopN = statistics.NewTopN(32)
+		}
+		affectedIndexes[row.GetInt64(1)] = idx
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
-		idx.CMSketch.AppendTopN(data, row.GetUint64(3))
+		idx.TopN.AppendTopN(data, row.GetUint64(3))
+	}
+	for _, idx := range affectedIndexes {
+		idx.TopN.Sort()
 	}
 }
 
@@ -472,7 +481,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.statsCache.initStatsCache(tables, version)
+	h.statsCache.InitStatsCache(tables, version)
 	return nil
 }
 

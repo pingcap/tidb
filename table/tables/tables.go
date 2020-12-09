@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -399,15 +398,26 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			binlogNewRow = append(binlogNewRow, value)
 		}
 	}
-
+	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-	if err != nil {
-		return err
+	if !sessVars.InTxn() {
+		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
+		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
+			sessVars.PresumeKeyNotExists = true
+		}
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
+		if err != nil {
+			return err
+		}
+	} else {
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		if err != nil {
+			return err
+		}
 	}
 
 	key := t.RecordKey(h)
-	sessVars := sctx.GetSessionVars()
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
@@ -703,6 +713,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
+	logutil.BgLogger().Debug("addRecord",
+		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd)
 	if err != nil {
@@ -732,7 +744,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			handleStr := kv.GetDuplicateErrorHandleString(recordID)
+			handleStr := getDuplicateErrorHandleString(t, recordID, r)
 			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
@@ -878,7 +890,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) {
+		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
 			pkIdx := FindPrimaryIndex(meta)
 			var idxOfIdx int
 			for i, idxCol := range pkIdx.Columns {
@@ -910,7 +922,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) || col.IsCommonHandleColumn(meta) {
+		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -1093,11 +1105,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	}
 
 	key := t.RecordKey(h)
-	err = txn.Delete(key)
-	if err != nil {
-		return err
-	}
-	return nil
+	return txn.Delete(key)
 }
 
 // removeRowIndices removes all the indices of a row.
@@ -1112,7 +1120,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -1127,7 +1135,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, txn, vals, h)
+	return idx.Delete(sc, txn.GetUnionStore(), vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
@@ -1413,10 +1421,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			isNewCollation := collate.NewCollationEnabled() &&
-				col.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(col.Flag)
-			canSkip = canSkip && !isNewCollation
+			canSkip = canSkip && !types.CommonHandleNeedRestoredData(&col.FieldType)
 			return canSkip
 		}
 	}
@@ -1471,12 +1476,37 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	recordKey := t.RecordKey(recordID)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		handleStr := kv.GetDuplicateErrorHandleString(recordID)
+		handleStr := getDuplicateErrorHandleString(t, recordID, data)
 		return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}
 	return nil
+}
+
+func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
+	if handle.IsInt() {
+		return kv.GetDuplicateErrorHandleString(handle)
+	}
+	var pk table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().Primary {
+			pk = idx
+			break
+		}
+	}
+	if pk == nil {
+		return kv.GetDuplicateErrorHandleString(handle)
+	}
+	var err error
+	str := make([]string, len(pk.Meta().Columns))
+	for i, col := range pk.Meta().Columns {
+		str[i], err = row[col.Offset].ToString()
+		if err != nil {
+			return kv.GetDuplicateErrorHandleString(handle)
+		}
+	}
+	return strings.Join(str, "-")
 }
 
 func init() {

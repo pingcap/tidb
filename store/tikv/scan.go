@@ -236,6 +236,26 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return errors.Trace(err)
 		}
 
+		// When there is a response-level key error, the returned pairs are incomplete.
+		// We should resolve the lock first and then retry the same request.
+		if keyErr := cmdScanResp.GetError(); keyErr != nil {
+			lock, err := extractLockFromKeyErr(keyErr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version.Ver, []*Lock{lock})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			continue
+		}
+
 		kvPairs := cmdScanResp.Pairs
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {

@@ -105,7 +105,7 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
-//IsFullRange check if the range is full scan range
+// IsFullRange check if the range is full scan range
 func (ran *Range) IsFullRange() bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
@@ -201,7 +201,9 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
-	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+	case types.KindBytes:
+		return fmt.Sprintf("0x%X", d.GetValue())
+	case types.KindString, types.KindMysqlEnum, types.KindMysqlSet,
 		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
 		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}

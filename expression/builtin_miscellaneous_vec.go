@@ -52,7 +52,7 @@ func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
 		if ipv4 == nil {
-			//Not a vaild ipv4 address.
+			// Not a vaild ipv4 address.
 			result.AppendNull()
 			continue
 		}
@@ -256,7 +256,7 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
-				//Not an IPv6 address, return false
+				// Not an IPv6 address, return false
 				i64s[i] = 0
 			} else {
 				i64s[i] = 1
@@ -381,7 +381,7 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 			ipAddress := buf.GetBytes(i)
 			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
-				//Not an IPv6 address, return false
+				// Not an IPv6 address, return false
 				i64s[i] = 0
 			} else {
 				i64s[i] = 1
@@ -448,7 +448,7 @@ func (b *builtinInet6AtonSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		var isMappedIpv6 bool
 		ipTo4 := ip.To4()
 		if ipTo4 != nil && strings.Contains(val, ":") {
-			//mapped ipv6 address.
+			// mapped ipv6 address.
 			isMappedIpv6 = true
 		}
 
@@ -517,7 +517,7 @@ func (b *builtinInetAtonSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 			result.SetNull(i, true)
 			continue
 		}
-		//reset
+		// reset
 		byteResult = 0
 		res = 0
 		dotCount = 0

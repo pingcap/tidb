@@ -75,9 +75,10 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		hitCnt int64
-		cached map[string][]byte
-		stats  *SnapshotRuntimeStats
+		hitCnt     int64
+		cached     map[string][]byte
+		cachedSize int
+		stats      *SnapshotRuntimeStats
 	}
 	sampleStep uint32
 }
@@ -174,7 +175,23 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		s.mu.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
-		s.mu.cached[string(key)] = m[string(key)]
+		val := m[string(key)]
+		s.mu.cachedSize += len(key) + len(val)
+		s.mu.cached[string(key)] = val
+	}
+
+	const cachedSizeLimit = 10 << 30
+	if s.mu.cachedSize >= cachedSizeLimit {
+		for k, v := range s.mu.cached {
+			if _, needed := m[k]; needed {
+				continue
+			}
+			delete(s.mu.cached, k)
+			s.mu.cachedSize -= len(k) + len(v)
+			if s.mu.cachedSize < cachedSizeLimit {
+				break
+			}
+		}
 	}
 	s.mu.Unlock()
 
@@ -295,18 +312,28 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			lockedKeys [][]byte
 			locks      []*Lock
 		)
-		for _, pair := range batchGetResp.Pairs {
-			keyErr := pair.GetError()
-			if keyErr == nil {
-				collectF(pair.GetKey(), pair.GetValue())
-				continue
-			}
+		if keyErr := batchGetResp.GetError(); keyErr != nil {
+			// If a response-level error happens, skip reading pairs.
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			lockedKeys = append(lockedKeys, lock.Key)
 			locks = append(locks, lock)
+		} else {
+			for _, pair := range batchGetResp.Pairs {
+				keyErr := pair.GetError()
+				if keyErr == nil {
+					collectF(pair.GetKey(), pair.GetValue())
+					continue
+				}
+				lock, err := extractLockFromKeyErr(keyErr)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				lockedKeys = append(lockedKeys, lock.Key)
+				locks = append(locks, lock)
+			}
 		}
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
@@ -319,7 +346,11 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 					return errors.Trace(err)
 				}
 			}
-			pending = lockedKeys
+			// Only reduce pending keys when there is no response-level error. Otherwise,
+			// lockedKeys may be incomplete.
+			if batchGetResp.GetError() == nil {
+				pending = lockedKeys
+			}
 			continue
 		}
 		return nil
@@ -542,6 +573,15 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	if keyErr.CommitTsTooLarge != nil {
+		err := errors.Errorf("commit TS %v is too large", keyErr.CommitTsTooLarge.CommitTs)
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	if keyErr.TxnNotFound != nil {
+		err := errors.Errorf("txn %d not found", keyErr.TxnNotFound.StartTs)
+		return errors.Trace(err)
+	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
@@ -731,7 +771,8 @@ func (rs *SnapshotRuntimeStats) String() string {
 			buf.WriteByte(',')
 		}
 		ms := rs.backoffSleepMS[k]
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%d ms}", k.String(), v, ms))
+		d := time.Duration(ms) * time.Millisecond
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
 	}
 	return buf.String()
 }
