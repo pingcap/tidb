@@ -270,4 +270,7 @@ var (
 
 	// ErrTooLongValueForType is returned when the individual enum element length is too long.
 	ErrTooLongValueForType = dbterror.ClassDDL.NewStd(mysql.ErrTooLongValueForType)
+
+	// ErrUnknownEngine is returned when the table engine is unknown.
+	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 )

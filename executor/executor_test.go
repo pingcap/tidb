@@ -1785,9 +1785,9 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	// Check cast json to decimal.
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12178
-	//tk.MustExec("drop table if exists test_json")
-	//tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
-	//tk.MustExec(`insert into test_json (b) values
+	// tk.MustExec("drop table if exists test_json")
+	// tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	// tk.MustExec(`insert into test_json (b) values
 	//	('{"c": "1267.1"}'),
 	//	('{"c": "1267.01"}'),
 	//	('{"c": "1267.1234"}'),
@@ -1795,7 +1795,7 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	//	('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
 	//	('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
 	//
-	//tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+	// tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
 	//	"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
 	//	"1234567890123456789012345678901234567890123456789012345.12"))
 }
@@ -4699,6 +4699,11 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, c int, d int, primary key(d, a, c));")
 	tk.MustQuery("split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);").Check(testkit.Rows("3 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
+	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
+	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
 }
 
 func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
@@ -7062,6 +7067,36 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
+func (s *testSerialSuite) TestIssue21441(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`insert into t values(1),(2),(3)`)
+	tk.Se.GetSessionVars().InitChunkSize = 1
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	sql := `
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t`
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1", "1", "1", "1", "1", "1", "1", "1",
+		"2", "2", "2", "2", "2", "2", "2", "2",
+		"3", "3", "3", "3", "3", "3", "3", "3",
+	))
+
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
+}
+
 func (s *testSuite) Test17780(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7071,4 +7106,10 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustExec("update t0 set c0=0 where t0.c0 like 0")
 	// the update should not affect c0
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
+}
+
+func (s *testSuite) Test13004(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
+	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
