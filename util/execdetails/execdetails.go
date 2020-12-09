@@ -324,28 +324,28 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
-	copDetails := d.ScanDetail
-	if copDetails != nil {
-		if copDetails.ProcessedKeys > 0 {
-			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
+	scanDetail := d.ScanDetail
+	if scanDetail != nil {
+		if scanDetail.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(scanDetail.ProcessedKeys, 10))
 		}
-		if copDetails.TotalKeys > 0 {
-			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
+		if scanDetail.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
-		if copDetails.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
+		if scanDetail.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
-		if copDetails.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
+		if scanDetail.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
 		}
-		if copDetails.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
+		if scanDetail.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
 		}
-		if copDetails.RocksdbBlockReadCount > 0 {
-			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
+		if scanDetail.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
 		}
-		if copDetails.RocksdbBlockReadByte > 0 {
-			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
+		if scanDetail.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -429,7 +429,7 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats      map[string][]*BasicRuntimeStats
-	copDetails *ScanDetail
+	scanDetail *ScanDetail
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -492,7 +492,7 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
-	if detail := crs.copDetails; detail != nil {
+	if detail := crs.scanDetail; detail != nil {
 		crs.writeField(buf, "total_keys", detail.TotalKeys)
 		crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
 		buf.WriteString(", rocksdb: {")
@@ -749,10 +749,10 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 // RecordCopDetail records a specific cop tasks's cop detail.
 func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *ScanDetail) {
 	copStats := e.GetCopStats(planID)
-	if copStats.copDetails == nil {
-		copStats.copDetails = &ScanDetail{}
+	if copStats.scanDetail == nil {
+		copStats.scanDetail = &ScanDetail{}
 	}
-	copStats.copDetails.Merge(detail)
+	copStats.scanDetail.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.

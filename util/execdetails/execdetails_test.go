@@ -100,7 +100,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
-	copDetails := &ScanDetail{
+	scanDetail := &ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 5,
@@ -109,7 +109,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopDetail(tableScanID, copDetails)
+	stats.RecordCopDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
@@ -139,9 +139,9 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 
-	cop.copDetails.ProcessedKeys = 0
-	cop.copDetails.RocksdbKeySkippedCount = 0
-	cop.copDetails.RocksdbBlockReadCount = 0
+	cop.scanDetail.ProcessedKeys = 0
+	cop.scanDetail.RocksdbKeySkippedCount = 0
+	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
 	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, total_keys: 15, "+
 		"processed_keys: 0, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block_cache_hit_count: 10, block_read_count: 0, block_read: 100 Bytes}" {
@@ -158,7 +158,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, "tablescan_"+strconv.Itoa(tableScanID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
-	copDetails := &ScanDetail{
+	scanDetail := &ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
 		RocksdbDeleteSkippedCount: 10,
@@ -167,7 +167,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopDetail(tableScanID, copDetails)
+	stats.RecordCopDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
