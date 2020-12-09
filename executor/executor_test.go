@@ -6415,7 +6415,7 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
-func (s *testSerialSuite) TestIssue21441(c *C) {
+func (s *testSuite) TestIssue21441(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
 
