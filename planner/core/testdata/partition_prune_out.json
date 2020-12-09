@@ -339,6 +339,38 @@
           "└─Selection_6 8002.00 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(plus(test_partition.t1.a, test_partition.t1.b), 3))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from t1 where id = 1 or id=2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 20.00 root partition:all data:Selection_6",
+          "└─Selection_6 20.00 cop[tikv]  or(eq(test_partition.t1.id, 1), eq(test_partition.t1.id, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id = 1 and a=1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 0.01 root partition:all data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t1.a, 1), eq(test_partition.t1.id, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 partition(p1) where a = 1 or b = 2",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 19.99 root partition:dual data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

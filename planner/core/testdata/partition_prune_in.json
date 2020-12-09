@@ -30,7 +30,10 @@
       "select * from t1 where a in (1,6) and (a=3 and b =3)",
       "select * from t1 where a = 1 and (b=6 or a=6)",
       "select * from t1 where a = 100 and (b=100 or a=100)",
-      "select * from t1 where a = 1 or (a+b=3)"
+      "select * from t1 where a = 1 or (a+b=3)",
+      "select * from t1 where id = 1 or id=2",
+      "select * from t1 where id = 1 and a=1",
+      "select * from t1 partition(p1) where a = 1 or b = 2"
     ]
   }
 ]
