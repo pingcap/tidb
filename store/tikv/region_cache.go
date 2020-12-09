@@ -311,24 +311,10 @@ func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
 			c.checkAndResolve(needCheckStores)
 		case <-ticker.C:
 			// refresh store once a minute to update labels
-			c.markAllNeedCheck()
+			for _, store := range c.storeMu.stores {
+				store.reResolve(c)
+			}
 		}
-	}
-}
-
-func (c *RegionCache) markAllNeedCheck() {
-	c.storeMu.Lock()
-	defer c.storeMu.Unlock()
-	if len(c.storeMu.stores) < 1 {
-		return
-	}
-	// we only send notify once
-	for _, s := range c.storeMu.stores {
-		s.markNeedCheck(c.notifyCheckCh, false)
-	}
-	select {
-	case c.notifyCheckCh <- struct{}{}:
-	default:
 	}
 }
 
