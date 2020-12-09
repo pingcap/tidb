@@ -166,7 +166,7 @@ var (
 const (
 	headerSize   = 8 // element size + data size.
 	dataSizeOff  = 4
-	keyEntrySize = 6 // keyOff +  keyLen
+	keyEntrySize = 8 // keyOff +  keyLen
 	keyLenOff    = 4
 	valTypeSize  = 1
 	valEntrySize = 5

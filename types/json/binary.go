@@ -212,7 +212,7 @@ func (bj BinaryJSON) arrayGetElem(idx int) BinaryJSON {
 
 func (bj BinaryJSON) objectGetKey(i int) []byte {
 	keyOff := int(endian.Uint32(bj.Value[headerSize+i*keyEntrySize:]))
-	keyLen := int(endian.Uint16(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
+	keyLen := int(endian.Uint32(bj.Value[headerSize+i*keyEntrySize+keyLenOff:]))
 	return bj.Value[keyOff : keyOff+keyLen]
 }
 
@@ -622,9 +622,9 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 	for i, field := range fields {
 		keyEntryOff := keyEntryBegin + i*keyEntrySize
 		keyOff := len(buf) - docOff
-		keyLen := uint32(len(field.key))
+		keyLen := len(field.key)
 		endian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
-		endian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
+		endian.PutUint32(buf[keyEntryOff+keyLenOff:], uint32(keyLen))
 		buf = append(buf, field.key...)
 	}
 	for i, field := range fields {

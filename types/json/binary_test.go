@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var _ = Suite(&testJSONSuite{})
@@ -405,6 +406,18 @@ func (s *testJSONSuite) TestGetKeys(c *C) {
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
 	parsedBJ = mustParseBinaryFromString(c, "{}")
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+
+	buf := make([]byte, 65537)
+	for i := range buf {
+		buf[i] = 'a'
+	}
+	str := string(hack.String(buf))
+	parsedBJ = mustParseBinaryFromString(c, "{\""+str[:65535]+"\": 1}")
+	c.Assert(len(parsedBJ.GetKeys().String()), Equals, 65539)
+	parsedBJ = mustParseBinaryFromString(c, "{\""+str[:65536]+"\": 2}")
+	c.Assert(len(parsedBJ.GetKeys().String()), Equals, 65540)
+	parsedBJ = mustParseBinaryFromString(c, "{\""+str[:65537]+"\": 3}")
+	c.Assert(len(parsedBJ.GetKeys().String()), Equals, 65541)
 }
 
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {

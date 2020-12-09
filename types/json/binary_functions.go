@@ -329,7 +329,7 @@ func buildBinaryObject(keys [][]byte, elems []BinaryJSON) BinaryJSON {
 	endian.PutUint32(buf[dataSizeOff:], uint32(totalSize))
 	for i, key := range keys {
 		endian.PutUint32(buf[headerSize+i*keyEntrySize:], uint32(len(buf)))
-		endian.PutUint16(buf[headerSize+i*keyEntrySize+keyLenOff:], uint16(len(key)))
+		endian.PutUint32(buf[headerSize+i*keyEntrySize+keyLenOff:], uint32(len(key)))
 		buf = append(buf, key...)
 	}
 	entryStart := headerSize + len(elems)*keyEntrySize
@@ -599,7 +599,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 		if elemCount > 0 {
 			firstKeyOff := int(endian.Uint32(bj.Value[headerSize:]))
 			lastKeyOff := int(endian.Uint32(bj.Value[headerSize+(elemCount-1)*keyEntrySize:]))
-			lastKeyLen := int(endian.Uint16(bj.Value[headerSize+(elemCount-1)*keyEntrySize+keyLenOff:]))
+			lastKeyLen := int(endian.Uint32(bj.Value[headerSize+(elemCount-1)*keyEntrySize+keyLenOff:]))
 			buf = append(buf, bj.Value[firstKeyOff:lastKeyOff+lastKeyLen]...)
 		}
 	}
