@@ -443,7 +443,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
-func (s *testPlanNormalize) BenchmarkDecodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -475,7 +475,7 @@ func (s *testPlanNormalize) BenchmarkDecodePlanPerformance(c *C) {
 	}
 }
 
-func (s *testPlanNormalize) BenchmarkEncodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
