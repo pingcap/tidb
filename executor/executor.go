@@ -1596,12 +1596,13 @@ func (e *UnionExec) Close() error {
 	}
 	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
 	// promised to exit when reaching here (e.childIDChan been closed).
+	var firstErr error
 	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
-		if err := e.children[i].Close(); err != nil {
-			return err
+		if err := e.children[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
