@@ -1832,4 +1832,43 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
+
+	// Test pessimistic retry for unique index amend.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 1), (2, 2);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c)")
+	tk.MustExec("insert into t values(3, 5)")
+	tk.MustExec("update t set c = 4 where c = 2")
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		err = tk2.ExecToErr("begin pessimistic")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("insert into t values(5, 5)")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("delete from t where id = 5")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		// let commit in tk start.
+		errCh <- err
+		time.Sleep(time.Millisecond * 100)
+		err = tk2.ExecToErr("commit")
+		errCh <- err
+	}()
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	err = <-errCh
+	c.Assert(err, Equals, nil)
 }
