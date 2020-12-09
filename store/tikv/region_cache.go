@@ -311,7 +311,14 @@ func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
 			c.checkAndResolve(needCheckStores)
 		case <-ticker.C:
 			// refresh store once a minute to update labels
-			for _, store := range c.storeMu.stores {
+			var stores []*Store
+			c.storeMu.RLock()
+			stores = make([]*Store, 0, len(c.storeMu.stores))
+			for _, s := range c.storeMu.stores {
+				stores = append(stores, s)
+			}
+			c.storeMu.RUnlock()
+			for _, store := range stores {
 				store.reResolve(c)
 			}
 		}
