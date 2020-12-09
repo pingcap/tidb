@@ -1172,7 +1172,7 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 	}
 }
 
-func (s *testChunkSuite) TestAppendRowsByColsIdx(c *check.C) {
+func (s *testChunkSuite) TestAppendRowsByColIdxs(c *check.C) {
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)

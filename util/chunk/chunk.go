@@ -740,6 +740,7 @@ func (c *Chunk) AppendRowsByColIdxs(rows []Row, colIdxs []int) (wide int) {
 		return
 	}
 	for _, srcRow := range rows {
+		c.appendSel(0)
 		for i, colIdx := range colIdxs {
 			appendCellByCell(c.columns[i], srcRow.c.columns[colIdx], srcRow.idx)
 		}
