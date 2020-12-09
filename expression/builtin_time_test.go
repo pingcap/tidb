@@ -2058,6 +2058,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		{[]types.Datum{types.NewStringDatum("2017-01-18"), types.NewStringDatum("12:30:59")}, "2017-01-18 12:30:59"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("12:30:50")}, "2017-01-18 13:31:51"},
 		{[]types.Datum{types.NewStringDatum("2017-01-18 01:01:01"), types.NewStringDatum("838:59:59")}, "2017-02-22 00:01:00"},
+		{[]types.Datum{types.NewStringDatum("0000-01-01"), types.NewStringDatum("1")}, ""},
 
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123"))}, "2017-01-18 12:39:50.123"},
 		{[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.999"))}, "2017-01-18 12:39:50.999"},
@@ -2410,6 +2411,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+		{"DAY", 28768, 0, ""},
 	}
 
 	fc := funcs[ast.TimestampAdd]
