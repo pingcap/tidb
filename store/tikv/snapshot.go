@@ -470,11 +470,18 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
 	case kv.ReplicaRead:
+		s.mu.Lock()
 		s.replicaRead = val.(kv.ReplicaReadType)
+<<<<<<< HEAD
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
+=======
+		s.mu.Unlock()
+>>>>>>> 0eb8ff97b... executor: open childExec during execution for UnionExec (#21561)
 	case kv.TaskID:
+		s.mu.Lock()
 		s.taskID = val.(uint64)
+		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
