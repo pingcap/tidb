@@ -910,7 +910,7 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:          DefTiDBEnableParallelApply,
 		ShardAllocateStep:            DefTiDBShardAllocateStep,
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
-		EnableChangeMultiSchema:      DefTiDBMultiSchemaChange,
+		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
