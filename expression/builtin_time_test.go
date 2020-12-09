@@ -2410,6 +2410,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 		{"MINUTE", 1, "2003-01-02", "2003-01-02 00:01:00"},
 		{"WEEK", 1, "2003-01-02 23:59:59", "2003-01-09 23:59:59"},
 		{"MICROSECOND", 1, 950501, "1995-05-01 00:00:00.000001"},
+		{"DAY", 28768, 0, ""},
 	}
 
 	fc := funcs[ast.TimestampAdd]

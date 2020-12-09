@@ -6670,7 +6670,8 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	}
 	tm1, err := arg.GoTime(time.Local)
 	if err != nil {
-		return "", isNull, err
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
 	}
 	var tb time.Time
 	fsp := types.DefaultFsp
