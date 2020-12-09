@@ -45,7 +45,8 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	// set new BytesLimit
 	BytesLimit := int64(90000)
 
-	s.do.StatsHandle().SetBytesLimit4Test(BytesLimit)
+	do.StatsHandle().SetBytesLimit4Test(BytesLimit)
+	// create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("insert into t2 values(1, 2)")
 	do = s.do
@@ -101,6 +102,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t2")
 	c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
+
 }
 
 func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
@@ -209,6 +211,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		for _, v := range statsTblnew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
+
 	}
 }
 
@@ -254,5 +257,6 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		for _, v := range statsTblNew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
+
 	}
 }
