@@ -1668,7 +1668,9 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 		tm1, err := arg.GoTime(time.Local)
 		if err != nil {
-			return err
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
 		}
 		var tb time.Time
 		fsp := types.DefaultFsp
