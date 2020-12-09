@@ -36,12 +36,6 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -205,13 +199,19 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-			if len(e.handleVal) == 0 {
-				// handle is not found, try lock the index key if isolation level is not read consistency
-				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-					return nil
+
+			// try lock the index key if isolation level is not read consistency
+			// also lock key if read consistency read a value
+			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+				err = e.lockKeyIfNeeded(ctx, e.idxKey)
+				if err != nil {
+					return err
 				}
-				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
+			if len(e.handleVal) == 0 {
+				return nil
+			}
+
 			var iv kv.Handle
 			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
@@ -338,34 +338,36 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return nil, err
 		}
 		// key does not exist in mem buffer, check the lock cache
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return val, nil
+		if e.lock {
+			var ok bool
+			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok {
+				return val, nil
+			}
 		}
 		// fallthrough to snapshot get.
 	}
 
-	isLocked := e.tblInfo.IsLocked()
-	if !isLocked || e.tblInfo.Lock.Tp != model.TableLockRead { // if not read lock or table was unlock then snapshot get
-		return e.snapshot.Get(ctx, key)
-	}
+	lock := e.tblInfo.Lock
+	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+		cacheDB := e.ctx.GetStore().GetMemCache()
+		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+		// key does not exist then get from snapshot and set to cache
+		if val == nil {
+			val, err = e.snapshot.Get(ctx, key)
+			if err != nil {
+				return nil, err
+			}
 
-	cacheDB := e.ctx.GetStore().GetMemCache()
-	val = cacheDB.Get(ctx, e.tblInfo.ID, key)
-	// key does not exist then get from snapshot and set to cache
-	if val == nil {
-		val, err = e.snapshot.Get(ctx, key)
-		if err != nil {
-			return nil, err
+			err := cacheDB.Set(e.tblInfo.ID, key, val)
+			if err != nil {
+				return nil, err
+			}
 		}
-
-		err := cacheDB.Set(e.tblInfo.ID, key, val)
-		if err != nil {
-			return nil, err
-		}
+		return val, nil
 	}
-	return val, nil
+	// if not read lock or table was unlock then snapshot get
+	return e.snapshot.Get(ctx, key)
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
@@ -464,20 +466,20 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
 			if col.ID == hid {
-				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

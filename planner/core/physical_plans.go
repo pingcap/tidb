@@ -60,8 +60,9 @@ var (
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
 	_ PhysicalPlan = &PhysicalShuffle{}
-	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
+	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
+	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -469,6 +470,8 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 
 	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -547,7 +550,7 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	return copyColumn
 }
 
-//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+// SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
@@ -1235,7 +1238,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 }
 
 // PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
 // Take `Window` operator for example:
 //  Shuffle -> Window -> Sort -> DataSource, will be separated into:
@@ -1246,11 +1249,11 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	Tails       []PhysicalPlan
+	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1259,15 +1262,17 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
+	PartitionRangeSplitterType
 )
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleDataSourceStub struct {
+type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// Worker points to `executor.shuffleReceiver`.
+	Receiver unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1326,4 +1331,32 @@ func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
 		}
 	}()
 	return v.Clone()
+}
+
+// PhysicalTableSample represents a table sample plan.
+// It returns the sample rows to its parent operand.
+type PhysicalTableSample struct {
+	physicalSchemaProducer
+	TableSampleInfo *TableSampleInfo
+	TableInfo       table.Table
+	Desc            bool
+}
+
+// TableSampleInfo contains the information for PhysicalTableSample.
+type TableSampleInfo struct {
+	AstNode    *ast.TableSample
+	FullSchema *expression.Schema
+	Partitions []table.PartitionedTable
+}
+
+// NewTableSampleInfo creates a new TableSampleInfo.
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+	if node == nil {
+		return nil
+	}
+	return &TableSampleInfo{
+		AstNode:    node,
+		FullSchema: fullSchema,
+		Partitions: pt,
+	}
 }

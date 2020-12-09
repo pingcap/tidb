@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -90,6 +91,13 @@ type scalar struct {
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	if tp.EvalType() == types.ETString {
+		// The histogram will store the string value's 'sort key' representation of its collation.
+		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
+		tp = tp.Clone()
+		tp.Collate = charset.CollationBin
+	}
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -122,7 +130,7 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	//let the initial sum = 0
+	// let the initial sum = 0
 	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
 	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
 
@@ -812,18 +820,10 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
 		if highVal.Kind() == types.KindString {
-			highVal.SetBytesAsString(collate.GetCollator(
-				highVal.Collation()).Key(highVal.GetString()),
-				highVal.Collation(),
-				uint32(highVal.Length()),
-			)
+			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
 		}
 		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytesAsString(collate.GetCollator(
-				lowVal.Collation()).Key(lowVal.GetString()),
-				lowVal.Collation(),
-				uint32(lowVal.Length()),
-			)
+			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {

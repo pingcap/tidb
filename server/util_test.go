@@ -14,6 +14,7 @@
 package server
 
 import (
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -139,7 +140,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
-	columns[0].Flag = columns[0].Flag | uint16(mysql.UnsignedFlag)
+	columns[0].Flag |= uint16(mysql.UnsignedFlag)
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
@@ -251,6 +252,7 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
+	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
 		out     string
@@ -400,6 +402,18 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			"1e15",
 			-1,
 			32,
+		},
+		{
+			infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-infVal,
+			"0",
+			-1,
+			64,
 		},
 	}
 	for _, t := range tests {

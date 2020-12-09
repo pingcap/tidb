@@ -63,7 +63,7 @@ type TableReaderExecutor struct {
 	table table.Table
 
 	// The source of key ranges varies from case to case.
-	// It may be calculated from PyhsicalPlan by executorBuilder, or calculated from argument by dataBuilder;
+	// It may be calculated from PhysicalPlan by executorBuilder, or calculated from argument by dataBuilder;
 	// It may be calculated from ranger.Ranger, or calculated from handles.
 	// The table ID may also change because of the partition table, and causes the key range to change.
 	// So instead of keeping a `range` struct field, it's better to define a interface.
@@ -105,7 +105,7 @@ type TableReaderExecutor struct {
 	batchCop bool
 }
 
-// Open initialzes necessary variables for using this executor.
+// Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))

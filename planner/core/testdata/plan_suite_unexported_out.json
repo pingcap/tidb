@@ -257,8 +257,8 @@
     "Name": "TestWindowParallelFunction",
     "Cases": [
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(24,4) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data source:Projection_8)->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(24,4) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data sources:[Projection_8])->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
@@ -300,7 +300,7 @@
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
@@ -308,7 +308,7 @@
       "[planner:3593]You cannot use the window function 'row_number' in this context.'",
       "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(65,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#18 over(order by test.t.a, test.t.b, test.t.c range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(65,0) BINARY))->Column#20 over())->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
-      "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Partition(execution info: concurrency:4, data source:TableReader_9)->Projection",
+      "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Partition(execution info: concurrency:4, data sources:[TableReader_9])->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
       "[planner:3585]Window 'w1': frame end cannot be UNBOUNDED PRECEDING.",
       "[planner:3584]Window 'w1': frame start cannot be UNBOUNDED FOLLOWING.",
@@ -322,7 +322,7 @@
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
       "[planner:3586]Window 'w': frame start or end is negative, NULL or of non-integral type",
-      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
+      "TableReader(Table(t))->Sort->Window(row_number()->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
     ]
   },
   {
@@ -935,7 +935,7 @@
       },
       {
         "Left": "[]",
-        "Right": "[or(or(eq(test.t.a, 3), eq(test.t.a, 4)), eq(test.t.a, 2))]"
+        "Right": "[or(eq(test.t.a, 3), or(eq(test.t.a, 4), eq(test.t.a, 2)))]"
       },
       {
         "Left": "[gt(test.t.a, 1)]",

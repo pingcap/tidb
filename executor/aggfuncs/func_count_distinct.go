@@ -500,10 +500,10 @@ type approxCountDistinctHashValue uint32
 // This algorithm is also very accurate for data sets with small cardinality and very efficient on CPU. If number of
 // distinct element is more than 2^32, relative error may be high.
 type partialResult4ApproxCountDistinct struct {
-	size       uint32 /// Number of elements.
-	sizeDegree uint8  /// The size of the table as a power of 2.
-	skipDegree uint8  /// Skip elements not divisible by 2 ^ skipDegree.
-	hasZero    bool   /// The hash table contains an element with a hash value of 0.
+	size       uint32 // Number of elements.
+	sizeDegree uint8  // The size of the table as a power of 2.
+	skipDegree uint8  // Skip elements not divisible by 2 ^ skipDegree.
+	hasZero    bool   // The hash table contains an element with a hash value of 0.
 	buf        []approxCountDistinctHashValue
 }
 
