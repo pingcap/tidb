@@ -50,10 +50,11 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
+				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+				if err != nil {
 					return err
 				}
-				result.SetNull(i, true)
+				result.SetNull(i, isNull)
 				continue
 			}
 			i64s[i] = 0
@@ -89,10 +90,11 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
+				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+				if err != nil {
 					return err
 				}
-				result.SetNull(i, true)
+				result.SetNull(i, isNull)
 				continue
 			}
 			i64s[i] = 0
@@ -233,6 +235,17 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.MergeNulls(buf, buf1)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
+			continue
+		}
+		if ds[i].IsZero() {
+			i64s[i] = 0
+			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+				if err != nil {
+					return err
+				}
+				result.SetNull(i, isNull)
+			}
 			continue
 		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
@@ -923,10 +936,11 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		}
 		date := ds[i]
 		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
+			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+			if err != nil {
 				return err
 			}
-			result.SetNull(i, true)
+			result.SetNull(i, isNull)
 			continue
 		}
 		i64s[i] = int64((date.Month() + 2) / 3)
@@ -1858,14 +1872,19 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			negative = "-"
 			secondsFloat = math.Abs(secondsFloat)
 		}
-		seconds := int64(secondsFloat)
+		seconds := uint64(secondsFloat)
 		demical := secondsFloat - float64(seconds)
-		var minute, second int64
+		var minute, second uint64
 		hour := seconds / 3600
 		if hour > 838 {
 			hour = 838
 			minute = 59
 			second = 59
+			demical = 0
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+			if err != nil {
+				return err
+			}
 		} else {
 			minute = seconds % 3600 / 60
 			second = seconds % 60
@@ -2068,10 +2087,11 @@ func (b *builtinDayOfYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
+			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+			if err != nil {
 				return err
 			}
-			result.SetNull(i, true)
+			result.SetNull(i, isNull)
 			continue
 		}
 		i64s[i] = int64(ds[i].YearDay())
@@ -2452,10 +2472,11 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if ds[i].InvalidZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
+			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+			if err != nil {
 				return err
 			}
-			result.SetNull(i, true)
+			result.SetNull(i, isNull)
 			continue
 		}
 		i64s[i] = int64(ds[i].Weekday() + 1)
@@ -2703,10 +2724,11 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		}
 		if ds[i].IsZero() {
 			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
+				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+				if err != nil {
 					return err
 				}
-				result.SetNull(i, true)
+				result.SetNull(i, isNull)
 				continue
 			}
 			i64s[i] = 0

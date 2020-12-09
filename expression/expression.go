@@ -1016,7 +1016,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4,
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
-		ast.IsIPv6:
+		ast.IsIPv6,
+		ast.UUID:
 		ret = true
 
 	// A special case: Only push down Round by signature
