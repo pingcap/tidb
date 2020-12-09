@@ -436,9 +436,9 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 
 	str := strings.Join(strs, sep)
 	// todo check whether the length of result is larger than Flen
-	//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+	// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 	//	return "", true, nil
-	//}
+	// }
 	return str, false, nil
 }
 
@@ -3552,10 +3552,10 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 
-	//encode
+	// encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
-	//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+	// A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
 	count := len(result)
 	if count > 76 {
 		resultArr := splitToSubN(result, 76)

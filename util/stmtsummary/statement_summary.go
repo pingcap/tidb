@@ -781,7 +781,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		commitDetails.Mu.Unlock()
 	}
 
-	//plan cache
+	// plan cache
 	if sei.PlanInCache {
 		ssElement.planInCache = true
 		ssElement.planCacheHits += 1
