@@ -563,7 +563,7 @@ const (
 	DefTiDBDDLErrorCountLimit           = 512
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
-	DefTiDBMultiSchemaChange            = false
+	DefTiDBChangeMultiSchema            = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
