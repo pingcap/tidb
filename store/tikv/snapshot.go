@@ -669,6 +669,7 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	s.mu.RLock()
 	if s.mu.stats == nil || bo.totalSleep == 0 {
+		s.mu.RUnlock()
 		return
 	}
 	s.mu.RUnlock()
