@@ -105,7 +105,7 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
-//IsFullRange check if the range is full scan range
+// IsFullRange check if the range is full scan range
 func (ran *Range) IsFullRange() bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
