@@ -145,7 +145,7 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-//IsZero return a boolean indicate whether BinaryJSON is Zero
+// IsZero return a boolean indicate whether BinaryJSON is Zero
 func (bj BinaryJSON) IsZero() bool {
 	isZero := false
 	switch bj.TypeCode {
