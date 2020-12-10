@@ -1907,7 +1907,7 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
+func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1938,8 +1938,19 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustExec(`UPDATE t m, t n SET m.b = m.b + 10, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 12"))
 
-	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
-	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.a = m.a + 1, n.b = n.b + 10, q.b = q.b - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.b = m.b + 1, n.a = n.a + 10, q.b = q.b - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'q'.`)
+	tk.MustGetErrMsg(`UPDATE t q, t n, t m SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'q' and 'n'.`)
+
+	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 12"))
 }
 
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
