@@ -1766,13 +1766,9 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementOffset,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
-<<<<<<< HEAD
-=======
-	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
 	variable.DefaultWeekFormat,
 
->>>>>>> 9c3e10637... session: add default_week_format to builtinGlobalVariable (#21511)
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
 	variable.TiDBIndexJoinBatchSize,
