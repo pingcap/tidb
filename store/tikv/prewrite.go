@@ -84,6 +84,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
+	failpoint.Inject("invalidMaxCommitTS", func() {
+		if req.MaxCommitTs > 0 {
+			req.MaxCommitTs = minCommitTS - 1
+		}
+	})
+
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
@@ -158,10 +164,14 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 			if c.isOnePC() {
 				if prewriteResp.OnePcCommitTs == 0 {
+					if prewriteResp.MinCommitTs != 0 {
+						return errors.Trace(errors.New("MinCommitTs must be 0 when 1pc falls back to 2pc"))
+					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
+					c.setAsyncCommit(false)
 				} else {
 					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
 					// not to lock the mutex.

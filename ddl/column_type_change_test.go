@@ -1314,7 +1314,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui decimal(20, 10)")
 	tk.MustExec("alter table t modify f64 decimal(20, 10)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1".
-	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrBadNumber)
 	tk.MustQuery("select * from t").Check(testkit.Rows("0.0000000000 0.0000000000 0.0000000000 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\""))
 
 	// double
