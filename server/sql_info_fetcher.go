@@ -189,7 +189,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		// Otherwise we catch a profile and run `EXPLAIN ANALYZE` result.
 		ctx, cancelFunc := context.WithCancel(reqCtx)
 		timer := time.NewTimer(time.Second * time.Duration(timeout))
-		resultChan := make(chan *explainAnalyzeResult)
+		resultChan := make(chan *explainAnalyzeResult, 1)
 		go sh.getExplainAnalyze(ctx, sql, resultChan)
 		errChan := make(chan error)
 		var buf bytes.Buffer
