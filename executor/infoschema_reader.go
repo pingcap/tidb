@@ -1550,7 +1550,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 
 	// Filter the sys or memory schema.
 	for schema := range schemas {
-		if !util.IsMemOrSysDB(schema) {
+		if !util.IsMemDB(schema) {
 			databases = append(databases, schema)
 		}
 	}

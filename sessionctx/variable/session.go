@@ -572,6 +572,9 @@ type SessionVars struct {
 	// EnableChangeColumnType is used to control whether to enable the change column type.
 	EnableChangeColumnType bool
 
+	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
+	EnableChangeMultiSchema bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -907,6 +910,7 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:          DefTiDBEnableParallelApply,
 		ShardAllocateStep:            DefTiDBShardAllocateStep,
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
+		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
@@ -1544,7 +1548,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationServer] = coll.Name
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		val = coll.Name
+	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
 		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
 			if name == CharacterSetResults {
@@ -1568,9 +1573,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharacterSetServer:
 			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
-		default:
-			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1617,6 +1621,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
 		s.EnableChangeColumnType = TiDBOptOn(val)
+	case TiDBEnableChangeMultiSchema:
+		s.EnableChangeMultiSchema = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
