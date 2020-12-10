@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/hack"
 	"math"
 	"strconv"
 	"strings"
@@ -218,7 +219,7 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(string(hack.String(types.AppendFormatFloat(make([]byte, 20)[:0], v, types.UnspecifiedLength, bits))), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
