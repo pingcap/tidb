@@ -1455,10 +1455,10 @@ func (s *testEvaluatorSuite) TestCastStringAsDecimalSigWithUnsignedFlagInUnion(c
 
 // for issue https://github.com/pingcap/tidb/issues/21416
 func (s *testEvaluatorSuite) TestCastRealAsStringSig(c *C) {
-	cases := []struct{
-		in float64
+	cases := []struct {
+		in  float64
 		out string
-	} {
+	}{
 		{
 			1.01e15,
 			"1.01e15",
