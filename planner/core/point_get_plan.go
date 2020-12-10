@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -1193,6 +1193,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
 	return updatePlan
