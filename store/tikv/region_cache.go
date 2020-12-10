@@ -175,7 +175,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
-	return candidates[int32(seed)%int32(len(candidates))]
+	return candidates[seed%uint32(len(candidates))]
 }
 
 func (r *RegionStore) filterStoreCandidates(op *storeSelectorOp, aidxs ...AccessIndex) []AccessIndex {
