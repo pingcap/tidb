@@ -14,14 +14,17 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -227,11 +230,13 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
+	builder.Request.TxnScope = sv.TxnScope
 	if sv.SnapshotInfoschema != nil {
 		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
+	builder.verifyTxnScope(sv)
 	return builder
 }
 
@@ -253,6 +258,42 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
 	return builder
+}
+
+func (builder *RequestBuilder) verifyTxnScope(sv *variable.SessionVars) {
+	if builder.Request.TxnScope == oracle.GlobalTxnScope {
+		return
+	}
+	is := infoschema.GetInfoSchemaBySessionVars(sv)
+	for _, bundle := range is.RuleBundles() {
+		rule, ok := placement.GetLeaderRuleByBundle(bundle, placement.DCLabelKey)
+		if !ok {
+			continue
+		}
+		dc, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+		if !ok {
+			continue
+		}
+		ptID, err := placement.ObjectIDFromGroupID(rule.GroupID)
+		if err != nil {
+			builder.err = err
+			continue
+		}
+		intersectTableID := int64(0)
+		for _, keyRange := range builder.Request.KeyRanges {
+			tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+			if ptID == tableID {
+				intersectTableID = tableID
+				break
+			}
+		}
+		if intersectTableID < 1 {
+			continue
+		}
+		if dc != builder.Request.TxnScope {
+			builder.err = fmt.Errorf("table %v can not be read by %v txn_scope", intersectTableID, builder.Request.TxnScope)
+		}
+	}
 }
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".

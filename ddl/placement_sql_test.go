@@ -635,3 +635,89 @@ alter placement policy
 		testFunc(testcase.name, testcase.hook, testcase.expectErr)
 	}
 }
+
+func (s *testDBSuite1) TestCrossDCQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	setBundle := func(parName, dc string) {
+		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
+		c.Assert(err, IsNil)
+		groupID := placement.GroupID(pid)
+		oldBundle := &placement.Bundle{
+			ID: groupID,
+			Rules: []*placement.Rule{
+				{
+					GroupID: groupID,
+					Role:    placement.Leader,
+					Count:   1,
+					LabelConstraints: []placement.LabelConstraint{
+						{
+							Key:    placement.DCLabelKey,
+							Op:     placement.In,
+							Values: []string{dc},
+						},
+					},
+				},
+			},
+		}
+		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
+	}
+	setBundle("p0", "sh")
+	setBundle("p1", "bj")
+
+	testcases := []struct {
+		name      string
+		txnScope  string
+		sql       string
+		expectErr error
+	}{
+		{
+			name:      "cross dc read",
+			txnScope:  "bj",
+			sql:       "select * from t1 where c < 6",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read",
+			txnScope:  "bj",
+			sql:       "select * from t1",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
+			name:      "cross dc read",
+			txnScope:  "sh",
+			sql:       "select * from t1 where c < 6",
+			expectErr: nil,
+		},
+		{
+			name:      "cross dc read",
+			txnScope:  "global",
+			sql:       "select * from t1 where c < 6",
+			expectErr: nil,
+		},
+	}
+	for _, testcase := range testcases {
+		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr(testcase.sql)
+		if testcase.expectErr != nil {
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, ".*can not be read by.*")
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+}
