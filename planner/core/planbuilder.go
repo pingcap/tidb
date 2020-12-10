@@ -871,7 +871,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
-			if check {
+			if check && ctx.GetSessionVars().ConnectionID > 0 {
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
@@ -1281,7 +1281,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
 		}
-		if b.isForUpdateRead {
+		if b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0 {
 			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
 				logutil.BgLogger().Info("build physical index lookup reader, the index isn't public in forUpdateRead",
 					zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
