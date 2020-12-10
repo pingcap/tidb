@@ -340,6 +340,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				result.AppendNull() // fixed: false
 				continue
 			}
 		}
@@ -437,6 +438,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				result.AppendNull() // fixed: false
 				continue
 			}
 		}
@@ -962,6 +964,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				result.AppendNull() // fixed: false
 				continue
 			}
 		}
@@ -1059,6 +1062,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				result.AppendNull() // fixed: false
 				continue
 			}
 		}

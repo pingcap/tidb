@@ -268,6 +268,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				{{ template "SetNull" . }}
 				continue
 			}
 		}
@@ -300,6 +301,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 			if isNull {
 				sc.AppendWarning(err)
+				{{ template "SetNull" . }}
 				continue
 			}
 		}
