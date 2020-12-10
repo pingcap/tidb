@@ -563,7 +563,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done")
+			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
 			return context.Canceled
 		}
 
