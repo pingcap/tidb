@@ -8194,7 +8194,7 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
 }
 
-func (s *testSuite2) TestIssue12206(c *C) {
+func (s *testSuite) TestIssue12206(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12206;")
