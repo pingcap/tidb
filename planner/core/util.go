@@ -31,7 +31,9 @@ import (
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr int
-	skipAggMap          map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+	// skipAggMap stores correlated aggregate functions which have been built in outer query,
+	// so extractor in sub-query will skip these aggregate functions.
+	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 	// AggFuncs is the collected AggregateFuncExprs.
 	AggFuncs []*ast.AggregateFuncExpr
 }
