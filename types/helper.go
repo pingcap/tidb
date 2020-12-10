@@ -254,7 +254,11 @@ func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			// minus 1 for .
 			digits--
 		}
-		exponent, _ := strconv.Atoi(string(hack.String(out[ePosInOut+1:])))
+		exponent, err := strconv.Atoi(string(hack.String(out[ePosInOut+1:])))
+		if err != nil {
+			// should never reach this, but for code check
+			exponent = 0
+		}
 		if exponent > 0 && digits > exponent+1 {
 			// if number of digits is greater than exponent+1, use 'f' format
 			out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
