@@ -5075,21 +5075,23 @@ func isDuration(str string) bool {
 }
 
 // strDatetimeAddDuration adds duration to datetime string, returns a string value.
-func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
 	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
-		return "", err
+		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
+		sc.AppendWarning(err)
+		return "", true, nil
 	}
 	ret, err := arg0.Add(sc, arg1)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	fsp := types.MaxFsp
 	if ret.Microsecond() == 0 {
 		fsp = types.MinFsp
 	}
 	ret.SetFsp(fsp)
-	return ret.String(), nil
+	return ret.String(), false, nil
 }
 
 // strDurationAddDuration adds duration to duration string, returns a string value.
@@ -5110,14 +5112,16 @@ func strDurationAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 }
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a string value.
-func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (string, error) {
+func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.Duration) (result string, isNull bool, err error) {
 	arg0, err := types.ParseTime(sc, d, mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
-		return "", err
+		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
+		sc.AppendWarning(err)
+		return "", true, nil
 	}
 	arg1time, err := arg1.ConvertToTime(sc, uint8(types.GetFsp(arg1.String())))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	tmpDuration := arg0.Sub(sc, &arg1time)
 	fsp := types.MaxFsp
@@ -5126,10 +5130,10 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 	}
 	resultDuration, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	resultDuration.SetFsp(fsp)
-	return resultDuration.String(), nil
+	return resultDuration.String(), false, nil
 }
 
 // strDurationSubDuration subtracts duration from duration string, returns a string value.
@@ -5430,8 +5434,8 @@ func (b *builtinAddStringAndDurationSig) evalString(row chunk.Row) (result strin
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeAddDuration(sc, arg0, arg1)
-	return result, err != nil, err
+	result, isNull, err = strDatetimeAddDuration(sc, arg0, arg1)
+	return result, isNull, err
 }
 
 type builtinAddStringAndStringSig struct {
@@ -5483,8 +5487,8 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeAddDuration(sc, arg0, arg1)
-	return result, err != nil, err
+	result, isNull, err = strDatetimeAddDuration(sc, arg0, arg1)
+	return result, isNull, err
 }
 
 type builtinAddDateAndDurationSig struct {
@@ -6308,8 +6312,8 @@ func (b *builtinSubStringAndDurationSig) evalString(row chunk.Row) (result strin
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeSubDuration(sc, arg0, arg1)
-	return result, err != nil, err
+	result, isNull, err = strDatetimeSubDuration(sc, arg0, arg1)
+	return result, isNull, err
 }
 
 type builtinSubStringAndStringSig struct {
@@ -6361,8 +6365,8 @@ func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string,
 		}
 		return result, false, nil
 	}
-	result, err = strDatetimeSubDuration(sc, arg0, arg1)
-	return result, err != nil, err
+	result, isNull, err = strDatetimeSubDuration(sc, arg0, arg1)
+	return result, isNull, err
 }
 
 type builtinSubTimeStringNullSig struct {
