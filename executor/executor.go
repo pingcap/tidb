@@ -888,8 +888,8 @@ type SelectLockExec struct {
 	// tblID2Table is cached to reduce cost.
 	tblID2Table map[int64]table.PartitionedTable
 
-	// ptcolMaps is partitioned table column map to row indexes
-	ptColMaps map[int64][]int
+	// ptCol2RowIndexes is partitioned table column map to row indexes
+	ptCol2RowIndexes map[int64][]int
 }
 
 // Open implements the Executor Open interface.
@@ -901,7 +901,7 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	is := domain.GetDomain(e.ctx).InfoSchema()
 	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
 		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
-		e.ptColMaps = make(map[int64][]int, len(e.partitionedTable))
+		e.ptCol2RowIndexes = make(map[int64][]int, len(e.partitionedTable))
 		for id := range e.tblID2Handle {
 			for _, p := range e.partitionedTable {
 				if id == p.Meta().ID {
@@ -926,7 +926,7 @@ func (e *SelectLockExec) generatePartitionedTableColumnMap(pt table.PartitionedT
 		return errors.Trace(errors.Errorf("Cannot get schema info for table %s", tblInfo.Name.O))
 	}
 	colNamePrefix := fmt.Sprintf("%s.%s.", dbInfo.Name.L, tblInfo.Name.L)
-	cols := pt.Cols()
+	cols := pt.VisibleCols()
 	matched := false
 	ret := make([]int, 0, len(cols))
 	for _, colInfo := range cols {
@@ -943,17 +943,17 @@ func (e *SelectLockExec) generatePartitionedTableColumnMap(pt table.PartitionedT
 			return errors.Trace(errors.Errorf("Table %s column %s cannot find data with select result", tblInfo.Name.O, colInfo.Name.L))
 		}
 	}
-	e.ptColMaps[tblInfo.ID] = ret
+	e.ptCol2RowIndexes[tblInfo.ID] = ret
 	return nil
 }
 
-func (e *SelectLockExec) projectRowToPartitionedTable(row chunk.Row, ptID int64) ([]types.Datum, error) {
+func (e *SelectLockExec) projectRowToPartitionedTableRow(row chunk.Row, ptID int64) ([]types.Datum, error) {
 	rowDatums := row.GetDatumRow(e.base().retFieldTypes)
 	numDatums := len(rowDatums)
 	if len(e.schema.Columns) != numDatums {
 		return nil, errors.Trace(errors.Errorf("Columns length not match row fields length"))
 	}
-	proj, have := e.ptColMaps[ptID]
+	proj, have := e.ptCol2RowIndexes[ptID]
 	if !have {
 		return nil, errors.Trace(errors.Errorf("Cannot get column maps"))
 	}
@@ -985,7 +985,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
 				if pt, ok := e.tblID2Table[id]; ok {
-					ptRowData, err := e.projectRowToPartitionedTable(row, id)
+					ptRowData, err := e.projectRowToPartitionedTableRow(row, id)
 					if err != nil {
 						return err
 					}

@@ -7136,6 +7136,42 @@ func (s *testSuite) Test21509(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite) Test21618(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	// Prepare
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (c_int int, d_int int, primary key (c_int), key(d_int)) partition by hash (c_int) partitions 4")
+	tk1.MustExec("insert into t values (1, 2)")
+	// Transaction 1 execute
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t where d_int in (select d_int from t where c_int = 1) for update")
+	fc := make(chan int)
+	go func() {
+		// Transaction 2 execute
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("select * from t where d_int = 2 for update")
+		tk2.MustExec("commit")
+		fc <- 1
+	}()
+	timer := time.NewTimer(1 * time.Second)
+	select {
+	case <-fc:
+		c.Assert(true, IsTrue, Commentf("Should not finish transaction 2"))
+	case <-timer.C:
+	}
+	tk1.MustExec("commit")
+
+	timer = time.NewTimer(1 * time.Second)
+	select {
+	case <-fc:
+	case <-timer.C:
+		c.Assert(true, IsTrue, Commentf("Transaction 2 should be finished"))
+	}
+}
+
 func (s *testSuite) Test12178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
