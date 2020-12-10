@@ -1561,11 +1561,11 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
-	return b.buildSortWithCheck(ctx, p, byItems, nil, 0, false, aggMapper, windowMapper)
+	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, 0, false)
 }
 
-func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, projExprs []expression.Expression, oldLen int,
-	hasDistinct bool, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
+func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
+	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -1598,8 +1598,13 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 	return sort, nil
 }
 
+// checkOrderByInDistinct checks whether ORDER BY has conflicts with DISTINCT, see #12442
 func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
-	// check if expressions directly match
+	// Check if expressions directly match
+	// e.g.
+	// select distinct count(a) from t group by b order by count(a);  ✔
+	// select distinct a+1 from t order by a+1;                       ✔
+	// select distinct a+1 from t order by a+2;                       ✗
 	for j := 0; j < length; j++ {
 		// both check original expression & as name
 		if expr.Equal(b.ctx, originalExprs[j]) || expr.Equal(b.ctx, p.Schema().Columns[j]) {
@@ -1607,7 +1612,14 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 		}
 	}
 
-	// check if referenced columns match
+	// Check if referenced columns match
+	// e.g.
+	// select distinct a from t order by sin(a);                            ✔
+	// select distinct sin(a) from t order by a;                            ✗
+	// select distinct a, b from t order by a+b;                            ✔
+	// select distinct a from t order by b;                                 ✗
+	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
+	// select distinct count(a) from t group by b order by sum(a);          ✗
 	cols := expression.ExtractColumns(expr)
 CheckReferenced:
 	for _, col := range cols {
@@ -3008,7 +3020,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	if sel.OrderBy != nil {
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, projExprs, oldLen, sel.Distinct, orderMap, windowMapper)
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 		} else {
 			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		}

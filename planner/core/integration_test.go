@@ -2006,6 +2006,8 @@ func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	// #12442
 	tk.MustExec("drop table if exists ttest")
 	tk.MustExec("create table ttest (v1 int, v2 int)")
 	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
