@@ -1938,9 +1938,15 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
+	topNSize := new(int32)
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	statsVersion := new(int32)
+	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		TopNSize:   topNSize,
+		Version:    statsVersion,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
