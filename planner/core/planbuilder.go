@@ -826,6 +826,26 @@ func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPat
 	return tiFlashPath
 }
 
+func getLatestIndexInfo(ctx sessionctx.Context, id int64) (map[int64]*model.IndexInfo, error) {
+	latestIndexes := make(map[int64]*model.IndexInfo)
+	dom := domain.GetDomain(ctx)
+	if dom == nil {
+		return nil, errors.New("domain not found for ctx")
+	}
+	is, err := dom.GetSnapshotInfoSchema(math.MaxUint64)
+	if err != nil {
+		return nil, err
+	}
+	latestTbl, exist := is.TableByID(id)
+	if exist {
+		latestTblInfo := latestTbl.Meta()
+		for _, index := range latestTblInfo.Indices {
+			latestIndexes[index.ID] = index
+		}
+	}
+	return latestIndexes, nil
+}
+
 func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -833,24 +853,19 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
-	is, err := domain.GetDomain(ctx).GetSnapshotInfoSchema(math.MaxUint64)
-	if err != nil {
-		return nil, err
-	}
+
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 
-	latestIndexes := make(map[int64]*model.IndexInfo)
-	if check {
-		latestTbl, exist := is.TableByID(tbl.Meta().ID)
-		if exist {
-			latestTblInfo := latestTbl.Meta()
-			for _, index := range latestTblInfo.Indices {
-				latestIndexes[index.ID] = index
-			}
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+	if check && ctx.GetSessionVars().ConnectionID > 0 {
+		latestIndexes, err = getLatestIndexInfo(ctx, tblInfo.ID)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -1249,12 +1264,29 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
+
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+	if b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0 {
+		latestIndexes, err = getLatestIndexInfo(b.ctx, tblInfo.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
 			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
+		}
+		if b.isForUpdateRead {
+			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+				logutil.BgLogger().Info("build physical index lookup reader, the index isn't public in forUpdateRead",
+					zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
+				continue
+			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
 		// For partition tables.
