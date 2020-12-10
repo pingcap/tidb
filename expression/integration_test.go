@@ -8058,6 +8058,7 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
 
+// The actual results do not agree with the test results, It should be modified after the test suite is updated
 func (s *testIntegrationSuite) TestIssue17726(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
