@@ -2913,3 +2913,13 @@ func (s *testSessionSuite) TestPessimisticLockOnPartition(c *C) {
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
 }
+
+// TestDefaultWeekFormat checks for issue #21510.
+func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("set @@global.default_week_format = 4;")
+	defer tk1.MustExec("set @@global.default_week_format = default;")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
+}
