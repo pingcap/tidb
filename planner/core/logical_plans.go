@@ -515,6 +515,7 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	SampleInfo       *TableSampleInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

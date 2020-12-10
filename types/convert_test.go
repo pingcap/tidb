@@ -272,6 +272,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(ZeroDuration, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(time.Now().Year()))
+	bj1, err := json.ParseBinaryFromString("99")
+	c.Assert(err, IsNil)
+	v, err = Convert(bj1, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1999))
+	bj2, err := json.ParseBinaryFromString("-1")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj2, ft)
+	c.Assert(err, NotNil)
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
@@ -982,7 +991,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
-		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
+		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
 		c.Assert(casted, Equals, tt.Out)
 	}
 }

@@ -820,18 +820,10 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
 		if highVal.Kind() == types.KindString {
-			highVal.SetBytesAsString(collate.GetCollator(
-				highVal.Collation()).Key(highVal.GetString()),
-				highVal.Collation(),
-				uint32(highVal.Length()),
-			)
+			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
 		}
 		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytesAsString(collate.GetCollator(
-				lowVal.Collation()).Key(lowVal.GetString()),
-				lowVal.Collation(),
-				uint32(lowVal.Length()),
-			)
+			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {

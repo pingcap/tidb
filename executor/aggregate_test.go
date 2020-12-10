@@ -15,8 +15,10 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1248,19 +1250,12 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 
-	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
-	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
+	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)", "var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
 	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
-	castFormat := "cast(%s as decimal(32, 2))"
 
-	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
+	sqls := make([]string, 0, len(aggFuncs))
 	for _, af := range aggFuncs {
 		sql := fmt.Sprintf(sqlFormat, af)
-		sqls = append(sqls, sql)
-	}
-
-	for _, af := range aggFuncs2 {
-		sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
 		sqls = append(sqls, sql)
 	}
 
@@ -1272,11 +1267,11 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
-		var expected *testkit.Result
+		var expected [][]interface{}
 		for _, con := range concurrencies {
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			if con == 1 {
-				expected = tk.MustQuery(sql).Sort()
+				expected = tk.MustQuery(sql).Sort().Rows()
 			} else {
 				er := tk.MustQuery("explain " + sql).Rows()
 				ok := false
@@ -1288,9 +1283,17 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 					}
 				}
 				c.Assert(ok, Equals, true)
-				tk.MustQuery(sql).Sort().Check(expected.Rows())
-			}
+				rows := tk.MustQuery(sql).Sort().Rows()
 
+				c.Assert(len(rows), Equals, len(expected))
+				for i := range rows {
+					v1, err := strconv.ParseFloat(rows[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					v2, err := strconv.ParseFloat(expected[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					c.Assert(math.Abs(v1-v2), Less, 1e-3)
+				}
+			}
 		}
 	}
 }

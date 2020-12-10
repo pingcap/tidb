@@ -87,14 +87,14 @@
         "Plan": [
           "Point_Get_1 1.00 root table:t1, clustered index:PRIMARY(id) "
         ],
-        "Res": []
+        "Res": null
       },
       {
         "SQL": "select * from t1 where id = b'00'",
         "Plan": [
           "Point_Get_1 1.00 root table:t1, clustered index:PRIMARY(id) "
         ],
-        "Res": []
+        "Res": null
       },
       {
         "SQL": "select * from t1 where id = 0.0",
@@ -145,8 +145,8 @@
         "SQL": "select * from t2 where id in (0, 1)",
         "Plan": [
           "IndexReader_10 9600.00 root  index:Selection_9",
-		"└─Selection_9 9600.00 cop[tikv]  or(eq(cast(test.t2.id), 0), eq(cast(test.t2.id), 1))",
-		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo"
+          "└─Selection_9 9600.00 cop[tikv]  or(eq(cast(test.t2.id), 0), eq(cast(test.t2.id), 1))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo"
         ],
         "Res": [
           "1asdf",
@@ -196,7 +196,7 @@
           "└─TableReader_7 10000.00 root  data:TableFullScan_6",
           "  └─TableFullScan_6 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
         ],
-        "Res": []
+        "Res": null
       }
     ]
   }

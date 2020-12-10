@@ -1918,6 +1918,25 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
 
+func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
+	// #20598
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
+	tk.MustExec("insert into tt(x) values (1)")
+	tk.MustExec("update tt set x=2, z = default")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
+
+	tk.MustGetErrMsg("update tt set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set x = 3, z = 13",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as s1, tt as s2 set s1.z = default, s2.z = 456",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+}
+
 func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

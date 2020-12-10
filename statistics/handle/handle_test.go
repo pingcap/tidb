@@ -134,7 +134,6 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema drop a column, the table stats can still work.
