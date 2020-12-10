@@ -1452,3 +1452,39 @@ func (s *testEvaluatorSuite) TestCastStringAsDecimalSigWithUnsignedFlagInUnion(c
 		c.Assert(res.Compare(t.res), Equals, 0)
 	}
 }
+
+// for issue https://github.com/pingcap/tidb/issues/21416
+func (s *testEvaluatorSuite) TestCastRealAsStringSig(c *C) {
+	cases := []struct{
+		in float64
+		out string
+	} {
+		{
+			1.01e15,
+			"1.01e15",
+		},
+		{
+			1.0123456789012345e15,
+			"1012345678901234.5",
+		},
+		{
+			-1.01e15,
+			"-1.01e15",
+		},
+		{
+			-1.012345678901234e15,
+			"-1.012345678901234e15",
+		},
+		{
+			-1.0123456789012345e15,
+			"-1012345678901234.5",
+		},
+	}
+	for _, ca := range cases {
+		expr := WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(ca.in)})
+		res, isNull, err := expr.EvalString(s.ctx, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, false)
+		c.Assert(res, Equals, ca.out)
+	}
+}

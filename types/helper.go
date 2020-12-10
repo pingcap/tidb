@@ -14,11 +14,14 @@
 package types
 
 import (
+	"bytes"
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
@@ -197,4 +200,69 @@ func strToInt(str string) (int64, error) {
 		r = -r
 	}
 	return int64(r), err
+}
+
+const (
+	expFormatBig     = 1e15
+	expFormatSmall   = 1e-15
+	defaultMySQLPrec = 5
+)
+
+func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
+	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
+	tryEFormat := false
+	if bitSize == 32 {
+		tryEFormat = (prec == UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
+	} else {
+		tryEFormat = (prec == UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
+	}
+	var out []byte
+	if tryEFormat {
+		if bitSize == 32 {
+			prec = defaultMySQLPrec
+		}
+		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
+		valStr := out[len(in):]
+		// remove the '+' from the string for compatibility.
+		plusPos := bytes.IndexByte(valStr, '+')
+		if plusPos > 0 {
+			plusPosInOut := len(in) + plusPos
+			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
+		}
+		// remove extra '0'
+		ePos := bytes.IndexByte(valStr, 'e')
+		pointPos := bytes.IndexByte(valStr, '.')
+		ePosInOut := len(in) + ePos
+		pointPosInOut := len(in) + pointPos
+		validPos := ePosInOut
+		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
+			if out[i] == '0' || out[i] == '.' {
+				validPos = i
+			} else {
+				break
+			}
+		}
+		digits := validPos - len(in)
+		if fVal < 0 {
+			// minus 1 for -
+			digits--
+		}
+		if pointPosInOut >= 0 && validPos > pointPosInOut {
+			// minus 1 for .
+			digits--
+		}
+		exponent, _ := strconv.Atoi(string(hack.String(out[ePosInOut+1:])))
+		if exponent > 0 && digits > exponent+1 {
+			// if number of digits is greater than exponent+1, use 'f' format
+			out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+			return out
+		}
+		out = append(out[:validPos], out[ePosInOut:]...)
+		return out
+	}
+	out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	return out
 }

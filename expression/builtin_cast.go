@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -841,7 +842,7 @@ func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNu
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	res, err = types.ProduceStrWithSpecifiedTp(string(hack.String(types.AppendFormatFloat(make([]byte, 20)[:0], val, types.UnspecifiedLength, bits))), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
