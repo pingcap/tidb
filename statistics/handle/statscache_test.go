@@ -116,6 +116,7 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	h.SetBytesLimit4Test(BytesLimit)
 
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t1(c int)")
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
@@ -148,11 +149,17 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	c.Assert(statsTbl1new.Indices[tbl1.Meta().Indices[0].ID].Len() > 0, IsTrue)
 
 	c.Assert(statsTbl1new.Indices[tbl1.Meta().Indices[0].ID].String(), Equals, "index:1 ndv:5\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
-		"num: 1 lower_bound: 3 upper_bound: 3 repeats: 1\n"+
-		"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1\n"+
-		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1")
+		"num: 0 lower_bound: 1 upper_bound: 1 repeats: 0\n"+
+		"num: 0 lower_bound: 2 upper_bound: 2 repeats: 0\n"+
+		"num: 0 lower_bound: 3 upper_bound: 3 repeats: 0\n"+
+		"num: 0 lower_bound: 4 upper_bound: 4 repeats: 0\n"+
+		"num: 0 lower_bound: 5 upper_bound: 5 repeats: 0")
+	testKit.MustQuery("show stats_topn where table_name = 't1' and column_name = 'idx_t'").Sort().Check(testkit.Rows("test t1  idx_t 1 1 1",
+		"test t1  idx_t 1 2 1",
+		"test t1  idx_t 1 3 1",
+		"test t1  idx_t 1 4 1",
+		"test t1  idx_t 1 5 1",
+	))
 	c.Assert(statsTbl1new.Columns[tbl1.Meta().Columns[0].ID].String(), Equals, "column:1 ndv:5 totColSize:5\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
 		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
