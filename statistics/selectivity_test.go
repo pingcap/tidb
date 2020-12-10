@@ -429,11 +429,11 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 20.0)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 20.0)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
@@ -442,7 +442,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.2)
+	c.Assert(count, Equals, 20.0)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -742,4 +742,32 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
+}
+
+func (s *testStatsSuite) TestOutOfRangeIntervalEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	for i := 0; i < 1000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/4)) // 0 ~ 249
+	}
+	testKit.MustExec("analyze table t")
+
+	h := s.do.StatsHandle()
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+	sc := &stmtctx.StatementContext{}
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+	count, err := col.GetColumnRowCount(sc, getRange(250, 250), 0, false)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, float64(0))
+
+	for i := 0; i < 8; i++ {
+		count, err := col.GetColumnRowCount(sc, getRange(250, 250), int64(i+1), false)
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, math.Min(float64(i+1), 4)) // estRows must be less than modifyCnt
+	}
 }

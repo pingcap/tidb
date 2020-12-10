@@ -569,8 +569,8 @@ func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyC
 		return 0 // it must be 0 since the histogram contains the whole data
 	}
 	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
-	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hg.GetUpper(0))
-	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hg.GetUpper(0))
+	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hgHigh)
+	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hgHigh)
 	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
 	return math.Min(rangeCount, float64(modifyCount))
 }

@@ -284,6 +284,7 @@ func calcWidth(lower, upper float64) float64 {
 	return upper - lower
 }
 
+// calcWidth is used to calculate the width of the datum [left, right] which histogram bound is [lower, upper]
 func calcWidth4Datums(left, right, lower, upper *types.Datum) float64 {
 	switch left.Kind() {
 	case types.KindFloat32:
