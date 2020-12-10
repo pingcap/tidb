@@ -67,6 +67,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -557,12 +558,10 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 }
 
 // ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table` and `load data infile` statements, when not in strict SQL mode.
+// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	// TODO: Currently altering column of integer to unsigned integer is not supported.
-	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
@@ -700,7 +699,7 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 

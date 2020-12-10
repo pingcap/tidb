@@ -209,6 +209,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
+	case *plannercore.PhysicalTableSample:
+		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -1803,8 +1805,12 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
+		if _, ok := tblID2table[info.TblID]; ok {
+			multiUpdateOnSameTable[info.TblID] = true
+		}
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
@@ -1832,6 +1838,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
+		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}
@@ -3933,4 +3941,23 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 
 func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
+}
+
+func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &TableSampleExecutor{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		table:        v.TableInfo,
+		startTS:      startTS,
+	}
+	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+		e.sampler = newTableRegionSampler(
+			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
+	}
+	return e
 }

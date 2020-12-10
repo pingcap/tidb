@@ -1435,7 +1435,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
 	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2000-10-01 01:11:01"))
 
 	// for issue #5132
 	tk.MustExec("CREATE TABLE `tt1` (" +
@@ -2824,7 +2824,7 @@ func (s *testSuite7) TestSetWithCurrentTimestampAndNow(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists tbl;`)
 	tk.MustExec(`create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);`)
-	//c1 insert using now() function result, c3 using default value calculation, should be same
+	// c1 insert using now() function result, c3 using default value calculation, should be same
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(2);`)
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)

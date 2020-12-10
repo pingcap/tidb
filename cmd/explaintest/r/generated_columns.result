@@ -123,9 +123,9 @@ IndexReader_6	10.00	root		index:IndexRangeScan_5
 EXPLAIN SELECT b, c, d FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t1.b, test.t1.c, test.t1.d
-└─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b=1;
 id	estRows	task	access object	operator info
 IndexLookUp_10	10.00	root		
@@ -147,9 +147,9 @@ INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS
 EXPLAIN SELECT name FROM person where city_no=1;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.person.name
-└─IndexLookUp_10	10.00	root		
-  ├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	root		
+  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a INT,
 b INT GENERATED ALWAYS AS (-a) VIRTUAL,
@@ -177,9 +177,10 @@ HashAgg_5	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
 EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#9, funcs:sum(Column#8)->Column#5
-└─Projection_18	10000.00	root		cast(test.t1.b, decimal(32,0) BINARY)->Column#8, test.t1.c
-  └─TableReader_11	10000.00	root		data:TableFullScan_10
-    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_20	10000.00	root		cast(test.t1.b, decimal(32,0) BINARY)->Column#8, test.t1.c
+  └─Projection_12	10000.00	root		test.t1.b, test.t1.c
+    └─TableReader_11	10000.00	root		data:TableFullScan_10
+      └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
 id	estRows	task	access object	operator info
 HashAgg_9	8000.00	root		group by:test.t1.a, funcs:sum(Column#6)->Column#5
@@ -189,9 +190,10 @@ HashAgg_9	8000.00	root		group by:test.t1.a, funcs:sum(Column#6)->Column#5
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
 id	estRows	task	access object	operator info
 HashAgg_5	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection_12	10000.00	root		cast(test.t1.c, decimal(32,0) BINARY)->Column#6, test.t1.b
-  └─TableReader_9	10000.00	root		data:TableFullScan_8
-    └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_14	10000.00	root		cast(test.t1.c, decimal(32,0) BINARY)->Column#6, test.t1.b
+  └─Projection_10	10000.00	root		test.t1.b, test.t1.c
+    └─TableReader_9	10000.00	root		data:TableFullScan_8
+      └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS tu;
 CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
 INSERT INTO tu(a, b) VALUES(1, 2);
