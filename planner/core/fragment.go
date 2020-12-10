@@ -26,7 +26,7 @@ import (
 type Fragment struct {
 	p PhysicalPlan
 
-	/// following field are filled during getPlanFragment.
+	// following field are filled during getPlanFragment.
 	// TODO: Strictly speaking, not all plan fragment contain table scan. we can do this assumption until more plans are supported.
 	TableScan         *PhysicalTableScan          // result physical table scan
 	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers

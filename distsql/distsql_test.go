@@ -47,7 +47,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -203,7 +203,7 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -473,7 +473,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
