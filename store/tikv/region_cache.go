@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -286,7 +287,8 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
-	go c.asyncCheckAndResolveLoop()
+	interval := config.GetGlobalConfig().StoresRefreshInterval
+	go c.asyncCheckAndResolveLoop(time.Duration(interval) * time.Second)
 	return c
 }
 
@@ -296,7 +298,9 @@ func (c *RegionCache) Close() {
 }
 
 // asyncCheckAndResolveLoop with
-func (c *RegionCache) asyncCheckAndResolveLoop() {
+func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	var needCheckStores []*Store
 	for {
 		select {
@@ -305,6 +309,18 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
+		case <-ticker.C:
+			// refresh store once a minute to update labels
+			var stores []*Store
+			c.storeMu.RLock()
+			stores = make([]*Store, 0, len(c.storeMu.stores))
+			for _, s := range c.storeMu.stores {
+				stores = append(stores, s)
+			}
+			c.storeMu.RUnlock()
+			for _, store := range stores {
+				store.reResolve(c)
+			}
 		}
 	}
 }
@@ -1130,6 +1146,18 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
+func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
+	c.storeMu.RLock()
+	defer c.storeMu.RUnlock()
+	s := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.IsLabelsMatch(labels) {
+			s = append(s, store)
+		}
+	}
+	return s
+}
+
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
@@ -1385,14 +1413,15 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string        // loaded store address
-	saddr        string        // loaded store status address
-	storeID      uint64        // store's id
-	state        uint64        // unsafe store storeState
-	resolveMutex sync.Mutex    // protect pd from concurrent init requests
-	epoch        uint32        // store fail epoch, see RegionStore.storeEpochs
-	storeType    kv.StoreType  // type of the store
-	tokenCount   atomic2.Int64 // used store token count
+	addr         string               // loaded store address
+	saddr        string               // loaded store status address
+	storeID      uint64               // store's id
+	state        uint64               // unsafe store storeState
+	labels       []*metapb.StoreLabel // stored store labels
+	resolveMutex sync.Mutex           // protect pd from concurrent init requests
+	epoch        uint32               // store fail epoch, see RegionStore.storeEpochs
+	storeType    kv.StoreType         // type of the store
+	tokenCount   atomic2.Int64        // used store token count
 }
 
 type resolveState uint64
@@ -1439,6 +1468,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.addr = addr
 		s.saddr = store.GetStatusAddress()
 		s.storeType = GetStoreTypeByMeta(store)
+		s.labels = store.GetLabels()
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1491,9 +1521,9 @@ func (s *Store) reResolve(c *RegionCache) {
 
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
-	if s.addr != addr {
+	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels()}
 		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
@@ -1547,7 +1577,34 @@ retry:
 	case notifyCheckCh <- struct{}{}:
 	default:
 	}
+}
 
+// IsSameLabels returns whether the store have the same labels with target labels
+func (s *Store) IsSameLabels(labels []*metapb.StoreLabel) bool {
+	if len(s.labels) != len(labels) {
+		return false
+	}
+	return s.IsLabelsMatch(labels)
+}
+
+// IsLabelsMatch return whether the store's labels match the target labels
+func (s *Store) IsLabelsMatch(labels []*metapb.StoreLabel) bool {
+	if len(labels) < 1 {
+		return true
+	}
+	for _, targetLabel := range labels {
+		match := false
+		for _, label := range s.labels {
+			if targetLabel.Key == label.Key && targetLabel.Value == label.Value {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
 }
 
 type livenessState uint32
