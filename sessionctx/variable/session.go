@@ -1545,7 +1545,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
 		val = coll.Name
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
 		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
 			if name == CharacterSetResults {
