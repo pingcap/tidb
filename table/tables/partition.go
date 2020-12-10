@@ -507,7 +507,7 @@ func generateListColumnPruneExprStr(ctx sessionctx.Context, pi *model.PartitionI
 	var colName = pi.Columns[colIdx].L
 	var buf = bytes.NewBuffer(make([]byte, 0, 8))
 	hasNull := false
-	fmt.Fprintf(buf, "(%s in (", colName)
+	fmt.Fprintf(buf, "(`%s` in (", colName)
 	for i, vs := range def.InValues {
 		if i > 0 {
 			buf.WriteByte(',')
