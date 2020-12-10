@@ -100,6 +100,8 @@
       "select * from t1 left join t2 on true where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id = 7",
       "select * from t1 where a = 1",
       "select * from t1 where b = 1",
+      "select * from t1 where b is null",
+      "select * from t1 where a is null",
       "select * from t1 where a = 1 or b = 2",
       "select * from t1 where a = 1 or (a = 2 and b = 2) or ((a,b) in ((4,4),(5,5)))",
       "select * from t1 where a = 1 or (a is null and b = 10)",
@@ -122,7 +124,9 @@
       "select * from t1 where a = 1 or (a+b=3)",
       "select * from t1 where id = 1 or id=2",
       "select * from t1 where id = 1 and a=1",
-      "select * from t1 partition(p1) where a = 1 or b = 2"
+      "select * from t1 partition(p1) where a = 1 or b = 2",
+      "select * from t1 join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and (t2.a = 6 and t2.b = 6)",
+      "select * from t1 where t1.a in (select b from t2 where a in (1,2))"
     ]
   }
 ]
