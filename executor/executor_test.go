@@ -7083,3 +7083,15 @@ func (s *testSuite) Test13004(c *C) {
 	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
 	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
+
+func (s *testSuite) Test21509(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c_int int, c_timestamp timestamp, primary key (c_int), key(c_timestamp)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t0 values (1, '2020-12-05 01:02:03')")
+	tk.MustExec("begin")
+	// the select for update should not got error
+	tk.MustQuery("select * from t0 where c_timestamp in (select c_timestamp from t0 where c_int = 1) for update")
+	tk.MustExec("commit")
+}

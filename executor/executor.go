@@ -886,6 +886,9 @@ type SelectLockExec struct {
 
 	// tblID2Table is cached to reduce cost.
 	tblID2Table map[int64]table.PartitionedTable
+
+	// ptcolMaps is partitioned table column map to row indexes
+	ptColMaps map[int64][]int
 }
 
 // Open implements the Executor Open interface.
@@ -894,18 +897,73 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		return err
 	}
 
+	is := domain.GetDomain(e.ctx).InfoSchema()
 	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
 		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
+		e.ptColMaps = make(map[int64][]int, len(e.partitionedTable))
 		for id := range e.tblID2Handle {
 			for _, p := range e.partitionedTable {
 				if id == p.Meta().ID {
 					e.tblID2Table[id] = p
+					err := e.generatePartitionedTableColumnMap(p, is)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+func (e *SelectLockExec) generatePartitionedTableColumnMap(pt table.PartitionedTable, is infoschema.InfoSchema) error {
+	// Get Table Name and DB name
+	tblInfo := pt.Meta()
+	dbInfo, ok := is.SchemaByTable(tblInfo)
+	if !ok {
+		return errors.Trace(errors.Errorf("Cannot get schema info for table %s", tblInfo.Name.O))
+	}
+	colNamePrefix := fmt.Sprintf("%s.%s.", dbInfo.Name.L, tblInfo.Name.L)
+	cols := pt.Cols()
+	matched := false
+	ret := make([]int, 0, len(cols))
+	for _, colInfo := range cols {
+		colFullName := colNamePrefix + colInfo.Name.L
+		matched = false
+		for i, col := range e.schema.Columns {
+			if col.OrigName == colFullName {
+				ret = append(ret, i)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return errors.Trace(errors.Errorf("Table %s column %s cannot find data with select result", tblInfo.Name.O, colInfo.Name.L))
+		}
+	}
+	e.ptColMaps[tblInfo.ID] = ret
+	return nil
+}
+
+func (e *SelectLockExec) projectRowToPartitionedTable(row chunk.Row, ptID int64) ([]types.Datum, error) {
+	rowDatums := row.GetDatumRow(e.base().retFieldTypes)
+	numDatums := len(rowDatums)
+	if len(e.schema.Columns) != numDatums {
+		return nil, errors.Trace(errors.Errorf("Columns length not match row fields length"))
+	}
+	proj, have := e.ptColMaps[ptID]
+	if !have {
+		return nil, errors.Trace(errors.Errorf("Cannot get column maps"))
+	}
+	ret := make([]types.Datum, 0, numDatums)
+	for _, idx := range proj {
+		if idx >= numDatums {
+			return nil, errors.Trace(errors.Errorf("Column maps index is overflow!"))
+		}
+		ret = append(ret, rowDatums[idx])
+	}
+	return ret, nil
 }
 
 // Next implements the Executor Next interface.
@@ -926,8 +984,11 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
 				if pt, ok := e.tblID2Table[id]; ok {
-					// On a partitioned table, we have to use physical ID to encode the lock key!
-					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
+					ptRowData, err := e.projectRowToPartitionedTable(row, id)
+					if err != nil {
+						return err
+					}
+					p, err := pt.GetPartitionByRow(e.ctx, ptRowData)
 					if err != nil {
 						return err
 					}
