@@ -59,7 +59,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache StatsCache
+	statsCache *statsCache
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
@@ -112,14 +112,10 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	var err error
-	handle.statsCache, err = newStatsCacheWithMemCap(ctx.GetSessionVars().MemQuotaStatistics, defaultStatsCacheType)
-	if err != nil {
-		return nil, err
-	}
+	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistics)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	err = handle.RefreshVars()
+	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
 	}
@@ -236,14 +232,17 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	return h.statsCache.BytesConsumed()
+	h.statsCache.mu.Lock()
+	size = h.statsCache.memTracker.BytesConsumed()
+	h.statsCache.mu.Unlock()
+	return
 }
 
 // EraseTable4Test erase a table by ID and add new empty (with Meta) table.
 // ONLY used for test.
 func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Update([]*statistics.Table{table.CopyWithoutBucketsAndCMS()}, nil, h.statsCache.GetVersion())
+	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
 }
 
 // GetAllTableStatsMemUsage4Test get all the mem usage with true table.
@@ -277,7 +276,10 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 // SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 // Only used for test.
 func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {
-	h.statsCache.SetBytesLimit(bytesLimit)
+	h.statsCache.mu.Lock()
+	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
+	h.statsCache.memCapacity = bytesLimit
+	h.statsCache.mu.Unlock()
 }
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
@@ -642,7 +644,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -683,7 +685,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		flag = statistics.AnalyzeFlag
 	}
 	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statsVersion, flag, hg.Correlation))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
@@ -962,6 +964,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	tables := make([]*statistics.Table, 0, len(allTables))
 	for _, tbl := range allTables {
 		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
+
 		if err != nil {
 			return err
 		}
