@@ -1452,3 +1452,32 @@ func (s *testEvaluatorSuite) TestCastStringAsDecimalSigWithUnsignedFlagInUnion(c
 		c.Assert(res.Compare(t.res), Equals, 0)
 	}
 }
+
+// for issue https://github.com/pingcap/tidb/issues/21416
+func (s *testEvaluatorSuite) TestCastRealAsStringSig(c *C) {
+	expr := WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(1.01e15)})
+	res, isNull, err := expr.EvalString(s.ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(res, Equals, "1.01e15")
+	expr = WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(1.0123456789012345e15)})
+	res, isNull, err = expr.EvalString(s.ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(res, Equals, "1012345678901234.5")
+	expr = WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(-1.01e15)})
+	res, isNull, err = expr.EvalString(s.ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(res, Equals, "-1.01e15")
+	expr = WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(-1.012345678901234e15)})
+	res, isNull, err = expr.EvalString(s.ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(res, Equals, "-1.012345678901234e15")
+	expr = WrapWithCastAsString(s.ctx, &Constant{RetType: types.NewFieldType(mysql.TypeDouble), Value: types.NewFloat64Datum(-1.0123456789012345e15)})
+	res, isNull, err = expr.EvalString(s.ctx, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, Equals, false)
+	c.Assert(res, Equals, "-1012345678901234.5")
+}

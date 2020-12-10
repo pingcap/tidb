@@ -311,14 +311,14 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
 				prec = int(col.Decimal)
 			}
-			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
+			tmp = types.AppendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
 			prec := types.UnspecifiedLength
 			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
 				prec = int(col.Decimal)
 			}
-			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
+			tmp = types.AppendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
@@ -356,56 +356,6 @@ func lengthEncodedIntSize(n uint64) int {
 	}
 
 	return 9
-}
-
-const (
-	expFormatBig     = 1e15
-	expFormatSmall   = 1e-15
-	defaultMySQLPrec = 5
-)
-
-func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
-	absVal := math.Abs(fVal)
-	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
-		return []byte{'0'}
-	}
-	isEFormat := false
-	if bitSize == 32 {
-		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
-	} else {
-		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
-	}
-	var out []byte
-	if isEFormat {
-		if bitSize == 32 {
-			prec = defaultMySQLPrec
-		}
-		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
-		valStr := out[len(in):]
-		// remove the '+' from the string for compatibility.
-		plusPos := bytes.IndexByte(valStr, '+')
-		if plusPos > 0 {
-			plusPosInOut := len(in) + plusPos
-			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
-		}
-		// remove extra '0'
-		ePos := bytes.IndexByte(valStr, 'e')
-		pointPos := bytes.IndexByte(valStr, '.')
-		ePosInOut := len(in) + ePos
-		pointPosInOut := len(in) + pointPos
-		validPos := ePosInOut
-		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
-			if out[i] == '0' || out[i] == '.' {
-				validPos = i
-			} else {
-				break
-			}
-		}
-		out = append(out[:validPos], out[ePosInOut:]...)
-	} else {
-		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
-	}
-	return out
 }
 
 // CorsHandler adds Cors Header if `cors` config is set.
