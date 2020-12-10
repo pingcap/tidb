@@ -208,6 +208,7 @@ const (
 	defaultMySQLPrec = 5
 )
 
+// AppendFormatFloat convert a float point number to it's text represent, similar with my_gcvt in MySQL
 func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
