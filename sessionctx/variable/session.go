@@ -1270,7 +1270,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return returnErr
 			}
-			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
 			// 1. tx_isolation
 			// 2. transaction_isolation
 			// The following if condition is used to deduplicate two same warnings.
@@ -1544,7 +1544,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationServer] = coll.Name
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		val = coll.Name
+	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
 		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
 			if name == CharacterSetResults {
@@ -1568,9 +1569,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharacterSetServer:
 			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
-		default:
-			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
