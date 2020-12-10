@@ -431,6 +431,7 @@ func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
 	c.delayMu.Unlock()
 }
 
+// UpdateStoreLabels merge the target and owned labels together
 func (c *Cluster) UpdateStoreLabels(storeID uint64, labels []*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
