@@ -100,7 +100,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
-		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
+		"compact", "redundant", "1 sql_no_cache", "1 sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
@@ -445,7 +445,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SELECT DISTINCTS * FROM t", false, ""},
 		{"SELECT DISTINCT * FROM t", true, "SELECT DISTINCT * FROM `t`"},
 		{"SELECT DISTINCTROW * FROM t", true, "SELECT DISTINCT * FROM `t`"},
-		{"SELECT ALL * FROM t", true, "SELECT * FROM `t`"},
+		{"SELECT ALL * FROM t", true, "SELECT ALL * FROM `t`"},
 		{"SELECT DISTINCT ALL * FROM t", false, ""},
 		{"SELECT DISTINCTROW ALL * FROM t", false, ""},
 		{"INSERT INTO foo (a) VALUES (42)", true, "INSERT INTO `foo` (`a`) VALUES (42)"},
@@ -4206,6 +4206,8 @@ func (s *testParserSuite) TestSQLResult(c *C) {
 		{`select SQL_SMALL_RESULT c1 from t group by c1`, true, "SELECT SQL_SMALL_RESULT `c1` FROM `t` GROUP BY `c1`"},
 		{`select SQL_BUFFER_RESULT * from t`, true, "SELECT SQL_BUFFER_RESULT * FROM `t`"},
 		{`select sql_small_result sql_big_result sql_buffer_result 1`, true, "SELECT SQL_SMALL_RESULT SQL_BIG_RESULT SQL_BUFFER_RESULT 1"},
+		{`select STRAIGHT_JOIN SQL_SMALL_RESULT * from t`, true, "SELECT SQL_SMALL_RESULT STRAIGHT_JOIN * FROM `t`"},
+		{`select SQL_CALC_FOUND_ROWS DISTINCT * from t`, true, "SELECT SQL_CALC_FOUND_ROWS DISTINCT * FROM `t`"},
 	}
 	s.RunTest(c, table)
 }

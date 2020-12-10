@@ -984,6 +984,10 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SQL_NO_CACHE ")
 		}
 
+		if n.SelectStmtOpts.CalcFoundRows {
+			ctx.WriteKeyWord("SQL_CALC_FOUND_ROWS ")
+		}
+
 		if n.TableHints != nil && len(n.TableHints) != 0 {
 			ctx.WritePlain("/*+ ")
 			for i, tableHint := range n.TableHints {
@@ -999,6 +1003,8 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 
 		if n.Distinct {
 			ctx.WriteKeyWord("DISTINCT ")
+		} else if n.SelectStmtOpts.ExplicitAll {
+			ctx.WriteKeyWord("ALL ")
 		}
 		if n.SelectStmtOpts.StraightJoin {
 			ctx.WriteKeyWord("STRAIGHT_JOIN ")
