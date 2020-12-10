@@ -235,6 +235,99 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
 
+func (s *testUpdateSuite) TestUpdateSwapColumnValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_str varchar(40))")
+	tk.MustExec("create table t2 (c_str varchar(40))")
+	tk.MustExec("insert into t1 values ('Alice')")
+	tk.MustExec("insert into t2 values ('Bob')")
+	tk.MustQuery("select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str").Check(testkit.Rows("Alice Bob"))
+	tk.MustExec("update t1, t2 set t1.c_str = t2.c_str, t2.c_str = t1.c_str where t1.c_str <= t2.c_str")
+	tk.MustQuery("select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 3"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int as (-a) virtual, d int as (-b) stored)")
+	tk.MustExec("insert into t(a, b) values (10, 11), (20, 22)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10 11 -10 -11", "20 22 -20 -22"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 10 -11 -10", "22 20 -22 -20"))
+	tk.MustExec("update t set b=30, a=b")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10 30 -10 -30", "20 30 -20 -30"))
+}
+
+func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(x int, y int)")
+	tk.MustExec("insert into t values()")
+	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+	tk.MustExec("update t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+
+	// Update generated columns
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual)")
+	tk.MustExec("insert into t(x, y) values(1, 2), (3, 4)")
+	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2 where t1.x=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 12 -9", "3 1 13 -9"))
+
+	tk.MustExec("update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 12 -7", "5 3 15 -7"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int as (a+b) stored)")
+	tk.MustExec("insert into t(a, b) values (1, 2)")
+	tk.MustExec("update t t1, t t2 set t2.a=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 2 5"))
+
+	tk.MustExec("update t t1, t t2 set t1.a=4, t2.b=5")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4 5 9"))
+
+	// Update primary keys
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("update t set a=a+2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3", "4"))
+	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("13", "14"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1,3), (2,4)")
+	tk.MustGetErrMsg("update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a",
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b))")
+	tk.MustExec("insert into t values (1,3,5), (2,4,6)")
+	tk.MustExec("update t m, t n set m.a = n.a+10, m.b = n.b+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 13 5", "12 14 6"))
+	tk.MustExec("update t m, t n, t q set q.c=m.a+n.b, n.c = m.a+1, m.c = n.b+1 where m.b=n.b AND m.a=q.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 13 24", "12 14 26"))
+	tk.MustGetErrMsg("update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b",
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+}
+
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
 
 type testSuite11 struct {
