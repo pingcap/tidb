@@ -4951,6 +4951,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if tm.Year() == 0 {
+		// MySQL won't evaluate add for date with zero year.
+		// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
+		return types.ZeroTime, true, nil
+	}
 	arg1, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
@@ -4992,7 +4997,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeTimestamp, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -6092,9 +6097,9 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		return types.Duration{}, isNull, err
 	}
 	var (
-		hour          int64
-		minute        int64
-		second        int64
+		hour          uint64
+		minute        uint64
+		second        uint64
 		demical       float64
 		secondDemical float64
 		negative      string
@@ -6104,7 +6109,7 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		negative = "-"
 		secondsFloat = math.Abs(secondsFloat)
 	}
-	seconds := int64(secondsFloat)
+	seconds := uint64(secondsFloat)
 	demical = secondsFloat - float64(seconds)
 
 	hour = seconds / 3600
@@ -6112,6 +6117,11 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		hour = 838
 		minute = 59
 		second = 59
+		demical = 0
+		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+		if err != nil {
+			return types.Duration{}, err != nil, err
+		}
 	} else {
 		minute = seconds % 3600 / 60
 		second = seconds % 60
@@ -6683,7 +6693,8 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 	}
 	tm1, err := arg.GoTime(time.Local)
 	if err != nil {
-		return "", isNull, err
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
 	}
 	var tb time.Time
 	fsp := types.DefaultFsp

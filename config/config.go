@@ -180,6 +180,9 @@ type Config struct {
 	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
 	// StoresRefreshInterval indicates the interval of refreshing stores info, the unit is second.
 	StoresRefreshInterval uint64 `toml:"stores-refresh-interval" json:"stores-refresh-interval"`
+	// EnableTCP4Only enables net.Listen("tcp4",...)
+	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
+	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
