@@ -1883,9 +1883,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					if index != -1 {
 						// For SQLs like:
 						//   select a+1 from t having t.a;
-						newV := v
-						newV.Name = &ast.ColumnName{Name: v.Name.Name}
-						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+						field := a.selectFields[index]
+						if field.Auxiliary { // having can't use auxiliary field
+							index = -1
+						}
 					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
@@ -3798,6 +3799,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt := Update{
 		OrderedList:               orderedList,
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		VirtualAssignmentsOffset:  len(update.List),
 	}.Init(b.ctx)
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
@@ -3839,34 +3841,45 @@ func GetUpdateColumns(ctx sessionctx.Context, orderedList []*expression.Assignme
 	return assignFlag, nil
 }
 
+type tblUpdateInfo struct {
+	name      string
+	pkUpdated bool
+}
+
 func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, updt *Update) error {
 	assignFlags, err := GetUpdateColumns(ctx, updt.OrderedList, updt.SelectPlan.Schema().Len())
 	if err != nil {
 		return err
 	}
-	isPKUpdated := make(map[int64]model.CIStr)
+	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
-		var updatePK bool
+		var update, updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			// Check for multi-updates on primary key,
-			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
-			if !flags[i] {
-				continue
-			}
-			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
-				updatePK = true
+			if flags[i] {
+				update = true
+				if mysql.HasPriKeyFlag(col.Flag) {
+					updatePK = true
+				}
 			}
 		}
-		if updatePK {
-			if otherTblName, ok := isPKUpdated[tbl.Meta().ID]; ok {
-				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTblName.O, updt.names[content.Start].TblName.O)
+		if update {
+			// Check for multi-updates on primary key,
+			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
+			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
+				if otherTable.pkUpdated || updatePK {
+					return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
+				}
+			} else {
+				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
+					name:      updt.names[content.Start].TblName.O,
+					pkUpdated: updatePK,
+				}
 			}
-			isPKUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
 		}
 	}
 	return nil
@@ -3953,6 +3966,7 @@ func (b *PlanBuilder) buildUpdateLists(
 	}
 
 	allAssignments := append(list, virtualAssignments...)
+	dependentColumnsModified := make(map[int64]bool)
 	for i, assign := range allAssignments {
 		var idx int
 		var err error
@@ -3978,6 +3992,10 @@ func (b *PlanBuilder) buildUpdateLists(
 				expr.Name = assign.Column
 			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, false)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			dependentColumnsModified[col.UniqueID] = true
 		} else {
 			// rewrite with generation expression
 			rewritePreprocess := func(expr ast.Node) ast.Node {
@@ -3993,9 +4011,22 @@ func (b *PlanBuilder) buildUpdateLists(
 				}
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
-		}
-		if err != nil {
-			return nil, nil, false, err
+			if err != nil {
+				return nil, nil, false, err
+			}
+			// check if the column is modified
+			dependentColumns := expression.ExtractDependentColumns(newExpr)
+			var isModified bool
+			for _, col := range dependentColumns {
+				if dependentColumnsModified[col.UniqueID] {
+					isModified = true
+					break
+				}
+			}
+			// skip unmodified generated columns
+			if !isModified {
+				continue
+			}
 		}
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false

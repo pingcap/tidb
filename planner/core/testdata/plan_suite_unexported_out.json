@@ -935,7 +935,7 @@
       },
       {
         "Left": "[]",
-        "Right": "[or(or(eq(test.t.a, 3), eq(test.t.a, 4)), eq(test.t.a, 2))]"
+        "Right": "[or(eq(test.t.a, 3), or(eq(test.t.a, 4), eq(test.t.a, 2)))]"
       },
       {
         "Left": "[gt(test.t.a, 1)]",

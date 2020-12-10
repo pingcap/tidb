@@ -62,9 +62,9 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	s.store.oracle = o
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -90,7 +90,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil))
+		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil), oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50, &oracle.Option{})
@@ -310,10 +310,10 @@ func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)
 }
