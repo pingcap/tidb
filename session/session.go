@@ -656,13 +656,19 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
-		err = s.NewTxn(ctx)
-		if err != nil {
-			return err
-		}
-		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
-		if pessTxnConf.Enable {
-			s.sessionVars.TxnCtx.IsPessimistic = true
+		if len(nh.history) > 1 {
+			err = s.NewTxn(ctx)
+			if err != nil {
+				return err
+			}
+			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+			if pessTxnConf.Enable {
+				if s.sessionVars.TxnMode == ast.Pessimistic {
+					s.sessionVars.TxnCtx.IsPessimistic = true
+				}
+			}
+		} else {
+			s.PrepareTxnCtx(ctx)
 		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
