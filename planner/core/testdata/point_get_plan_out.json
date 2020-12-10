@@ -15,7 +15,7 @@
       {
         "SQL": "select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3",
         "Plan": [
-          "Selection_6 0.80 root  eq(plus(test.t.b, 1), 3)",
+          "Selection_6 0.80 root  1",
           "└─Point_Get_5 1.00 root table:t, index:b(b, c) "
         ],
         "Res": [

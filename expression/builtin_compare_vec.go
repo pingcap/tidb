@@ -615,7 +615,7 @@ func vecResOfGE(res []int64) {
 	}
 }
 
-//vecCompareInt is vectorized CompareInt()
+// vecCompareInt is vectorized CompareInt()
 func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
 	case isUnsigned0 && isUnsigned1:
