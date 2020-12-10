@@ -137,7 +137,10 @@ func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *P
 			return proj.Exprs[idx], nil
 		}
 	case *expression.CorrelatedColumn:
-		ReplaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
+		_, err := ReplaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
+		if err != nil {
+			return nil, err
+		}
 	case *expression.ScalarFunction:
 		newExpr, err := expression.NewFunction(proj.SCtx(), v.FuncName.L, v.RetType, v.GetArgs()...)
 		if err != nil {
