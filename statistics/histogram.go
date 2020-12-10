@@ -325,13 +325,16 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 
 // RemoveIdxVals remove the given values from the histogram.
 func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
-	sort.Slice(idxValCntPairs, func(i, j int) bool {
-		return bytes.Compare(idxValCntPairs[i].Encoded, idxValCntPairs[j].Encoded) < 0
-	})
 	totalSubCnt := int64(0)
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			// If the current val smaller than current bucket's lower bound, skip it.
+			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			if cmpResult > 0 {
+				continue
+			}
+			// If the current val bigger than current bucket's upper bound, break.
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
 			if cmpResult < 0 {
 				break
 			}
@@ -343,6 +346,9 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 			}
 		}
 		hg.Buckets[bktIdx].Count -= totalSubCnt
+		if hg.Buckets[bktIdx].Count < 0 {
+			hg.Buckets[bktIdx].Count = 0
+		}
 	}
 }
 

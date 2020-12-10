@@ -233,6 +233,10 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
+	var statsVer = statistics.Version1
+	if idxExec.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
 	result := analyzeResult{
 		TableID:  idxExec.tableID,
 		Hist:     []*statistics.Histogram{hist},
@@ -240,7 +244,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		TopNs:    []*statistics.TopN{topN},
 		IsIndex:  1,
 		job:      idxExec.job,
-		StatsVer: idxExec.ctx.GetSessionVars().AnalyzeVersion,
+		StatsVer: statsVer,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -644,7 +648,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 		TopNs:    topNs[:pkColCount+len(exec.colsInfo)],
 		Count:    hist.NullCount,
 		job:      exec.job,
-		StatsVer: exec.ctx.GetSessionVars().AnalyzeVersion,
+		StatsVer: statistics.Version1,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
@@ -1219,6 +1223,10 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		}
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
+	var statsVer = statistics.Version1
+	if idxExec.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
 	result := analyzeResult{
 		TableID:  idxExec.tableID,
 		Hist:     []*statistics.Histogram{hist},
@@ -1226,7 +1234,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		TopNs:    []*statistics.TopN{topN},
 		IsIndex:  1,
 		job:      idxExec.job,
-		StatsVer: idxExec.ctx.GetSessionVars().AnalyzeVersion,
+		StatsVer: statsVer,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -1265,7 +1273,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		Cms:      []*statistics.CMSketch{nil},
 		TopNs:    []*statistics.TopN{nil},
 		job:      colExec.job,
-		StatsVer: colExec.ctx.GetSessionVars().AnalyzeVersion,
+		StatsVer: statistics.Version1,
 	}
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count
