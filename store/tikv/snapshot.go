@@ -351,10 +351,12 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				scanDetail.RocksdbBlockReadByte = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
 			}
 			if s.mu.stats != nil {
+				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
 				}
 				s.mu.stats.scanDetail.Merge(scanDetail)
+				s.mu.Unlock()
 			}
 		}
 		if len(lockedKeys) > 0 {
@@ -489,10 +491,12 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				scanDetail.RocksdbBlockReadByte = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
 			}
 			if s.mu.stats != nil {
+				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
 				}
 				s.mu.stats.scanDetail.Merge(scanDetail)
+				s.mu.Unlock()
 			}
 		}
 		val := cmdGetResp.GetValue()
