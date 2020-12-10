@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -374,7 +373,79 @@ func compareStringSlice(c *C, ss1, ss2 []string) {
 	}
 }
 
+<<<<<<< HEAD
 func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+=======
+func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20))")
+
+	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
+		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+}
+
+func (s *testPlanNormalize) TestNthPlanHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
+	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
+
+	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	// Test hints for nth_plan(x).
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
+	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`)"))
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
+
+	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	// Test warning for multiply hints.
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
+		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
+
+	// Test the correctness of generated plans.
+	tk.MustExec("insert into t values (1,1,1)")
+	tk.MustQuery("select  /*+ nth_plan(1) */ * from t where a=1 and b=1;").Check(testkit.Rows(
+		"1 1 1"))
+	tk.MustQuery("select  /*+ nth_plan(2) */ * from t where a=1 and b=1;").Check(testkit.Rows(
+		"1 1 1"))
+	tk.MustQuery("select  /*+ nth_plan(1) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+	tk.MustQuery("select  /*+ nth_plan(2) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+
+	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+}
+
+func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
+>>>>>>> f44c77371... test: convert test to benchmard test to make ci stable (#21616)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -399,13 +470,14 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	encodedPlanStr := core.EncodePlan(p)
-	start := time.Now()
-	_, err := plancodec.DecodePlan(encodedPlanStr)
-	c.Assert(err, IsNil)
-	c.Assert(time.Since(start).Seconds(), Less, 3.0)
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		_, err := plancodec.DecodePlan(encodedPlanStr)
+		c.Assert(err, IsNil)
+	}
 }
 
-func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -421,9 +493,8 @@ func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
 	p, ok := info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	start := time.Now()
-	encodedPlanStr := core.EncodePlan(p)
-	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	_, err := plancodec.DecodePlan(encodedPlanStr)
-	c.Assert(err, IsNil)
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		core.EncodePlan(p)
+	}
 }
