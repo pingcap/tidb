@@ -685,12 +685,12 @@
         "Hints": "use_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), merge_join(@`del_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), merge_join(@`upd_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`)"
       },

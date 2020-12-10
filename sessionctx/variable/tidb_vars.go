@@ -351,6 +351,9 @@ const (
 	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
 	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
+	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
+	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -560,6 +563,7 @@ const (
 	DefTiDBDDLErrorCountLimit           = 512
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
+	DefTiDBChangeMultiSchema            = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
@@ -626,7 +630,7 @@ var (
 	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
