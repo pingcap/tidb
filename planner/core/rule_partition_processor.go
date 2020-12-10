@@ -258,19 +258,25 @@ func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNa
 }
 
 func (l *listPartitionPruner) locatePartition(cond expression.Expression) (map[int]struct{}, error) {
-	sf, ok := cond.(*expression.ScalarFunction)
-	if !ok {
-		return l.fullRange, nil
+	switch sf := cond.(type) {
+	case *expression.Constant:
+		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx)
+		if err == nil && b == 0 {
+			// A constant false expression.
+			return make(map[int]struct{}), nil
+		}
+	case *expression.ScalarFunction:
+		switch sf.FuncName.L {
+		case ast.LogicOr:
+			dnfItems := expression.FlattenDNFConditions(sf)
+			return l.locatePartitionByDNFCondition(dnfItems)
+		case ast.LogicAnd:
+			cnfItems := expression.FlattenCNFConditions(sf)
+			return l.locatePartitionByCNFCondition(cnfItems)
+		}
+		return l.locatePartitionByColumn(sf)
 	}
-	switch sf.FuncName.L {
-	case ast.LogicOr:
-		dnfItems := expression.FlattenDNFConditions(sf)
-		return l.locatePartitionByDNFCondition(dnfItems)
-	case ast.LogicAnd:
-		cnfItems := expression.FlattenCNFConditions(sf)
-		return l.locatePartitionByCNFCondition(cnfItems)
-	}
-	return l.locatePartitionByColumn(sf)
+	return l.fullRange, nil
 }
 
 func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.Expression) (map[int]struct{}, error) {

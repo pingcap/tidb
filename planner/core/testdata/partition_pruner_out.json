@@ -1081,7 +1081,7 @@
           "1 1 1"
         ],
         "Plan": [
-          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "TableReader_7 10.00 root partition:p0 data:Selection_6",
           "└─Selection_6 10.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 0)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
