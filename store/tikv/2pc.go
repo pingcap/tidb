@@ -1556,6 +1556,11 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 					zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.len()))
 				break
 			}
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+					zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
+				return false, err
+			}
 		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)
