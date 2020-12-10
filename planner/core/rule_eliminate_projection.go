@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -77,33 +76,43 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	}
 }
 
-func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
+func doPhysicalProjectionElimination(p PhysicalPlan) (PhysicalPlan, error) {
+	var err error
 	for i, child := range p.Children() {
-		p.Children()[i] = doPhysicalProjectionElimination(child)
+		p.Children()[i], err = doPhysicalProjectionElimination(child)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
 	if isProj && canProjectionBeEliminatedStrict(proj) {
-		return p.Children()[0]
+		return p.Children()[0], nil
 	}
 	if isProj {
 		if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema()))
+				proj.Exprs[i], err = ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema())
+				if err != nil {
+					return nil, err
+				}
 			}
 			p.Children()[0] = child.Children()[0]
 		}
-		return p
+		return p, nil
 	}
 
-	return p
+	return p, nil
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
-func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
+func eliminatePhysicalProjection(p PhysicalPlan) (PhysicalPlan, error) {
 	oldSchema := p.Schema()
-	newRoot := doPhysicalProjectionElimination(p)
+	newRoot, err := doPhysicalProjectionElimination(p)
+	if err != nil {
+		return nil, err
+	}
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
@@ -112,28 +121,30 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
-	return newRoot
+	return newRoot, nil
 }
 
 type projectionEliminator struct {
 }
 
 // ReplaceColumnOfExprInPhysicalProjection replaces column of expression by another PhysicalProjection.
-func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *PhysicalProjection, schema *expression.Schema) expression.Expression {
+func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *PhysicalProjection, schema *expression.Schema) (expression.Expression, error) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		idx := schema.ColumnIndex(v)
 		if idx != -1 && idx < len(proj.Exprs) {
-			return proj.Exprs[idx]
+			return proj.Exprs[idx], nil
 		}
 	case *expression.CorrelatedColumn:
 		ReplaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
 	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
+		newExpr, err := expression.NewFunction(proj.SCtx(), v.FuncName.L, v.RetType, v.GetArgs()...)
+		if err != nil {
+			return nil, err
 		}
+		return newExpr, nil
 	}
-	return expr
+	return expr, nil
 }
 
 // optimize implements the logicalOptRule interface.
