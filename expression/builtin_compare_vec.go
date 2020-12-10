@@ -14,10 +14,11 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"strings"
 )
 
 // vecEvalDecimal evals a builtinGreatestDecimalSig.
