@@ -226,5 +226,11 @@
       "select approx_percentile(a, 10*10) from t",
       "select approx_percentile(a, 50) from t group by b order by b"
     ]
+  },
+  {
+    "name": "TestConditionPushDownToIndexScanForPrefixIndex",
+    "cases": [
+      "explain select * from t where a between 'a' and 'b' and b = 'b'"
+    ]
   }
 ]

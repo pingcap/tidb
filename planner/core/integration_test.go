@@ -1308,11 +1308,11 @@ func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk.MustExec("create table t(a int,b char(100),key(a),key(b(10)))")
 	tk.MustQuery("explain select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
 		"Projection_4 19.99 root  test.t.a, test.t.b",
-		"└─IndexMerge_9 0.02 root  ",
+		"└─IndexMerge_9 19.99 root  ",
 		"  ├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
-		"  └─Selection_8(Probe) 0.02 cop[tikv]  eq(test.t.b, \"x\")",
-		"    └─TableRowIDScan_7 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  ├─Selection_7(Build) 0.01 cop[tikv]  eq(test.t.b, \"x\")",
+		"  │ └─IndexRangeScan_6 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1, 'xx')")
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows())
@@ -2001,4 +2001,26 @@ func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
 	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
 		"1",
 	))
+}
+
+func (s *testIntegrationSuite) TestConditionPushDownToIndexScanForPrefixIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a text, b text, index a_b (a(255), b(255)))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }

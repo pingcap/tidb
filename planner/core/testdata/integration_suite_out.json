@@ -1287,5 +1287,19 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestConditionPushDownToIndexScanForPrefixIndex",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a between 'a' and 'b' and b = 'b'",
+        "Plan": [
+          "IndexLookUp_11 0.25 root  ",
+          "├─Selection_10(Build) 0.25 cop[tikv]  eq(test.t.b, \"b\"), ge(test.t.a, \"a\"), le(test.t.a, \"b\")",
+          "│ └─IndexRangeScan_8 250.00 cop[tikv] table:t, index:a_b(a, b) range:[\"a\",\"b\"], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 0.25 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

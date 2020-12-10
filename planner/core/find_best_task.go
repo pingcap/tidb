@@ -15,9 +15,11 @@ package core
 
 import (
 	"math"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -936,26 +938,90 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost, nil
 }
 
-func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
+func indexCoveringCol(col *expression.Column, constVal *expression.Constant, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
-		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
-			return true
+		if indexCol != nil && col.Equal(nil, indexCol) {
+			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
+			if isFullLen {
+				return true
+			}
+			if constVal == nil {
+				continue
+			}
+			val, err := constVal.Eval(chunk.Row{})
+			if err != nil || (val.Kind() != types.KindString && val.Kind() != types.KindBytes) {
+				continue
+			}
+			colCharset := col.GetType().Collate
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			var length int
+			if isUTF8Charset {
+				length = utf8.RuneCount(val.GetBytes())
+			} else {
+				length = len(val.GetBytes())
+			}
+			if length < idxColLens[i] {
+				return true
+			}
 		}
 	}
 	return false
 }
 
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
-	for _, col := range columns {
+	return ds.indexCanHandleCols(columns, nil, indexColumns, idxColLens, tblInfo)
+}
+
+// extractColumnsAndConstants extracts involved columns from expr. If a column is one operand of ge/le/eq/ne/lt/gt and
+// the other operand is text/blob constant, the constant is also recorded in order to check whether the condition can be
+// pushed down to IndexScan of prefix index.
+func extractColumnsAndConstants(expr expression.Expression, columns []*expression.Column, constants []*expression.Constant) ([]*expression.Column, []*expression.Constant) {
+	switch v := expr.(type) {
+	case *expression.Column:
+		columns = append(columns, v)
+		constants = append(constants, nil)
+
+	case *expression.ScalarFunction:
+		_, collation := expr.CharsetAndCollation(v.GetCtx())
+		op := v.FuncName.L
+		if op == ast.GE || op == ast.LE || op == ast.EQ || op == ast.NE || op == ast.LT || op == ast.GT {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok && types.IsTypePrefixable(col.RetType.Tp) && collate.CompatibleCollate(col.GetType().Collate, collation) {
+				if constVal, ok := v.GetArgs()[1].(*expression.Constant); ok {
+					columns = append(columns, col)
+					constants = append(constants, constVal)
+					return columns, constants
+				}
+			}
+			if col, ok := v.GetArgs()[1].(*expression.Column); ok && types.IsTypePrefixable(col.RetType.Tp) && collate.CompatibleCollate(col.GetType().Collate, collation) {
+				if constVal, ok := v.GetArgs()[0].(*expression.Constant); ok {
+					columns = append(columns, col)
+					constants = append(constants, constVal)
+					return columns, constants
+				}
+			}
+		}
+		for _, arg := range v.GetArgs() {
+			columns, constants = extractColumnsAndConstants(arg, columns, constants)
+		}
+	}
+	return columns, constants
+}
+
+func (ds *DataSource) indexCanHandleCols(columns []*expression.Column, constants []*expression.Constant, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
+	for i, col := range columns {
+		var constVal *expression.Constant
+		if constants != nil {
+			constVal = constants[i]
+		}
+
 		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
 		}
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
-		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
+		coveredByPlainIndex := indexCoveringCol(col, constVal, indexColumns, idxColLens)
+		coveredByClusteredIndex := indexCoveringCol(col, constVal, ds.commonHandleCols, ds.commonHandleLens)
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
@@ -1197,7 +1263,11 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if ds.isCoveringIndex(expression.ExtractColumns(cond), indexColumns, idxColLens, table) {
+		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
+		columns := make([]*expression.Column, 0, 8)
+		constants := make([]*expression.Constant, 0, 8)
+		columns, constants = extractColumnsAndConstants(cond, columns, constants)
+		if ds.indexCanHandleCols(columns, constants, indexColumns, idxColLens, table) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
