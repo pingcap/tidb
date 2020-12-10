@@ -296,7 +296,7 @@
         ],
         "Plan": [
           "TableReader_7 0.01 root partition:p0,p1 data:Selection_6",
-          "└─Selection_6 0.01 cop[tikv]  or(and(and(eq(test_partition.t2.id, 1), eq(test_partition.t2.a, 1)), eq(test_partition.t2.b, 1)), and(isnull(test_partition.t2.a), isnull(test_partition.t2.b)))",
+          "└─Selection_6 0.01 cop[tikv]  or(and(eq(test_partition.t2.id, 1), and(eq(test_partition.t2.a, 1), eq(test_partition.t2.b, 1))), and(isnull(test_partition.t2.a), isnull(test_partition.t2.b)))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
@@ -330,7 +330,7 @@
         ],
         "Plan": [
           "TableReader_7 0.00 root partition:p0 data:Selection_6",
-          "└─Selection_6 0.00 cop[tikv]  or(and(and(eq(test_partition.t2.id, 1), eq(test_partition.t2.a, 1)), eq(test_partition.t2.b, 1)), and(and(eq(test_partition.t2.a, 1), eq(test_partition.t2.id, 1)), eq(test_partition.t2.b, 1)))",
+          "└─Selection_6 0.00 cop[tikv]  or(and(eq(test_partition.t2.id, 1), and(eq(test_partition.t2.a, 1), eq(test_partition.t2.b, 1))), and(eq(test_partition.t2.a, 1), and(eq(test_partition.t2.id, 1), eq(test_partition.t2.b, 1))))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
@@ -382,8 +382,8 @@
         "SQL": "select * from t1 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 2666.67 root partition:all data:Selection_6",
-          "└─Selection_6 2666.67 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.id, 10)",
+          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.a, 10), gt(test_partition.t1.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -391,8 +391,8 @@
         "SQL": "select * from t2 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 2666.67 root partition:all data:Selection_6",
-          "└─Selection_6 2666.67 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.id), gt(test_partition.t2.id, 10)",
+          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.id), gt(test_partition.t2.a, 10), gt(test_partition.t2.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
@@ -400,8 +400,8 @@
         "SQL": "select * from t3 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 2666.67 root partition:all data:Selection_6",
-          "└─Selection_6 2666.67 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.id, 10)",
+          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.a, 10), gt(test_partition.t3.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
       },
@@ -411,8 +411,8 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader_7 2674.00 root partition:all data:Selection_6",
-          "└─Selection_6 2674.00 cop[tikv]  or(and(eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.id, 10)), isnull(test_partition.t1.a))",
+          "TableReader_7 898.00 root partition:all data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t1.a, test_partition.t1.id), and(gt(test_partition.t1.id, 10), gt(test_partition.t1.a, 10))), isnull(test_partition.t1.a))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -422,8 +422,8 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader_7 2674.00 root partition:all data:Selection_6",
-          "└─Selection_6 2674.00 cop[tikv]  or(and(eq(test_partition.t2.a, test_partition.t2.id), gt(test_partition.t2.id, 10)), isnull(test_partition.t2.a))",
+          "TableReader_7 898.00 root partition:all data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t2.a, test_partition.t2.id), and(gt(test_partition.t2.id, 10), gt(test_partition.t2.a, 10))), isnull(test_partition.t2.a))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
@@ -433,8 +433,8 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader_7 2674.00 root partition:all data:Selection_6",
-          "└─Selection_6 2674.00 cop[tikv]  or(and(eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.id, 10)), isnull(test_partition.t3.a))",
+          "TableReader_7 898.00 root partition:all data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t3.a, test_partition.t3.id), and(gt(test_partition.t3.id, 10), gt(test_partition.t3.a, 10))), isnull(test_partition.t3.a))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
       },
