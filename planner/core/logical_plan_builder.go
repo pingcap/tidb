@@ -4887,13 +4887,11 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 	// Unused window specs should also be checked in b.buildWindowFunctions,
 	// so we add them to `groupedWindow` with empty window functions.
 	for _, spec := range b.windowSpecs {
-		if _, ok := groupedWindow[spec]; ok {
-			continue
+		if _, ok := groupedWindow[spec]; !ok {
+			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
+				groupedWindow[spec] = nil
+			}
 		}
-		if _, ok := updatedSpecMap[spec.Name.L]; ok {
-			continue
-		}
-		groupedWindow[spec] = []*ast.WindowFuncExpr{}
 	}
 	return groupedWindow, nil
 }
