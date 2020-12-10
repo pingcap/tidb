@@ -803,6 +803,9 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 		return "", isNull, err
 	}
 	planTree, err := plancodec.DecodePlan(planString)
+	if err != nil {
+		return planString, false, nil
+	}
 	return planTree, false, err
 }
 
