@@ -1185,10 +1185,6 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
-		return 0, false, nil
-	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val, true)
 	if err != nil {
