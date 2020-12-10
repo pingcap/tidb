@@ -16,6 +16,8 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/tidb/infoschema"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -507,6 +509,11 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	is               infoschema.InfoSchema
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
