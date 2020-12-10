@@ -35,7 +35,7 @@ var (
 	binCollatorInstance = &binCollator{}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
-	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil), "", "")
+	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
 	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregateNcollations)
 	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
@@ -44,9 +44,17 @@ var (
 	ErrIllegalMix3Collation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate3collations)
 )
 
-// DefaultLen is set for datum if the string datum don't know its length.
 const (
+	// DefaultLen is set for datum if the string datum don't know its length.
 	DefaultLen = 0
+	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
+	b2Mask = 0x1F // 0001 1111
+	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
+	b3Mask = 0x0F // 0000 1111
+	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
+	b4Mask = 0x07 // 0000 0111
+	// non-first bytes start 10 and carry 6 bits of data
+	mbMask = 0x3F // 0011 1111
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -164,16 +172,25 @@ func GetCollatorByID(id int) Collator {
 // CollationID2Name return the collation name by the given id.
 // If the id is not found in the map, the default collation is returned.
 func CollationID2Name(id int32) string {
-	name, ok := mysql.Collations[uint8(id)]
-	if !ok {
+	collation, err := charset.GetCollationByID(int(id))
+	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
-		//logutil.BgLogger().Warn(
-		//	"Unable to get collation name from ID, use default collation instead.",
-		//	zap.Int32("ID", id),
-		//	zap.Stack("stack"))
+		// logutil.BgLogger().Warn(
+		// 	"Unable to get collation name from ID, use default collation instead.",
+		// 	zap.Int32("ID", id),
+		// 	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
-	return name
+	return collation.Name
+}
+
+// CollationName2ID return the collation id by the given name.
+// If the name is not found in the map, the default collation id is returned
+func CollationName2ID(name string) int {
+	if coll, err := charset.GetCollationByName(name); err == nil {
+		return coll.ID
+	}
+	return mysql.DefaultCollationID
 }
 
 // GetCollationByName wraps charset.GetCollationByName, it checks the collation.
@@ -221,6 +238,40 @@ func truncateTailingSpace(str string) string {
 	return str
 }
 
+func sign(i int) int {
+	if i < 0 {
+		return -1
+	} else if i > 0 {
+		return 1
+	}
+	return 0
+}
+
+// decode rune by hand
+func decodeRune(s string, si int) (r rune, newIndex int) {
+	switch b := s[si]; {
+	case b < 0x80:
+		r = rune(b)
+		newIndex = si + 1
+	case b < 0xE0:
+		r = rune(b&b2Mask)<<6 |
+			rune(s[1+si]&mbMask)
+		newIndex = si + 2
+	case b < 0xF0:
+		r = rune(b&b3Mask)<<12 |
+			rune(s[si+1]&mbMask)<<6 |
+			rune(s[si+2]&mbMask)
+		newIndex = si + 3
+	default:
+		r = rune(b&b4Mask)<<18 |
+			rune(s[si+1]&mbMask)<<12 |
+			rune(s[si+2]&mbMask)<<6 |
+			rune(s[si+3]&mbMask)
+		newIndex = si + 4
+	}
+	return
+}
+
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
@@ -232,21 +283,23 @@ func init() {
 	newCollatorIDMap = make(map[int]Collator)
 
 	newCollatorMap["binary"] = &binCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["binary"])] = &binCollator{}
+	newCollatorIDMap[CollationName2ID("binary")] = &binCollator{}
 	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["ascii_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["latin1_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("latin1_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
+	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCSCollator{}
 }

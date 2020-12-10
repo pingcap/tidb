@@ -143,4 +143,5 @@ const (
 	LblBatchGet    = "batch_get"
 	LblGet         = "get"
 	LblLockKeys    = "lock_keys"
+	LblInTxn       = "in_txn"
 )

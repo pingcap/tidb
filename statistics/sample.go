@@ -320,7 +320,8 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 			return err
 		}
 		cms.subValue(h1, h2, realCnt)
-		c.TopN.topN[h1] = append(c.TopN.topN[h1], &TopNMeta{h2, data, realCnt})
+		c.TopN.AppendTopN(data, realCnt)
 	}
+	c.TopN.Sort()
 	return nil
 }

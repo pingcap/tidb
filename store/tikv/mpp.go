@@ -41,15 +41,15 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-// ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTask for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTask, error) {
+// ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mppTasks := make([]kv.MPPTask, 0, len(tasks))
+	mppTasks := make([]kv.MPPTaskMeta, 0, len(tasks))
 	for _, copTask := range tasks {
 		mppTasks = append(mppTasks, copTask)
 	}
@@ -136,7 +136,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}()
 	sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
 	var regionInfos []*coprocessor.RegionInfo
-	originalTask := req.Task.(*batchCopTask)
+	originalTask := req.Meta.(*batchCopTask)
 	for _, task := range originalTask.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: task.task.region.id,
@@ -207,7 +207,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.client.SendRequest(bo.ctx, req.Task.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
+	rpcResp, err := m.store.client.SendRequest(bo.ctx, req.Meta.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
 
 	if err != nil {
 		m.sendError(err)
@@ -265,7 +265,7 @@ func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
-			zap.String("storeAddr", req.Task.GetAddress()),
+			zap.String("storeAddr", req.Meta.GetAddress()),
 			zap.Error(err))
 		return err
 	}

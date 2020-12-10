@@ -17,13 +17,13 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -61,9 +61,12 @@ func (s *testPlanNormalize) TearDownSuite(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("set @@tidb_partition_prune_mode='static-only';")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
+	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -165,9 +168,11 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2, bmsql_order_line, bmsql_district,bmsql_stock")
+	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table t3 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("create table t4 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec(`CREATE TABLE  bmsql_order_line  (
 	   ol_w_id  int(11) NOT NULL,
 	   ol_d_id  int(11) NOT NULL,
@@ -295,6 +300,16 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
 			isSame: true,
 		},
+		{ // test for tablescan partition
+			sql1:   "select * from t3 where a=5",
+			sql2:   "select * from t3 where a=15",
+			isSame: true,
+		},
+		{ // test for point get partition
+			sql1:   "select * from t4 where a=4",
+			sql2:   "select * from t4 where a=30",
+			isSame: true,
+		},
 		{
 			sql1: `SELECT  COUNT(*) AS low_stock
 					FROM
@@ -360,6 +375,16 @@ func compareStringSlice(c *C, ss1, ss2 []string) {
 	}
 }
 
+func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20))")
+
+	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
+		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+}
+
 func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -418,7 +443,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
-func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -443,8 +468,32 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	encodedPlanStr := core.EncodePlan(p)
-	start := time.Now()
-	_, err := plancodec.DecodePlan(encodedPlanStr)
-	c.Assert(err, IsNil)
-	c.Assert(time.Since(start).Seconds(), Less, 3.0)
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		_, err := plancodec.DecodePlan(encodedPlanStr)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		core.EncodePlan(p)
+	}
 }

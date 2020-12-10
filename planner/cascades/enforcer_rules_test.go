@@ -26,7 +26,7 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 	enforcers := GetEnforcerRules(group, prop)
 	c.Assert(enforcers, IsNil)
 	col := &expression.Column{}
-	prop.Items = append(prop.Items, property.Item{Col: col})
+	prop.SortItems = append(prop.SortItems, property.SortItem{Col: col})
 	enforcers = GetEnforcerRules(group, prop)
 	c.Assert(enforcers, NotNil)
 	c.Assert(len(enforcers), Equals, 1)
@@ -38,9 +38,9 @@ func (s *testCascadesSuite) TestNewProperties(c *C) {
 	prop := &property.PhysicalProperty{}
 	col := &expression.Column{}
 	group := memo.NewGroupWithSchema(nil, expression.NewSchema())
-	prop.Items = append(prop.Items, property.Item{Col: col})
+	prop.SortItems = append(prop.SortItems, property.SortItem{Col: col})
 	enforcers := GetEnforcerRules(group, prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)
 	newProp := orderEnforcer.NewProperty(prop)
-	c.Assert(newProp.Items, IsNil)
+	c.Assert(newProp.SortItems, IsNil)
 }

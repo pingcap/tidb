@@ -558,6 +558,11 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
+			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
+			// to avoid to convert it to its Key representation once more.
+			if collectors[i].Samples[j].Value.Kind() == types.KindString {
+				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
+			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
@@ -1131,9 +1136,9 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
 	if RandSeed == 1 {
-		e.randSeed = time.Now().UnixNano()
+		atomic.StoreInt64(&e.randSeed, time.Now().UnixNano())
 	} else {
-		e.randSeed = RandSeed
+		atomic.StoreInt64(&e.randSeed, RandSeed)
 	}
 
 	err = e.buildSampTask()

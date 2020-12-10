@@ -197,7 +197,7 @@
           "  └─Sort_29 6400.00 root  test.t.b",
           "    └─Selection_28 6400.00 root  gt(Column#4, 1)",
           "      └─HashAgg_19 8000.00 root  group by:test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
-          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b, test.t.b",
+          "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#11, cast(test.t.a, decimal(32,0) BINARY)->Column#12, test.t.b, test.t.b",
           "          └─TableReader_21 10000.00 root  data:TableFullScan_22",
           "            └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -223,7 +223,7 @@
         "SQL": "select sum(a) from t group by a, a+b order by a",
         "Plan": [
           "Projection_10 10000.00 root  Column#3",
-          "└─Projection_12 10000.00 root  cast(test.t.a, decimal(65,0) BINARY)->Column#3, test.t.a",
+          "└─Projection_12 10000.00 root  cast(test.t.a, decimal(32,0) BINARY)->Column#3, test.t.a",
           "  └─TableReader_13 10000.00 root  data:TableFullScan_14",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
@@ -312,7 +312,7 @@
       {
         "SQL": "select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a",
         "Plan": [
-          "Projection_13 10000.00 root  test.t.a, cast(test.t.b, decimal(65,0) BINARY)->Column#5",
+          "Projection_13 10000.00 root  test.t.a, cast(test.t.b, decimal(32,0) BINARY)->Column#5",
           "└─TableReader_14 10000.00 root  data:TableFullScan_15",
           "  └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
@@ -450,7 +450,7 @@
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
-          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(65,0) BINARY)->Column#4, cast(test.t.b, decimal(65,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(65,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
+          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
           "  └─Sort_22 8000.00 root  test.t.b",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
           "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
@@ -501,7 +501,7 @@
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_16 1.00 root  funcs:avg(distinct Column#7)->Column#5",
-          "└─Projection_17 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
+          "└─Projection_17 8000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#7",
           "  └─TableReader_18 8000.00 root  data:HashAgg_19",
           "    └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.a, ",
           "      └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -611,7 +611,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_8 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
           "  └─TableReader_10 10000.00 root  data:TableFullScan_11",
           "    └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -636,7 +636,7 @@
         "Plan": [
           "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg_9 8000.00 root  group by:test.t.c, funcs:avg(Column#10)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#11)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#11, test.t.c, test.t.c",
+          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(32,0) BINARY)->Column#11, test.t.c, test.t.c",
           "    └─TableReader_11 10000.00 root  data:TableFullScan_12",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],

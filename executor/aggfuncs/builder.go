@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -247,6 +248,11 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 			ordinal: ordinal,
 		},
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -275,6 +281,15 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if len(base.args) == 2 {
+		frac = base.args[1].GetType().Decimal
+	}
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
+
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -319,6 +334,11 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
@@ -368,6 +388,11 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		},
 		isMax: isMax,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {

@@ -128,25 +128,25 @@ id	estRows	task	access object	operator info
 Projection_13	424.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
 └─Limit_16	424.00	root		offset:0, count:2500
   └─HashAgg_19	424.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─HashJoin_34	424.00	root		inner join, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
-      ├─TableReader_37(Build)	424.00	root		data:Selection_36
-      │ └─Selection_36	424.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
-      │   └─TableRangeScan_35	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
-      └─TableReader_44(Probe)	455.80	root		data:Selection_43
-        └─Selection_43	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
-          └─TableRangeScan_42	2000.00	cop[tikv]	table:dd	range:[0,+inf], keep order:false
+    └─HashJoin_33	424.00	root		inner join, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
+      ├─TableReader_36(Build)	424.00	root		data:Selection_35
+      │ └─Selection_35	424.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
+      │   └─TableRangeScan_34	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
+      └─TableReader_43(Probe)	455.80	root		data:Selection_42
+        └─Selection_42	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
+          └─TableRangeScan_41	2000.00	cop[tikv]	table:dd	range:[0,+inf], keep order:false
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
 Projection_10	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	170.34	root		offset:0, count:3000
-  └─IndexMergeJoin_26	170.34	root		inner join, inner:IndexLookUp_24, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
-    ├─TableReader_31(Build)	170.34	root		data:Selection_30
-    │ └─Selection_30	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
-    │   └─TableRangeScan_29	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
-    └─IndexLookUp_24(Probe)	1.00	root		
-      ├─IndexRangeScan_21(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true
-      └─Selection_23(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan_22	3.93	cop[tikv]	table:sdk	keep order:false
+  └─IndexJoin_18	170.34	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
+    ├─TableReader_30(Build)	170.34	root		data:Selection_29
+    │ └─Selection_29	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
+    │   └─TableRangeScan_28	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
+    └─IndexLookUp_17(Probe)	1.00	root		
+      ├─IndexRangeScan_14(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
+      └─Selection_16(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
+        └─TableRowIDScan_15	3.93	cop[tikv]	table:sdk	keep order:false
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection_5	39.28	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -206,7 +206,7 @@ load stats 's/explain_complex_stats_tbl_009.json';
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	estRows	task	access object	operator info
 HashAgg_34	18000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
-└─Projection_63	18000.00	root		cast(Column#28, decimal(65,0) BINARY)->Column#31, Column#29
+└─Projection_63	18000.00	root		cast(Column#28, decimal(32,0) BINARY)->Column#31, Column#29
   └─Union_35	18000.00	root		
     ├─TableReader_38	2000.00	root		data:TableFullScan_37
     │ └─TableFullScan_37	2000.00	cop[tikv]	table:tbl_001	keep order:false

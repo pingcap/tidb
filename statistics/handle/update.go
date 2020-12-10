@@ -557,7 +557,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketch(idx.CMSketch, idx.TopN, eqFB)
+				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
@@ -901,7 +901,10 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
+	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
+	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
+	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

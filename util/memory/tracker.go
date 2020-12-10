@@ -16,6 +16,8 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -42,7 +44,7 @@ type Tracker struct {
 		sync.Mutex
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
-		children []*Tracker
+		children map[int][]*Tracker
 	}
 	actionMu struct {
 		sync.Mutex
@@ -120,8 +122,31 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	a.SetFallback(t.actionMu.actionOnExceed)
-	t.actionMu.actionOnExceed = a
+	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
+}
+
+// GetFallbackForTest get the oom action used by test.
+func (t *Tracker) GetFallbackForTest() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.actionOnExceed
+}
+
+// reArrangeFallback merge two action chains and rearrange them by priority in descending order.
+func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.GetPriority() < b.GetPriority() {
+		a, b = b, a
+		a.SetFallback(b)
+	} else {
+		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
+	}
+	return a
 }
 
 // SetLabel sets the label of a Tracker.
@@ -143,7 +168,10 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 		oldParent.remove(t)
 	}
 	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
+	if parent.mu.children == nil {
+		parent.mu.children = make(map[int][]*Tracker)
+	}
+	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
 	parent.mu.Unlock()
 
 	t.setParent(parent)
@@ -164,12 +192,21 @@ func (t *Tracker) Detach() {
 
 func (t *Tracker) remove(oldChild *Tracker) {
 	found := false
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child == oldChild {
-			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-			found = true
-			break
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child == oldChild {
+				children = append(children[:i], children[i+1:]...)
+				if len(children) > 0 {
+					t.mu.children[label] = children
+				} else {
+					delete(t.mu.children, label)
+				}
+				found = true
+				break
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -188,19 +225,30 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		return
 	}
 
+	if oldChild.label != newChild.label {
+		t.remove(oldChild)
+		newChild.AttachTo(t)
+		return
+	}
+
 	newConsumed := newChild.BytesConsumed()
 	newChild.setParent(t)
 
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child != oldChild {
+				continue
+			}
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.setParent(nil)
-		t.mu.children[i] = newChild
-		break
+			newConsumed -= oldChild.BytesConsumed()
+			oldChild.setParent(nil)
+			children[i] = newChild
+			t.mu.children[label] = children
+			break
+		}
 	}
 	t.mu.Unlock()
 
@@ -248,30 +296,14 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
-// SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label int) *Tracker {
-	if t.label == label {
-		return t
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, child := range t.mu.children {
-		if result := child.SearchTracker(label); result != nil {
-			return result
-		}
-	}
-	return nil
-}
-
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	if t.label == label {
 		return t
 	}
-	for _, child := range t.mu.children {
-		if result := child.SearchTrackerWithoutLock(label); result != nil {
-			return result
-		}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
 	}
 	return nil
 }
@@ -286,43 +318,86 @@ func (t *Tracker) String() string {
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(t.bytesLimit))
 	}
-	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.FormatBytes(t.BytesConsumed()))
 
 	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
+	labels := make([]int, 0, len(t.mu.children))
+	for label := range t.mu.children {
+		labels = append(labels, label)
+	}
+	sort.Ints(labels)
+	for _, label := range labels {
+		children := t.mu.children[label]
+		for _, child := range children {
+			child.toString(indent+"  ", buffer)
 		}
 	}
 	t.mu.Unlock()
 	buffer.WriteString(indent + "}\n")
 }
 
-// BytesToString converts the memory consumption to a readable string.
-func (t *Tracker) BytesToString(numBytes int64) string {
-	return BytesToString(numBytes)
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func (t *Tracker) FormatBytes(numBytes int64) string {
+	return FormatBytes(numBytes)
 }
 
 // BytesToString converts the memory consumption to a readable string.
 func BytesToString(numBytes int64) string {
-	GB := float64(numBytes) / float64(1<<30)
+	GB := float64(numBytes) / float64(byteSizeGB)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
 	}
 
-	MB := float64(numBytes) / float64(1<<20)
+	MB := float64(numBytes) / float64(byteSizeMB)
 	if MB > 1 {
 		return fmt.Sprintf("%v MB", MB)
 	}
 
-	KB := float64(numBytes) / float64(1<<10)
+	KB := float64(numBytes) / float64(byteSizeKB)
 	if KB > 1 {
 		return fmt.Sprintf("%v KB", KB)
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
+}
+
+const (
+	byteSizeGB = int64(1 << 30)
+	byteSizeMB = int64(1 << 20)
+	byteSizeKB = int64(1 << 10)
+	byteSizeBB = int64(1)
+)
+
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func FormatBytes(numBytes int64) string {
+	if numBytes <= byteSizeKB {
+		return BytesToString(numBytes)
+	}
+	unit, unitStr := getByteUnit(numBytes)
+	if unit == byteSizeBB {
+		return BytesToString(numBytes)
+	}
+	v := float64(numBytes) / float64(unit)
+	decimal := 1
+	if numBytes%unit == 0 {
+		decimal = 0
+	} else if v < 10 {
+		decimal = 2
+	}
+	return fmt.Sprintf("%v %s", strconv.FormatFloat(v, 'f', decimal, 64), unitStr)
+}
+
+func getByteUnit(b int64) (int64, string) {
+	if b > byteSizeGB {
+		return byteSizeGB, "GB"
+	} else if b > byteSizeMB {
+		return byteSizeMB, "MB"
+	} else if b > byteSizeKB {
+		return byteSizeKB, "KB"
+	}
+	return byteSizeBB, "Bytes"
 }
 
 // AttachToGlobalTracker attach the tracker to the global tracker

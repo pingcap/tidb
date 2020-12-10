@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -262,7 +264,7 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
-	// issue 6424
+	// issue 6424 & issue 20207
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
 	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123')")
@@ -271,7 +273,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[table:1292]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -1433,7 +1435,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
 	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2000-10-01 01:11:01"))
 
 	// for issue #5132
 	tk.MustExec("CREATE TABLE `tt1` (" +
@@ -1458,6 +1460,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
 		"KEY `idx` (`ts`)" +
 		");")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
 	tk.MustExec("update tsup set a=5;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
@@ -1466,6 +1469,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r1.Check(r2.Rows())
 	tk.MustExec("update tsup set ts='2019-01-01';")
 	tk.MustQuery("select ts from tsup;").Check(testkit.Rows("2019-01-01 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	// issue 5532
 	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
@@ -1480,7 +1484,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
-	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(4, 0)'")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
 
@@ -1518,7 +1522,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime not null, b datetime)")
 	tk.MustExec("insert into t value('1999-12-12', '1999-12-13')")
-	tk.MustExec(" set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1999-12-12 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
@@ -2820,7 +2824,7 @@ func (s *testSuite7) TestSetWithCurrentTimestampAndNow(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists tbl;`)
 	tk.MustExec(`create table t1(c1 timestamp default current_timestamp, c2 int, c3 timestamp default current_timestamp);`)
-	//c1 insert using now() function result, c3 using default value calculation, should be same
+	// c1 insert using now() function result, c3 using default value calculation, should be same
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(2);`)
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
@@ -2962,4 +2966,89 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "4 d", "7 f"))
 	tk.MustExec("delete from t partition (p3,p2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
+}
+
+func (s *testSerialSuite) TestIssue20724(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a varchar(10) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("update t1 set a = 'A'")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssue20840(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("replace into t1 values ('A')")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
+}
+
+func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
+	tests := []struct {
+		a    []interface{}
+		b    []interface{}
+		same bool
+	}{
+		// Positive cases
+		{[]interface{}{1}, []interface{}{1}, true},
+		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
+		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+
+		// negative cases
+		{[]interface{}{1}, []interface{}{2}, false},
+		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
+		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+
+		// Corner cases
+		{[]interface{}{}, []interface{}{}, true},
+		{[]interface{}{nil}, []interface{}{nil}, true},
+		{[]interface{}{}, []interface{}{1}, false},
+		{[]interface{}{1}, []interface{}{1, 1}, false},
+		{[]interface{}{nil}, []interface{}{1}, false},
+	}
+	for _, tt := range tests {
+		testEqualDatumsAsBinary(c, tt.a, tt.b, tt.same)
+	}
+}
+
+func (s *testSuite) TestIssue21232(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a varchar(1), index idx(a))")
+	tk.MustExec("create table t1(a varchar(5), index idx(a))")
+	tk.MustExec("insert into t values('a'), ('b')")
+	tk.MustExec("insert into t1 values('a'), ('bbbbb')")
+	tk.MustExec("update /*+ INL_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_HASH_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+}
+
+func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) {
+	sc := new(stmtctx.StatementContext)
+	re := new(executor.ReplaceExec)
+	sc.IgnoreTruncate = true
+	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
