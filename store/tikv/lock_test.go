@@ -597,7 +597,7 @@ func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
 	c.Assert(err, IsNil)
 	c.Assert(committer.mutations.Len(), Equals, 2)
-	committer.lockTTL = 50
+	committer.lockTTL = 0
 	committer.setAsyncCommit(true)
 	committer.maxCommitTS = committer.startTS + (100 << 18) // 100ms
 
@@ -606,12 +606,8 @@ func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(committer.isAsyncCommit(), IsTrue)
 
-	// Update MaxTs of TiKV
-	time.Sleep(time.Millisecond * 105)
-	t2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	_, _ = t2.Get(context.Background(), []byte("b"))
-
+	// Set an invalid maxCommitTS to produce MaxCommitTsTooLarge
+	committer.maxCommitTS = committer.startTS - 1
 	err = committer.prewriteMutations(bo, committer.mutations.Slice(1, 2))
 	c.Assert(err, IsNil)
 	c.Assert(committer.isAsyncCommit(), IsFalse) // Fallback due to MaxCommitTsTooLarge
