@@ -39,7 +39,7 @@ func CheckFsp(fsp int) (int8, error) {
 		return DefaultFsp, nil
 	}
 	if fsp < int(MinFsp) || fsp > int(MaxFsp) {
-		return DefaultFsp, errors.Errorf("Invalid fsp %d", fsp)
+		return MaxFsp, nil
 	}
 	return int8(fsp), nil
 }
