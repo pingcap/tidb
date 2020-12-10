@@ -639,15 +639,64 @@ func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
 	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
 	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
 
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.UpdateStoreLabels(store3, dc1Label)
+	// Region have 3 peer, leader located in dc-1, followers located in dc-1, dc-2
 	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
 	seed := rand.Uint32()
-	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, seed, WithMatchLabels(dc1Label))
-	c.Assert(err, IsNil)
-	c.Assert(ctx.Store.storeID, Equals, s.store1)
-	ctx, err = s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadMixed, seed, WithMatchLabels(dc2Label))
-	c.Assert(err, IsNil)
-	c.Assert(ctx.Store.storeID, Equals, s.store2)
+
+	testcases := []struct {
+		name               string
+		t                  kv.ReplicaReadType
+		labels             []*metapb.StoreLabel
+		expectStoreIDRange map[uint64]struct{}
+	}{
+		{
+			name:   "any Peer,located in dc-1",
+			t:      kv.ReplicaReadMixed,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+				store3:   {},
+			},
+		},
+		{
+			name:   "any Peer,located in dc-2",
+			t:      kv.ReplicaReadMixed,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store2: {},
+			},
+		},
+		{
+			name:   "only follower,located in dc-1",
+			t:      kv.ReplicaReadFollower,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				store3: {},
+			},
+		},
+		{
+			name:   "only leader, shouldn't consider labels",
+			t:      kv.ReplicaReadLeader,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, testcase.t, seed, WithMatchLabels(testcase.labels))
+		c.Assert(err, IsNil)
+		_, exist := testcase.expectStoreIDRange[ctx.Store.storeID]
+		c.Assert(exist, Equals, true)
+	}
 }
 
 func (s *testRegionCacheSuite) TestSplit(c *C) {
