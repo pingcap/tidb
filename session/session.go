@@ -2283,6 +2283,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
