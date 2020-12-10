@@ -84,7 +84,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 	case *ast.DeleteStmt:
 		return x.TableHints
 	case *ast.InsertStmt:
-		//check duplicated hints
+		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
 	case *ast.ExplainStmt:
