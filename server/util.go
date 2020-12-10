@@ -223,7 +223,7 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 			data = append(data, 0)
 		} else {
 			data = append(data, 4)
-			data = dumpUint16(data, uint16(year)) //year
+			data = dumpUint16(data, uint16(year)) // year
 			data = append(data, byte(mon), byte(day))
 		}
 	}

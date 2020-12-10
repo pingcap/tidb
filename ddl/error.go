@@ -203,6 +203,8 @@ var (
 	ErrFieldNotFoundPart = dbterror.ClassDDL.NewStd(mysql.ErrFieldNotFoundPart)
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
 	ErrWrongTypeColumnValue = dbterror.ClassDDL.NewStd(mysql.ErrWrongTypeColumnValue)
+	// ErrValuesIsNotIntType returns 'VALUES value for partition '%-.64s' must have type INT'
+	ErrValuesIsNotIntType = dbterror.ClassDDL.NewStd(mysql.ErrValuesIsNotIntType)
 	// ErrFunctionalIndexPrimaryKey returns 'The primary key cannot be a functional index'
 	ErrFunctionalIndexPrimaryKey = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexPrimaryKey)
 	// ErrFunctionalIndexOnField returns 'Functional index on a column is not supported. Consider using a regular index instead'
@@ -268,4 +270,7 @@ var (
 
 	// ErrTooLongValueForType is returned when the individual enum element length is too long.
 	ErrTooLongValueForType = dbterror.ClassDDL.NewStd(mysql.ErrTooLongValueForType)
+
+	// ErrUnknownEngine is returned when the table engine is unknown.
+	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 )

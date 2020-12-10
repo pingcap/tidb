@@ -60,18 +60,18 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	}
 	data := make([]byte, 4, 128)
 
-	//status ok
+	// status ok
 	data = append(data, 0)
-	//stmt id
+	// stmt id
 	data = dumpUint32(data, uint32(stmt.ID()))
-	//number columns
+	// number columns
 	data = dumpUint16(data, uint16(len(columns)))
-	//number params
+	// number params
 	data = dumpUint16(data, uint16(len(params)))
-	//filter [00]
+	// filter [00]
 	data = append(data, 0)
-	//warning count
-	data = append(data, 0, 0) //TODO support warning count
+	// warning count
+	data = append(data, 0, 0) // TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
 		return err

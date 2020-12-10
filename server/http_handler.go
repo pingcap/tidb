@@ -590,12 +590,9 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 					rt.Frames = append(rt.Frames, f)
 				}
 			}
-		} else {
-			if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
-				rt.Frames = append(rt.Frames, f)
-			}
+		} else if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
-
 	}
 
 	if pi != nil {
@@ -604,10 +601,8 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 				rt.Frames = append(rt.Frames, f)
 			}
 		}
-	} else {
-		if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
-			rt.Frames = append(rt.Frames, f)
-		}
+	} else if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
