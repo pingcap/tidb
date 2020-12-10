@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -832,10 +831,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64) (map[int64]*model.Inde
 	if dom == nil {
 		return nil, errors.New("domain not found for ctx")
 	}
-	is, err := dom.GetSnapshotInfoSchema(math.MaxUint64)
-	if err != nil {
-		return nil, err
-	}
+	is := dom.InfoSchema()
 	latestTbl, exist := is.TableByID(id)
 	if exist {
 		latestTblInfo := latestTbl.Meta()
@@ -862,7 +858,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	if check && ctx.GetSessionVars().ConnectionID > 0 {
+	if check && ctx.GetSessionVars().ConnectionID > 0 && len(tblInfo.Indices) > 0 {
 		latestIndexes, err = getLatestIndexInfo(ctx, tblInfo.ID)
 		if err != nil {
 			return nil, err
