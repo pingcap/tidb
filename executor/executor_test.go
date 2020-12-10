@@ -1818,15 +1818,15 @@ func (s *testSuiteP1) TestMultiUpdate(c *C) {
 	// Test UPDATE ... set_lists.
 	tk.MustExec(`UPDATE test_mu SET b = 0, c = b WHERE a = 4`)
 	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
-	result.Check(testkit.Rows(`1 7 2`, `4 0 0`, `7 8 9`))
+	result.Check(testkit.Rows(`1 7 2`, `4 0 5`, `7 8 9`))
 
 	tk.MustExec(`UPDATE test_mu SET c = 8, b = c WHERE a = 4`)
 	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
-	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 9`))
+	result.Check(testkit.Rows(`1 7 2`, `4 5 8`, `7 8 9`))
 
 	tk.MustExec(`UPDATE test_mu SET c = b, b = c WHERE a = 7`)
 	result = tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`)
-	result.Check(testkit.Rows(`1 7 2`, `4 8 8`, `7 8 8`))
+	result.Check(testkit.Rows(`1 7 2`, `4 5 8`, `7 9 8`))
 }
 
 func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
@@ -7010,6 +7010,16 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
 	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func (s *testSuite) TestIssue13953(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`id` int(11) DEFAULT NULL, `tp_bigint` bigint(20) DEFAULT NULL )")
+	tk.MustExec("insert into t values(0,1),(1,9215570218099803537)")
+	tk.MustQuery("select A.tp_bigint,B.id from t A join t B on A.id < B.id * 16 where A.tp_bigint = B.id;").Check(
+		testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
