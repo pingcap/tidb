@@ -5209,9 +5209,9 @@ func (s *testIntegrationSuite) TestIssue18850(c *C) {
 func (s *testIntegrationSuite) TestIssue11177(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'lvuleck'", "Warning 1292 Truncated incorrect FLOAT value: '2008-09-16 22:23:50'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
 	tk.MustQuery("SELECT 'aa' BETWEEN 'bb' AND 0;").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'aa'", "Warning 1292 Truncated incorrect FLOAT value: 'bb'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
 	tk.MustQuery("select 1 between 0 and b'110';").Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows())
 	tk.MustQuery("select 'b' between 'a' and b'110';").Check(testkit.Rows("0"))
