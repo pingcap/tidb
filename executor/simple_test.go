@@ -591,17 +591,10 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 		testkit.Rows("0 16"))
 	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
 		testkit.Rows("1", "2"))
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows("1 0",
-			"1 1",
-			"1 2",
-			"1 3",
-			"2 0",
-			"2 1",
-			"2 2",
-			"2 3"))
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
+	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
 
 	tk.MustExec("drop stats t")
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(

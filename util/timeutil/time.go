@@ -60,6 +60,22 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
+// inferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
+// recursive final linked file of the path.
+func inferOneStepLinkForPath(path string) (string, error) {
+	fileInfo, err := os.Lstat(path)
+	if err != nil {
+		return path, err
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		path, err = os.Readlink(path)
+		if err != nil {
+			return path, err
+		}
+	}
+	return path, nil
+}
+
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
 // It is exported because we need to use it during bootstap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
@@ -72,6 +88,13 @@ func InferSystemTZ() string {
 	case !ok:
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
+			if strings.Index(path, "posixrules") != -1 {
+				path, err1 = inferOneStepLinkForPath("/etc/localtime")
+				if err1 != nil {
+					logutil.Logger(context.Background()).Error("locate timezone files failed", zap.Error(err1))
+					return ""
+				}
+			}
 			name, err2 := inferTZNameFromFileName(path)
 			if err2 == nil {
 				return name

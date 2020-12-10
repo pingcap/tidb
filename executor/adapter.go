@@ -646,7 +646,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.isSelectForUpdate
+	a.isSelectForUpdate = b.isSelectForUpdate && !a.Ctx.GetSessionVars().StmtCtx.InInsertStmt
 	return e, nil
 }
 

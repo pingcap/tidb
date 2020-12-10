@@ -338,6 +338,9 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		}
 	}
 	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), defaultNumTopN)
+	if needCMS && cms != nil {
+		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
+	}
 	return hist, cms, err
 }
 
@@ -524,6 +527,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 			return nil, nil, err
 		}
 		hists = append(hists, hg)
+		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
@@ -1205,6 +1209,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		if err != nil {
 			return analyzeResult{Err: err, job: idxExec.job}
 		}
+		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
 	result := analyzeResult{
 		PhysicalTableID: idxExec.physicalTableID,

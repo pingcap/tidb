@@ -609,7 +609,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		{2010101011, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
 		{201010101, false, "2000-02-01 01:01:01", false, "2000-02-01 01:01:01", false, "2000-02-01"},
 		{20101010, false, "2010-10-10 00:00:00", false, "2010-10-10 00:00:00", false, "2010-10-10"},
-		{2010101, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
+		{2010101, false, "0201-01-01 00:00:00", true, types.ZeroDatetimeStr, false, "0201-01-01"},
 		{201010, false, "2020-10-10 00:00:00", false, "2020-10-10 00:00:00", false, "2020-10-10"},
 		{20101, false, "2002-01-01 00:00:00", false, "2002-01-01 00:00:00", false, "2002-01-01"},
 		{2010, true, types.ZeroDatetimeStr, true, types.ZeroDatetimeStr, true, types.ZeroDateStr},
@@ -736,6 +736,39 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 		c.Assert(err, IsNil)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+	}
+}
+
+func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		Input       string
+		Fsp         int8
+		ExpectError bool
+		Expect      string
+	}{
+		{"20170118.123", 3, false, "2017-01-18 00:00:00.000"},
+		{"121231113045.123345", 6, false, "2012-12-31 11:30:45.123345"},
+		{"20121231113045.123345", 6, false, "2012-12-31 11:30:45.123345"},
+		{"121231113045.9999999", 6, false, "2012-12-31 11:30:46.000000"},
+		{"170105084059.575601", 6, false, "2017-01-05 08:40:59.575601"},
+		{"201705051315111.22", 2, true, "0000-00-00 00:00:00.00"},
+		{"2011110859.1111", 4, true, "0000-00-00 00:00:00.0000"},
+		{"2011110859.1111", 4, true, "0000-00-00 00:00:00.0000"},
+		{"191203081.1111", 4, true, "0000-00-00 00:00:00.0000"},
+		{"43128.121105", 6, true, "0000-00-00 00:00:00.000000"},
+	}
+
+	for _, test := range table {
+		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, (int)(test.Fsp))
+		if test.ExpectError {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(t.String(), Equals, test.Expect)
+		}
 	}
 }
 
@@ -1015,7 +1048,7 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 	}
 }
 
-func (s *testTimeSuite) TestTamestampDiff(c *C) {
+func (s *testTimeSuite) TestTimestampDiff(c *C) {
 	tests := []struct {
 		unit   string
 		t1     types.MysqlTime
@@ -1356,6 +1389,11 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			unit:   "SECOND",
 			format: "-3020400",
 			failed: true,
+		},
+		{
+			unit:   "SECOND",
+			format: "50.-2",
+			ans:    "00:00:50",
 		},
 		{
 			unit:   "MONTH",

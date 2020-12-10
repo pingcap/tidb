@@ -147,6 +147,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareDDL
 	}
 
+	if _, ok := stmt.(*ast.LoadDataStmt); ok {
+		return ErrUnsupportedPs
+	}
+
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
