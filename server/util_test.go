@@ -417,7 +417,7 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		},
 	}
 	for _, t := range tests {
-		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
+		c.Assert(string(types.AppendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
 	}
 }
 
