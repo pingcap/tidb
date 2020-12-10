@@ -193,6 +193,20 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
+<<<<<<< HEAD
+=======
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.checkStatisticsOpGrammar(in)
+	case *ast.GroupByClause:
+		p.checkGroupBy(node)
+>>>>>>> b9c5aaf55... planner: error by default for GROUP BY expr ASC|DESC (#21120)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -668,6 +682,34 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
+<<<<<<< HEAD
+=======
+func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	for _, item := range stmt.Items {
+		if !item.NullOrder && !enableNoopFuncs {
+			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			return
+		}
+	}
+}
+
+func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
+	var statsName string
+	switch stmt := node.(type) {
+	case *ast.CreateStatisticsStmt:
+		statsName = stmt.StatsName
+	case *ast.DropStatisticsStmt:
+		statsName = stmt.StatsName
+	}
+	if isIncorrectName(statsName) {
+		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+		p.err = ErrInternal.GenWithStack(msg)
+	}
+	return
+}
+
+>>>>>>> b9c5aaf55... planner: error by default for GROUP BY expr ASC|DESC (#21120)
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.OldTable.Name.String()
 	newTable := stmt.NewTable.Name.String()
