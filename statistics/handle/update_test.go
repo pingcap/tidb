@@ -1536,7 +1536,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			hist: "column:2 ndv:20 totColSize:20\n" +
 				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
 				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0",
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
