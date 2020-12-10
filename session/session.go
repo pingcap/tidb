@@ -656,9 +656,19 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
-		err = s.NewTxn(ctx)
-		if err != nil {
-			return err
+		if len(nh.history) > 1 {
+			err = s.NewTxn(ctx)
+			if err != nil {
+				return err
+			}
+			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+			if pessTxnConf.Enable {
+				if s.sessionVars.TxnMode == ast.Pessimistic {
+					s.sessionVars.TxnCtx.IsPessimistic = true
+				}
+			}
+		} else {
+			s.PrepareTxnCtx(ctx)
 		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
@@ -682,7 +692,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sql))
+					zap.String("sql", sql),
+					zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -704,7 +715,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
-			zap.Uint64("original txnStartTS", orgStartTS))
+			zap.Uint64("original txnStartTS", orgStartTS),
+			zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 		failpoint.Inject("preCommitHook", func() {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
