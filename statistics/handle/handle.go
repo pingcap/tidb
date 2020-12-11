@@ -531,6 +531,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
+				StatsVer:   row.GetInt64(7),
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break

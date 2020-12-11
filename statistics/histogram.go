@@ -811,6 +811,7 @@ type Column struct {
 	ErrorRate
 	Flag           int64
 	LastAnalyzePos types.Datum
+	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 }
 
 func (c *Column) String() string {
