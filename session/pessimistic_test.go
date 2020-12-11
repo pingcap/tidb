@@ -384,6 +384,11 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 1000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists conflict")
@@ -2068,9 +2073,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
-	_ = tk.ExecToErr("commit")
-	// TODO: wait for https://github.com/pingcap/tidb/pull/21531
-	// c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }
@@ -2123,9 +2126,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
-	_ = tk.ExecToErr("commit")
-	// TODO: Check the error after supporting falling back to 2PC in TiKV.
-	// c.Assert(err, IsNil)
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }
