@@ -484,7 +484,6 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 		Fsp   int8
 	}{
 		{"00:00:00.1", -2},
-		{"00:00:00.1", 7},
 	}
 
 	for _, test := range errTable {
