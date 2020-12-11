@@ -41,6 +41,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -402,8 +403,14 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			}
 		}
 		out = append(out[:validPos], out[ePosInOut:]...)
-	} else {
+	} else if fVal < 1e15 {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	} else {
+		// prec in strconv of fmt 'e' would be added 1, so we minus 1 here.
+		out = strconv.AppendFloat(in, fVal, 'e', prec-1, bitSize)
+		if strings.Index(string(out), "e+") >= 0 {
+			out = []byte(strings.Replace(string(out), "e+", "e", 1))
+		}
 	}
 	return out
 }
