@@ -236,7 +236,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	ranges := ranger.FullIntRange(false)
 
 	var builder distsql.RequestBuilder
-	return builder.SetTableRanges(tableID, ranges, nil).
+	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
