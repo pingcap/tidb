@@ -153,7 +153,7 @@ func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 			followerIdx++
 		}
 		storeIdx, s := r.accessStore(TiKvOnly, followerIdx)
-		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) && r.filterStoreCandidate(op, followerIdx) {
+		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) && r.filterStoreCandidate(followerIdx, op) {
 			return followerIdx
 		}
 		seed++
@@ -166,30 +166,18 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
 	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
 		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
 			continue
 		}
 		candidates = append(candidates, AccessIndex(i))
 	}
-	candidates = r.filterStoreCandidates(op, candidates...)
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
 	return candidates[seed%uint32(len(candidates))]
 }
 
-func (r *RegionStore) filterStoreCandidates(op *storeSelectorOp, aidxs ...AccessIndex) []AccessIndex {
-	candidates := make([]AccessIndex, 0, len(aidxs))
-	for _, aidx := range aidxs {
-		if !r.filterStoreCandidate(op, aidx) {
-			continue
-		}
-		candidates = append(candidates, aidx)
-	}
-	return candidates
-}
-
-func (r *RegionStore) filterStoreCandidate(op *storeSelectorOp, aidx AccessIndex) bool {
+func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp, ) bool {
 	_, s := r.accessStore(TiKvOnly, aidx)
 	// filter label unmatched store
 	if !s.IsLabelsMatch(op.labels) {

@@ -636,6 +636,12 @@ func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
 			Value: "dc-2",
 		},
 	}
+	dc3Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-3",
+		},
+	}
 	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
 	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
 
@@ -684,6 +690,14 @@ func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
 			name:   "only leader, shouldn't consider labels",
 			t:      kv.ReplicaReadLeader,
 			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+		{
+			name:   "no label matching, fallback to leader",
+			t:      kv.ReplicaReadMixed,
+			labels: dc3Label,
 			expectStoreIDRange: map[uint64]struct{}{
 				s.store1: {},
 			},
