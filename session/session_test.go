@@ -222,11 +222,12 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
 		tableType := tb[1]
-		if tableType == "VIEW" {
+		switch tableType {
+		case "VIEW":
 			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tableType == "BASE TABLE" {
+		case "BASE TABLE":
 			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		} else {
+		default:
 			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
 		}
 	}
@@ -3701,7 +3702,7 @@ func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
-	//Assert Coprocessor OOMAction
+	// Assert Coprocessor OOMAction
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
@@ -3814,4 +3815,14 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
 	}
+}
+
+// TestDefaultWeekFormat checks for issue #21510.
+func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("set @@global.default_week_format = 4;")
+	defer tk1.MustExec("set @@global.default_week_format = default;")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
 }

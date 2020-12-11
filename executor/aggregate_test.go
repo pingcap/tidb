@@ -470,7 +470,7 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 
-	//For var_samp()/stddev_samp()
+	// For var_samp()/stddev_samp()
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (id int(11),value1 float(10,2));")
 	tk.MustExec("INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);")
@@ -791,10 +791,10 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 
 	// FixMe: test functional dependency of derived table
-	//tk.MustQuery("select * from (select * from t) as e group by a")
-	//tk.MustQuery("select * from (select * from t) as e group by b,d")
-	//err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	//c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	// tk.MustQuery("select * from (select * from t) as e group by a")
+	// tk.MustQuery("select * from (select * from t) as e group by b,d")
+	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	// c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")

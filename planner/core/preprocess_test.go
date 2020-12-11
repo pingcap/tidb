@@ -272,6 +272,13 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE INDEX `` on t (a);", true, errors.New("[ddl:1280]Incorrect index name ''")},
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
+		// issue 21082
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
+		{"CREATE TABLE t (a int);", false, nil},
+		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
+		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+
 		// issue 20295
 		// issue 11193
 		{"select cast(1.23 as decimal(65,65))", true, types.ErrTooBigScale.GenWithStackByArgs(65, "1.23", mysql.MaxDecimalScale)},
