@@ -595,7 +595,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 
 	// for round
 	result = tk.MustQuery("SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);")
-	result.Check(testkit.Rows("3 -3 3")) // TODO: Should be 3 -3 2
+	result.Check(testkit.Rows("3 -3 2"))
 	result = tk.MustQuery("SELECT ROUND(2.5, NULL), ROUND(NULL, 4), ROUND(NULL, NULL), ROUND(NULL);")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("SELECT ROUND('123.4'), ROUND('123e-2');")
@@ -1520,6 +1520,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2003-12-31 00:00:00 2004-01-01 00:00:00"))
 	result = tk.MustQuery("select timestamp(20170118123950.123), timestamp(20170118123950.999);")
 	result.Check(testkit.Rows("2017-01-18 12:39:50.123 2017-01-18 12:39:50.999"))
+	// Issue https://github.com/pingcap/tidb/issues/20003
+	result = tk.MustQuery("select timestamp(0.0001, 0.00001);")
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select timestamp('2003-12-31', '01:01:01.01'), timestamp('2003-12-31 12:34', '01:01:01.01')," +
 		" timestamp('2008-12-31','00:00:00.0'), timestamp('2008-12-31 00:00:00.000');")
 
@@ -4646,6 +4649,10 @@ func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
 		"\t  └─IndexReader_28  \troot\t1      \tindex:Limit_27                                              \t1      \ttime:216.85µs, loops:1, rpc num: 1, rpc time:150.824µs, proc keys:0\t198 Bytes\tN/A\n" +
 		"\t    └─Limit_27      \tcop \t1      \toffset:0, count:1                                           \t1      \ttime:57.396µs, loops:2                                              \tN/A      \tN/A\n" +
 		"\t      └─IndexScan_26\tcop \t1      \ttable:t, index:idx(a), range:(0,+inf], keep order:true, desc\t1      \ttime:56.661µs, loops:1                                              \tN/A      \tN/A"))
+
+	// Test issue16939
+	tk.MustQuery("select tidb_decode_plan(query), time from information_schema.slow_query order by time desc limit 1;")
+	tk.MustQuery("select tidb_decode_plan('xxx')").Check(testkit.Rows("xxx"))
 }
 
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
@@ -7550,21 +7557,28 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
 }
 
-func (s *testIntegrationSerialSuite) TestIssue14448and19383(c *C) {
+// issues 14448, 19383, 17734
+func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS t1")
 	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
 	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
-	_, err := tk.Exec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
-	message := `function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
-	c.Assert(strings.Contains(err.Error(), message), IsTrue)
-	_, err = tk.Exec("SELECT * FROM t1 LOCK IN SHARE MODE")
-	message = `function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
-	c.Assert(strings.Contains(err.Error(), message), IsTrue)
-	tk.MustExec("SET tidb_enable_noop_functions=1")
-	tk.MustExec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
-	tk.MustExec("SELECT * FROM t1 LOCK IN SHARE MODE")
+
+	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	stmts := []string{
+		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1",
+		"SELECT * FROM t1 LOCK IN SHARE MODE",
+		"SELECT * FROM t1 GROUP BY a DESC",
+		"SELECT * FROM t1 GROUP BY a ASC",
+	}
+	for _, stmt := range stmts {
+		tk.MustExec("SET tidb_enable_noop_functions=1")
+		tk.MustExec(stmt)
+		tk.MustExec("SET tidb_enable_noop_functions=0")
+		_, err := tk.Exec(stmt)
+		c.Assert(err.Error(), Matches, message)
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
@@ -7767,6 +7781,25 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("create table t(a enum('a','b'));")
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
+}
+
+func (s *testIntegrationSuite) TestIssue11755(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists lt;")
+	tk.MustExec("create table lt (d decimal(10, 4));")
+	tk.MustExec("insert into lt values(0.2),(0.2);")
+	tk.MustQuery("select LEAD(d,1,1) OVER(), LAG(d,1,1) OVER() from lt;").Check(testkit.Rows("0.2000 1.0000", "1.0000 0.2000"))
+}
+
+func (s *testIntegrationSuite) TestIssue20369(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("insert into t select values(a) from t;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "<nil>"))
 }
 
 func (s *testIntegrationSuite) TestIssue20730(c *C) {
@@ -8161,7 +8194,7 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
 
-func (s *testSuite2) TestIssue12205(c *C) {
+func (s *testIntegrationSuite) TestIssue12205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
