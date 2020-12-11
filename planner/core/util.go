@@ -28,9 +28,8 @@ import (
 )
 
 // AggregateFuncExtractor visits Expr tree.
-// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
+// It collects AggregateFuncExpr from AST Node.
 type AggregateFuncExtractor struct {
-	inAggregateFuncExpr int
 	// skipAggMap stores correlated aggregate functions which have been built in outer query,
 	// so extractor in sub-query will skip these aggregate functions.
 	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
@@ -41,8 +40,6 @@ type AggregateFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr++
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
@@ -53,7 +50,6 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr--
 		if _, ok := a.skipAggMap[v]; !ok {
 			a.AggFuncs = append(a.AggFuncs, v)
 		}
