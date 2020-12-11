@@ -96,16 +96,7 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncLead:
 		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
-<<<<<<< HEAD
-		return buildLag(windowFuncDesc, ordinal)
-=======
 		return buildLag(ctx, windowFuncDesc, ordinal)
-	case ast.AggFuncMax:
-		// The max/min aggFunc using in the window function will using the sliding window algo.
-		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
-	case ast.AggFuncMin:
-		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, false)
->>>>>>> 6e1c2ac8a... executor: fix LEAD and LAG's default value can not adapt to field type (#20747)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
