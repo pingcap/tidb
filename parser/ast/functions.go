@@ -439,7 +439,7 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(" ")
 			fallthrough
 		case 2:
-			if n.Args[1].(ValueExpr).GetValue() != nil {
+			if expr, isValue := n.Args[1].(ValueExpr); !isValue || expr.GetValue() != nil {
 				if err := n.Args[1].Restore(ctx); err != nil {
 					return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args[1]")
 				}
