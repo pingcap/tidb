@@ -1616,11 +1616,8 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// both original expression and alias can be referenced.
 	// e.g.
 	// select distinct a from t order by sin(a);                            ✔
-	// select distinct sin(a) from t order by a;                            ✗
 	// select distinct a, b from t order by a+b;                            ✔
-	// select distinct a from t order by b;                                 ✗
 	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
-	// select distinct count(a) from t group by b order by sum(a);          ✗
 	cols := expression.ExtractColumns(expr)
 CheckReferenced:
 	for _, col := range cols {
@@ -1630,9 +1627,14 @@ CheckReferenced:
 			}
 		}
 
+		// Failed cases
+		// e.g.
+		// select distinct sin(a) from t order by a;                            ✗
+		// select distinct a from t order by a+b;                               ✗
 		if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
 			return ErrAggregateInOrderNotSelect.GenWithStackByArgs(idx+1, "DISTINCT")
 		}
+		// select distinct count(a) from t group by b order by sum(a);          ✗
 		return ErrFieldInOrderNotSelect.GenWithStackByArgs(idx+1, col.OrigName, "DISTINCT")
 	}
 	return nil
