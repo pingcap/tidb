@@ -1582,7 +1582,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 			return nil, err
 		}
 
-		// check whether order by items show up in select distinct fields, see #12442
+		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
 		if hasDistinct && projExprs != nil {
 			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
 			if err != nil {
@@ -1600,7 +1600,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 
 // checkOrderByInDistinct checks whether ORDER BY has conflicts with DISTINCT, see #12442
 func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
-	// Check if expressions directly match
+	// Check if expressions in ORDER BY whole match some fields in DISTINCT.
 	// e.g.
 	// select distinct count(a) from t group by b order by count(a);  ✔
 	// select distinct a+1 from t order by a+1;                       ✔
@@ -1612,7 +1612,8 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 		}
 	}
 
-	// Check if referenced columns match
+	// Check if referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
+	// both original expression and alias can be referenced.
 	// e.g.
 	// select distinct a from t order by sin(a);                            ✔
 	// select distinct sin(a) from t order by a;                            ✗
