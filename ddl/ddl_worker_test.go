@@ -160,7 +160,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Schema ID is wrong, so creating table is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 	// Table exists, so creating table is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
 }
@@ -189,7 +189,7 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	// Schema ID is wrong and orReplace is false, so creating view is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 	// View exists and orReplace is false, so creating view is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 
 }
@@ -782,7 +782,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// modify delete-only-state column,
 	col.FieldType.Tp = mysql.TypeTiny
-	col.FieldType.Flen = col.FieldType.Flen - 1
+	col.FieldType.Flen--
 	updateTest(&tests[16])
 	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	cancelState = model.StateNone

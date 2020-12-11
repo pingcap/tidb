@@ -269,7 +269,7 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 
 	// partition by range columns (c1)
 	if len(pi.Columns) == 1 {
-		return pi.Columns[0].L
+		return "`" + pi.Columns[0].L + "`"
 	}
 
 	// partition by range columns (c1, c2, ...)
@@ -308,7 +308,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	// build column offset.
 	partExp := pi.Expr
 	if len(pi.Columns) == 1 {
-		partExp = pi.Columns[0].L
+		partExp = "`" + pi.Columns[0].L + "`"
 	}
 	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
 	if err != nil {
@@ -451,7 +451,7 @@ func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.Parti
 	if len(pi.Columns) == 0 {
 		partStr = pi.Expr
 	} else if len(pi.Columns) == 1 {
-		partStr = pi.Columns[0].L
+		partStr = "`" + pi.Columns[0].L + "`"
 	} else {
 		return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 	}
@@ -501,7 +501,7 @@ func generateMultiListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.
 		if i > 0 {
 			partStr += ","
 		}
-		partStr += col.L
+		partStr += "`" + col.L + "`"
 	}
 	fmt.Fprintf(&buf, "((%s) in (", partStr)
 	for i, vs := range def.InValues {
@@ -834,6 +834,14 @@ func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []type
 	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
+func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
+}
+
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	partitionInfo := t.meta.GetPartitionInfo()
@@ -844,6 +852,14 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
+}
+
+func (t *partitionedTable) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.

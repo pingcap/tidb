@@ -408,7 +408,7 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 				continue
 			}
 			arg0 := args0[i]
-			if _, ok := b.hashSet[arg0]; ok {
+			if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 				r64s[i] = 1
 				result.SetNull(i, false)
 			}
