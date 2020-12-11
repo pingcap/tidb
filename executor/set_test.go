@@ -469,14 +469,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`SET @@character_set_results = NULL;`)
 	tk.MustQuery(`select @@character_set_results;`).Check(testkit.Rows(""))
 
-	tk.MustGetErrCode(`SET @@global.character_set_server = @global_start_value;`, mysql.ErrWrongValueForVar)
-	tk.MustGetErrCode(`SET @@character_set_server = @global_start_value;`, mysql.ErrWrongValueForVar)
-	tk.MustGetErrCode(`SET @@character_set_server = NULL;`, mysql.ErrWrongValueForVar)
-	tk.MustGetErrCode(`SET @@character_set_server = "";`, mysql.ErrWrongValueForVar)
-	tk.MustGetErrMsg(`SET @@character_set_server = "somecharset";`, "Unknown charset somecharset")
-	// we do not support set character_set_xxx or collation_xxx to a collation id.
-	tk.MustGetErrMsg(`SET @@global.character_set_server = 46;`, "Unknown charset 46")
-	tk.MustGetErrMsg(`SET @@character_set_server = 46;`, "Unknown charset 46")
+	varList := []string{"character_set_server", "character_set_client", "character_set_filesystem", "character_set_database"}
+	for _, v := range varList {
+		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
+		// we do not support set character_set_xxx or collation_xxx to a collation id.
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
+	}
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
