@@ -568,6 +568,9 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
+	if b.ctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(ctx).Info("MYLOG Build", zap.String("type", fmt.Sprintf("%T", node)))
+	}
 	b.optFlag |= flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
@@ -862,18 +865,25 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	check = check && ctx.GetSessionVars().ConnectionID > 0 && len(tblInfo.Indices) > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	if check {
-		latestIndexes, err = getLatestIndexInfo(ctx, tblInfo.ID, startVer)
+	loadLatestIndexes := func() error {
+		latestIndexes, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if latestIndexes == nil {
 			check = false
 		}
+		return nil
 	}
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			if check && latestIndexes == nil {
+				err = loadLatestIndexes()
+				if err != nil {
+					return nil, err
+				}
+			}
 			if check {
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue

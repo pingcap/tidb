@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -389,7 +389,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x); fp != nil {
+		if fp := tryPointGetPlan(ctx, x, false); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -688,7 +688,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 2. It must be a single table select.
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
+func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
 	if selStmt.Having != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -767,6 +767,20 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return p
 	}
 
+	check = check && ctx.GetSessionVars().ConnectionID > 0 && len(tbl.Indices) > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+	loadLatestIndexes := func() bool {
+		latestIndexes, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+		if err != nil {
+			return false
+		}
+		if latestIndexes == nil {
+			check = false
+		}
+		return true
+	}
+
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
 			continue
@@ -775,6 +789,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			continue
 		}
 		if isTableDual {
+			if check && latestIndexes == nil {
+				if !loadLatestIndexes() {
+					return nil
+				}
+			}
+			if check {
+				if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
+			}
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
@@ -783,6 +807,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		idxValues, idxValueParams := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
+		}
+		if check && latestIndexes == nil {
+			if !loadLatestIndexes() {
+				return nil
+			}
+		}
+		if check {
+			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
 		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
@@ -1096,7 +1130,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		OrderBy: updateStmt.Order,
 		Limit:   updateStmt.Limit,
 	}
-	pointGet := tryPointGetPlan(ctx, selStmt)
+	pointGet := tryPointGetPlan(ctx, selStmt, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
@@ -1188,7 +1222,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		OrderBy: delStmt.Order,
 		Limit:   delStmt.Limit,
 	}
-	if pointGet := tryPointGetPlan(ctx, selStmt); pointGet != nil {
+	if pointGet := tryPointGetPlan(ctx, selStmt, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
 				names: pointGet.outputNames,

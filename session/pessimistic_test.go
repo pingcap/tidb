@@ -1907,47 +1907,78 @@ func (s *testPessimisticSuite) TestResolveStalePessimisticPrimaryLock(c *C) {
 func (s *testPessimisticSuite) TestIssue21498(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
 	for _, partition := range []bool{false, true} {
+		//RC test
 		tk.MustExec("drop table if exists t")
 		createTable := "create table t (id int primary key, v int, index iv (v))"
 		if partition {
 			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
 		}
 		tk.MustExec(createTable)
-		tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40);")
+		tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
 
 		tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
-		tk.MustExec("begin pessimistic;")
-		tk.MustQuery("select * from t where v = 10;").Check(testkit.Rows("1 10"))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows("1 10"))
 
-		tk2.MustExec("alter table t drop index iv;")
-		tk2.MustExec("update t set v = 11 where id = 1;")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
 
-		tk.MustQuery("select * from t where v = 10;").Check(testkit.Rows())
-		tk.MustQuery("select * from t where v = 11;").Check(testkit.Rows("1 11"))
-		tk.MustQuery("select * from t where id = 1;").Check(testkit.Rows("1 11"))
-		tk.MustExec("admin check table t;")
-		tk.MustExec("commit;")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 11").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 11"))
+		tk.MustExec("admin check table t")
+		tk.MustExec("commit")
 
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (id int primary key, v int, index iv (v), v2 int);")
-		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400);")
+		createTable = "create table t (id int primary key, v int, index iv (v), v2 int)"
+		if partition {
+			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
+		}
+		tk.MustExec(createTable)
+		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400)")
 
 		tk.MustExec("begin pessimistic")
-		time.Sleep(time.Second)
-		tk.MustQuery("select * from t use index (iv) where v = 10;").Check(testkit.Rows("1 10 100"))
-		tk2.MustExec("alter table t drop index iv;")
-		tk2.MustExec("update t set v = 11 where id = 1;")
-		err := tk.ExecToErr("select * from t use index (iv) where v = 10;")
+		tk.MustQuery("select * from t use index (iv) where v = 10").Check(testkit.Rows("1 10 100"))
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
+		err := tk.ExecToErr("select * from t use index (iv) where v = 10")
 		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
-		tk.MustQuery("select * from t where v = 10;").Check(testkit.Rows())
-		tk2.MustExec("update t set id = 5 where id = 1;")
-		err = tk.ExecToErr("select * from t use index (iv) where v = 10;")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk2.MustExec("update t set id = 5 where id = 1")
+		err = tk.ExecToErr("select * from t use index (iv) where v = 10") // select with
 		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
-		tk.MustQuery("select * from t where v = 10;").Check(testkit.Rows())
-		tk.MustExec("admin check table t;")
-		tk.MustExec("commit;")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		if !partition {
+			// amend transaction does not support partition table
+			tk.MustExec("insert into t(id, v, v2) select 6, v + 20, v2 + 200 from t where id = 4") // insert ... select with index unchanged
+		}
+		err = tk.ExecToErr("insert into t(id, v, v2) select 7, v + 30, v2 + 300 from t use index (iv) where id = 4") // insert ... select with index changed
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustExec("admin check table t") // check consistency inside txn
+		tk.MustExec("commit")
+		if !partition {
+			tk.MustQuery("select * from t").Check(testkit.Rows("2 20 200", "3 30 300", "4 40 400", "5 11 100", "6 60 600"))
+		}
+		tk.MustExec("admin check table t") // check consistency out of txn
+
+		//RR test for non partition
+		if partition {
+			continue
+		}
+		tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 21 where v = 20")
+		tk2.MustExec("update t set v = 22 where v = 21")
+		tk.MustExec("update t set v = 23 where v = 22")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 24 where v = 23")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("2 24 200", "3 30 300", "4 40 400", "5 11 100", "6 60 600"))
 	}
 }
