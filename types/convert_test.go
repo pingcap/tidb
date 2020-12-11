@@ -746,7 +746,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeString, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeString, []byte("123"), "123")
 
-	//TODO add more tests
+	// TODO add more tests
 	signedAccept(c, mysql.TypeNewDecimal, 123, "123")
 	signedAccept(c, mysql.TypeNewDecimal, int64(123), "123")
 	signedAccept(c, mysql.TypeNewDecimal, uint64(123), "123")
@@ -979,7 +979,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`[]`, 0},
 		{`3`, 3},
 		{`-3`, -3},
-		{`4.5`, 5},
+		{`4.5`, 4},
 		{`true`, 1},
 		{`false`, 0},
 		{`null`, 0},
