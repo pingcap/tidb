@@ -763,6 +763,17 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.mustExec("create view v1 as select 1")
+		dbt.mustExec("create sequence s1")
+
+		// can't insert into views (in TiDB) or sequences. issue #20880
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
 		lastID, err1 := rs.LastInsertId()

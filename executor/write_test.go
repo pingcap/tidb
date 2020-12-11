@@ -1435,7 +1435,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2000-10-01 01:01:01 2017-01-01 10:10:10"))
 	tk.MustExec("update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2017-10-01 10:20:11"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2017-10-01 10:10:11 2000-10-01 01:11:01"))
 
 	// for issue #5132
 	tk.MustExec("CREATE TABLE `tt1` (" +
