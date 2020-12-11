@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -57,6 +56,54 @@ func (s *testPlanNormalize) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+}
+
+func (s *testPlanNormalize) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		if i == 0 {
+			tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+		} else if i == 1 {
+			tk.MustExec("set session tidb_opt_prefer_range_scan=1")
+		}
+		tk.Se.GetSessionVars().PlanID = 0
+		tk.MustExec(tt)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(core.Plan)
+		c.Assert(ok, IsTrue)
+		normalized, _ := core.NormalizePlan(p)
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = normalizedPlanRows
+		})
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+	}
 }
 
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
@@ -444,7 +491,7 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
-func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkDecodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -469,13 +516,14 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	encodedPlanStr := core.EncodePlan(p)
-	start := time.Now()
-	_, err := plancodec.DecodePlan(encodedPlanStr)
-	c.Assert(err, IsNil)
-	c.Assert(time.Since(start).Seconds(), Less, 3.0)
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		_, err := plancodec.DecodePlan(encodedPlanStr)
+		c.Assert(err, IsNil)
+	}
 }
 
-func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
+func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -492,9 +540,8 @@ func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
 	p, ok := info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
 	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	start := time.Now()
-	encodedPlanStr := core.EncodePlan(p)
-	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	_, err := plancodec.DecodePlan(encodedPlanStr)
-	c.Assert(err, IsNil)
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		core.EncodePlan(p)
+	}
 }
