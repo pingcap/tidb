@@ -94,9 +94,18 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncPercentRank:
 		return buildPercenRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
-		return buildLead(windowFuncDesc, ordinal)
+		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
+<<<<<<< HEAD
 		return buildLag(windowFuncDesc, ordinal)
+=======
+		return buildLag(ctx, windowFuncDesc, ordinal)
+	case ast.AggFuncMax:
+		// The max/min aggFunc using in the window function will using the sliding window algo.
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
+	case ast.AggFuncMin:
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, false)
+>>>>>>> 6e1c2ac8a... executor: fix LEAD and LAG's default value can not adapt to field type (#20747)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -659,7 +668,7 @@ func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 }
 
-func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
+func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
 		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
@@ -668,6 +677,13 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	defaultExpr = expression.NewNull()
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
+		switch et := defaultExpr.(type) {
+		case *expression.Constant:
+			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			if err1 == nil {
+				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			}
+		}
 	}
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
@@ -676,10 +692,10 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
 }
 
-func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lead{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLead(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lead{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }
 
-func buildLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lag{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lag{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }
