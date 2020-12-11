@@ -2065,6 +2065,14 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for extract
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
+	result = tk.MustQuery("select extract(day_microsecond from '2017-01-01 12:12:12'), extract(day_microsecond from '01 12:12:12'), extract(day_microsecond from '12:12:12'), extract(day_microsecond from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212000000 361212000000 121212000000 240000890000"))
+	result = tk.MustQuery("select extract(day_second from '2017-01-01 12:12:12'), extract(day_second from '01 12:12:12'), extract(day_second from '12:12:12'), extract(day_second from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212 361212 121212 240000"))
+	result = tk.MustQuery("select extract(day_minute from '2017-01-01 12:12:12'), extract(day_minute from '01 12:12:12'), extract(day_minute from '12:12:12'), extract(day_minute from '01 00:00:00.89')")
+	result.Check(testkit.Rows("11212 3612 1212 2400"))
+	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
+	result.Check(testkit.Rows("112 36 12 24"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
