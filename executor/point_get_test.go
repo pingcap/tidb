@@ -604,6 +604,7 @@ func (s *testSerialSuite) mustExecDDL(tk *testkit.TestKit, c *C, sql string) {
 }
 
 func (s *testSerialSuite) TestPointGetReadLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
@@ -656,6 +657,7 @@ func (s *testSerialSuite) TestPointGetReadLock(c *C) {
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
