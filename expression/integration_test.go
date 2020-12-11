@@ -4653,6 +4653,10 @@ func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
 		"\t  └─IndexReader_28  \troot\t1      \tindex:Limit_27                                              \t1      \ttime:216.85µs, loops:1, rpc num: 1, rpc time:150.824µs, proc keys:0\t198 Bytes\tN/A\n" +
 		"\t    └─Limit_27      \tcop \t1      \toffset:0, count:1                                           \t1      \ttime:57.396µs, loops:2                                              \tN/A      \tN/A\n" +
 		"\t      └─IndexScan_26\tcop \t1      \ttable:t, index:idx(a), range:(0,+inf], keep order:true, desc\t1      \ttime:56.661µs, loops:1                                              \tN/A      \tN/A"))
+
+	// Test issue16939
+	tk.MustQuery("select tidb_decode_plan(query), time from information_schema.slow_query order by time desc limit 1;")
+	tk.MustQuery("select tidb_decode_plan('xxx')").Check(testkit.Rows("xxx"))
 }
 
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
