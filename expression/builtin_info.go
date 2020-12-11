@@ -806,7 +806,7 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	if err != nil {
 		return planString, false, nil
 	}
-	return planTree, false, err
+	return planTree, false, nil
 }
 
 type nextValFunctionClass struct {
