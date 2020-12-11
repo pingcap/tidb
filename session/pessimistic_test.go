@@ -384,6 +384,11 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 1000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists conflict")
