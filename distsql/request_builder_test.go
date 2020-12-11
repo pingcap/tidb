@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -321,6 +322,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -397,6 +399,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -444,6 +447,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -491,6 +495,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -601,6 +606,7 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 			SyncLog:        false,
 			Streaming:      false,
 			ReplicaRead:    replicaRead,
+			TxnScope:       oracle.GlobalTxnScope,
 		}
 
 		c.Assert(actual, DeepEquals, expect)
@@ -624,6 +630,7 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		MemTracker:     (*memory.Tracker)(nil),
 		ReplicaRead:    0x1,
 		SchemaVar:      10000,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
