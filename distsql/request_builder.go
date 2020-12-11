@@ -247,11 +247,10 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
-	if isCommonHandle {
-		return CommonHandleRangesToKVRanges(sc, tid, ranges)
-	} else {
+	if !isCommonHandle {
 		return tablesRangesToKVRanges(tid, ranges, fb), nil
 	}
+	return CommonHandleRangesToKVRanges(sc, tid, ranges)
 }
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
