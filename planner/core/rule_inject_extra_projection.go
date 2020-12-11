@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -56,6 +57,12 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
+	case *PhysicalTableReader:
+		tableReader, isTableReader := plan.(*PhysicalTableReader)
+		if isTableReader && tableReader.StoreType == kv.TiFlash {
+			tableReader.tablePlan = pe.inject(tableReader.tablePlan)
+			tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		}
 	}
 	return plan
 }
