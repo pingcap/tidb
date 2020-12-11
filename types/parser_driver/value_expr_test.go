@@ -48,6 +48,7 @@ func (s *testValueExprRestoreSuite) TestValueExprRestore(c *C) {
 		{types.NewDecimalDatum(types.NewDecFromInt(321)), "321"},
 		{types.NewDurationDatum(types.ZeroDuration), "'00:00:00'"},
 		{types.NewTimeDatum(types.ZeroDatetime), "'0000-00-00 00:00:00'"},
+		{types.NewStringDatum("\\"), "\\\\"},
 	}
 	// Run Test
 	var sb strings.Builder
