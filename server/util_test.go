@@ -415,6 +415,24 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			-1,
 			64,
 		},
+		{
+			1e14,
+			"100000000000000",
+			-1,
+			64,
+		},
+		{
+			1e15,
+			"1e15",
+			-1,
+			64,
+		},
+		{
+			1e308,
+			"1e308",
+			-1,
+			64,
+		},
 	}
 	for _, t := range tests {
 		c.Assert(string(appendFormatFloat(nil, t.fVal, t.prec, t.bitSize)), Equals, t.out)
