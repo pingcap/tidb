@@ -941,6 +941,16 @@ error = '''
 Internal : %s
 '''
 
+["planner:3065"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s
+'''
+
+["planner:3066"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s
+'''
+
 ["planner:3105"]
 error = '''
 The value specified for generated column '%s' in table '%s' is not allowed.
