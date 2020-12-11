@@ -653,7 +653,7 @@ var defaultConf = Config{
 	IndexLimit:                   64,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
-	EnableTableLock:              false,
+	EnableTableLock:              true,
 	DelayCleanTableLock:          0,
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
