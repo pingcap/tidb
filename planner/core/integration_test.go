@@ -1972,37 +1972,6 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 }
 
-func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test;")
-	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
-	tk.MustExec("insert into test(age) values(5);")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("analyze table test;")
-	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"TableReader_7 2048.00 root  data:Selection_6",
-		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
-
-	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"IndexLookUp_7 2048.00 root  ",
-		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
-}
-
 func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
