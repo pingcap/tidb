@@ -50,8 +50,8 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
-// Note this function should be deleted or at least not exported, but currently br refers it,
-// so have to keep it.(This also means br might not be compatible with clustered index)
+// Note this function should be deleted or at least not exported, but currently
+// br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
@@ -255,8 +255,8 @@ func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCo
 }
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
-// Note this function should not be exported, but currently br refers to it,
-// so have to keep it.(This also means br might not be compatible with clustered index)
+// Note this function should not be exported, but currently
+// br refers to it, so have to keep it.
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	return tablesRangesToKVRanges([]int64{tid}, ranges, fb)
 }
