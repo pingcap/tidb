@@ -4652,6 +4652,7 @@ func (s *testIntegrationSuite) TestTiDBDecodePlanFunc(c *C) {
 
 	// Test issue16939
 	tk.MustQuery("select tidb_decode_plan(query), time from information_schema.slow_query order by time desc limit 1;")
+	tk.MustQuery("select tidb_decode_plan('xxx')").Check(testkit.Rows("xxx"))
 }
 
 func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
