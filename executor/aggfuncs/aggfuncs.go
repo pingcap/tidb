@@ -16,12 +16,11 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/util/set"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // All the AggFunc implementations are listed here for navigation.
