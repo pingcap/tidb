@@ -233,7 +233,12 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullIntRange(false)
+	var ranges []*ranger.Range
+	if c.TableInfo.IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
 
 	var builder distsql.RequestBuilder
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
