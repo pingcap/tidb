@@ -6483,3 +6483,12 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }
+
+func (s *testSuite) Test15492(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (2, 20), (1, 10), (3, 30)")
+	tk.MustQuery("select a + 1 as field1, a as field2 from t order by field1, field2 limit 2").Check(testkit.Rows("2 1", "3 2"))
+}
