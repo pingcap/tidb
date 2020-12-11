@@ -333,7 +333,7 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		},
 		{
 			0.0000000000000009,
-			"0.000",
+			"9e-16",
 			3,
 			64,
 		},
@@ -418,12 +418,6 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		{
 			1e14,
 			"100000000000000",
-			-1,
-			64,
-		},
-		{
-			1e15,
-			"1e15",
 			-1,
 			64,
 		},

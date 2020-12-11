@@ -41,7 +41,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -372,9 +371,9 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	}
 	isEFormat := false
 	if bitSize == 32 {
-		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
 	} else {
-		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
 	}
 	var out []byte
 	if isEFormat {
@@ -403,14 +402,8 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			}
 		}
 		out = append(out[:validPos], out[ePosInOut:]...)
-	} else if fVal < 1e15 {
-		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	} else {
-		// prec in strconv of fmt 'e' would be added 1, so we minus 1 here.
-		out = strconv.AppendFloat(in, fVal, 'e', prec-1, bitSize)
-		if strings.Index(string(out), "e+") >= 0 {
-			out = []byte(strings.Replace(string(out), "e+", "e", 1))
-		}
+		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}
 	return out
 }
