@@ -344,7 +344,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// for which a correlated column will be created later, so we append a null constant
 			// as a temporary result expression.
 			if index < 0 {
-				er.ctxStackAppend(&expression.Constant{}, types.EmptyName)
+				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 			} else {
 				// index >= 0 indicates this is a regular aggregate column
 				er.ctxStackAppend(er.schema.Columns[index], er.names[index])

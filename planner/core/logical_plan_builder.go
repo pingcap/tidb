@@ -2022,16 +2022,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, error) {
-	aggList, _ := b.extractAggFuncs(fields)
-	outerAggList, err := b.extractOuterAggFuncs(ctx, p, aggList)
-	if err != nil {
-		return nil, err
-	}
-	return outerAggList, nil
-}
-
-func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
@@ -2046,7 +2037,17 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 	return aggList, totalAggMapper
 }
 
-func (b *PlanBuilder) extractOuterAggFuncs(ctx context.Context, p LogicalPlan, aggFuncs []*ast.AggregateFuncExpr) (outer []*ast.AggregateFuncExpr, err error) {
+func (b *PlanBuilder) extractAggFuncsInByItems(byItems []*ast.ByItem) []*ast.AggregateFuncExpr {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
+	for _, f := range byItems {
+		n, _ := f.Expr.Accept(extractor)
+		f.Expr = n.(ast.ExprNode)
+	}
+	return extractor.AggFuncs
+}
+
+// extractCorrelatedAggFuncs extracts correlated aggregates which belong to outer query from aggregate function list.
+func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p LogicalPlan, aggFuncs []*ast.AggregateFuncExpr) (outer []*ast.AggregateFuncExpr, err error) {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(aggFuncs))
 	cols := make([]*expression.Column, 0, len(aggFuncs))
 	aggMapper := make(map[*ast.AggregateFuncExpr]int)
@@ -2142,9 +2143,10 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 
 // resolveSelect finds and collects correlated aggregates within the SELECT stmt.
 // It resolves and builds FROM clause first to get a source plan, from which we can decide
-// whether a column is correlated or not. Then it collects correlated aggregate from
-// SELECT fields (including sub-queries), HAVING, ORDER BY, WHERE. Finally it restore the
-// original SELECT stmt.
+// whether a column is correlated or not.
+// Then it collects correlated aggregate from SELECT fields (including sub-queries), HAVING,
+// ORDER BY, WHERE & GROUP BY.
+// Finally it restore the original SELECT stmt.
 func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
 	// collect correlated aggregate from sub-queries inside FROM clause.
 	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
@@ -2158,6 +2160,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		return err
 	}
 
+	// similar to process in PlanBuilder.buildSelect
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = r.b.unfoldWildStar(p, sel.Fields.Fields)
 	if err != nil {
@@ -2180,20 +2183,28 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		return err
 	}
 
-	// find and collect correlated aggregates recursively
+	// find and collect correlated aggregates recursively in sub-queries
 	_, err = r.b.resolveCorrelatedAggregates(r.ctx, sel, p)
 	if err != nil {
 		return err
 	}
 
 	// collect from SELECT fields, HAVING, ORDER BY and window functions
-	err = r.collectFromSelectFields(r.ctx, p, sel)
+	if r.b.detectSelectAgg(sel) {
+		err = r.collectFromSelectFields(p, sel.Fields.Fields)
+		if err != nil {
+			return err
+		}
+	}
+
+	// collect from WHERE
+	err = r.collectFromWhere(p, sel.Where)
 	if err != nil {
 		return err
 	}
 
-	// collect from WHERE clause
-	err = r.collectFromWhere(p, sel.Where)
+	// collect from GROUP BY
+	err = r.collectFromGroupBy(p, sel.GroupBy)
 	if err != nil {
 		return err
 	}
@@ -2223,15 +2234,26 @@ func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, 
 	return false, nil
 }
 
-func (r *correlatedAggregateResolver) collectFromSelectFields(ctx context.Context, p LogicalPlan, sel *ast.SelectStmt) error {
-	hasAgg := r.b.detectSelectAgg(sel)
-	if !hasAgg {
+func (r *correlatedAggregateResolver) collectFromSelectFields(p LogicalPlan, fields []*ast.SelectField) error {
+	aggList, _ := r.b.extractAggFuncsInSelectFields(fields)
+	r.b.curClause = fieldList
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
+	if err != nil {
 		return nil
 	}
-	r.b.curClause = fieldList
-	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, sel.Fields.Fields)
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
+	return nil
+}
+
+func (r *correlatedAggregateResolver) collectFromGroupBy(p LogicalPlan, groupBy *ast.GroupByClause) error {
+	if groupBy == nil {
+		return nil
+	}
+	aggList := r.b.extractAggFuncsInByItems(groupBy.Items)
+	r.b.curClause = groupByClause
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
 	if err != nil {
-		return err
+		return nil
 	}
 	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
 	return nil
@@ -2241,10 +2263,10 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 	if where == nil {
 		return nil
 	}
-	r.b.curClause = whereClause
 	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
 	_, _ = where.Accept(extractor)
-	outerAggFuncs, err := r.b.extractOuterAggFuncs(r.ctx, p, extractor.AggFuncs)
+	r.b.curClause = whereClause
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, extractor.AggFuncs)
 	if err != nil {
 		return err
 	}
@@ -2295,13 +2317,14 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
-	ctx     sessionctx.Context
-	fields  []*ast.SelectField
-	schema  *expression.Schema
-	names   []*types.FieldName
-	err     error
-	inExpr  bool
-	isParam bool
+	ctx        sessionctx.Context
+	fields     []*ast.SelectField
+	schema     *expression.Schema
+	names      []*types.FieldName
+	err        error
+	inExpr     bool
+	isParam    bool
+	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
 	exprDepth int // exprDepth is the depth of current expression in expression tree.
 }
@@ -2329,7 +2352,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	extractor := &AggregateFuncExtractor{}
+	extractor := &AggregateFuncExtractor{skipAggMap: g.skipAggMap}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		idx, err := expression.FindFieldName(g.names, v.Name)
@@ -2774,10 +2797,11 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
-		ctx:    b.ctx,
-		fields: fields,
-		schema: p.Schema(),
-		names:  p.OutputNames(),
+		ctx:        b.ctx,
+		fields:     fields,
+		schema:     p.Schema(),
+		names:      p.OutputNames(),
+		skipAggMap: b.correlatedAggMapper,
 	}
 	for _, item := range gby.Items {
 		resolver.inExpr = false
@@ -3166,7 +3190,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg || sel.GroupBy != nil {
-		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
+		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
 		// of this sub-query are actually correlated aggregates from the outer querym And they have already been built
 		// in the outer query. The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
