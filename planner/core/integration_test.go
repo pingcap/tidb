@@ -1972,35 +1972,44 @@ func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
 }
 
-func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
+func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test;")
-	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
-	tk.MustExec("insert into test(age) values(5);")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("analyze table test;")
-	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"TableReader_7 2048.00 root  data:Selection_6",
-		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
 
-	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"IndexLookUp_7 2048.00 root  ",
-		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
+	// #12442
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+
+	tk.MustGetErrMsg("select distinct v1 from ttest order by v2",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v2' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by v1",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by 1+v1",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by v1+2",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct count(v1) from ttest group by v2 order by sum(v1)",
+		"[planner:3066]Expression #1 of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)",
+		"[planner:3066]Expression #1 of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with DISTINCT")
+
+	// Expressions in ORDER BY whole match some fields in DISTINCT.
+	tk.MustQuery("select distinct v1+1 from ttest order by v1+1").Check(testkit.Rows("2", "5"))
+	tk.MustQuery("select distinct count(v1) from ttest order by count(v1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest group by v2 order by count(v1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select distinct sum(v1) from ttest group by v2 order by sum(v1)").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by 1, 2").Check(testkit.Rows("1 2", "1 7", "4 6"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by 2, 1").Check(testkit.Rows("1 2", "4 6", "1 7"))
+
+	// Referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
+	// both original expression and alias can be referenced.
+	tk.MustQuery("select distinct v1 from ttest order by v1+1").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by v1+1, v2").Check(testkit.Rows("1 2", "1 7", "4 6"))
+	tk.MustQuery("select distinct v1+1 as z, v2 from ttest order by v1+1, z+v2").Check(testkit.Rows("2 2", "2 7", "5 6"))
+	tk.MustQuery("select distinct sum(v1) as z from ttest group by v2 order by z+1").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1").Check(testkit.Rows("2", "5"))
+	tk.MustQuery("select distinct v1 as z from ttest order by v1+z").Check(testkit.Rows("1", "4"))
 }
 
 func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
