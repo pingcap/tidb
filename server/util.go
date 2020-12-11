@@ -380,9 +380,9 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	}
 	isEFormat := false
 	if bitSize == 32 {
-		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
+		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
 	} else {
-		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
 	}
 	var out []byte
 
