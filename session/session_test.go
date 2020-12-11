@@ -3146,7 +3146,7 @@ func (s *testSessionSuite2) TestPointGetStmtHints(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a int);")
+	tk.MustExec("create table t1(a int primary key);")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
