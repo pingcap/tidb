@@ -886,6 +886,8 @@ const (
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
 	ErrIncorrectType                                                = 3064
+	ErrFieldInOrderNotSelect                                        = 3065
+	ErrAggregateInOrderNotSelect                                    = 3066
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
 	ErrUnsupportedAlterInplaceOnVirtualColumn                       = 3103

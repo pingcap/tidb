@@ -1098,10 +1098,11 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
@@ -1131,7 +1132,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			proj.Exprs = append(proj.Exprs, expr)
 			col, name, err := b.buildProjectionField(ctx, p, field, expr)
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, 0, err
 			}
 			schema.Append(col)
 			newNames = append(newNames, name)
@@ -1139,7 +1140,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 
 		// For window functions in the order by clause, we will append an field for it.
@@ -1155,7 +1156,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		schema.Append(col)
 		newNames = append(newNames, name)
@@ -1182,7 +1183,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 	}
 	proj.SetChildren(p)
-	return proj, oldLen, nil
+	return proj, proj.Exprs, oldLen, nil
 }
 
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
@@ -1397,6 +1398,11 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
+	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, 0, false)
+}
+
+func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
+	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -1405,12 +1411,20 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 	sort := LogicalSort{}.Init(b.ctx, b.getSelectOffset())
 	exprs := make([]*util.ByItems, 0, len(byItems))
 	transformer := &itemTransformer{}
-	for _, item := range byItems {
+	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, err
+		}
+
+		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
+		if hasDistinct && projExprs != nil {
+			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		p = np
@@ -1419,6 +1433,48 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 	sort.ByItems = exprs
 	sort.SetChildren(p)
 	return sort, nil
+}
+
+// checkOrderByInDistinct checks whether ORDER BY has conflicts with DISTINCT, see #12442
+func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
+	// Check if expressions in ORDER BY whole match some fields in DISTINCT.
+	// e.g.
+	// select distinct count(a) from t group by b order by count(a);  ✔
+	// select distinct a+1 from t order by a+1;                       ✔
+	// select distinct a+1 from t order by a+2;                       ✗
+	for j := 0; j < length; j++ {
+		// both check original expression & as name
+		if expr.Equal(b.ctx, originalExprs[j]) || expr.Equal(b.ctx, p.Schema().Columns[j]) {
+			return nil
+		}
+	}
+
+	// Check if referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
+	// both original expression and alias can be referenced.
+	// e.g.
+	// select distinct a from t order by sin(a);                            ✔
+	// select distinct a, b from t order by a+b;                            ✔
+	// select distinct count(a), sum(a) from t group by b order by sum(a);  ✔
+	cols := expression.ExtractColumns(expr)
+CheckReferenced:
+	for _, col := range cols {
+		for j := 0; j < length; j++ {
+			if col.Equal(b.ctx, originalExprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
+				continue CheckReferenced
+			}
+		}
+
+		// Failed cases
+		// e.g.
+		// select distinct sin(a) from t order by a;                            ✗
+		// select distinct a from t order by a+b;                               ✗
+		if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
+			return ErrAggregateInOrderNotSelect.GenWithStackByArgs(idx+1, "DISTINCT")
+		}
+		// select distinct count(a) from t group by b order by sum(a);          ✗
+		return ErrFieldInOrderNotSelect.GenWithStackByArgs(idx+1, col.OrigName, "DISTINCT")
+	}
+	return nil
 }
 
 // getUintFromNode gets uint64 value from ast.Node.
@@ -2655,6 +2711,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
+		projExprs                     []expression.Expression
 	)
 
 	if sel.From != nil {
@@ -2746,7 +2803,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2781,7 +2838,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+		p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 		if err != nil {
 			return nil, err
 		}
@@ -2795,7 +2852,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+		} else {
+			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+		}
 		if err != nil {
 			return nil, err
 		}
