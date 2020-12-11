@@ -145,7 +145,7 @@ func (bj BinaryJSON) marshalTo(buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-//IsZero return a boolean indicate whether BinaryJSON is Zero
+// IsZero return a boolean indicate whether BinaryJSON is Zero
 func (bj BinaryJSON) IsZero() bool {
 	isZero := false
 	switch bj.TypeCode {
@@ -426,6 +426,36 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	bj.TypeCode = typeCode
 	bj.Value = buf
 	return nil
+}
+
+// HashValue converts certain JSON values for aggregate comparisons.
+// For example int64(3) == float64(3.0)
+func (bj BinaryJSON) HashValue(buf []byte) []byte {
+	switch bj.TypeCode {
+	case TypeCodeInt64:
+		// Convert to a FLOAT if no precision is lost.
+		// In the future, it will be better to convert to a DECIMAL value instead
+		// See: https://github.com/pingcap/tidb/issues/9988
+		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
+		} else {
+			buf = append(buf, bj.Value...)
+		}
+	case TypeCodeArray:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = bj.arrayGetElem(i).HashValue(buf)
+		}
+	case TypeCodeObject:
+		elemCount := int(endian.Uint32(bj.Value))
+		for i := 0; i < elemCount; i++ {
+			buf = append(buf, bj.objectGetKey(i)...)
+			buf = bj.objectGetVal(i).HashValue(buf)
+		}
+	default:
+		buf = append(buf, bj.Value...)
+	}
+	return buf
 }
 
 // CreateBinary creates a BinaryJSON from interface.
