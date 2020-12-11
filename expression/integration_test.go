@@ -7263,8 +7263,6 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
-<<<<<<< HEAD
-=======
 func (s *testIntegrationSuite) TestIssue11755(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7274,17 +7272,6 @@ func (s *testIntegrationSuite) TestIssue11755(c *C) {
 	tk.MustQuery("select LEAD(d,1,1) OVER(), LAG(d,1,1) OVER() from lt;").Check(testkit.Rows("0.2000 1.0000", "1.0000 0.2000"))
 }
 
-func (s *testIntegrationSuite) TestIssue20369(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (1);")
-	tk.MustExec("insert into t select values(a) from t;")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "<nil>"))
-}
-
->>>>>>> 6e1c2ac8a... executor: fix LEAD and LAG's default value can not adapt to field type (#20747)
 func (s *testIntegrationSuite) TestIssue20730(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
