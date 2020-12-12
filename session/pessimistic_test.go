@@ -1968,34 +1968,41 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		if partition {
 			continue
 		}
+
 		tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
 		tk2.MustExec("alter table t add unique index iv(v)")
 		tk.MustExec("begin pessimistic")
 		tk2.MustExec("alter table t drop index iv")
 		tk2.MustExec("update t set v = 21 where v = 20")
-		tk.MustExec("update t set v = 22 where v = 21")
+		tk2.MustExec("update t set v = 31 where v = 30")
+		tk.MustExec("update t set v = 22 where v = 21") // fast path
 		tk.CheckExecResult(1, 0)
 		tk.MustExec("update t set v = 23 where v = 22")
 		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 32 where v >= 31 and v < 40") // common path
+		tk.CheckExecResult(1, 0)
 		tk.MustExec("commit")
-		tk.MustQuery("select * from t").Check(testkit.Rows("2 23 200", "3 30 300", "4 40 400", "5 11 100", "6 60 600"))
+		tk.MustQuery("select * from t").Check(testkit.Rows("2 23 200", "3 32 300", "4 40 400", "5 11 100", "6 60 600"))
 
 		tk2.MustExec("alter table t add unique index iv(v)")
 		tk.MustExec("begin pessimistic")
 		tk2.MustExec("alter table t drop index iv")
 		tk2.MustExec("update t set v = 24 where v = 23")
-		tk.MustExec("delete from t where v = 24")
+		tk2.MustExec("update t set v = 41 where v = 40")
+		tk.MustExec("delete from t where v = 24") // fast path
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("delete from t where v >= 41 and v < 50") // common path
 		tk.CheckExecResult(1, 0)
 		tk.MustExec("commit")
-		tk.MustQuery("select * from t").Check(testkit.Rows("3 30 300", "4 40 400", "5 11 100", "6 60 600"))
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 32 300", "5 11 100", "6 60 600"))
 
 		tk2.MustExec("alter table t add unique index iv(v)")
 		tk.MustExec("begin pessimistic")
 		tk2.MustExec("alter table t drop index iv")
-		tk2.MustExec("update t set v = 31 where v = 30")
-		tk.MustExec("insert into t(id, v, v2) select 3 * id, 3 * v, 3 * v2 from t where v = 31")
+		tk2.MustExec("update t set v = 33 where v = 32")
+		tk.MustExec("insert into t(id, v, v2) select 3 * id, 3 * v, 3 * v2 from t where v = 33")
 		tk.CheckExecResult(1, 0)
 		tk.MustExec("commit")
-		tk.MustQuery("select * from t").Check(testkit.Rows("3 31 300", "4 40 400", "5 11 100", "6 60 600", "9 93 900"))
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 33 300", "5 11 100", "6 60 600", "9 99 900"))
 	}
 }
