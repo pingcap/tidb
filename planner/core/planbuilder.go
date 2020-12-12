@@ -454,6 +454,9 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
 }
 
 type handleColHelper struct {
@@ -526,6 +529,11 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
+	if b.isSampling {
+		// Disable logical optimization to avoid the optimizer
+		// push down/eliminate operands like Selection, Limit or Sort.
+		return 0
+	}
 	return b.optFlag
 }
 
@@ -544,8 +552,10 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// PlannerSelectBlockAsName should be restored after using this builder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
@@ -557,7 +567,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		colMapper:     make(map[*ast.ColumnNameExpr]int),
 		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor: processor,
-	}
+	}, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
@@ -2827,7 +2837,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	}
 	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
 	if err != nil {
-		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
 		}
 		valStr, err1 := value.ToString()

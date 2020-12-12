@@ -66,6 +66,10 @@ const (
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
+	tinyBlobMaxLength     = 255
+	blobMaxLength         = 65535
+	mediumBlobMaxLength   = 16777215
+	longBlobMaxLength     = 4294967295
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
@@ -550,6 +554,26 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
+func adjustBlobTypesFlen(col *table.Column) {
+	if col.FieldType.Tp == mysql.TypeBlob {
+		if col.FieldType.Flen <= tinyBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = tinyBlobMaxLength
+			col.FieldType.Tp = mysql.TypeTinyBlob
+		} else if col.FieldType.Flen <= blobMaxLength {
+			col.FieldType.Flen = blobMaxLength
+		} else if col.FieldType.Flen <= mediumBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = mediumBlobMaxLength
+			col.FieldType.Tp = mysql.TypeMediumBlob
+		} else if col.FieldType.Flen <= longBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = longBlobMaxLength
+			col.FieldType.Tp = mysql.TypeLongBlob
+		}
+	}
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
@@ -561,6 +585,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
+
+	adjustBlobTypesFlen(col)
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
@@ -605,6 +631,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
+					// Add NotNullFlag early so that processColumnFlags() can see it.
+					col.Flag |= mysql.NotNullFlag
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
@@ -2222,8 +2250,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	for i := len(options) - 1; i >= 0; i-- {
 		opt := options[i]
-		switch opt.Tp {
-		case ast.TableOptionCharset:
+		if opt.Tp == ast.TableOptionCharset {
 			// Only overwrite columns charset if the option contains `CONVERT TO`.
 			return opt.UintValue == ast.TableOptionCharsetWithConvertTo
 		}
@@ -2288,6 +2315,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
+		if !ctx.GetSessionVars().EnableChangeMultiSchema {
+			return errRunMultiSchemaChanges
+		}
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
@@ -3423,7 +3453,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3466,6 +3496,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
 		return false
 	}
 
@@ -3705,6 +3740,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
+	// Adjust the flen for blob types after the default flen is set.
+	adjustBlobTypesFlen(newCol)
+
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3766,7 +3804,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4540,7 +4578,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
-		//oldIdent is equal to newIdent, do nothing
+		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
@@ -4674,7 +4712,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
@@ -4847,7 +4885,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
@@ -5162,19 +5200,12 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	colNames := meta.Partition.Columns
+	colTypes := collectColumnsType(meta)
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			continue
 		}
-
-		colName := colNames[i]
-		colInfo := getColumnInfoByName(meta, colName.L)
-		if colInfo == nil {
-			return errors.Trace(ErrFieldNotFoundPart)
-		}
-		colType := &colInfo.FieldType
-
+		colType := colTypes[i]
 		val, err := expression.EvalAstExpr(ctx, colExpr)
 		if err != nil {
 			return err
@@ -5208,49 +5239,9 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType)
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
 		if err != nil {
 			return ErrWrongTypeColumnValue.GenWithStackByArgs()
-		}
-	}
-	return nil
-}
-
-func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
-	defs := tblInfo.Partition.Definitions
-	pi := tblInfo.Partition
-	var colTps []*types.FieldType
-	if len(pi.Columns) == 0 {
-		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
-			tp.Flag |= mysql.UnsignedFlag
-		}
-		colTps = []*types.FieldType{tp}
-	} else {
-		colTps = make([]*types.FieldType, 0, len(pi.Columns))
-		for _, colName := range pi.Columns {
-			colInfo := findColumnByName(colName.L, tblInfo)
-			if colInfo == nil {
-				return errors.Trace(ErrFieldNotFoundPart)
-			}
-			colTps = append(colTps, &colInfo.FieldType)
-		}
-	}
-	for i := range defs {
-		for j, vs := range defs[i].InValues {
-			for k, v := range vs {
-				if colTps[k].EvalType() != types.ETInt {
-					continue
-				}
-				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
-				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !isNull {
-					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
-				}
-			}
 		}
 	}
 	return nil

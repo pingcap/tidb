@@ -481,13 +481,18 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			value = it.Value()
 			if len(value) > 0 {
 				if tablecodec.IsUntouchedIndexKValue(key, value) {
-					continue
+					if !flags.HasLocked() {
+						continue
+					}
+					op = pb.Op_Lock
+					lockCnt++
+				} else {
+					op = pb.Op_Put
+					if flags.HasPresumeKeyNotExists() {
+						op = pb.Op_Insert
+					}
+					putCnt++
 				}
-				op = pb.Op_Put
-				if flags.HasPresumeKeyNotExists() {
-					op = pb.Op_Insert
-				}
-				putCnt++
 			} else {
 				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
@@ -1165,7 +1170,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	} else {
 		start = time.Now()
 		logutil.Event(ctx, "start get commit ts")
-		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 		if err != nil {
 			logutil.Logger(ctx).Warn("2PC get commitTS failed",
 				zap.Error(err),
@@ -1399,7 +1404,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),

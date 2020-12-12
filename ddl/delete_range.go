@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -445,7 +446,7 @@ func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint
 
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
-	currVer, err := ctx.GetStore().CurrentVersion()
+	currVer, err := ctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
