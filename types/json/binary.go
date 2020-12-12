@@ -540,29 +540,29 @@ func appendUint32(buf []byte, v uint32) []byte {
 }
 
 func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
-	var typeCode TypeCode
+	// The type interpretation process is as follows:
+	// - Attempt float64 if it contains Ee.
+	// - Next attempt int64
+	// - Then uint64 (valid in MySQL JSON, not in JSON decode library)
+	// - Then float64
+	// - Return an error
 	if strings.ContainsAny(string(x), "Ee.") {
-		typeCode = TypeCodeFloat64
 		f64, err := x.Float64()
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return TypeCodeFloat64, nil, errors.Trace(err)
 		}
-		buf = appendBinaryFloat64(buf, f64)
-	} else {
-		typeCode = TypeCodeInt64
-		i64, err := x.Int64()
-		if err != nil {
-			typeCode = TypeCodeFloat64
-			f64, err := x.Float64()
-			if err != nil {
-				return typeCode, nil, errors.Trace(err)
-			}
-			buf = appendBinaryFloat64(buf, f64)
-		} else {
-			buf = appendBinaryUint64(buf, uint64(i64))
-		}
+		return TypeCodeFloat64, appendBinaryFloat64(buf, f64), nil
+	} else if val, err := x.Int64(); err == nil {
+		return TypeCodeInt64, appendBinaryUint64(buf, uint64(val)), nil
+	} else if val, err := strconv.ParseUint(string(x), 10, 64); err == nil {
+		return TypeCodeUint64, appendBinaryUint64(buf, val), nil
 	}
-	return typeCode, buf, nil
+	val, err := x.Float64()
+	if err == nil {
+		return TypeCodeFloat64, appendBinaryFloat64(buf, val), nil
+	}
+	var typeCode TypeCode
+	return typeCode, nil, errors.Trace(err)
 }
 
 func appendBinaryString(buf []byte, v string) []byte {
