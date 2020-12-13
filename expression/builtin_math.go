@@ -274,6 +274,9 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+	if bf.tp.Decimal > bf.tp.Flen {
+		bf.tp.Decimal = argFieldTp.Decimal
+	}
 
 	var sig builtinFunc
 	if len(args) > 1 {
