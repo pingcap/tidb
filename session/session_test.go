@@ -3151,19 +3151,18 @@ func (s *testSessionSuite2) TestPointGetStmtHints(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 GB) */ into t1 values (1);")
-	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ * from t1 where a = 1;")
-	val := int64(0)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.CheckBytesLimit(val), IsTrue)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Setting the MEMORY_QUOTA to 0 means no memory limit")
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("select * from t1 where a = 1;")
 	tk.MustExec("set tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select * from t1 where a = 1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-	tk.MustQuery("select /*+ MEMORY_QUOTA(1 GB) */ * from t1 where a = 1;").Check(testkit.Rows("1"))
 	err = tk.ExecToErr("update t1 set a = a + 10 where a in (1,2,3);")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-	err = tk.ExecToErr("update /*+ memory_quota(1 MB) */ t1 set a = a + 10 where a in (1,2,3);")
+	tk.MustExec("set tidb_mem_quota_query=1024;")
+	tk.MustQuery("select * from t1 where a = 1;").Check(testkit.Rows("1"))
+	err = tk.ExecToErr("update t1 set a = a + 10 where a in (1,2,3);")
 	c.Check(err, IsNil)
 }
 
