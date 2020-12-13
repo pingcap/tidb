@@ -56,6 +56,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	if p.Lock {
 		b.hasLock = true
 	}
+	if p.TrackMem {
+		e.trackMem = true
+	}
 	e.Init(p, startTS)
 	return e
 }
@@ -89,6 +92,8 @@ type PointGetExecutor struct {
 
 	stats *runtimeStatsWithSnapshot
 
+	// control if track mem
+	trackMem   bool
 	memTracker *memory.Tracker
 }
 
@@ -150,11 +155,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 
-	if e.memTracker == nil {
+	if e.trackMem {
 		e.memTracker = memory.NewTracker(e.id, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		result := newFirstChunk(e)
-		e.memTracker.Consume(result.MemoryUsage())
 	}
 	return nil
 }
@@ -256,6 +259,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				e.idxInfo.Name.O, e.handle)
 		}
 		return nil
+	}
+	if e.memTracker != nil {
+		e.memTracker.Consume(int64(len(val)))
 	}
 	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {

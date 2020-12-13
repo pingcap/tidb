@@ -1210,14 +1210,6 @@ type SelectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
-	if len(e.baseExecutor.children) > 0 {
-		child := e.baseExecutor.children[0]
-		if batchPointGet, ok := child.(*BatchPointGetExec); ok {
-			batchPointGet.memTracker = memory.NewTracker(batchPointGet.id, -1)
-		} else if pointGet, ok := child.(*PointGetExecutor); ok {
-			pointGet.memTracker = memory.NewTracker(pointGet.id, -1)
-		}
-	}
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}

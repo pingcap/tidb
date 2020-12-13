@@ -3158,6 +3158,7 @@ func (s *testSessionSuite2) TestPointGetStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Setting the MEMORY_QUOTA to 0 means no memory limit")
 	tk.MustExec("set tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select * from t1 where a = 1;")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustQuery("select /*+ MEMORY_QUOTA(1 GB) */ * from t1 where a = 1;").Check(testkit.Rows("1"))
 	err = tk.ExecToErr("update t1 set a = a + 10 where a in (1,2,3);")

@@ -70,6 +70,8 @@ type BatchPointGetExec struct {
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
 
+	// control if track mem
+	trackMem   bool
 	memTracker *memory.Tracker
 }
 
@@ -123,11 +125,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 
-	if e.memTracker == nil {
+	if e.trackMem {
 		e.memTracker = memory.NewTracker(e.id, -1)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-		result := newFirstChunk(e)
-		e.memTracker.Consume(result.MemoryUsage())
 	}
 	return nil
 }
@@ -159,6 +159,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
+		if e.memTracker != nil {
+			e.memTracker.Consume(int64(len(val)))
+		}
 		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
