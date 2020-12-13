@@ -2915,7 +2915,7 @@ func (s *testSessionSuite) TestPessimisticLockOnPartition(c *C) {
 }
 
 // TestDefaultWeekFormat checks for issue #21510.
-func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
+func (s *testSessionSuite) TestDefaultWeekFormat(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustExec("set @@global.default_week_format = 4;")
 	defer tk1.MustExec("set @@global.default_week_format = default;")
