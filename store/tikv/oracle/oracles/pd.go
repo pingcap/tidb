@@ -290,9 +290,6 @@ func (o *pdOracle) setLastTSDiff(diff int64, txnScope string) {
 	lastTSDiffPointer := lastTSDiffInterface.(*int64)
 	for {
 		lastTSDiff := atomic.LoadInt64(lastTSDiffPointer)
-		if diff <= lastTSDiff {
-			return
-		}
 		if atomic.CompareAndSwapInt64(lastTSDiffPointer, lastTSDiff, diff) {
 			return
 		}
