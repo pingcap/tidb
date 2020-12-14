@@ -361,5 +361,6 @@ func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
 	tk.MustExec("INSERT INTO t2 VALUES (0, 0), (NULL, NULL);")
 	// issue #13551 and #21674
 	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
+	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1 FROM t2 LIMIT 1) = ANY (SELECT c1 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
 	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 order by c1 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows())
 }
