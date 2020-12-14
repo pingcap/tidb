@@ -939,28 +939,26 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 }
 
 func indexCoveringCol(col *expression.Column, constVal *expression.Constant, indexCols []*expression.Column, idxColLens []int) bool {
+	constLen := -1
+	if constVal != nil {
+		val, err := constVal.Eval(chunk.Row{})
+		if err == nil && (val.Kind() == types.KindBytes || val.Kind() == types.KindString) {
+			colCharset := col.GetType().Collate
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			if isUTF8Charset {
+				constLen = utf8.RuneCount(val.GetBytes())
+			} else {
+				constLen = len(val.GetBytes())
+			}
+		}
+	}
 	for i, indexCol := range indexCols {
 		if indexCol != nil && col.Equal(nil, indexCol) {
 			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
 			if isFullLen {
 				return true
 			}
-			if constVal == nil {
-				continue
-			}
-			val, err := constVal.Eval(chunk.Row{})
-			if err != nil || (val.Kind() != types.KindString && val.Kind() != types.KindBytes) {
-				continue
-			}
-			colCharset := col.GetType().Collate
-			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-			var length int
-			if isUTF8Charset {
-				length = utf8.RuneCount(val.GetBytes())
-			} else {
-				length = len(val.GetBytes())
-			}
-			if length < idxColLens[i] {
+			if constLen != -1 && constLen < idxColLens[i] {
 				return true
 			}
 		}
@@ -969,69 +967,60 @@ func indexCoveringCol(col *expression.Column, constVal *expression.Constant, ind
 }
 
 func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
-	return ds.indexCanHandleCols(columns, nil, indexColumns, idxColLens, tblInfo)
+	for _, col := range columns {
+		if !ds.indexCanHandleCol(col, nil, indexColumns, idxColLens, tblInfo) {
+			return false
+		}
+	}
+	return true
 }
 
-// extractColumnsAndConstants extracts involved columns from expr. If a column is one operand of ge/le/eq/ne/lt/gt and
-// the other operand is text/blob constant, the constant is also recorded in order to check whether the condition can be
-// pushed down to IndexScan of prefix index.
-func extractColumnsAndConstants(expr expression.Expression, columns []*expression.Column, constants []*expression.Constant) ([]*expression.Column, []*expression.Constant) {
+func (ds *DataSource) indexCanHandleCond(expr expression.Expression, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
 	switch v := expr.(type) {
 	case *expression.Column:
-		columns = append(columns, v)
-		constants = append(constants, nil)
-
+		return ds.indexCanHandleCol(v, nil, indexColumns, idxColLens, tblInfo)
 	case *expression.ScalarFunction:
 		_, collation := expr.CharsetAndCollation(v.GetCtx())
 		op := v.FuncName.L
 		if op == ast.GE || op == ast.LE || op == ast.EQ || op == ast.NE || op == ast.LT || op == ast.GT {
 			if col, ok := v.GetArgs()[0].(*expression.Column); ok && types.IsTypePrefixable(col.RetType.Tp) && collate.CompatibleCollate(col.GetType().Collate, collation) {
 				if constVal, ok := v.GetArgs()[1].(*expression.Constant); ok {
-					columns = append(columns, col)
-					constants = append(constants, constVal)
-					return columns, constants
+					return ds.indexCanHandleCol(col, constVal, indexColumns, idxColLens, tblInfo)
 				}
 			}
 			if col, ok := v.GetArgs()[1].(*expression.Column); ok && types.IsTypePrefixable(col.RetType.Tp) && collate.CompatibleCollate(col.GetType().Collate, collation) {
 				if constVal, ok := v.GetArgs()[0].(*expression.Constant); ok {
-					columns = append(columns, col)
-					constants = append(constants, constVal)
-					return columns, constants
+					return ds.indexCanHandleCol(col, constVal, indexColumns, idxColLens, tblInfo)
 				}
 			}
 		}
 		for _, arg := range v.GetArgs() {
-			columns, constants = extractColumnsAndConstants(arg, columns, constants)
+			if !ds.indexCanHandleCond(arg, indexColumns, idxColLens, tblInfo) {
+				return false
+			}
 		}
 	}
-	return columns, constants
+	return true
 }
 
-func (ds *DataSource) indexCanHandleCols(columns []*expression.Column, constants []*expression.Constant, indexColumns []*expression.Column, idxColLens []int, tblInfo *model.TableInfo) bool {
-	for i, col := range columns {
-		var constVal *expression.Constant
-		if constants != nil {
-			constVal = constants[i]
-		}
-
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-			continue
-		}
-		if col.ID == model.ExtraHandleID {
-			continue
-		}
-		coveredByPlainIndex := indexCoveringCol(col, constVal, indexColumns, idxColLens)
-		coveredByClusteredIndex := indexCoveringCol(col, constVal, ds.commonHandleCols, ds.commonHandleLens)
-		if !coveredByPlainIndex && !coveredByClusteredIndex {
-			return false
-		}
-
-		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-			col.GetType().EvalType() == types.ETString &&
-			!mysql.HasBinaryFlag(col.GetType().Flag)
-		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
-			return false
-		}
+func (ds *DataSource) indexCanHandleCol(col *expression.Column, constVal *expression.Constant, indexColumns []*expression.Column,
+	idxColLens []int, tblInfo *model.TableInfo) bool {
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+		return true
+	}
+	if col.ID == model.ExtraHandleID {
+		return true
+	}
+	coveredByPlainIndex := indexCoveringCol(col, constVal, indexColumns, idxColLens)
+	coveredByClusteredIndex := indexCoveringCol(col, constVal, ds.commonHandleCols, ds.commonHandleLens)
+	if !coveredByPlainIndex && !coveredByClusteredIndex {
+		return false
+	}
+	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+		col.GetType().EvalType() == types.ETString &&
+		!mysql.HasBinaryFlag(col.GetType().Flag)
+	if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
+		return false
 	}
 	return true
 }
@@ -1263,11 +1252,7 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-		columns := make([]*expression.Column, 0, 8)
-		constants := make([]*expression.Constant, 0, 8)
-		columns, constants = extractColumnsAndConstants(cond, columns, constants)
-		if ds.indexCanHandleCols(columns, constants, indexColumns, idxColLens, table) {
+		if ds.indexCanHandleCond(cond, indexColumns, idxColLens, table) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
