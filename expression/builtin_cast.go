@@ -22,6 +22,7 @@
 package expression
 
 import (
+	json2 "encoding/json"
 	"math"
 	"strconv"
 	"strings"
@@ -36,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
+
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -688,7 +691,8 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSO
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if mysql.HasParseToJSONFlag(b.tp.Flag) {
+	data := hack.Slice(val)
+	if mysql.HasParseToJSONFlag(b.tp.Flag) && json2.Valid(data) {
 		res, err = json.ParseBinaryFromString(val)
 	} else {
 		res = json.CreateBinary(val)
