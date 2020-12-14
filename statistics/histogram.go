@@ -963,6 +963,11 @@ func (idx *Index) TotalRowCount() float64 {
 	return idx.Histogram.TotalRowCount()
 }
 
+// IsInvalid checks if this index is invalid.
+func (idx *Index) IsInvalid(collPseudo bool) bool {
+	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+}
+
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
 func (idx *Index) MemoryUsage() (sum int64) {
