@@ -644,11 +644,6 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			<-c.testingKnobs.bkAfterCommitPrimary
 		}
 		batches = batches[1:]
-		if c.connID == 1 {
-			logutil.Logger(bo.ctx).Info("[for debug] for conn1, left secondary batch",
-				zap.Int("len", len(batches)),
-				zap.Bool("action", actionIsCommit))
-		}
 	}
 	if actionIsCommit && !actionCommit.retry {
 		// Commit secondary batches in background goroutine to reduce latency.
