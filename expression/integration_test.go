@@ -7875,6 +7875,19 @@ func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue20161(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(raw JSON);`)
+	tk.MustExec(`insert into t(raw) values('["a","ab"]'), ('["a"]'), (null);`)
+	tk.MustQuery(`SELECT JSON_SEARCH(raw,'one','c') FROM t;`).
+		Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
+}
+
 func (s *testIntegrationSuite) TestIssue10462(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
