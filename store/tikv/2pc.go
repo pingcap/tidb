@@ -652,8 +652,14 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
-			failpoint.Inject("skipCommitSecondaryKeys", func() {
-				failpoint.Return()
+			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if s, ok := v.(string); !ok {
+					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+					time.Sleep(2 * time.Second)
+				} else if s == "skip" {
+					failpoint.Return()
+				}
 			})
 
 			e := c.doActionOnBatches(secondaryBo, action, batches)

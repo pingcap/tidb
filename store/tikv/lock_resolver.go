@@ -229,6 +229,9 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		if err != nil {
 			return false, err
 		}
+		if l.LockType != kvrpcpb.Op_PessimisticLock && status.ttl == 0 {
+			lr.saveResolved(l.TxnID, status)
+		}
 
 		if status.ttl > 0 {
 			logutil.BgLogger().Error("BatchResolveLocks fail to clean locks, this result is not expected!")
@@ -464,11 +467,6 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			//     - always cache the check txn status result.
 			// For prewrite locks, their primary keys should ALWAYS be the correct one.
 			if l.LockType != kvrpcpb.Op_PessimisticLock && status.ttl == 0 {
-				logutil.Logger(bo.ctx).Info("saved resolved txn status",
-					zap.Uint64("resolved txn startTS", l.TxnID),
-					zap.Uint64("resolved txn ttl", status.ttl),
-					zap.Uint64("resolved txn commitTS", status.commitTS),
-					zap.Stringer("resolved txn check result action", status.action))
 				lr.saveResolved(l.TxnID, status)
 			}
 			return status, nil
@@ -612,11 +610,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 		if status.IsCommitted() {
 			lreq.CommitVersion = status.CommitTS()
 		} else {
-			logutil.BgLogger().Info("resolveLock rollback",
-				zap.String("lock", l.String()),
-				zap.Stringer("status action", status.action),
-				zap.Uint64("status ttl", status.ttl),
-				zap.Uint64("status commitTS", status.commitTS))
+			logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
 		}
 
 		if resolveLite {

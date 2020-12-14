@@ -1837,10 +1837,10 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 }
 
 func (s *testPessimisticSuite) TestResolveStalePessimisticPrimaryLock(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/skipCommitSecondaryKeys", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries", "return(\"skip\")"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return(20000)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/skipCommitSecondaryKeys"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
 	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
