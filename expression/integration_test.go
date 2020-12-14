@@ -1700,6 +1700,10 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// result = tk.MustQuery("select time('2003-12-10-10 01:02:03.000123')")
 	// result.Check(testkit.Rows("00:20:03")
 
+	// Issue 20995
+	result = tk.MustQuery("select time('0.1234567')")
+	result.Check(testkit.Rows("00:00:00.123457"))
+
 	// for hour
 	result = tk.MustQuery(`SELECT hour("12:13:14.123456"), hour("12:13:14.000010"), hour("272:59:55"), hour(020005), hour(null), hour("27aaaa2:59:55");`)
 	result.Check(testkit.Rows("12 12 272 2 <nil> <nil>"))
@@ -2061,6 +2065,14 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for extract
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
+	result = tk.MustQuery("select extract(day_microsecond from '2017-01-01 12:12:12'), extract(day_microsecond from '01 12:12:12'), extract(day_microsecond from '12:12:12'), extract(day_microsecond from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212000000 361212000000 121212000000 240000890000"))
+	result = tk.MustQuery("select extract(day_second from '2017-01-01 12:12:12'), extract(day_second from '01 12:12:12'), extract(day_second from '12:12:12'), extract(day_second from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212 361212 121212 240000"))
+	result = tk.MustQuery("select extract(day_minute from '2017-01-01 12:12:12'), extract(day_minute from '01 12:12:12'), extract(day_minute from '12:12:12'), extract(day_minute from '01 00:00:00.89')")
+	result.Check(testkit.Rows("11212 3612 1212 2400"))
+	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
+	result.Check(testkit.Rows("112 36 12 24"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
@@ -7917,6 +7929,41 @@ func (s *testIntegrationSuite) TestIssue17868(c *C) {
 	tk.MustExec("insert into t7 values ('32767', '', '1000-01-03', '-0', '11101011')")
 	tk.MustQuery("select col2 = 1 from t7").Check(testkit.Rows("0"))
 	tk.MustQuery("select col2 != 1 from t7").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestIssue21619(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select CAST("9223372036854775808" as json)`).Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery(`select json_type(CAST("9223372036854775808" as json))`).Check(testkit.Rows("UNSIGNED INTEGER"))
+	tk.MustQuery(`select CAST(9223372036854775808 as json)`).Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery(`select json_type(CAST(9223372036854775808 as json))`).Check(testkit.Rows("UNSIGNED INTEGER"))
+	tk.MustQuery(`select CAST(-9223372036854775808 as json)`).Check(testkit.Rows("-9223372036854775808"))
+	tk.MustQuery(`select json_type(CAST(-9223372036854775808 as json))`).Check(testkit.Rows("INTEGER"))
+}
+
+func (s *testIntegrationSuite) TestIssue10467(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx2;")
+	tk.MustExec("create table tx2 (col json);")
+	tk.MustExec(`insert into tx2 values (json_array("3")),(json_array("3")),(json_array("3")),(json_array("3"));`)
+	tk.MustExec(`insert into tx2 values (json_array(3.0));`)
+	tk.MustExec(`insert into tx2 values (json_array(3));`)
+	tk.MustExec(`insert into tx2 values (json_array(3.0));`)
+	tk.MustExec(`insert into tx2 values (json_array(-3));`)
+	tk.MustExec(`insert into tx2 values (json_array(-3.0));`)
+	tk.MustExec(`insert into tx2 values (json_array(922337203685477580));`)
+	tk.MustExec(`insert into tx2 values (json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581));`)
+
+	// TODO: in MySQL these values will hash the same because the first is stored as JSON type DECIMAL.
+	// Currently TiDB does not support JSON type DECIMAL.
+	// See: https://github.com/pingcap/tidb/issues/9988
+	// insert into tx2 values (json_array(9223372036854775808.0));
+	// insert into tx2 values (json_array(9223372036854775808));
+
+	// ordering by a JSON col is not supported in MySQL, and the order is a bit questionable in TiDB.
+	// sort by count for test result stability.
+	tk.MustQuery("select col, count(1) c from tx2 group by col order by c desc;").Check(testkit.Rows("[922337203685477581] 5", `["3"] 4`, "[3] 3", "[-3] 2", "[922337203685477580] 1"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
