@@ -457,6 +457,20 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	for {
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist)
 		if err == nil {
+			// If l.LockType is pessimistic lock type:
+			//     - if its primary lock is pessimistic too, the check txn status result should not be cached.
+			//     - if its primary lock is prewrite lock type, the check txn status could be cached.
+			// If l.lockType is prewrite lock type:
+			//     - always cache the check txn status result.
+			// For prewrite locks, their primary keys should ALWAYS be the correct one.
+			if l.LockType != kvrpcpb.Op_PessimisticLock && status.ttl == 0 {
+				logutil.Logger(bo.ctx).Info("saved resolved txn status",
+					zap.Uint64("resolved txn startTS", l.TxnID),
+					zap.Uint64("resolved txn ttl", status.ttl),
+					zap.Uint64("resolved txn commitTS", status.commitTS),
+					zap.Stringer("resolved txn check result action", status.action))
+				lr.saveResolved(l.TxnID, status)
+			}
 			return status, nil
 		}
 		// If the error is something other than txnNotFoundErr, throw the error (network
@@ -576,7 +590,6 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 
 			status.commitTS = cmdResp.CommitVersion
-			lr.saveResolved(txnID, status)
 		}
 		return status, nil
 	}
@@ -599,7 +612,11 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 		if status.IsCommitted() {
 			lreq.CommitVersion = status.CommitTS()
 		} else {
-			logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
+			logutil.BgLogger().Info("resolveLock rollback",
+				zap.String("lock", l.String()),
+				zap.Stringer("status action", status.action),
+				zap.Uint64("status ttl", status.ttl),
+				zap.Uint64("status commitTS", status.commitTS))
 		}
 
 		if resolveLite {
