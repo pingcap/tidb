@@ -8297,7 +8297,7 @@ func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 
 }
- 
+
 func (s *testIntegrationSuite2) TestCastCoer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
