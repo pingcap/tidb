@@ -810,6 +810,26 @@
     "Name": "TestListColumnsPartitionPruner",
     "Cases": [
       {
+        "SQL": "select * from t1",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "<nil> 10 <nil>",
+          "10 10 10"
+        ],
+        "Plan": [
+          "IndexReader_7 10000.00 root partition:all index:IndexFullScan_6",
+          "└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "select * from t1 where a = 1 or b = 2",
         "Result": [
           "1 1 1",

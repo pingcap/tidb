@@ -281,6 +281,9 @@ func (l *listPartitionPruner) locatePartition(cond expression.Expression) (map[i
 
 func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.Expression) (map[int]struct{}, error) {
 	cnfUseds := make([]map[int]struct{}, 0, len(conds))
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
 	for _, cond := range conds {
 		cnfUsed, err := l.locatePartition(cond)
 		if err != nil {
@@ -301,6 +304,9 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 
 func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.Expression) (map[int]struct{}, error) {
 	dnfUseds := make([]map[int]struct{}, 0, len(conds))
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
 	for _, cond := range conds {
 		dnfUsed, err := l.locatePartition(cond)
 		if err != nil {
@@ -387,6 +393,9 @@ func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFun
 }
 
 func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
 	used, err := l.locatePartitionByCNFCondition(conds)
 	if err != nil {
 		return nil, err
@@ -395,6 +404,9 @@ func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.E
 }
 
 func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
 	used, err := l.locatePartitionsByConditions(conds, l.pruneList.ExprCols, l.pruneList.Exprs)
 	if err != nil {
 		return nil, err

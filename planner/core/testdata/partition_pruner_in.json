@@ -86,6 +86,7 @@
   {
     "name": "TestListColumnsPartitionPruner",
     "cases": [
+      "select * from t1",
       "select * from t1 where a = 1 or b = 2",
       "select * from t1 where a = 1 and b = 2",
       "select * from t1 where a = 1 and b = 1",
