@@ -36,8 +36,10 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	dto "github.com/prometheus/client_model/go"
 )
 
 var _ = Suite(&testStatsSuite{})
@@ -1783,4 +1785,48 @@ func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
 	for i := 0; i < c.N; i++ {
 		h.HandleAutoAnalyze(is)
 	}
+}
+
+func (s *testStatsSuite) TestDisableFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(0.0)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	m := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(m)
+	c.Assert(m.String(), Equals, `label:<name:"type" value:"ok" > counter:<value:0 > `)
+}
+
+func (s *testStatsSuite) TestFeedbackCounter(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	m := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(m)
+	c.Assert(m.String(), Equals, `label:<name:"type" value:"ok" > counter:<value:20 > `)
 }

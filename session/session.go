@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -353,7 +354,7 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if s.statsCollector != nil {
+	if s.statsCollector != nil && feedback.(*statistics.QueryFeedback).Valid {
 		do, err := GetDomain(s.store)
 		if err != nil {
 			logutil.BgLogger().Debug("domain not found", zap.Error(err))
