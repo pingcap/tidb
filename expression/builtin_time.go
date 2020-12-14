@@ -5852,10 +5852,8 @@ func (b *builtinMakeTimeSig) makeTime(hour int64, minute int64, second float64, 
 		hour = 838
 		overflow = true
 	}
-	if hour == -838 || hour == 838 {
-		if second > 59 {
-			second = 59
-		}
+	if (hour == -838 || hour == 838) && minute == 59 && second > 59 {
+		overflow = true
 	}
 	if overflow {
 		minute = 59
