@@ -3,7 +3,7 @@ PACKAGE_DIRECTORIES := $(PACKAGES) | sed 's/github.com\/pingcap\/dumpling\/*//'
 DUMPLING_PKG := github.com/pingcap/dumpling
 CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.ReleaseVersion=$(shell git describe --tags --dirty)"
+LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
 LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
@@ -24,7 +24,7 @@ bin/%: cmd/%/main.go $(wildcard v4/**/*.go)
 	$(GOBUILD) $(RACEFLAG) -tags codes -o $@ $<
 
 test: failpoint-enable
-	$(GOTEST) $(RACEFLAG) -tags leak ./... || ( make failpoint-disable && exit 1 )
+	$(GOTEST) $(RACEFLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak ./... || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 integration_test: failpoint-enable bin/dumpling
