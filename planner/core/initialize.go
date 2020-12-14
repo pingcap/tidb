@@ -432,6 +432,13 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
+// Init initializes PhysicalTableSample.
+func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalTableSample {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
+	p.stats = &property.StatsInfo{RowCount: 1}
+	return &p
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)

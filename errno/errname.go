@@ -835,7 +835,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
+	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
+	ErrFieldInOrderNotSelect:                                 mysql.Message("Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s", nil),
+	ErrAggregateInOrderNotSelect:                             mysql.Message("Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s", nil),
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", nil),
 	ErrInvalidJSONPath:                                       mysql.Message("Invalid JSON path expression %s.", nil),
@@ -1027,6 +1030,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
+	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
+
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
@@ -1034,6 +1039,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
 	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
+	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
+	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
 	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
 	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
 	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),

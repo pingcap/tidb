@@ -72,7 +72,7 @@ import (
 //          +---------->  |    fetch data from DataSource   |
 //                        +---------------------------------+
 //
-////////////////////////////////////////////////////////////////////////////////////////
+//
 type ShuffleExec struct {
 	baseExecutor
 	concurrency int
@@ -390,6 +390,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 }
 
 var _ partitionSplitter = &partitionHashSplitter{}
+var _ partitionSplitter = &partitionRangeSplitter{}
 
 type partitionSplitter interface {
 	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
@@ -412,5 +413,49 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	for i := 0; i < numRows; i++ {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
+	return workerIndices, nil
+}
+
+func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression) *partitionHashSplitter {
+	return &partitionHashSplitter{
+		byItems:    byItems,
+		numWorkers: concurrency,
+	}
+}
+
+type partitionRangeSplitter struct {
+	byItems      []expression.Expression
+	numWorkers   int
+	groupChecker *vecGroupChecker
+	idx          int
+}
+
+func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItems []expression.Expression) *partitionRangeSplitter {
+	return &partitionRangeSplitter{
+		byItems:      byItems,
+		numWorkers:   concurrency,
+		groupChecker: newVecGroupChecker(ctx, byItems),
+		idx:          0,
+	}
+}
+
+// This method is supposed to be used for shuffle with sorted `dataSource`
+// the caller of this method should guarantee that `input` is grouped,
+// which means that rows with the same byItems should be continuous, the order does not matter.
+func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	_, err := s.groupChecker.splitIntoGroups(input)
+	if err != nil {
+		return workerIndices, err
+	}
+
+	workerIndices = workerIndices[:0]
+	for !s.groupChecker.isExhausted() {
+		begin, end := s.groupChecker.getNextGroup()
+		for i := begin; i < end; i++ {
+			workerIndices = append(workerIndices, s.idx)
+		}
+		s.idx = (s.idx + 1) % s.numWorkers
+	}
+
 	return workerIndices, nil
 }

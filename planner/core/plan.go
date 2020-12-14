@@ -80,14 +80,12 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
 
-	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
-	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
-	switch p := pp.(type) {
+	switch p := tsk.plan().(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
@@ -149,14 +147,26 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	childExec, ok := pp.Children()[0].(*PhysicalSort)
+	sort, ok := pp.Children()[0].(*PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 		// TODO: Implement a better one.
 		return nil
 	}
+	tail, dataSource := sort, sort.Children()[0]
 
-	tail, dataSource := childExec, childExec.Children()[0]
+	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
+	for _, item := range pp.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			partitionBy = append(partitionBy, col)
+		}
+	}
+	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if NDV <= 1 {
+		return nil
+	}
+	concurrency = mathutil.Min(concurrency, NDV)
+
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
@@ -169,8 +179,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 }
 
 func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
-	// TODO: should be configured by a session variable
-	concurrency := 1 // disable by default
+	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
 	}

@@ -980,7 +980,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		elemCount := bj.GetElemCount()
 		if currentLeg.arrayIndex == arrayIndexAsterisk {
 			for i := 0; i < elemCount; i++ {
-				//buf = bj.arrayGetElem(i).extractTo(buf, subPathExpr)
+				// buf = bj.arrayGetElem(i).extractTo(buf, subPathExpr)
 				path := fullpath.pushBackOneIndexLeg(i)
 				stop, err = bj.arrayGetElem(i).extractToCallback(subPathExpr, callbackFn, path)
 				if stop || err != nil {
@@ -988,7 +988,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 				}
 			}
 		} else if currentLeg.arrayIndex < elemCount {
-			//buf = bj.arrayGetElem(currentLeg.arrayIndex).extractTo(buf, subPathExpr)
+			// buf = bj.arrayGetElem(currentLeg.arrayIndex).extractTo(buf, subPathExpr)
 			path := fullpath.pushBackOneIndexLeg(currentLeg.arrayIndex)
 			stop, err = bj.arrayGetElem(currentLeg.arrayIndex).extractToCallback(subPathExpr, callbackFn, path)
 			if stop || err != nil {
@@ -999,7 +999,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		elemCount := bj.GetElemCount()
 		if currentLeg.dotKey == "*" {
 			for i := 0; i < elemCount; i++ {
-				//buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
+				// buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
 				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(subPathExpr, callbackFn, path)
 				if stop || err != nil {
@@ -1009,7 +1009,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		} else {
 			child, ok := bj.objectSearchKey(hack.Slice(currentLeg.dotKey))
 			if ok {
-				//buf = child.extractTo(buf, subPathExpr)
+				// buf = child.extractTo(buf, subPathExpr)
 				path := fullpath.pushBackOneKeyLeg(currentLeg.dotKey)
 				stop, err = child.extractToCallback(subPathExpr, callbackFn, path)
 				if stop || err != nil {
@@ -1018,7 +1018,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 			}
 		}
 	} else if currentLeg.typ == pathLegDoubleAsterisk {
-		//buf = bj.extractTo(buf, subPathExpr)
+		// buf = bj.extractTo(buf, subPathExpr)
 		stop, err = bj.extractToCallback(subPathExpr, callbackFn, fullpath)
 		if stop || err != nil {
 			return
@@ -1027,7 +1027,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		if bj.TypeCode == TypeCodeArray {
 			elemCount := bj.GetElemCount()
 			for i := 0; i < elemCount; i++ {
-				//buf = bj.arrayGetElem(i).extractTo(buf, pathExpr)
+				// buf = bj.arrayGetElem(i).extractTo(buf, pathExpr)
 				path := fullpath.pushBackOneIndexLeg(i)
 				stop, err = bj.arrayGetElem(i).extractToCallback(pathExpr, callbackFn, path)
 				if stop || err != nil {
@@ -1037,7 +1037,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		} else if bj.TypeCode == TypeCodeObject {
 			elemCount := bj.GetElemCount()
 			for i := 0; i < elemCount; i++ {
-				//buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
+				// buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
 				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(pathExpr, callbackFn, path)
 				if stop || err != nil {

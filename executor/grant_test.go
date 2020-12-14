@@ -54,7 +54,7 @@ func (s *testSuiteP1) TestGrantGlobal(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
-	//with grant option
+	// with grant option
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
 	for _, v := range mysql.AllGlobalPrivs {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
