@@ -268,6 +268,7 @@ func generateRetFlag(res Expression, evalType types.EvalType, args []Expression)
 	if fun, ok := res.(*ScalarFunction); (ok && fun.FuncName.L == ast.Cast) || res.GetType().Tp == mysql.TypeBit {
 		if evalType == types.ETInt || evalType == types.ETReal {
 			lfg, rfg := args[0].GetType().Flag, args[1].GetType().Flag
+			// set signedFlag to 0 when bit convert explicitly or implicitly to int or real
 			if mysql.TypeBit == lhs.GetType().Tp || mysql.TypeBit == rhs.GetType().Tp {
 				retType.Flag |= mysql.UnsignedFlag
 				if mysql.TypeBit == rhs.GetType().Tp {
@@ -276,7 +277,9 @@ func generateRetFlag(res Expression, evalType types.EvalType, args []Expression)
 					retType.Flag &= ^(mysql.UnsignedFlag ^ rfg)
 				}
 			}
-		} else if evalType == types.ETDecimal && mysql.TypeEnum == lhs.GetType().Tp || mysql.TypeEnum == rhs.GetType().Tp {
+		} else if evalType == types.ETDecimal && (mysql.TypeEnum == lhs.GetType().Tp || mysql.TypeEnum == rhs.GetType().Tp) {
+			// set Flen and Decimal as unspecified length(-1) when the enum type is compare with decimal type,avoid loss of data,
+			// like the enum'z'(26), wher Flen=2,Decimal=2 the enum=26.00 but when Flen= 1,Decimal=2 the enum=9
 			if mysql.TypeNewDecimal == retType.Tp {
 				retType.Flen, retType.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 			}
