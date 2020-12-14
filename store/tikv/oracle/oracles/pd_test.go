@@ -22,16 +22,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/testutil"
-	"go.uber.org/goleak"
 )
 
 func TestT(t *testing.T) {
 	TestingT(t)
-}
-
-func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m, testutil.LeakOptions...)
 }
 
 var _ = Suite(&clientTestSuite{})
