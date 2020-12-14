@@ -303,7 +303,7 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
 		for i, col := range meta.ColumnNames() {
 			bf.Write(opt.delimiter)
-			escape([]byte(col), bf, getEscapeQuotation(escapeBackSlash, opt.delimiter))
+			escapeCSV([]byte(col), bf, escapeBackSlash, opt)
 			bf.Write(opt.delimiter)
 			if i != len(meta.ColumnTypes())-1 {
 				bf.Write(opt.separator)

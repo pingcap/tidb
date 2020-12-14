@@ -17,16 +17,40 @@ func (s *testSQLByteSuite) TestEscape(c *C) {
 	str := []byte(`MWQeWw""'\rNmtGxzGp`)
 	expectStrBackslash := `MWQeWw\"\"\'\\rNmtGxzGp`
 	expectStrWithoutBackslash := `MWQeWw""''\rNmtGxzGp`
-	expectStrBackslashDoubleQuote := `MWQeWw""""'\rNmtGxzGp`
-	escape(str, &bf, getEscapeQuotation(true, quotationMark))
+	expectStrBackslashDoubleQuote := `MWQeWw\"\"'\\rNmtGxzGp`
+	expectStrWithoutBackslashDoubleQuote := `MWQeWw""""'\rNmtGxzGp`
+	escapeSQL(str, &bf, true)
 	c.Assert(bf.String(), Equals, expectStrBackslash)
 	bf.Reset()
-	escape(str, &bf, getEscapeQuotation(true, doubleQuotationMark))
-	c.Assert(bf.String(), Equals, expectStrBackslash)
-	bf.Reset()
-	escape(str, &bf, getEscapeQuotation(false, quotationMark))
+	escapeSQL(str, &bf, false)
 	c.Assert(bf.String(), Equals, expectStrWithoutBackslash)
 	bf.Reset()
-	escape(str, &bf, getEscapeQuotation(false, doubleQuotationMark))
+	opt := &csvOption{
+		delimiter: []byte(`"`),
+		separator: []byte(`,`),
+	}
+	escapeCSV(str, &bf, true, opt)
 	c.Assert(bf.String(), Equals, expectStrBackslashDoubleQuote)
+	bf.Reset()
+	escapeCSV(str, &bf, false, opt)
+	c.Assert(bf.String(), Equals, expectStrWithoutBackslashDoubleQuote)
+	bf.Reset()
+
+	str = []byte(`a|*|b"cd`)
+	expectedStrWithDelimiter := `a|*|b""cd`
+	expectedStrBackslashWithoutDelimiter := `a\|*\|b"cd`
+	expectedStrWithoutDelimiter := `a|*|b"cd`
+
+	escapeCSV(str, &bf, false, opt)
+	c.Assert(bf.String(), Equals, expectedStrWithDelimiter)
+	bf.Reset()
+
+	opt.delimiter = []byte("")
+	opt.separator = []byte(`|*|`)
+	escapeCSV(str, &bf, true, opt)
+	c.Assert(bf.String(), Equals, expectedStrBackslashWithoutDelimiter)
+	bf.Reset()
+	escapeCSV(str, &bf, false, opt)
+	c.Assert(bf.String(), Equals, expectedStrWithoutDelimiter)
+	bf.Reset()
 }
