@@ -231,3 +231,60 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 		err: nil,
 	}
 }
+
+func (o *pdOracle) getTransferTimeline(ctx context.Context) (t0Tidb, t1Pd, t2Tidb int64, err error) {
+	t0Tidb = oracle.GetPhysical(time.Now())
+	t1Pd, _, err = o.c.GetTS(ctx)
+	if err != nil {
+		return 0, 0, 0, errors.Trace(err)
+	}
+	t2Tidb = oracle.GetPhysical(time.Now())
+	return t0Tidb, t1Pd, t2Tidb, nil
+}
+
+func (o *pdOracle) getStaleTimestamp(ctx context.Context, t0Tidb, t1Pd, t2Tidb, prevSecond int64) int64 {
+	dist := time.Duration(t2Tidb - t0Tidb)
+	if dist > slowDist {
+		logutil.Logger(ctx).Warn(" stale timestamp may be inaccurate because of long fetching time ",
+			zap.Duration("cost time", dist))
+	}
+
+	diff := (2*t1Pd - t2Tidb - t0Tidb) / 2
+	physical := oracle.GetPhysical(time.Now().Add(-time.Second*time.Duration(prevSecond))) + diff
+	return physical
+}
+
+// assert t0_tidb : tidb_t0 ( time when tidb send data to pd on tidb )
+// assert t1_pd : pd_t1 ( time when pd receive data on pd )
+// assert t1_tidb : tidb_t1 ( time when pd receive data on tidb )
+// assert t2_tidb : tidb_t2 ( time when tidb receive data on tidb )
+// assert t_x_tidb + c = t_x_pd
+// assert transfer_time_tidb_to_pd eq transfer_time_pd_to_tidb
+
+// t0_tidb + transfer_time = t1_tidb = t1_pd - c
+// t2_tidb - transfer_time = t1_tidb = t1_pd - c
+// assert transfer_time_pd_to_tidb
+// = transfer_time_mean + r
+// = ( t2_tidb - t0_tidb ) / 2 + r
+
+// r = (transfer_time_pd_to_tidb - transfer_time_tidb_to_pd) / 2
+// assert total_transfer_time =  t2_tidb - t0_tidb
+// r is in (-total_transfer_time, total_transfer_time)
+
+// t2_tidb - ( t2_tidb - t0_tidb ) / 2 - r = t1_pd - c
+// 2 t2_tidb - t2_tidb + t0_tidb - 2 r = 2 t1_pd - 2 c
+// c = ( 2 * t1_pd - t2_tidb - t0_tidb ) / 2 + r
+
+// t_x_pd = t_x_tidb + c
+// example : t_-10_pd = t_x_tidb - 10 + c
+// GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
+func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts uint64, err error) {
+	t0Tidb, t1Pd, t2Tidb, err := o.getTransferTimeline(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	physical := o.getStaleTimestamp(ctx, t0Tidb, t1Pd, t2Tidb, prevSecond)
+	ts = oracle.ComposeTS(physical, 0)
+	return ts, nil
+}
