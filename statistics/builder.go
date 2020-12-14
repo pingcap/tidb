@@ -29,15 +29,17 @@ type SortedBuilder struct {
 	bucketIdx       int64
 	Count           int64
 	hist            *Histogram
+	statsVer        int
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType) *SortedBuilder {
+func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType, statsVer int) *SortedBuilder {
 	return &SortedBuilder{
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
+		statsVer:        statsVer,
 	}
 }
 
@@ -49,8 +51,16 @@ func (b *SortedBuilder) Hist() *Histogram {
 // Iterate updates the histogram incrementally.
 func (b *SortedBuilder) Iterate(data types.Datum) error {
 	b.Count++
+	appendBucket := b.hist.AppendBucket
+	updateLastBucket := b.hist.updateLastBucket
+	if b.statsVer == Version2 {
+		updateLastBucket = b.hist.updateLastBucketV2
+		appendBucket = func(lower, upper *types.Datum, count, repeat int64) {
+			b.hist.AppendBucketWithNDV(lower, upper, count, repeat, 1)
+		}
+	}
 	if b.Count == 1 {
-		b.hist.AppendBucketWithNDV(&data, &data, 1, 1, 1)
+		appendBucket(&data, &data, 1, 1)
 		b.hist.NDV = 1
 		return nil
 	}
@@ -66,7 +76,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.Buckets[b.bucketIdx].Repeat++
 	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
 		// The bucket still have room to store a new item, update the bucket.
-		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
+		updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		b.hist.NDV++
 	} else {
 		// All buckets are full, we should merge buckets.
@@ -82,11 +92,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		}
 		// We may merge buckets, so we should check it again.
 		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
-			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
+			updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
 		} else {
 			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
 			b.bucketIdx++
-			b.hist.AppendBucketWithNDV(&data, &data, b.lastNumber+1, 1, 1)
+			appendBucket(&data, &data, b.lastNumber+1, 1)
 		}
 		b.hist.NDV++
 	}

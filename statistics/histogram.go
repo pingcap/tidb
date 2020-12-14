@@ -214,7 +214,7 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
-	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: 1})
+	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: 0})
 	hg.Bounds.AppendDatum(0, lower)
 	hg.Bounds.AppendDatum(0, upper)
 }
@@ -232,7 +232,15 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 	hg.Bounds.AppendDatum(0, upper)
 	hg.Buckets[len-1].Count = count
 	hg.Buckets[len-1].Repeat = repeat
-	hg.Buckets[len-1].NDV++
+}
+
+func (hg *Histogram) updateLastBucketV2(upper *types.Datum, count, repeat int64) {
+	hg.updateLastBucket(upper, count, repeat)
+	l := hg.Len()
+	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
+	if hg.Buckets[l-1].NDV > 0 {
+		hg.Buckets[l-1].NDV++
+	}
 }
 
 // DecodeTo decodes the histogram bucket values into `Tp`.
@@ -383,6 +391,26 @@ func (hg *Histogram) ToString(idxCols int) string {
 
 // equalRowCount estimates the row count where the column equals to value.
 func (hg *Histogram) equalRowCount(value types.Datum) float64 {
+	index, match := hg.Bounds.LowerBound(0, &value)
+	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
+	if index%2 == 1 {
+		if match {
+			return float64(hg.Buckets[index/2].Repeat)
+		}
+		return hg.notNullCount() / float64(hg.NDV)
+	}
+	if match {
+		cmp := chunk.GetCompareFunc(hg.Tp)
+		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
+			return float64(hg.Buckets[index/2].Repeat)
+		}
+		return hg.notNullCount() / float64(hg.NDV)
+	}
+	return 0
+}
+
+// equalRowCountV2 estimates the row count where the column equals to value.
+func (hg *Histogram) equalRowCountV2(value types.Datum) float64 {
 	index, match := hg.Bounds.LowerBound(0, &value)
 	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
 	if index%2 == 1 {
@@ -703,7 +731,7 @@ func (hg *Histogram) IsIndexHist() bool {
 }
 
 // MergeHistograms merges two histograms.
-func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
+func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int, statsVer int) (*Histogram, error) {
 	if lh.Len() == 0 {
 		return rh, nil
 	}
@@ -719,7 +747,9 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	offset := int64(0)
 	if cmp == 0 {
 		lh.NDV--
-		lh.Buckets[len(lh.Buckets)-1].NDV--
+		if rh.Buckets[0].NDV > 0 {
+			lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV - 1
+		}
 		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat)
 		offset = rh.Buckets[0].Count
 		rh.popFirstBucket()
@@ -746,6 +776,10 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
+		if statsVer == Version2 {
+			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
+			continue
+		}
 		lh.AppendBucket(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat)
 	}
 	for lh.Len() > bucketSize {
@@ -1036,8 +1070,16 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 	if idx.NDV > 0 && idx.outOfRange(val) {
 		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 	}
-	if idx.CMSketch != nil && (len(idx.Histogram.Buckets) == 0 || idx.Histogram.Buckets[0].NDV == 0) {
+	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		return float64(idx.QueryBytes(b))
+	}
+	// If it's version2, query the top-n first.
+	if idx.StatsVer == Version2 {
+		count, found := idx.TopN.QueryTopN(b)
+		if found {
+			return float64(count)
+		}
+		return idx.Histogram.equalRowCountV2(val)
 	}
 	return idx.Histogram.equalRowCount(val)
 }

@@ -147,7 +147,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			logutil.BgLogger().Warn("select resp", zap.Int64s("output cnt", r.selectResp.OutputCounts), zap.Int64s("ndvs", r.selectResp.Ndvs))
+			// logutil.BgLogger().Warn("select resp", zap.Int64s("output cnt", r.selectResp.OutputCounts), zap.Int64s("ndvs", r.selectResp.Ndvs))
 			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
 		r.partialCount++

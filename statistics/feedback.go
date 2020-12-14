@@ -743,7 +743,7 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 }
 
 // UpdateHistogram updates the histogram according buckets.
-func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
+func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
 	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
 	ndvs := make([]int64, len(buckets))
 	for i := range buckets {

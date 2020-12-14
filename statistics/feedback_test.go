@@ -73,7 +73,7 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	originBucketCount := defaultBucketCount
 	defaultBucketCount = 7
 	defer func() { defaultBucketCount = originBucketCount }()
-	c.Assert(UpdateHistogram(q.Hist, q).ToString(0), Equals,
+	c.Assert(UpdateHistogram(q.Hist, q, Version2).ToString(0), Equals,
 		"column:0 ndv:10053 totColSize:0\n"+
 			"num: 10001 lower_bound: 0 upper_bound: 2 repeats: 0 ndv: 2\n"+
 			"num: 7 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 2\n"+

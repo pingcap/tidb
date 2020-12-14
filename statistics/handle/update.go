@@ -573,7 +573,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
-				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
+				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
 				newTblStats.Indices[fb.Hist.ID] = &newIdx
@@ -587,7 +587,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				_, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
 				newFB := &statistics.QueryFeedback{Feedback: ranFB}
 				newFB = newFB.DecodeIntValues()
-				newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB)
+				newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB, statistics.Version1)
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
@@ -763,7 +763,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
-	hist = statistics.UpdateHistogram(hist, q)
+	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)

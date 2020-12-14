@@ -333,6 +333,10 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		cms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 		topn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
 	}
+	statsVer := statistics.Version1
+	if e.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*e.analyzePB.IdxReq.Version)
+	}
 	for {
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
@@ -348,7 +352,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		}
 		respHist := statistics.HistogramFromProto(resp.Hist)
 		e.job.Update(int64(respHist.TotalRowCount()))
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]))
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statsVer)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -535,7 +539,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if hasPkHist(e.handleCols) {
 			respHist := statistics.HistogramFromProto(resp.PkHist)
 			rowCount = int64(respHist.TotalRowCount())
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]))
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -1212,7 +1216,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]))
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1263,7 +1267,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		return analyzeResult{Err: err, job: colExec.job}
 	}
 	hist := hists[0]
-	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, colExec.oldHist, hist, int(colExec.opts[ast.AnalyzeOptNumBuckets]))
+	hist, err = statistics.MergeHistograms(colExec.ctx.GetSessionVars().StmtCtx, colExec.oldHist, hist, int(colExec.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
 	if err != nil {
 		return analyzeResult{Err: err, job: colExec.job}
 	}

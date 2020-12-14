@@ -844,7 +844,7 @@ type idxScanCtx struct {
 	colInfos         []rowcodec.ColInfo
 	primaryColumnIds []int64
 	execDetail       *execDetail
- 	collectNDV       bool
+	collectNDV       bool
 	prevVals         [][]byte
 }
 

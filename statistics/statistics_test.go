@@ -180,7 +180,7 @@ func encodeKey(key types.Datum) types.Datum {
 }
 
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
 	ctx := context.Background()
 	for {
 		req := records.NewChunk()
@@ -204,7 +204,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 }
 
 func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewChunk()
@@ -403,7 +403,7 @@ func (s *testStatisticsSuite) TestMergeHistogram(c *C) {
 	for _, t := range tests {
 		lh := mockHistogram(t.leftLower, t.leftNum)
 		rh := mockHistogram(t.rightLower, t.rightNum)
-		h, err := MergeHistograms(sc, lh, rh, bucketCount)
+		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version1)
 		c.Assert(err, IsNil)
 		c.Assert(h.NDV, Equals, t.ndv)
 		c.Assert(h.Len(), Equals, t.bucketNum)
