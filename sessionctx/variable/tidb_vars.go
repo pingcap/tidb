@@ -433,6 +433,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
