@@ -177,7 +177,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	return candidates[seed%uint32(len(candidates))]
 }
 
-func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp, ) bool {
+func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKvOnly, aidx)
 	// filter label unmatched store
 	if !s.IsLabelsMatch(op.labels) {
