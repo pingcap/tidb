@@ -90,7 +90,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
@@ -123,7 +123,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
@@ -230,6 +230,27 @@
           " IndexLookUp root ",
           " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
           " └─TableScan cop  table:t4, partition:?, keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScan",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " TableReader   root ",
+          " └─Selection   cop  eq(test.test.age, ?)",
+          "   └─TableScan cop  table:test, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:test, index:idx_age(age), range:[?,?], keep order:false",
+          " └─TableScan cop  table:test, keep order:false"
         ]
       }
     ]

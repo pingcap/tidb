@@ -56,7 +56,9 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
-	var minCommitTS = c.minCommitTS
+	c.mu.Lock()
+	minCommitTS := c.minCommitTS
+	c.mu.Unlock()
 	if c.forUpdateTS > 0 && c.forUpdateTS >= minCommitTS {
 		minCommitTS = c.forUpdateTS + 1
 	} else if c.startTS >= minCommitTS {
@@ -82,13 +84,17 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
+	failpoint.Inject("invalidMaxCommitTS", func() {
+		if req.MaxCommitTs > 0 {
+			req.MaxCommitTs = minCommitTS - 1
+		}
+	})
+
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
-		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
-		req.MinCommitTs = 0
 	}
 
 	if c.isOnePC() {
@@ -119,7 +125,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil {
+		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+		// errors.
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
@@ -156,10 +164,14 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 			if c.isOnePC() {
 				if prewriteResp.OnePcCommitTs == 0 {
+					if prewriteResp.MinCommitTs != 0 {
+						return errors.Trace(errors.New("MinCommitTs must be 0 when 1pc falls back to 2pc"))
+					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
+					c.setAsyncCommit(false)
 				} else {
 					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
 					// not to lock the mutex.

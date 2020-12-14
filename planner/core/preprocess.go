@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -180,6 +181,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.DropSequenceStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCastExpr:
+		p.checkFuncCastExpr(node)
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
@@ -193,8 +196,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
+	case *ast.GroupByClause:
+		p.checkGroupBy(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -209,18 +221,57 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
-	var originSQL, hintedSQL string
-	switch node := originNode.(type) {
+const (
+	// TypeInvalid for unexpected types.
+	TypeInvalid byte = iota
+	// TypeSelect for SelectStmt.
+	TypeSelect
+	// TypeSetOpr for SetOprStmt.
+	TypeSetOpr
+	// TypeDelete for DeleteStmt.
+	TypeDelete
+	// TypeUpdate for UpdateStmt.
+	TypeUpdate
+	// TypeInsert for InsertStmt.
+	TypeInsert
+)
+
+func bindableStmtType(node ast.StmtNode) byte {
+	switch node.(type) {
 	case *ast.SelectStmt:
-		originSQL = parser.Normalize(node.Text())
-		hintedSQL = parser.Normalize(hintedNode.(*ast.SelectStmt).Text())
+		return TypeSelect
 	case *ast.SetOprStmt:
-		originSQL = parser.Normalize(node.Text())
-		hintedSQL = parser.Normalize(hintedNode.(*ast.SetOprStmt).Text())
-	default:
-		p.err = errors.Errorf("create binding doesn't support this type of query")
+		return TypeSetOpr
+	case *ast.DeleteStmt:
+		return TypeDelete
+	case *ast.UpdateStmt:
+		return TypeUpdate
+	case *ast.InsertStmt:
+		return TypeInsert
 	}
+	return TypeInvalid
+}
+
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	origTp := bindableStmtType(originNode)
+	hintedTp := bindableStmtType(hintedNode)
+	if origTp == TypeInvalid || hintedTp == TypeInvalid {
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+		return
+	}
+	if origTp != hintedTp {
+		p.err = errors.Errorf("hinted sql and original sql have different query types")
+		return
+	}
+	if origTp == TypeInsert {
+		origInsert, hintedInsert := originNode.(*ast.InsertStmt), hintedNode.(*ast.InsertStmt)
+		if origInsert.Select == nil || hintedInsert.Select == nil {
+			p.err = errors.Errorf("create binding only supports INSERT / REPLACE INTO SELECT")
+			return
+		}
+	}
+	originSQL := parser.Normalize(originNode.Text())
+	hintedSQL := parser.Normalize(hintedNode.Text())
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -657,6 +708,16 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
+func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	for _, item := range stmt.Items {
+		if !item.NullOrder && !enableNoopFuncs {
+			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 	var statsName string
 	switch stmt := node.(type) {
@@ -777,13 +838,41 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	var err error = nil
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			return ddl.ErrTableOptionUnionUnsupported
+			err = ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			return ddl.ErrTableOptionInsertMethodUnsupported
+			err = ddl.ErrTableOptionInsertMethodUnsupported
+		case ast.TableOptionEngine:
+			err = checkTableEngine(option.StrValue)
 		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var mysqlValidTableEngineNames = map[string]struct{}{
+	"archive":    {},
+	"blackhole":  {},
+	"csv":        {},
+	"example":    {},
+	"federated":  {},
+	"innodb":     {},
+	"memory":     {},
+	"merge":      {},
+	"mgr_myisam": {},
+	"myisam":     {},
+	"ndb":        {},
+	"heap":       {},
+}
+
+func checkTableEngine(engineName string) error {
+	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
+		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
@@ -830,11 +919,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
-			if tp.Tp == mysql.TypeDouble {
-				if tp.Flen != -1 {
-					return types.ErrSyntax.GenWithStackByArgs()
-				}
-			} else {
+			switch tp.Tp {
+			case mysql.TypeDouble:
+				// For Double type Flen and Decimal check is moved to parser component
+			default:
 				if tp.Flen > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 				}
@@ -1062,5 +1150,33 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
+	}
+}
+
+func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.EvalType() == types.ETDecimal {
+		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+			// valid
+			return
+		}
+
+		var buf strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+		if err := node.Expr.Restore(restoreCtx); err != nil {
+			p.err = err
+			return
+		}
+		if node.Tp.Flen < node.Tp.Decimal {
+			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
+			return
+		}
+		if node.Tp.Flen > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+			return
+		}
+		if node.Tp.Decimal > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+			return
+		}
 	}
 }

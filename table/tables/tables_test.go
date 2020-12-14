@@ -17,6 +17,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -102,7 +103,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tables.AllocHandle(nil, tb)
+	handle, err := tables.AllocHandle(context.Background(), nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle.IntValue(), Greater, int64(0))
 
@@ -246,7 +247,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	handle, err := tables.AllocHandle(nil, tb)
+	handle, err := tables.AllocHandle(context.Background(), nil, tb)
 	c.Assert(err, IsNil)
 	c.Assert(handle.IntValue(), Greater, int64(0))
 
@@ -354,6 +355,8 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	_, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
@@ -385,14 +388,14 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	c.Assert(err, IsNil)
-	_, err = tables.AllocHandle(tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
 	c.Assert(err, IsNil)
 
 	maxID := 1<<(64-15-1) - 1
 	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
 	c.Assert(err, IsNil)
 
-	_, err = tables.AllocHandle(tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
 	c.Assert(err, NotNil)
 }
 
@@ -615,4 +618,59 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
+}
+
+func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
+	// auto-commit
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttt")
+	tk.MustExec("create table ttt(id int(11) NOT NULL AUTO_INCREMENT,k int(11) NOT NULL DEFAULT '0',c char(120) NOT NULL DEFAULT '',PRIMARY KEY (id),UNIQUE KEY k_1 (k,c))")
+	tk.MustExec("insert into ttt(k,c) values(1, 'tidb')")
+	tk.MustExec("insert into ttt(k,c) values(2, 'tidb')")
+	_, err := tk.Exec("update ttt set k=1 where id=2")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+
+	// no auto-commit
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
+	tk.MustExec("begin")
+	_, err = tk.Exec("update ttt set k=1 where id=2")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+
+	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
+	tk.MustExec("begin")
+	_, err = tk.Exec("update ttt set k=1 where id=2")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+
+	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
+	tk1 := testkit.NewTestKit(c, ts.store)
+	tk2 := testkit.NewTestKit(c, ts.store)
+	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set @@tidb_constraint_check_in_place = 0")
+	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustExec("update ttt set k=3 where id=2")
+
+	ch := make(chan int, 2)
+	go func() {
+		tk2.MustExec("use test")
+		tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		ch <- 2
+	}()
+	time.Sleep(100 * time.Millisecond)
+	ch <- 1
+	tk1.Exec("commit")
+	var isSession1 string
+	if 1 == <-ch {
+		isSession1 = "true"
+	}
+	c.Assert(isSession1, Equals, "true")
+	tk1.MustExec("rollback")
+	tk2.MustExec("rollback")
 }

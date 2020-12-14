@@ -654,7 +654,7 @@ create table t(
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
+func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -665,7 +665,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) )")
+	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) ,decimal_unsigned decimal unsigned,key (decimal_unsigned), float_unsigned float unsigned,key(float_unsigned), double_unsigned double unsigned,key(double_unsigned))")
 
 	tests := []struct {
 		indexPos    int
@@ -741,6 +741,27 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			accessConds: "[]",
 			filterConds: "[]",
 			resultStr:   "[]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "decimal_unsigned > -100",
+			accessConds: "[gt(test.t.decimal_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "float_unsigned > -100",
+			accessConds: "[gt(test.t.float_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "double_unsigned > -100",
+			accessConds: "[gt(test.t.double_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
 		},
 	}
 
@@ -939,11 +960,11 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[-inf,1) (2,+inf]]",
 			length:      types.UnspecifiedLength,
 		},
-		//{
-		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
-		//	exprStr:   "a not between null and 0",
-		//	resultStr[(0,+inf]]
-		//},
+		// {
+		//  `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
+		// 	exprStr:   "a not between null and 0",
+		// 	resultStr[(0,+inf]]
+		// },
 		{
 			colPos:      0,
 			exprStr:     "a between 2 and 1",
@@ -1193,7 +1214,7 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
-	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(255));")
 	testKit.MustExec("analyze table t0;")
 
 	var input []string
@@ -1309,6 +1330,42 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	}
 }
 
+func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test;")
+	testKit.MustExec("drop table if exists t2;")
+	testKit.MustExec("create table t2 (id int unsigned not null auto_increment primary key, t text, index(t(3)));")
+	testKit.MustExec("insert into t2 (t) values ('aaaa'),('a');")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	inputLen := len(input)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		if i+1 == inputLen/2 {
+			testKit.MustExec("analyze table t2;")
+		}
+	}
+}
+
 func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
@@ -1343,6 +1400,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
 	testKit.MustQuery("SELECT * FROM t WHERE a < 15698").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
+	testKit.MustQuery("SELECT * FROM t WHERE a <= 1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
 	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 
@@ -1370,14 +1428,21 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (1, 2, 70)`,
-			accessConds: "[not(in(test.t.a, 1, 2, 70))]",
+			accessConds: "[not(in(test.t.a, 1, 2, 70))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
 			filterConds: "[]",
 			resultStr:   `[(NULL,1970) (1970,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
+			exprStr:     `a = 1 or a = 2 or a = 70`,
+			accessConds: "[or(eq(test.t.a, 2001), or(eq(test.t.a, 2002), eq(test.t.a, 1970)))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
+			filterConds: "[]",
+			resultStr:   `[[1970,1970] [2001,2002]]`,
+		},
+		{
+			indexPos:    0,
 			exprStr:     `a not in (99)`,
-			accessConds: "[ne(test.t.a, 99)]",
+			accessConds: "[ne(test.t.a, 1999)]", // this is in accordance with MySQL
 			filterConds: "[]",
 			resultStr:   `[[-inf,1999) (1999,+inf]]`,
 		},
@@ -1405,7 +1470,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a != 1`,
-			accessConds: "[ne(test.t.a, 1)]",
+			accessConds: "[ne(test.t.a, 2001)]",
 			filterConds: "[]",
 			resultStr:   `[[-inf,2001) (2001,+inf]]`,
 		},
@@ -1418,13 +1483,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		},
 		{
 			exprStr:     "a < 99 or a > 01",
-			accessConds: "[or(lt(test.t.a, 99), gt(test.t.a, 1))]",
+			accessConds: "[or(lt(test.t.a, 1999), gt(test.t.a, 2001))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1999) (2001,+inf]]",
 		},
 		{
 			exprStr:     "a >= 70 and a <= 69",
-			accessConds: "[ge(test.t.a, 70) le(test.t.a, 69)]",
+			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 2069)]",
 			filterConds: "[]",
 			resultStr:   "[[1970,2069]]",
 		},

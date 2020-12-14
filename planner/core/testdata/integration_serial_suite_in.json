@@ -78,5 +78,16 @@
       "explain select /*+ use_index(t, idx)*/ * from t",
       "explain select /*+ use_index(t)*/ * from t"
     ]
+  },
+  {
+    "name": "TestIssue20710",
+    "cases": [
+      "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
+      "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
+      "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
+      "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
+      "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
+      "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
+    ]
   }
 ]

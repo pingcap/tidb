@@ -1224,8 +1224,8 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
@@ -2175,6 +2175,14 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
 	case "HOUR_MINUTE":
 		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_MICROSECOND":
+		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "DAY_SECOND":
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+	case "DAY_MINUTE":
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_HOUR":
+		return int64(d.Hour()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
