@@ -290,9 +290,13 @@ func (tk *TestKit) Query(sql string, args ...interface{}) (*Result, error) {
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(res, check.NotNil, comment)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, res)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if err != nil {
+		return nil, err
+	}
 	err = res.Close()
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if err != nil {
+		return nil, err
+	}
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]

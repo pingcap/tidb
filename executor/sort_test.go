@@ -15,11 +15,11 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"os"
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
