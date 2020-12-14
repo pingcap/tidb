@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/twmb/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -196,7 +195,7 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 	for _, t := range tests {
 		lSketch, topN, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		c.Assert(len(topN.TopN()), LessEqual, 40)
+		c.Assert(len(topN.TopN), LessEqual, 40)
 		avg, err := averageAbsoluteError(lSketch, topN, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
@@ -271,7 +270,7 @@ func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 	c.Assert(err, IsNil)
 	c.Check(cms.defaultValue, Equals, uint64(1))
 	c.Check(avg, Equals, uint64(0))
-	c.Check(len(topN.TopN()), Equals, 0)
+	c.Check(topN, IsNil)
 }
 
 func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
@@ -282,15 +281,14 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	topN := make(map[uint64][]*TopNMeta)
+	topN := make([]TopNMeta, 20)
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
 	unsignedLong.Flag |= mysql.UnsignedFlag
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
 	var rows []chunk.Row
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
-		h1, h2 := murmur3.Sum128(tString)
-		topN[h1] = []*TopNMeta{{h2, tString, math.MaxUint64}}
+		topN[i] = TopNMeta{tString, math.MaxUint64}
 		chk.AppendBytes(0, tString)
 		chk.AppendUint64(1, math.MaxUint64)
 		rows = append(rows, chk.GetRow(i))

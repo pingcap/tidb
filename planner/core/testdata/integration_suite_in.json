@@ -74,7 +74,9 @@
   {
     "name": "TestSubqueryWithTopN",
     "cases": [
-      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)",
+      "desc select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1",
+      "desc select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1"
     ]
   },
   {

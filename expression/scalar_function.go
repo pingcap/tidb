@@ -153,10 +153,10 @@ func typeInferForNull(args []Expression) {
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
-	for _, arg := range args {
-		isNullArg := isNull(arg)
+	for i := len(args) - 1; i >= 0; i-- {
+		isNullArg := isNull(args[i])
 		if !isNullArg && retFieldTp == nil {
-			retFieldTp = arg.GetType()
+			retFieldTp = args[i].GetType()
 		}
 		hasNullArg = hasNullArg || isNullArg
 		// Break if there are both NULL and non-NULL expression
@@ -181,8 +181,11 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if funcName == ast.Cast {
+	switch funcName {
+	case ast.Cast:
 		return BuildCastFunction(ctx, args[0], retType), nil
+	case ast.GetVar:
+		return BuildGetVarFunction(ctx, args[0], retType)
 	}
 	fc, ok := funcs[funcName]
 	if !ok {

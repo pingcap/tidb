@@ -120,6 +120,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
+	}
+}
+
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	tk := NewTestKit(c, store)

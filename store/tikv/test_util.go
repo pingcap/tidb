@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/pd/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // NewTestTiKVStore creates a test store with Option

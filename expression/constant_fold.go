@@ -122,7 +122,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 					foldedExpr.GetType().Decimal = expr.GetType().Decimal
 					return foldedExpr, isDeferredConst
 				}
-				return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
+				return foldedExpr, isDeferredConst
 			}
 		} else {
 			// for no-const, here should return directly, because the following branches are unknown to be run or not

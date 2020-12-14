@@ -86,7 +86,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(info.Jobs, HasLen, 1)
 	c.Assert(info.Jobs[0], DeepEquals, job)
-	c.Assert(info.ReorgHandle, Equals, nil)
+	c.Assert(info.ReorgHandle, IsNil)
 	// Two jobs.
 	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	err = t.EnQueueDDLJob(job1)
@@ -96,7 +96,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(info.Jobs, HasLen, 2)
 	c.Assert(info.Jobs[0], DeepEquals, job)
 	c.Assert(info.Jobs[1], DeepEquals, job1)
-	c.Assert(info.ReorgHandle, Equals, nil)
+	c.Assert(info.ReorgHandle, IsNil)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 }

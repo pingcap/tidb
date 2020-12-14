@@ -10,7 +10,7 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-- [**Slack Channel**](https://pingcap.com/tidbslack/)
+- [**Slack Channel**](https://slack.tidb.io)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
@@ -62,7 +62,7 @@ The [community repository](https://github.com/pingcap/community) hosts all infor
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
 Contributions are welcomed and greatly appreciated. See
-[CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md)
+[Contribution Guide](https://github.com/pingcap/community/blob/master/contributors/README.md)
 for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
 
 ## Adopters

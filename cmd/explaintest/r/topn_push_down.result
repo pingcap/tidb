@@ -168,7 +168,7 @@ ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	estRows	task	access object	operator info
 Limit_19	0.00	root		offset:0, count:5
-└─IndexJoin_118	0.00	root		left outer join, inner:IndexReader_117, outer key:test.tr.id, inner key:test.p.relate_id
+└─IndexJoin_118	0.00	root		left outer join, inner:IndexReader_117, outer key:test.tr.id, inner key:test.p.relate_id, equal cond:eq(test.tr.id, test.p.relate_id)
   ├─TopN_127(Build)	0.00	root		test.te.expect_time, offset:0, count:5
   │ └─IndexMergeJoin_53	0.00	root		inner join, inner:Projection_51, outer key:test.tr.id, inner key:test.te.trade_id
   │   ├─IndexLookUp_98(Build)	0.00	root		
@@ -221,7 +221,7 @@ create table t(a int not null, index idx(a));
 explain select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
 id	estRows	task	access object	operator info
 Limit_11	5.00	root		offset:0, count:5
-└─IndexJoin_15	5.00	root		inner join, inner:IndexReader_14, outer key:test.t.a, inner key:test.t.a
+└─IndexJoin_15	5.00	root		inner join, inner:IndexReader_14, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
   ├─TableReader_23(Build)	4.00	root		data:TableFullScan_22
   │ └─TableFullScan_22	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─IndexReader_14(Probe)	1.25	root		index:IndexRangeScan_13
@@ -230,7 +230,7 @@ explain select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a wh
 id	estRows	task	access object	operator info
 Limit_12	5.00	root		offset:0, count:5
 └─Selection_13	5.00	root		isnull(test.t.a)
-  └─IndexJoin_17	5.00	root		left outer join, inner:IndexReader_16, outer key:test.t.a, inner key:test.t.a
+  └─IndexJoin_17	5.00	root		left outer join, inner:IndexReader_16, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
     ├─TableReader_25(Build)	4.00	root		data:TableFullScan_24
     │ └─TableFullScan_24	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─IndexReader_16(Probe)	1.25	root		index:IndexRangeScan_15

@@ -137,7 +137,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 }
 
 func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
-	ts, err := s.oracle.GetTimestamp(context.Background())
+	ts, err := s.oracle.GetTimestamp(context.Background(), &oracle.Option{})
 	c.Assert(err, IsNil)
 	return ts
 }

@@ -34,6 +34,9 @@ func init() {
 
 // SetGOGC update GOGC and related metrics.
 func SetGOGC(val int) {
+	if val <= 0 {
+		val = 100
+	}
 	debug.SetGCPercent(val)
 	metrics.GOGC.Set(float64(val))
 	atomic.StoreInt64(&gogcValue, int64(val))

@@ -17,7 +17,11 @@ StreamAgg_13	1.00	root		funcs:count(1)->Column#5
 explain select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	estRows	task	access object	operator info
 StreamAgg_12	1.00	root		funcs:count(1)->Column#5
+<<<<<<< HEAD
 └─IndexJoin_56	20044.00	root		inner join, inner:IndexLookUp_55, outer key:test.lo.a, inner key:test.e.a
+=======
+└─IndexJoin_56	19977.00	root		inner join, inner:IndexLookUp_55, outer key:test.lo.a, inner key:test.e.a, equal cond:eq(test.lo.a, test.e.a)
+>>>>>>> master
   ├─TableReader_40(Build)	250.00	root		data:TableFullScan_39
   │ └─TableFullScan_39	250.00	cop[tikv]	table:lo	keep order:false
   └─IndexLookUp_55(Probe)	80.18	root		

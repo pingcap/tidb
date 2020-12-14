@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -91,6 +92,13 @@ type scalar struct {
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	if tp.EvalType() == types.ETString {
+		// The histogram will store the string value's 'sort key' representation of its collation.
+		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
+		tp = tp.Clone()
+		tp.Collate = charset.CollationBin
+	}
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -123,7 +131,7 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	//let the initial sum = 0
+	// let the initial sum = 0
 	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
 	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
 
@@ -330,6 +338,35 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
+// RemoveIdxVals remove the given values from the histogram.
+func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
+	totalSubCnt := int64(0)
+	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
+		for pairIdx < len(idxValCntPairs) {
+			// If the current val smaller than current bucket's lower bound, skip it.
+			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			if cmpResult > 0 {
+				continue
+			}
+			// If the current val bigger than current bucket's upper bound, break.
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			if cmpResult < 0 {
+				break
+			}
+			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			pairIdx++
+			if cmpResult == 0 {
+				hg.Buckets[bktIdx].Repeat = 0
+				break
+			}
+		}
+		hg.Buckets[bktIdx].Count -= totalSubCnt
+		if hg.Buckets[bktIdx].Count < 0 {
+			hg.Buckets[bktIdx].Count = 0
+		}
+	}
+}
+
 // ToString gets the string representation for the histogram.
 func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
@@ -456,6 +493,24 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	}
 	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
+}
+
+// GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
+func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
+	columnCount := idx.TotalRowCount()
+	if columnCount == 0 {
+		return 1.0
+	}
+	return float64(totalCount) / columnCount
+}
+
+// BetweenRowCount estimates the row count for interval [l, r).
+func (idx *Index) BetweenRowCount(l, r types.Datum) float64 {
+	histBetweenCnt := idx.Histogram.BetweenRowCount(l, r)
+	if idx.StatsVer == Version1 {
+		return histBetweenCnt
+	}
+	return float64(idx.TopN.BetweenCount(l.GetBytes(), r.GetBytes())) + histBetweenCnt
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.
@@ -843,18 +898,10 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
 		if highVal.Kind() == types.KindString {
-			highVal.SetBytesAsString(collate.GetCollator(
-				highVal.Collation()).Key(highVal.GetString()),
-				highVal.Collation(),
-				uint32(highVal.Length()),
-			)
+			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
 		}
 		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytesAsString(collate.GetCollator(
-				lowVal.Collation()).Key(lowVal.GetString()),
-				lowVal.Collation(),
-				uint32(lowVal.Length()),
-			)
+			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {
@@ -941,6 +988,14 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
+// TotalRowCount returns the total count of this index.
+func (idx *Index) TotalRowCount() float64 {
+	if idx.StatsVer == Version2 {
+		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
+	}
+	return idx.Histogram.TotalRowCount()
+}
+
 // HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededIndices = neededIndexMap{idxs: map[tableIndexID]struct{}{}}
@@ -990,7 +1045,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 // QueryBytes is used to query the count of specified bytes.
 func (idx *Index) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := idx.TopN.QueryTopN(h1, h2, d); ok {
+	if count, ok := idx.TopN.QueryTopN(d); ok {
 		return count
 	}
 	return idx.queryHashValue(h1, h2)
@@ -1026,6 +1081,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 				continue
 			}
 		}
+		// The final interval is [low, high)
 		if indexRange.LowExclude {
 			lb = kv.Key(lb).PrefixNext()
 		}
@@ -1247,7 +1303,8 @@ type dataCnt struct {
 	cnt  uint64
 }
 
-func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) {
+// GetIndexPrefixLens returns an array representing
+func GetIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) {
 	prefixLens = make([]int, 0, numCols)
 	var colData []byte
 	prefixLen := 0
@@ -1275,7 +1332,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
 	for i := 0; i < hg.Bounds.NumRows(); i++ {
 		data := hg.Bounds.GetRow(i).GetBytes(0)
-		prefixLens, err := getIndexPrefixLens(data, numCols)
+		prefixLens, err := GetIndexPrefixLens(data, numCols)
 		if err != nil {
 			return err
 		}
@@ -1296,12 +1353,13 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	topN.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
+	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
-		cms.subValue(h1, h2, realCnt)
-		topN.topN[h1] = append(topN.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+		cms.SubValue(h1, h2, realCnt)
+		topN.AppendTopN(dataCnt.data, realCnt)
 	}
+	topN.Sort()
 	return nil
 }
