@@ -35,6 +35,12 @@ var (
 	ErrWrongNumberOfColumnsInSelect    = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongNumberOfColumnsInSelect)
 	ErrBadGeneratedColumn              = dbterror.ClassOptimizer.NewStd(mysql.ErrBadGeneratedColumn)
 	ErrFieldNotInGroupBy               = dbterror.ClassOptimizer.NewStd(mysql.ErrFieldNotInGroupBy)
+<<<<<<< HEAD
+=======
+	ErrAggregateOrderNonAggQuery       = dbterror.ClassOptimizer.NewStd(mysql.ErrAggregateOrderNonAggQuery)
+	ErrFieldInOrderNotSelect           = dbterror.ClassOptimizer.NewStd(mysql.ErrFieldInOrderNotSelect)
+	ErrAggregateInOrderNotSelect       = dbterror.ClassOptimizer.NewStd(mysql.ErrAggregateInOrderNotSelect)
+>>>>>>> 49b926ede... planner: check for only_full_group_by in ORDER BY and HAVING (#21216)
 	ErrBadTable                        = dbterror.ClassOptimizer.NewStd(mysql.ErrBadTable)
 	ErrKeyDoesNotExist                 = dbterror.ClassOptimizer.NewStd(mysql.ErrKeyDoesNotExist)
 	ErrOperandColumns                  = dbterror.ClassOptimizer.NewStd(mysql.ErrOperandColumns)

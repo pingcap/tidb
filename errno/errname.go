@@ -895,6 +895,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
+	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", nil),
