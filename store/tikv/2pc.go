@@ -652,6 +652,16 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
+			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if s, ok := v.(string); !ok {
+					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+					time.Sleep(2 * time.Second)
+				} else if s == "skip" {
+					failpoint.Return()
+				}
+			})
+
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -1218,8 +1228,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
+				zap.Stringer("primaryKey", kv.Key(c.primaryKey)),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("commitTS", c.commitTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS),
 				zap.Strings("keys", hexBatchKeys(batch.mutations.keys)))
 			return errors.Trace(err)
 		}
