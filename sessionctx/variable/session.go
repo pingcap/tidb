@@ -572,6 +572,9 @@ type SessionVars struct {
 	// EnableChangeColumnType is used to control whether to enable the change column type.
 	EnableChangeColumnType bool
 
+	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
+	EnableChangeMultiSchema bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -910,6 +913,7 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:          DefTiDBEnableParallelApply,
 		ShardAllocateStep:            DefTiDBShardAllocateStep,
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
+		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
@@ -936,7 +940,6 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1418,8 +1421,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBMemQuotaStatistics:
-		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1547,7 +1548,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationServer] = coll.Name
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		val = coll.Name
+	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
 		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
 			if name == CharacterSetResults {
@@ -1571,9 +1573,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharacterSetServer:
 			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
-		default:
-			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1620,6 +1621,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
 		s.EnableChangeColumnType = TiDBOptOn(val)
+	case TiDBEnableChangeMultiSchema:
+		s.EnableChangeMultiSchema = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
@@ -1935,8 +1938,7 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MemQuotaStatistics defines the memory quota for the statistic Cache.
-	MemQuotaStatistics int64
+
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64
 

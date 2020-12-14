@@ -188,7 +188,6 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
-mem-quota-statistics = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 index-limit = 70
@@ -196,6 +195,7 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 txn-scope = "dc-1"
 enable-enum-length-limit = false
+stores-refresh-interval = 30
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -260,7 +260,6 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.MemQuotaStatistics, Equals, int64(10000))
 	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
@@ -273,6 +272,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.TxnScope, Equals, "dc-1")
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
 [log.file]
