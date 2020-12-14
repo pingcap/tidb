@@ -252,8 +252,10 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	// see https://github.com/pingcap/tidb/issues/21595
-	// We will reopen this feature after GA.
-	// e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	// We will enable this feature by default after GA.
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 
 	if e.isUnparallelExec {
 		e.initForUnparallelExec()
@@ -1018,8 +1020,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
 	e.memTracker = memory.NewTracker(e.id, -1)
 	// see https://github.com/pingcap/tidb/issues/21595
-	// We will reopen this feature after GA.
-	// e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	// We will enable this feature by default after GA.
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	return nil
 }

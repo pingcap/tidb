@@ -7083,3 +7083,22 @@ func (s *testSuite) Test13004(c *C) {
 	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
 	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
+
+func (s testSuite) TestTrackAggMemoryUsage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+
+	tk.MustExec("set tidb_track_aggregate_memory_usage = off;")
+	rows := tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
+	c.Assert(rows[0][7], Equals, "N/A")
+	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
+	c.Assert(rows[0][7], Equals, "N/A")
+	tk.MustExec("set tidb_track_aggregate_memory_usage = on;")
+	rows = tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
+	c.Assert(rows[0][7], Not(Equals), "N/A")
+	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
+	c.Assert(rows[0][7], Not(Equals), "N/A")
+}

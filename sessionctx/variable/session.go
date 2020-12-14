@@ -764,6 +764,9 @@ type SessionVars struct {
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
+
+	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
+	TrackAggregateMemoryUsage bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1633,6 +1636,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.GuaranteeExternalConsistency = TiDBOptOn(val)
 	case TiDBAnalyzeVersion:
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
+	case TiDBTrackAggregateMemoryUsage:
+		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
