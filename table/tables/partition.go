@@ -756,9 +756,13 @@ func (t *partitionedTable) locateListPartition(ctx sessionctx.Context, pi *model
 	if pi.Expr != "" {
 		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
 		if err == nil {
-			val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+			val, isNull, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 			if err == nil {
-				valueMsg = fmt.Sprintf("%d", val)
+				if isNull {
+					valueMsg = fmt.Sprintf("NULL")
+				} else {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
 			}
 		}
 	} else {
