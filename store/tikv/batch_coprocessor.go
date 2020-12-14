@@ -126,7 +126,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 			// of date and already be cleaned up. We should retry and generate new tasks.
 			if rpcCtx == nil {
 				needRetry = true
-				logutil.BgLogger().Info("retry for TiFlash peer or region missing", zap.Uint64("region id", task.region.GetID()))
+				logutil.BgLogger().Info("retry for TiFlash peer with region missing", zap.Uint64("region id", task.region.GetID()))
 				// Probably all the regions are invalid. Make the loop continue and mark all the regions invalid.
 				// Then `splitRegion` will reloads these regions.
 				continue
@@ -144,7 +144,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 		}
 		if needRetry {
 			// Backoff once for each retry.
-			err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region or TiFlash peer"))
+			err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
