@@ -283,6 +283,34 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	return resErr
 }
 
+// Query query the statements and returns result rows and error.
+func (tk *TestKit) Query(sql string, args ...interface{}) (*Result, error) {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(res, check.NotNil, comment)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, res)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	err = res.Close()
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	sRows := make([][]string, len(rows))
+	for i := range rows {
+		row := rows[i]
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
+				iRow[j] = "<nil>"
+			} else {
+				d := row.GetDatum(j, &res.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
+				tk.c.Assert(err, check.IsNil)
+			}
+		}
+		sRows[i] = iRow
+	}
+	return &Result{rows: sRows, c: tk.c, comment: comment}, err
+}
+
 // ExecToErr executes a sql statement and discard results.
 func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	res, err := tk.Exec(sql, args...)

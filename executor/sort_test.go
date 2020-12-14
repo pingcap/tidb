@@ -15,13 +15,13 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 	"os"
 	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -86,9 +86,6 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
-	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
-	variable.MemoryUsageAlarmRatio.Store(0.0)
-	defer variable.MemoryUsageAlarmRatio.Store(alarmRatio)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
@@ -105,7 +102,9 @@ func (s *testSerialSuite1) TestIssue16696(c *C) {
 		tk.MustExec("insert into t select * from t")
 	}
 	tk.MustExec("set tidb_mem_quota_query = 1;")
-	rows := tk.MustQuery("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a").Rows()
+	rs, err := tk.Query("explain analyze  select t1.a, t1.a +1 from t t1 join t t2 join t t3 order by t1.a")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	rows := rs.Rows()
 	for _, row := range rows {
 		length := len(row)
 		line := fmt.Sprintf("%v", row)
