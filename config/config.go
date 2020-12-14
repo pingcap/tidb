@@ -623,6 +623,8 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -778,7 +780,9 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental:               Experimental{},
+	Experimental: Experimental{
+		AllowsExpressionIndex: false,
+	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
