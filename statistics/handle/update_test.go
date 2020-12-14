@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
@@ -1787,6 +1788,18 @@ func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
 	}
 }
 
+// subtraction parses the number for counter and returns new - old.
+// string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
+func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
+	newStr := newMetric.String()
+	oldStr := oldMetric.String()
+	newIdx := strings.LastIndex(newStr, ":")
+	newNum, _ := strconv.Atoi(newStr[newIdx+1:len(newStr)-3])
+	oldIdx := strings.LastIndex(oldStr, ":")
+	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1:len(oldStr)-3])
+	return newNum-oldNum
+}
+
 func (s *testStatsSuite) TestDisableFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -1796,6 +1809,8 @@ func (s *testStatsSuite) TestDisableFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 	}()
 	statistics.FeedbackProbability.Store(0.0)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
 	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
@@ -1804,9 +1819,9 @@ func (s *testStatsSuite) TestDisableFeedback(c *C) {
 		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
 	}
 
-	m := &dto.Metric{}
-	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(m)
-	c.Assert(m.String(), Equals, `label:<name:"type" value:"ok" > counter:<value:0 > `)
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 0)
 }
 
 func (s *testStatsSuite) TestFeedbackCounter(c *C) {
@@ -1818,6 +1833,8 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 		statistics.FeedbackProbability = oriProbability
 	}()
 	statistics.FeedbackProbability.Store(1)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
 	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
@@ -1826,7 +1843,7 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
 	}
 
-	m := &dto.Metric{}
-	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(m)
-	c.Assert(m.String(), Equals, `label:<name:"type" value:"ok" > counter:<value:20 > `)
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
