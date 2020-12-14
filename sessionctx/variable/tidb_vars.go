@@ -97,7 +97,6 @@ const (
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
-	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
 	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
