@@ -2034,3 +2034,24 @@ func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
 		"1",
 	))
 }
+
+// Test for issue https://github.com/pingcap/tidb/issues/21607.
+func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (a) values (1);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
+		Check(testkit.Rows("0"))
+}
