@@ -36,7 +36,9 @@ type pdOracle struct {
 	c pd.Client
 	// txn_scope (string) -> lastTSPointer (*uint64)
 	lastTSMap sync.Map
-	quit      chan struct{}
+	// txn_scope (string) -> lastTSPointer (*int64)
+	lastTSDiffMap sync.Map
+	quit          chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
@@ -72,11 +74,16 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64, opt *oracle.Option) bool {
 
 // GetTimestamp gets a new increasing time.
 func (o *pdOracle) GetTimestamp(ctx context.Context, opt *oracle.Option) (uint64, error) {
-	ts, err := o.getTimestamp(ctx, opt.TxnScope)
+	timeFirst := oracle.GetPhysical(time.Now())
+	physical, logical, err := o.getTimestamp(ctx, opt.TxnScope)
+	timeLast := oracle.GetPhysical(time.Now())
+	ts := oracle.ComposeTS(physical, logical)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+
 	o.setLastTS(ts, opt.TxnScope)
+	o.setLastTSDiff(o.calculateDiff(timeFirst, physical, timeLast), opt.TxnScope)
 	return ts, nil
 }
 
@@ -109,26 +116,22 @@ func (o *pdOracle) GetTimestampAsync(ctx context.Context, opt *oracle.Option) or
 	return &tsFuture{ts, o, opt.TxnScope}
 }
 
-func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, error) {
+func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (physical int64, logical int64, err error) {
 	now := time.Now()
-	var (
-		physical, logical int64
-		err               error
-	)
 	if txnScope == oracle.GlobalTxnScope || txnScope == "" {
 		physical, logical, err = o.c.GetTS(ctx)
 	} else {
 		physical, logical, err = o.c.GetLocalTS(ctx, txnScope)
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	dist := time.Since(now)
 	if dist > slowDist {
 		logutil.Logger(ctx).Warn("get timestamp too slow",
 			zap.Duration("cost time", dist))
 	}
-	return oracle.ComposeTS(physical, logical), nil
+	return physical, logical, nil
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
@@ -171,11 +174,12 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 			// Update the timestamp for each txnScope
 			o.lastTSMap.Range(func(key, _ interface{}) bool {
 				txnScope := key.(string)
-				ts, err := o.getTimestamp(ctx, txnScope)
+				physical, logical, err := o.getTimestamp(ctx, txnScope)
 				if err != nil {
 					logutil.Logger(ctx).Error("updateTS error", zap.String("txnScope", txnScope), zap.Error(err))
 					return true
 				}
+				ts := oracle.ComposeTS(physical, logical)
 				o.setLastTS(ts, txnScope)
 				return true
 			})
@@ -232,28 +236,6 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	}
 }
 
-func (o *pdOracle) getTransferTimeline(ctx context.Context) (t0Tidb, t1Pd, t2Tidb int64, err error) {
-	t0Tidb = oracle.GetPhysical(time.Now())
-	t1Pd, _, err = o.c.GetTS(ctx)
-	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-	t2Tidb = oracle.GetPhysical(time.Now())
-	return t0Tidb, t1Pd, t2Tidb, nil
-}
-
-func (o *pdOracle) getStaleTimestamp(ctx context.Context, t0Tidb, t1Pd, t2Tidb, prevSecond int64) int64 {
-	dist := time.Duration(t2Tidb - t0Tidb)
-	if dist > slowDist {
-		logutil.Logger(ctx).Warn(" stale timestamp may be inaccurate because of long fetching time ",
-			zap.Duration("cost time", dist))
-	}
-
-	diff := (2*t1Pd - t2Tidb - t0Tidb) / 2
-	physical := oracle.GetPhysical(time.Now().Add(-time.Second*time.Duration(prevSecond))) + diff
-	return physical
-}
-
 // assert t0_tidb : tidb_t0 ( time when tidb send data to pd on tidb )
 // assert t1_pd : pd_t1 ( time when pd receive data on pd )
 // assert t1_tidb : tidb_t1 ( time when pd receive data on tidb )
@@ -277,14 +259,53 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, t0Tidb, t1Pd, t2Tidb, 
 
 // t_x_pd = t_x_tidb + c
 // example : t_-10_pd = t_x_tidb - 10 + c
+func (o *pdOracle) calculateDiff(t0Tidb, t1Pd, t2Tidb int64) int64 {
+	return (2*t1Pd - t2Tidb - t0Tidb) / 2
+}
+
+func (o *pdOracle) getStaleTimestamp(ctx context.Context, diff, prevSecond int64) uint64 {
+	physical := oracle.GetPhysical(time.Now().Add(-time.Second*time.Duration(prevSecond))) + diff
+	return oracle.ComposeTS(physical, 0)
+}
+
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
 func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts uint64, err error) {
-	t0Tidb, t1Pd, t2Tidb, err := o.getTransferTimeline(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
+	diff, ok := o.getLastTSDiff(oracle.GlobalTxnScope)
+	if !ok {
+		return 0, errors.Errorf("get last TS diff fail, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
 
-	physical := o.getStaleTimestamp(ctx, t0Tidb, t1Pd, t2Tidb, prevSecond)
-	ts = oracle.ComposeTS(physical, 0)
+	ts = o.getStaleTimestamp(ctx, diff, prevSecond)
 	return ts, nil
+}
+
+func (o *pdOracle) setLastTSDiff(diff int64, txnScope string) {
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	lastTSDiffInterface, ok := o.lastTSDiffMap.Load(txnScope)
+	if !ok {
+		lastTSDiffInterface, _ = o.lastTSDiffMap.LoadOrStore(txnScope, new(int64))
+	}
+	lastTSDiffPointer := lastTSDiffInterface.(*int64)
+	for {
+		lastTSDiff := atomic.LoadInt64(lastTSDiffPointer)
+		if diff <= lastTSDiff {
+			return
+		}
+		if atomic.CompareAndSwapInt64(lastTSDiffPointer, lastTSDiff, diff) {
+			return
+		}
+	}
+}
+
+func (o *pdOracle) getLastTSDiff(txnScope string) (int64, bool) {
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	lastTSDiffInterface, ok := o.lastTSDiffMap.Load(txnScope)
+	if !ok {
+		return 0, false
+	}
+	return atomic.LoadInt64(lastTSDiffInterface.(*int64)), true
 }

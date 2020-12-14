@@ -73,17 +73,24 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 
 func (s *clientTestSuite) TestGetStaleTimestamp(c *C) {
 	ctx := context.Background()
-	t0Tidb, t1Pd, t2Tidb, err := s.pd.getTransferTimeline(ctx)
+	_, err := s.pd.GetStaleTimestamp(ctx, 10)
 	c.Assert(err, IsNil)
-	physical := s.pd.getStaleTimestamp(ctx, t0Tidb, t1Pd, t2Tidb, 10)
+	opt := oracle.Option{}
+	_, err = s.pd.GetTimestamp(ctx, &opt)
 	c.Assert(err, IsNil)
-	now := oracle.GetPhysical(time.Now())
-	c.Assert(now-physical, LessEqual, time.Second.Milliseconds()*10)
-	c.Assert(now-physical, GreaterEqual, time.Second.Milliseconds()*9)
+
+	ts, err := s.pd.GetStaleTimestamp(ctx, 0)
+	c.Assert(err, IsNil)
+	ts1, ok := s.pd.getLastTS("")
+	c.Assert(ok, Equals, true)
+	c.Assert(ts>>18, Equals, ts1>>18)
 
 	t := time.Now()
-	t0Tidb, t1Pd, t2Tidb = mockDelay(t, time.Second*1, time.Second*2)
-	physical = s.pd.getStaleTimestamp(ctx, t0Tidb, t1Pd, t2Tidb, 10)
+	t0Tidb, t1Pd, t2Tidb := mockTimestamp(t, time.Second*1, time.Second*2)
+	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb), opt.TxnScope)
+	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
+	c.Assert(err, IsNil)
+	physical := int64(ts >> 18)
 	c.Assert(oracle.GetPhysical(t)-physical, Equals, time.Second.Milliseconds()*10)
 
 	// g_t = 0, tb = g_t + 0, tp = g_t + 1 send tb -> tp
@@ -91,12 +98,15 @@ func (s *clientTestSuite) TestGetStaleTimestamp(c *C) {
 	// g_t = 2, tb = g_t + 0 = 2, tp = g_t + 1 = 3 tb receive
 	// g_t = -10 tp = -9 tb = -10
 	t = time.Now()
-	t0Tidb, t1Pd, t2Tidb = mockDelay(t, time.Second*2, time.Second*2)
-	physical = s.pd.getStaleTimestamp(ctx, t0Tidb, t1Pd, t2Tidb, 10)
+	t0Tidb, t1Pd, t2Tidb = mockTimestamp(t, time.Second*2, time.Second*2)
+	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb), opt.TxnScope)
+	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
+	c.Assert(err, IsNil)
+	physical = int64(ts >> 18)
 	c.Assert(oracle.GetPhysical(t)-physical, Equals, time.Second.Milliseconds()*9)
 }
 
-func mockDelay(now time.Time, duration0, duration1 time.Duration) (t0Tidb, t1Pd, t2Tidb int64) {
+func mockTimestamp(now time.Time, duration0, duration1 time.Duration) (t0Tidb, t1Pd, t2Tidb int64) {
 	t0Tidb = oracle.GetPhysical(now)
 	t1Pd = t0Tidb + duration0.Milliseconds()
 	t2Tidb = t0Tidb + duration1.Milliseconds()
