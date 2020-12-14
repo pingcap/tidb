@@ -354,7 +354,10 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
-	if s.statsCollector != nil && feedback.(*statistics.QueryFeedback).Valid {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+		return
+	}
+	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
 			logutil.BgLogger().Debug("domain not found", zap.Error(err))
