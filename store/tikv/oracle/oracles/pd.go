@@ -83,7 +83,7 @@ func (o *pdOracle) GetTimestamp(ctx context.Context, opt *oracle.Option) (uint64
 	}
 
 	o.setLastTS(ts, opt.TxnScope)
-	o.setLastTSDiff(o.calculateDiff(timeFirst, physical, timeLast), opt.TxnScope)
+	o.setLastTSDiff(o.calculateDiff(timeFirst, physical, timeLast))
 	return ts, nil
 }
 
@@ -236,29 +236,7 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	}
 }
 
-// assert t0_tidb : tidb_t0 ( time when tidb send data to pd on tidb )
-// assert t1_pd : pd_t1 ( time when pd receive data on pd )
-// assert t1_tidb : tidb_t1 ( time when pd receive data on tidb )
-// assert t2_tidb : tidb_t2 ( time when tidb receive data on tidb )
-// assert t_x_tidb + c = t_x_pd
-// assert transfer_time_tidb_to_pd eq transfer_time_pd_to_tidb
-
-// t0_tidb + transfer_time = t1_tidb = t1_pd - c
-// t2_tidb - transfer_time = t1_tidb = t1_pd - c
-// assert transfer_time_pd_to_tidb
-// = transfer_time_mean + r
-// = ( t2_tidb - t0_tidb ) / 2 + r
-
-// r = (transfer_time_pd_to_tidb - transfer_time_tidb_to_pd) / 2
-// assert total_transfer_time =  t2_tidb - t0_tidb
-// r is in (-total_transfer_time, total_transfer_time)
-
-// t2_tidb - ( t2_tidb - t0_tidb ) / 2 - r = t1_pd - c
-// 2 t2_tidb - t2_tidb + t0_tidb - 2 r = 2 t1_pd - 2 c
-// c = ( 2 * t1_pd - t2_tidb - t0_tidb ) / 2 + r
-
-// t_x_pd = t_x_tidb + c
-// example : t_-10_pd = t_x_tidb - 10 + c
+// NTP method
 func (o *pdOracle) calculateDiff(t0Tidb, t1Pd, t2Tidb int64) int64 {
 	return (2*t1Pd - t2Tidb - t0Tidb) / 2
 }
@@ -270,7 +248,7 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, diff, prevSecond int64
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
 func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts uint64, err error) {
-	diff, ok := o.getLastTSDiff(oracle.GlobalTxnScope)
+	diff, ok := o.getLastTSDiff()
 	if !ok {
 		return 0, errors.Errorf("get last TS diff fail, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
@@ -279,10 +257,8 @@ func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts 
 	return ts, nil
 }
 
-func (o *pdOracle) setLastTSDiff(diff int64, txnScope string) {
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
+func (o *pdOracle) setLastTSDiff(diff int64) {
+	txnScope := oracle.GlobalTxnScope
 	lastTSDiffInterface, ok := o.lastTSDiffMap.Load(txnScope)
 	if !ok {
 		lastTSDiffInterface, _ = o.lastTSDiffMap.LoadOrStore(txnScope, new(int64))
@@ -296,10 +272,8 @@ func (o *pdOracle) setLastTSDiff(diff int64, txnScope string) {
 	}
 }
 
-func (o *pdOracle) getLastTSDiff(txnScope string) (int64, bool) {
-	if txnScope == "" {
-		txnScope = oracle.GlobalTxnScope
-	}
+func (o *pdOracle) getLastTSDiff() (int64, bool) {
+	txnScope := oracle.GlobalTxnScope
 	lastTSDiffInterface, ok := o.lastTSDiffMap.Load(txnScope)
 	if !ok {
 		return 0, false

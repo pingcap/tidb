@@ -81,7 +81,7 @@ func (s *clientTestSuite) TestGetStaleTimestamp(c *C) {
 
 	t := time.Now()
 	t0Tidb, t1Pd, t2Tidb := mockTimestamp(t, time.Second*1, time.Second*2)
-	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb), opt.TxnScope)
+	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb))
 	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
 	c.Assert(err, IsNil)
 	physical := int64(ts >> 18)
@@ -93,7 +93,7 @@ func (s *clientTestSuite) TestGetStaleTimestamp(c *C) {
 	// g_t = -10 tp = -9 tb = -10
 	t = time.Now()
 	t0Tidb, t1Pd, t2Tidb = mockTimestamp(t, time.Second*2, time.Second*2)
-	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb), opt.TxnScope)
+	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb))
 	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
 	c.Assert(err, IsNil)
 	physical = int64(ts >> 18)
