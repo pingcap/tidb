@@ -508,6 +508,7 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 		{"1e 1dddd ", "10", ErrTruncated},
 		{"1e - 1", "1", ErrTruncated},
 		{"1e -1", "0.1", nil},
+		{"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "0.000000000000000000000000000000000000000000000000000000000000000000000000", nil},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
@@ -519,7 +520,7 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	wordBufLen = 1
 	tests = []tcase{
 		{"123450000098765", "98765", ErrOverflow},
-		{"123450.000098765", "123450", ErrTruncated},
+		{"123450.000098765", "123450", nil},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
