@@ -55,8 +55,6 @@ const (
 	DefIndexLimit = 64
 	// DefMaxOfIndexLimit is the maximum limitation of index on a single table for TiDB.
 	DefMaxOfIndexLimit = 64 * 8
-	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -69,6 +67,8 @@ const (
 	DefStoreLivenessTimeout = "5s"
 	// DefTxnScope is the default value for TxnScope
 	DefTxnScope = "global"
+	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
+	DefStoresRefreshInterval = 60
 )
 
 // Valid config maps
@@ -103,7 +103,6 @@ type Config struct {
 	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction                   string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
 	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -176,6 +175,8 @@ type Config struct {
 	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
+	// StoresRefreshInterval indicates the interval of refreshing stores info, the unit is second.
+	StoresRefreshInterval uint64 `toml:"stores-refresh-interval" json:"stores-refresh-interval"`
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
@@ -642,7 +643,6 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistics:           32 << 30,
 	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -793,6 +793,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
+	StoresRefreshInterval:        DefStoresRefreshInterval,
 }
 
 var (
@@ -1000,9 +1001,6 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
-	if c.MemQuotaStatistics < DefMinQuotaStatistics {
-		return fmt.Errorf("memory-quota-statistics should be greater than %dB", DefMinQuotaStatistics)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")

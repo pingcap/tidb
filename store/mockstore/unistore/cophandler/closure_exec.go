@@ -495,7 +495,7 @@ func buildTopNProcessor(e *closureExecutor, topN *tipb.TopN) error {
 	ctx := &topNCtx{
 		heap:         heap,
 		orderByExprs: conds,
-		sortRow:      e.newTopNSortRow(),
+		sortRow:      newTopNSortRow(len(conds)),
 		execDetail:   new(execDetail),
 	}
 
@@ -1376,7 +1376,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	if ctx.heap.tryToAddRow(ctx.sortRow) {
 		ctx.sortRow.data[0] = safeCopy(key)
 		ctx.sortRow.data[1] = safeCopy(value)
-		ctx.sortRow = e.newTopNSortRow()
+		ctx.sortRow = newTopNSortRow(len(ctx.orderByExprs))
 	}
 	if ctx.heap.err == nil {
 		gotRow = true
@@ -1384,9 +1384,9 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	return errors.Trace(ctx.heap.err)
 }
 
-func (e *closureExecutor) newTopNSortRow() *sortRow {
+func newTopNSortRow(numOrderByExprs int) *sortRow {
 	return &sortRow{
-		key:  make([]types.Datum, len(e.evalContext.columnInfos)),
+		key:  make([]types.Datum, numOrderByExprs),
 		data: make([][]byte, 2),
 	}
 }
