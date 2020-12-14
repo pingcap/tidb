@@ -17,11 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -3501,6 +3503,157 @@ func (s *testSuite4) TestWriteListPartitionTableIssue21437(c *C) {
 	tk.MustExec(`create table t (a int) partition by list (a%10) (partition p0 values in (0,1));`)
 	_, err := tk.Exec("replace into t values  (null)")
 	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value NULL")
+}
+
+func (s *testSuite4) TestListPartitionWithAutoRandom(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("replace into t values  (1,1)")
+	result := []string{"1"}
+	for i := 2; i < 100; i++ {
+		sql := fmt.Sprintf("insert into t (b) values (%v)", i)
+		tk.MustExec(sql)
+		result = append(result, strconv.Itoa(i))
+	}
+	tk.MustQuery("select b from t order by b").Check(testkit.Rows(result...))
+	tk.MustExec("update t set b=b+1 where a=1")
+	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("2"))
+	tk.MustExec("update t set b=b+1 where a<2")
+	tk.MustQuery("select b from t where a<2").Check(testkit.Rows("3"))
+	tk.MustExec("insert into t values (1, 1) on duplicate key update b=b+1")
+	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("4"))
+}
+
+func (s *testSuite4) TestListPartitionWithAutoIncrement(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("replace into t values  (1,1)")
+	result := []string{"1"}
+	for i := 2; i < 100; i++ {
+		sql := fmt.Sprintf("insert into t (b) values (%v)", i)
+		tk.MustExec(sql)
+		result = append(result, strconv.Itoa(i))
+	}
+	tk.MustQuery("select b from t order by b").Check(testkit.Rows(result...))
+	tk.MustExec("update t set b=b+1 where a=1")
+	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("2"))
+	tk.MustExec("update t set b=b+1 where a<2")
+	tk.MustQuery("select b from t where a<2").Check(testkit.Rows("3"))
+	tk.MustExec("insert into t values (1, 1) on duplicate key update b=b+1")
+	tk.MustQuery("select b from t where a=1").Check(testkit.Rows("4"))
+}
+
+func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	// Test for generated column
+	count := 0
+	for i := 0; i < 2; i++ {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+		if i == 0 {
+			// Test for virtual generated column
+			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
+			count++
+		} else {
+			// Test for stored generated column
+			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
+			count++
+		}
+		tk.MustExec("insert into t (a) values (1),(3),(5),(7),(9)")
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("1", "3", "5"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("7", "9"))
+		tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 1"))
+		tk.MustExec("update t set a=a+1 where a = 1")
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("2", "3", "5"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("7", "9"))
+		tk.MustQuery("select * from t where a = 1").Check(testkit.Rows())
+		tk.MustQuery("select * from t where a = 2").Check(testkit.Rows("2 2"))
+	}
+	c.Assert(count, Equals, 2)
+}
+
+func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	// Test for generated column
+	count := 0
+	for i := 0; i < 2; i++ {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+		if i == 0 {
+			// Test for virtual generated column
+			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
+			count++
+		} else {
+			// Test for stored generated column
+			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
+			count++
+		}
+		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
+		tk.MustQuery("select * from t where a = 'abc' order by a").Check(testkit.Rows("abc a"))
+		tk.MustExec("update t set a='bbb' where a = 'aaa'")
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
+		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
+		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
+	}
+	c.Assert(count, Equals, 2)
+}
+
+func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	// Test generated column with global index
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	count := 0
+	for i := 0; i < 2; i++ {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+		if i == 0 {
+			// Test for virtual generated column with global index
+			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
+			count++
+		} else {
+			// Test for stored generated column with global index
+			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
+			count++
+		}
+		tk.MustExec("alter table t add unique index (a)")
+		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
+		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
+		tk.MustQuery("select * from t where a = 'abc' order by a").Check(testkit.Rows("abc a"))
+		tk.MustExec("update t set a='bbb' where a = 'aaa'")
+		tk.MustExec("admin check table t")
+		tk.MustQuery("select a from t order by a").Check(testkit.Rows("abc", "acd", "bbb"))
+		// TODO: fix below test.
+		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("abc", "acd"))
+		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
+		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
+		// Test insert meet duplicate error.
+		_, err := tk.Exec("insert into t (a) values  ('abc')")
+		c.Assert(err, NotNil)
+		// Test insert on duplicate update
+		tk.MustExec("insert into t (a) values ('abc') on duplicate key update a='bbc'")
+		tk.MustQuery("select a from t order by a").Check(testkit.Rows("acd", "bbb", "bbc"))
+		tk.MustQuery("select * from t where a = 'bbc'").Check(testkit.Rows("bbc b"))
+		// TODO: fix below test.
+		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
+		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
+	}
+	c.Assert(count, Equals, 2)
 }
 
 func (s *testSerialSuite) TestIssue20724(c *C) {
