@@ -15,6 +15,7 @@ package json
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -332,7 +333,8 @@ func (s *testJSONSuite) TestBinaryJSONMerge(c *C) {
 		for _, s := range tt.suffixes {
 			suffixes = append(suffixes, mustParseBinaryFromString(c, s))
 		}
-		result := MergeBinary(suffixes)
+		result, err := MergeBinary(suffixes)
+		c.Assert(err, IsNil)
 		cmp := CompareBinary(result, mustParseBinaryFromString(c, tt.expected))
 		c.Assert(cmp, Equals, 0)
 	}
@@ -405,6 +407,16 @@ func (s *testJSONSuite) TestGetKeys(c *C) {
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
 	parsedBJ = mustParseBinaryFromString(c, "{}")
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+
+	b := strings.Builder{}
+	b.WriteString("{\"")
+	for i := 0; i < 65536; i++ {
+		b.WriteByte('a')
+	}
+	b.WriteString("\": 1}")
+	parsedBJ, err := ParseBinaryFromString(b.String())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:8129]TiDB doesn't yet support JSON object with key length >= 65536")
 }
 
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {

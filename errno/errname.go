@@ -1032,6 +1032,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
+	ErrJSONObjectKeyTooLong: mysql.Message("TiDB doesn't yet support JSON object with key length >= 65536", nil),
+
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 

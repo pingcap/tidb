@@ -965,7 +965,11 @@ func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 			result.AppendNull()
 			continue
 		}
-		result.AppendJSON(json.MergeBinary(jsonValues[i]))
+		binaryJSON, err := json.MergeBinary(jsonValues[i])
+		if err != nil {
+			return err
+		}
+		result.AppendJSON(binaryJSON)
 	}
 
 	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {

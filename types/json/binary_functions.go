@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"sort"
 	"unicode/utf8"
 
@@ -316,7 +317,7 @@ func buildBinaryElements(buf []byte, entryStart int, elems []BinaryJSON) []byte 
 	return buf
 }
 
-func buildBinaryObject(keys [][]byte, elems []BinaryJSON) BinaryJSON {
+func buildBinaryObject(keys [][]byte, elems []BinaryJSON) (BinaryJSON, error) {
 	totalSize := headerSize + len(elems)*(keyEntrySize+valEntrySize)
 	for i, elem := range elems {
 		if elem.TypeCode != TypeCodeLiteral {
@@ -328,13 +329,16 @@ func buildBinaryObject(keys [][]byte, elems []BinaryJSON) BinaryJSON {
 	endian.PutUint32(buf, uint32(len(elems)))
 	endian.PutUint32(buf[dataSizeOff:], uint32(totalSize))
 	for i, key := range keys {
+		if len(key) > math.MaxUint16 {
+			return BinaryJSON{}, ErrJSONObjectKeyTooLong
+		}
 		endian.PutUint32(buf[headerSize+i*keyEntrySize:], uint32(len(buf)))
 		endian.PutUint16(buf[headerSize+i*keyEntrySize+keyLenOff:], uint16(len(key)))
 		buf = append(buf, key...)
 	}
 	entryStart := headerSize + len(elems)*keyEntrySize
 	buf = buildBinaryElements(buf, entryStart, elems)
-	return BinaryJSON{TypeCode: TypeCodeObject, Value: buf}
+	return BinaryJSON{TypeCode: TypeCodeObject, Value: buf}, nil
 }
 
 // Modify modifies a JSON object by insert, replace or set.
@@ -466,19 +470,19 @@ func (bm *binaryModifier) insert(path PathExpression, newBj BinaryJSON) BinaryJS
 }
 
 // doInsert inserts the newBj to its parent, and builds the new parent.
-func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
+func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) (err error) {
 	parentPath, lastLeg := path.popOneLastLeg()
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, parentPath)
 	if len(result) == 0 {
-		return
+		return nil
 	}
 	parentBj := result[0]
 	if lastLeg.typ == pathLegIndex {
 		bm.modifyPtr = &parentBj.Value[0]
 		if parentBj.TypeCode != TypeCodeArray {
 			bm.modifyValue = buildBinaryArray([]BinaryJSON{parentBj, newBj})
-			return
+			return nil
 		}
 		elemCount := parentBj.GetElemCount()
 		elems := make([]BinaryJSON, 0, elemCount+1)
@@ -487,10 +491,10 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 		}
 		elems = append(elems, newBj)
 		bm.modifyValue = buildBinaryArray(elems)
-		return
+		return nil
 	}
 	if parentBj.TypeCode != TypeCodeObject {
-		return
+		return nil
 	}
 	bm.modifyPtr = &parentBj.Value[0]
 	elemCount := parentBj.GetElemCount()
@@ -512,7 +516,8 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 		keys = append(keys, insertKey)
 		elems = append(elems, newBj)
 	}
-	bm.modifyValue = buildBinaryObject(keys, elems)
+	bm.modifyValue, err = buildBinaryObject(keys, elems)
+	return err
 }
 
 func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
@@ -525,17 +530,17 @@ func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
 	return bm.rebuild()
 }
 
-func (bm *binaryModifier) doRemove(path PathExpression) {
+func (bm *binaryModifier) doRemove(path PathExpression) (err error) {
 	parentPath, lastLeg := path.popOneLastLeg()
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, parentPath)
 	if len(result) == 0 {
-		return
+		return nil
 	}
 	parentBj := result[0]
 	if lastLeg.typ == pathLegIndex {
 		if parentBj.TypeCode != TypeCodeArray {
-			return
+			return nil
 		}
 		bm.modifyPtr = &parentBj.Value[0]
 		elemCount := parentBj.GetElemCount()
@@ -546,10 +551,10 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 			}
 		}
 		bm.modifyValue = buildBinaryArray(elems)
-		return
+		return nil
 	}
 	if parentBj.TypeCode != TypeCodeObject {
-		return
+		return nil
 	}
 	bm.modifyPtr = &parentBj.Value[0]
 	elemCount := parentBj.GetElemCount()
@@ -563,7 +568,8 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 			elems = append(elems, parentBj.objectGetVal(i))
 		}
 	}
-	bm.modifyValue = buildBinaryObject(keys, elems)
+	bm.modifyValue, err = buildBinaryObject(keys, elems)
+	return err
 }
 
 // rebuild merges the old and the modified JSON into a new BinaryJSON
@@ -759,7 +765,7 @@ func CompareBinary(left, right BinaryJSON) int {
 // 2) adjacent object are merged to a single object;
 // 3) a scalar value is autowrapped as an array before merge;
 // 4) an adjacent array and object are merged by autowrapping the object as an array.
-func MergeBinary(bjs []BinaryJSON) BinaryJSON {
+func MergeBinary(bjs []BinaryJSON) (BinaryJSON, error) {
 	var remain = bjs
 	var objects []BinaryJSON
 	var results []BinaryJSON
@@ -769,13 +775,17 @@ func MergeBinary(bjs []BinaryJSON) BinaryJSON {
 			remain = remain[1:]
 		} else {
 			objects, remain = getAdjacentObjects(remain)
-			results = append(results, mergeBinaryObject(objects))
+			binaryObject, err := mergeBinaryObject(objects)
+			if err != nil {
+				return BinaryJSON{}, err
+			}
+			results = append(results, binaryObject)
 		}
 	}
 	if len(results) == 1 {
-		return results[0]
+		return results[0], nil
 	}
-	return mergeBinaryArray(results)
+	return mergeBinaryArray(results), nil
 }
 
 func getAdjacentObjects(bjs []BinaryJSON) (objects, remain []BinaryJSON) {
@@ -803,7 +813,7 @@ func mergeBinaryArray(elems []BinaryJSON) BinaryJSON {
 	return buildBinaryArray(buf)
 }
 
-func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
+func mergeBinaryObject(objects []BinaryJSON) (BinaryJSON, error) {
 	keyValMap := make(map[string]BinaryJSON)
 	keys := make([][]byte, 0, len(keyValMap))
 	for _, obj := range objects {
@@ -812,7 +822,11 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 			key := obj.objectGetKey(i)
 			val := obj.objectGetVal(i)
 			if old, ok := keyValMap[string(key)]; ok {
-				keyValMap[string(key)] = MergeBinary([]BinaryJSON{old, val})
+				var err error
+				keyValMap[string(key)], err = MergeBinary([]BinaryJSON{old, val})
+				if err != nil {
+					return BinaryJSON{}, err
+				}
 			} else {
 				keyValMap[string(key)] = val
 				keys = append(keys, key)
