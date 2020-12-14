@@ -39,15 +39,15 @@ export DUMPLING_TEST_PORT=4000
 # Test for --sql option.
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\`;"
-run_sql "create sequence \`$DB_NAME\`.\`SEQUENCE_NAME\` increment by 1;"
+run_sql "create sequence \`$DB_NAME\`.\`$SEQUENCE_NAME\` increment by 1;"
 
-run_dumpling --sql "select nextval(\`$DB_NAME\`.\`SEQUENCE_NAME\`)"
+run_dumpling --sql "select nextval(\`$DB_NAME\`.\`$SEQUENCE_NAME\`)"
 
 actual=$(grep -w "(.*)[,|;]" ${DUMPLING_OUTPUT_DIR}/result.000000000.sql | cut -c2-2)
 echo "expected 1, actual ${actual}"
 [ "$actual" = 1 ]
 
-run_dumpling --sql "select nextval(\`$DB_NAME\`.\`SEQUENCE_NAME\`)"
+run_dumpling --sql "select nextval(\`$DB_NAME\`.\`$SEQUENCE_NAME\`)"
 
 actual=$(grep -w "(.*)[,|;]" ${DUMPLING_OUTPUT_DIR}/result.000000000.sql | cut -c2-2)
 echo "expected 2, actual ${actual}"
