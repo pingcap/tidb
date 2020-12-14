@@ -73,6 +73,8 @@ const (
 	DefMaxOfTableColumnCountLimit = 4096
 	// DefTxnScope is the default value for TxnScope
 	DefTxnScope = "global"
+	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
+	DefStoresRefreshInterval = 60
 )
 
 // Valid config maps
@@ -181,6 +183,8 @@ type Config struct {
 	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
+	// StoresRefreshInterval indicates the interval of refreshing stores info, the unit is second.
+	StoresRefreshInterval uint64 `toml:"stores-refresh-interval" json:"stores-refresh-interval"`
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
@@ -795,6 +799,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
+	StoresRefreshInterval:        DefStoresRefreshInterval,
 }
 
 var (

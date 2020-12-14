@@ -61,9 +61,7 @@ type tikvSnapshot struct {
 	syncLog         bool
 	keyOnly         bool
 	vars            *kv.Variables
-	replicaRead     kv.ReplicaReadType
 	replicaReadSeed uint32
-	taskID          uint64
 	minCommitTSPushed
 
 	// Cache the result of BatchGet.
@@ -75,10 +73,12 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		hitCnt     int64
-		cached     map[string][]byte
-		cachedSize int
-		stats      *SnapshotRuntimeStats
+		hitCnt      int64
+		cached      map[string][]byte
+		cachedSize  int
+		stats       *SnapshotRuntimeStats
+		replicaRead kv.ReplicaReadType
+		taskID      uint64
 	}
 	sampleStep uint32
 }
@@ -269,23 +269,27 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
 	}
+	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
+	s.mu.RUnlock()
 
 	pending := batch.keys
 	for {
+		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			TaskId:       s.taskID,
+			TaskId:       s.mu.taskID,
 		})
+		s.mu.RUnlock()
 
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
 
@@ -411,22 +415,23 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		Client:            s.store.client,
 		resolveLite:       true,
 	}
+	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
-
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			TaskId:       s.taskID,
+			TaskId:       s.mu.taskID,
 		})
+	s.mu.RUnlock()
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
@@ -503,11 +508,11 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
 		s.mu.Lock()
-		s.replicaRead = val.(kv.ReplicaReadType)
+		s.mu.replicaRead = val.(kv.ReplicaReadType)
 		s.mu.Unlock()
 	case kv.TaskID:
 		s.mu.Lock()
-		s.taskID = val.(uint64)
+		s.mu.taskID = val.(uint64)
 		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
@@ -522,7 +527,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	switch opt {
 	case kv.ReplicaRead:
-		s.replicaRead = kv.ReplicaReadLeader
+		s.mu.Lock()
+		s.mu.replicaRead = kv.ReplicaReadLeader
+		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
@@ -663,9 +670,12 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 }
 
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
+	s.mu.RLock()
 	if s.mu.stats == nil || bo.totalSleep == 0 {
+		s.mu.RUnlock()
 		return
 	}
+	s.mu.RUnlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
