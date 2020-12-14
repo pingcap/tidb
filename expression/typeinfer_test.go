@@ -1017,9 +1017,9 @@ func (s *testInferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"nullif(c_float_d    , 123)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
 		{"nullif(c_double_d   , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"nullif(c_decimal    , 123)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
-		{"nullif(c_datetime   , 123)", mysql.TypeDatetime, charset.CharsetUTF8MB4, mysql.BinaryFlag, 22, 2},
-		{"nullif(c_time_d     , 123)", mysql.TypeDuration, charset.CharsetUTF8MB4, mysql.BinaryFlag, 10, 0},
-		{"nullif(c_timestamp_d, 123)", mysql.TypeTimestamp, charset.CharsetUTF8MB4, mysql.BinaryFlag, 19, 0},
+		{"nullif(c_datetime   , 123)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"nullif(c_time_d     , 123)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"nullif(c_timestamp_d, 123)", mysql.TypeTimestamp, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"nullif(c_char       , 123)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"nullif(c_varchar    , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},            // TODO: tp should be TypeVarString
 		{"nullif(c_text_d     , 123)", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, types.UnspecifiedLength},            // TODO: tp should be TypeMediumBlob
