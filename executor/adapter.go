@@ -747,6 +747,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
+
+	if pg, ok := a.Plan.(*plannercore.PointGetPlan); ok {
+		pg.TrackMem = true
+	}
+	if bpg, ok := a.Plan.(*plannercore.BatchPointGetPlan); ok {
+		bpg.TrackMem = true
+	}
+
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

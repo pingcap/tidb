@@ -67,6 +67,7 @@ type PointGetPlan struct {
 	LockWaitTime       int64
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
+	TrackMem           bool
 }
 
 type nameValuePair struct {
@@ -258,6 +259,7 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+	TrackMem         bool
 }
 
 // Clone implements PhysicalPlan interface.

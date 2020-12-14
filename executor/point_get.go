@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -48,6 +49,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e.base().maxChunkSize = 1
 	if p.Lock {
 		b.hasLock = true
+	}
+	if p.TrackMem {
+		e.trackMem = true
 	}
 	e.Init(p, startTS)
 	return e
@@ -81,6 +85,10 @@ type PointGetExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	stats *runtimeStatsWithSnapshot
+
+	// control if track mem
+	trackMem   bool
+	memTracker *memory.Tracker
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -140,6 +148,11 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+
+	if e.trackMem {
+		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 	return nil
 }
 
@@ -246,6 +259,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				e.idxInfo.Name.O, e.handle)
 		}
 		return nil
+	}
+	if e.memTracker != nil {
+		e.memTracker.Consume(int64(len(val)))
 	}
 	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {

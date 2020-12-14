@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -68,6 +69,10 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
+
+	// control if track mem
+	trackMem   bool
+	memTracker *memory.Tracker
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -123,6 +128,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
+
+	if e.trackMem {
+		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 	return nil
 }
 
@@ -153,6 +163,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
+		if e.memTracker != nil {
+			e.memTracker.Consume(int64(len(val)))
+		}
 		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
