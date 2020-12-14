@@ -796,24 +796,11 @@ error = '''
 Internal : %s
 '''
 
-<<<<<<< HEAD
-=======
 ["planner:3029"]
 error = '''
 Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
 '''
 
-["planner:3065"]
-error = '''
-Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s
-'''
-
-["planner:3066"]
-error = '''
-Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s
-'''
-
->>>>>>> 49b926ede... planner: check for only_full_group_by in ORDER BY and HAVING (#21216)
 ["planner:3105"]
 error = '''
 The value specified for generated column '%s' in table '%s' is not allowed.
