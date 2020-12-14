@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
@@ -1794,10 +1794,10 @@ func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
 	newStr := newMetric.String()
 	oldStr := oldMetric.String()
 	newIdx := strings.LastIndex(newStr, ":")
-	newNum, _ := strconv.Atoi(newStr[newIdx+1:len(newStr)-3])
+	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
 	oldIdx := strings.LastIndex(oldStr, ":")
-	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1:len(oldStr)-3])
-	return newNum-oldNum
+	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
+	return newNum - oldNum
 }
 
 func (s *testStatsSuite) TestDisableFeedback(c *C) {
