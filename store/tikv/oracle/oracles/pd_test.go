@@ -14,7 +14,8 @@
 package oracles
 
 import (
-	"context"
+	"github.com/tikv/pd/pkg/testutil"
+	"go.uber.org/goleak"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ import (
 
 func TestT(t *testing.T) {
 	TestingT(t)
+}
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m, testutil.LeakOptions...)
 }
 
 var _ = Suite(&clientTestSuite{})
@@ -65,44 +70,6 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 	}
 }
 
-func (s *clientTestSuite) TestGetStaleTimestamp(c *C) {
-	ctx := context.Background()
-	_, err := s.pd.GetStaleTimestamp(ctx, 10)
-	c.Assert(err, IsNil)
-	opt := oracle.Option{}
-	_, err = s.pd.GetTimestamp(ctx, &opt)
-	c.Assert(err, IsNil)
+func TestPdOracle_GetTimestamp(t *testing.T) {
 
-	ts, err := s.pd.GetStaleTimestamp(ctx, 0)
-	c.Assert(err, IsNil)
-	ts1, ok := s.pd.getLastTS("")
-	c.Assert(ok, Equals, true)
-	c.Assert(ts>>18, Equals, ts1>>18)
-
-	t := time.Now()
-	t0Tidb, t1Pd, t2Tidb := mockTimestamp(t, time.Second*1, time.Second*2)
-	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb))
-	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
-	c.Assert(err, IsNil)
-	physical := int64(ts >> 18)
-	c.Assert(oracle.GetPhysical(t)-physical, Equals, time.Second.Milliseconds()*10)
-
-	// g_t = 0, tb = g_t + 0, tp = g_t + 1 send tb -> tp
-	// g_t = 1, tb = g_t + 0 = 1, tp = g_t + 1 = 2 send tp -> tb
-	// g_t = 2, tb = g_t + 0 = 2, tp = g_t + 1 = 3 tb receive
-	// g_t = -10 tp = -9 tb = -10
-	t = time.Now()
-	t0Tidb, t1Pd, t2Tidb = mockTimestamp(t, time.Second*2, time.Second*2)
-	s.pd.setLastTSDiff(s.pd.calculateDiff(t0Tidb, t1Pd, t2Tidb))
-	ts, err = s.pd.GetStaleTimestamp(ctx, 10)
-	c.Assert(err, IsNil)
-	physical = int64(ts >> 18)
-	c.Assert(oracle.GetPhysical(t)-physical, Equals, time.Second.Milliseconds()*9)
-}
-
-func mockTimestamp(now time.Time, duration0, duration1 time.Duration) (t0Tidb, t1Pd, t2Tidb int64) {
-	t0Tidb = oracle.GetPhysical(now)
-	t1Pd = t0Tidb + duration0.Milliseconds()
-	t2Tidb = t0Tidb + duration1.Milliseconds()
-	return t0Tidb, t1Pd, t2Tidb
 }
