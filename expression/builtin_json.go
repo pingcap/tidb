@@ -455,10 +455,7 @@ func (b *builtinJSONMergeSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNu
 		}
 		values = append(values, value)
 	}
-	res, err = json.MergeBinary(values)
-	if err != nil {
-		return res, false, err
-	}
+	res = json.MergeBinary(values)
 	// function "JSON_MERGE" is deprecated since MySQL 5.7.22. Synonym for function "JSON_MERGE_PRESERVE".
 	// See https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#function_json-merge
 	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
@@ -960,10 +957,7 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res json.BinaryJSON, p strin
 		obj = json.CreateBinary([]interface{}{obj})
 	}
 
-	obj, err = json.MergeBinary([]json.BinaryJSON{obj, v})
-	if err != nil {
-		return res, false, err
-	}
+	obj = json.MergeBinary([]json.BinaryJSON{obj, v})
 	res, err = res.Modify([]json.PathExpression{pathExpr}, []json.BinaryJSON{obj}, json.ModifySet)
 	return res, false, err
 }

@@ -333,8 +333,7 @@ func (s *testJSONSuite) TestBinaryJSONMerge(c *C) {
 		for _, s := range tt.suffixes {
 			suffixes = append(suffixes, mustParseBinaryFromString(c, s))
 		}
-		result, err := MergeBinary(suffixes)
-		c.Assert(err, IsNil)
+		result := MergeBinary(suffixes)
 		cmp := CompareBinary(result, mustParseBinaryFromString(c, tt.expected))
 		c.Assert(cmp, Equals, 0)
 	}
