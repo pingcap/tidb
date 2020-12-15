@@ -7142,3 +7142,9 @@ func (s *testSuite) Test15492(c *C) {
 	tk.MustExec("insert into t values (2, 20), (1, 10), (3, 30)")
 	tk.MustQuery("select a + 1 as field1, a as field2 from t order by field1, field2 limit 2").Check(testkit.Rows("2 1", "3 2"))
 }
+
+func (s *testSuite) TestIssue15563(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
+}
