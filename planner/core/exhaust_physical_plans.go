@@ -1462,6 +1462,18 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return ranges, false, nil
 }
 
+func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
+	if sc.GetSessionVars().EnableIndexMergeJoin {
+		return indexJoins
+	}
+	for i := len(indexJoins) - 1; i >= 0; i-- {
+		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
+			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
+		}
+	}
+	return indexJoins
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
@@ -1554,7 +1566,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 		switch {
 		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
-			return allLeftOuterJoins, false
+			return filterIndexJoinBySessionVars(p.ctx, allLeftOuterJoins), false
 		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || (forceLeftOuter && !forceRightOuter)):
 			return forcedLeftOuterJoins, true
 		}
@@ -1580,7 +1592,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 		switch {
 		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
-			return allRightOuterJoins, false
+			return filterIndexJoinBySessionVars(p.ctx, allRightOuterJoins), false
 		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || (forceRightOuter && !forceLeftOuter)):
 			return forcedRightOuterJoins, true
 		}
@@ -1592,7 +1604,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	if canForced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
-	return append(allLeftOuterJoins, allRightOuterJoins...), false
+	return filterIndexJoinBySessionVars(p.ctx, append(allLeftOuterJoins, allRightOuterJoins...)), false
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
