@@ -552,11 +552,11 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id float) partition by list (id) (partition p0 values in (1));",
@@ -568,19 +568,19 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (id text) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id blob) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id enum('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id set('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
@@ -799,6 +799,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
+			"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-02-02'), partition p1 values in ('20200202'));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
 			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (1));",
 			ast.ErrPartitionColumnList,
 		},
@@ -846,6 +850,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			"partition by list columns (c1,c2,c3,c4,c5,c6,c7,c8) (" +
 			"partition p0 values in ((1,2,3,4,'2020-11-30 00:00:01', '2020-11-30','abc','a')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list columns (b) (partition p0 values in (1));",
+		"create table t(a int,b char(10)) partition by list columns (a, b) (partition p1 values in ((2, 'a'), (1, 'b')), partition p2 values in ((2, 'b')));",
 	}
 
 	for _, sql := range validCases {
@@ -910,7 +915,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 			ddl.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 	}
 
@@ -1883,6 +1888,9 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt1;")
@@ -3155,4 +3163,27 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (20))")
 	c.Assert(err, NotNil)
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
+	tk.MustExec("insert into t_list1(a) values (20180203);")
+	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
+}
+
+func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustGetErrCode(`create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));`, mysql.ErrMultipleDefConstInListPart)
+	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
+	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
+	tk.MustQuery(`select * from t11 order by a;`).Check(testkit.Rows("A", "B", "c", "C", "d"))
+	tk.MustQuery(`select * from t11 partition (p0);`).Check(testkit.Rows("A", "B"))
+	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
+	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
+	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
 }

@@ -646,10 +646,10 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 		str := strings.Join(strs[i], seps[i])
 		// todo check whether the length of result is larger than Flen
-		//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 		//	result.AppendNull()
 		//	continue
-		//}
+		// }
 		result.AppendString(str)
 	}
 	return nil
@@ -2424,7 +2424,7 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 
 		newStr := base64.StdEncoding.EncodeToString([]byte(str))
-		//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+		// A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
 		count := len(newStr)
 		if count > 76 {
 			newStr = strings.Join(splitToSubN(newStr, 76), "\n")
