@@ -14,6 +14,8 @@
 package ranger
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -91,10 +93,10 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
-// getPotentialEqOrInColOffset checks if the expression is a eq/le/ge function that one side is constant and another is column or an
+// getPotentialEqOrInColOffset checks if the expression is a eq/le/ge/lt/gt function that one side is constant and another is column or an
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
-// Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge into consideration.
+// Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
 func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -116,9 +118,12 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			offset = curOffset
 		}
 		return offset
-	case ast.EQ, ast.NullEQ, ast.LE, ast.GE:
+	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
@@ -137,6 +142,9 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
@@ -347,16 +355,53 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	return res, nil
 }
 
+// excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)`
+func excludeToIncludeForIntPoint(p point) point {
+	if !p.excl {
+		return p
+	}
+	if p.value.Kind() == types.KindInt64 {
+		val := p.value.GetInt64()
+		if p.start {
+			if val != math.MaxInt64 {
+				p.value.SetInt64(val + 1)
+				p.excl = false
+			}
+		} else {
+			if val != math.MinInt64 {
+				p.value.SetInt64(val - 1)
+				p.excl = false
+			}
+		}
+	}
+	if p.value.Kind() == types.KindUint64 {
+		val := p.value.GetUint64()
+		if p.start {
+			if val != math.MaxUint64 {
+				p.value.SetUint64(val + 1)
+				p.excl = false
+			}
+		} else {
+			if val != 0 {
+				p.value.SetUint64(val - 1)
+				p.excl = false
+			}
+		}
+	}
+	return p
+}
+
 func allSinglePoints(sc *stmtctx.StatementContext, points []point) bool {
 	if len(points)%2 == 1 {
 		return false
 	}
 	for i := 0; i < len(points); i += 2 {
-		left, right := points[i], points[i+1]
-		if !left.start || right.start || left.excl || right.excl {
+		points[i] = excludeToIncludeForIntPoint(points[i])
+		points[i+1] = excludeToIncludeForIntPoint(points[i+1])
+		if !points[i].start || points[i+1].start || points[i].excl || points[i+1].excl {
 			return false
 		}
-		cmp, err := left.value.CompareDatum(sc, &right.value)
+		cmp, err := points[i].value.CompareDatum(sc, &points[i+1].value)
 		if err != nil || cmp != 0 {
 			return false
 		}
