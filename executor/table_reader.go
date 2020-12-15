@@ -226,7 +226,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, err
 	}
-	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -237,7 +236,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetTxnScope(txnScope).
+		SetTxnScope(extractTxnScope(txn)).
 		Build()
 	if err != nil {
 		return nil, err

@@ -201,7 +201,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(keyRange).
 		SetDAGRequest(e.dagPBs[workID]).
@@ -212,7 +211,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
 		// FIXME: add unit test to cover this case
-		SetTxnScope(txnScope).
+		SetTxnScope(extractTxnScope(txn)).
 		Build()
 	if err != nil {
 		return err

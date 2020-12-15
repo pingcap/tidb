@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -3355,7 +3356,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
@@ -3364,7 +3364,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		// FIXME: add unit test to cover this case
-		SetTxnScope(txnScope).
+		SetTxnScope(extractTxnScope(txn)).
 		Build()
 	if err != nil {
 		return nil, err
@@ -3968,4 +3968,11 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 	return e
+}
+
+func extractTxnScope(txn kv.Transaction) string {
+	if txn == nil || txn.GetUnionStore() == nil {
+		return oracle.GlobalTxnScope
+	}
+	return txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 }
