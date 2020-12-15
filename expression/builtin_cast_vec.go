@@ -636,7 +636,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	tp := b.args[0].GetType()
+	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isYearType := tp.Tp == mysql.TypeYear
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
@@ -649,6 +651,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 			str = strconv.FormatInt(i64s[i], 10)
 		} else {
 			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		if isYearType && str == "0" {
+			str = "0000"
 		}
 		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err != nil {
