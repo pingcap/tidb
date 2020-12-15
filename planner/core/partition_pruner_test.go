@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -186,34 +187,118 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
-	var input []string
+	var input []struct {
+		SQL    string
+		Pruner []testTablePartitionInfo
+	}
 	var output []struct {
-		SQL       string
-		Result    []string
-		Plan      []string
-		IndexPlan []string
+		SQL         string
+		Result      []string
+		Plan        []string
+		Pruner      []testTablePartitionInfo
+		IndexPlan   []string
+		IndexPruner []testTablePartitionInfo
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	valid := false
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			// Test for table reader.
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			// Test for plan with index.
-			output[i].IndexPlan = s.testData.ConvertRowsToStrings(tk1.MustQuery("explain " + tt).Rows())
+			output[i].SQL = tt.SQL
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Rows())
+			// Test for table without index.
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt.SQL).Rows())
+			output[i].Pruner = s.getPartitionInfoFromPlan(output[i].Plan)
+			// Test for table with index.
+			output[i].IndexPlan = s.testData.ConvertRowsToStrings(tk1.MustQuery("explain " + tt.SQL).Rows())
+			output[i].IndexPruner = s.getPartitionInfoFromPlan(output[i].IndexPlan)
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		result := tk.MustQuery(tt)
-		idxResult := tk1.MustQuery(tt)
+		// compare the plan.
+		tk.MustQuery("explain " + tt.SQL).Check(testkit.Rows(output[i].Plan...))
+
+		// compare the pruner information.
+		s.checkPrunePartitionInfoEqual(c, tt.SQL, tt.Pruner, output[i].Pruner)
+		s.checkPrunePartitionInfoEqual(c, tt.SQL, tt.Pruner, output[i].IndexPruner)
+
+		// compare the result.
+		result := tk.MustQuery(tt.SQL)
+		idxResult := tk1.MustQuery(tt.SQL)
 		result.Check(idxResult.Rows())
 		result.Check(testkit.Rows(output[i].Result...))
+
 		// If the query doesn't specified the partition, compare the result with normal table
-		if !strings.Contains(tt, "partition(") {
-			result.Check(tk2.MustQuery(tt).Rows())
+		if !strings.Contains(tt.SQL, "partition(") {
+			result.Check(tk2.MustQuery(tt.SQL).Rows())
 			valid = true
 		}
 	}
 	c.Assert(valid, IsTrue)
+}
+
+type testTablePartitionInfo struct {
+	Table      string
+	Partitions string
+}
+
+func (s *testPartitionPruneSuit) checkPrunePartitionInfoEqual(c *C, query string, infos1, infos2 []testTablePartitionInfo) {
+	comment := Commentf("%v != %v, the query is: %v", infos1, infos2, query)
+	c.Assert(len(infos1), Equals, len(infos2), comment)
+	for i, info1 := range infos1 {
+		info2 := infos2[i]
+		c.Assert(info1.Table, Equals, info2.Table, comment)
+		c.Assert(info1.Partitions, Equals, info2.Partitions, comment)
+	}
+}
+
+func (s *testPartitionPruneSuit) getQueryPartitionInfo(tk *testkit.TestKit, query string) []testTablePartitionInfo {
+	rows := tk.MustQuery("explain " + query).Rows()
+	rs := s.testData.ConvertRowsToStrings(rows)
+	return s.getPartitionInfoFromPlan(rs)
+}
+
+// getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
+//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+// The return table partition info is: t1: p0; t2: p1
+func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) []testTablePartitionInfo {
+	infos := make([]testTablePartitionInfo, 0, 2)
+	info := testTablePartitionInfo{}
+	for _, row := range plan {
+		partitions := s.getFieldValue("partition:", row)
+		if partitions != "" {
+			info.Partitions = partitions
+			continue
+		}
+		tbl := s.getFieldValue("table:", row)
+		if tbl != "" {
+			info.Table = tbl
+			infos = append(infos, info)
+		}
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		if infos[i].Table != infos[j].Table {
+			return infos[i].Table < infos[j].Table
+		}
+		return infos[i].Partitions < infos[j].Partitions
+	})
+	return infos
+}
+
+func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
+	if idx := strings.Index(row, prefix); idx > 0 {
+		start := idx + len(prefix)
+		end := strings.Index(row[start:], " ")
+		if end > 0 {
+			value := row[start : start+end]
+			value = strings.Trim(value, ",")
+			return value
+		}
+	}
+	return ""
 }
