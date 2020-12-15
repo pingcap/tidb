@@ -69,6 +69,11 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 	}
 }
 
+//func (s *clientTestSuite) TestPdOracle_GetTimestamp(c *C) {
+//	opt := oracle.Option{}
+//	_, _ = s.pd.GetTimestamp(context.TODO(),&opt)
+//}
+
 func (s *clientTestSuite) TestPdOracle_GetStaleTimestamp(c *C) {
 	now := time.Now()
 	ts, err := s.pd.GetStaleTimestamp(context.Background(), 10)
