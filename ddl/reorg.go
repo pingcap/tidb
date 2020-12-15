@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -407,13 +408,13 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	}
 	var b distsql.RequestBuilder
 	var builder *distsql.RequestBuilder
-	if !tbl.Meta().IsCommonHandle {
-		ranges := ranger.FullIntRange(false)
-		builder = b.SetTableRanges(tbl.GetPhysicalID(), ranges, nil)
+	var ranges []*ranger.Range
+	if tbl.Meta().IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
 	} else {
-		ranges := ranger.FullNotNullRange()
-		builder = b.SetCommonHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), ranges)
+		ranges = ranger.FullIntRange(false)
 	}
+	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges, nil)
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -531,7 +532,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {

@@ -316,6 +316,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_merge_join_concurrency is used for merge join parallel executor
+	TiDBMergeJoinConcurrency = "tidb_merge_join_concurrency"
+
 	// tidb_stream_agg_concurrency is used for stream aggregation parallel executor.
 	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
@@ -347,6 +350,9 @@ const (
 
 	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
 	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
+
+	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
+	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
@@ -470,6 +476,21 @@ const (
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
+
+	// TiDBEnableAsyncCommit indicates whether to enable the async commit feature.
+	TiDBEnableAsyncCommit = "tidb_enable_async_commit"
+
+	// TiDBEnable1PC indicates whether to enable the one-phase commit feature.
+	TiDBEnable1PC = "tidb_enable_1pc"
+
+	// TiDBGuaranteeExternalConsistency indicates whether maintain the external consistency.
+	TiDBGuaranteeExternalConsistency = "tidb_guarantee_external_consistency"
+
+	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
+	TiDBAnalyzeVersion = "tidb_analyze_version"
 )
 
 // Default TiDB system variable values.
@@ -592,6 +613,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
 	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
@@ -602,7 +624,7 @@ var (
 	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
-	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
+	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
