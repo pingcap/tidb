@@ -93,8 +93,11 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		// see issue #20101: overflow when converting integer to year
-		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrInvalidYear) {
+		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrInvalidYear) {
+			// see issue #20101: overflow when converting integer to year
+		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
+		} else {
 			return point, errors.Trace(err)
 		}
 	}

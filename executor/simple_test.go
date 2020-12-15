@@ -600,7 +600,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)

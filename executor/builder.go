@@ -1712,7 +1712,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
-			useCache:     true,
+			useCache:     v.CanUseCache,
 		}
 	}
 	return serialExec
@@ -1938,9 +1938,15 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
+	topNSize := new(int32)
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	statsVersion := new(int32)
+	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		TopNSize:   topNSize,
+		Version:    statsVersion,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -3331,16 +3337,11 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		if meta != nil && meta.IsCommonHandle {
-			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, kvRange...)
-		} else {
-			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
-			ret = append(ret, kvRange...)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, kvRange...)
 	}
 	return ret, nil
 }
