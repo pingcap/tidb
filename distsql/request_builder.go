@@ -222,13 +222,18 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.Request.TxnScope = sv.TxnScope
 	if sv.SnapshotInfoschema != nil {
 		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
 	builder.bundles = infoschema.GetInfoSchemaBySessionVars(sv).RuleBundles()
+	return builder
+}
+
+// SetTxnScope sets "TxnScope" flag for "kv.Request".
+func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
+	builder.TxnScope = scope
 	return builder
 }
 
@@ -259,7 +264,7 @@ func (builder *RequestBuilder) verifyTxnScope() {
 	if builder.Request.TxnScope == oracle.GlobalTxnScope {
 		return
 	}
-	visitTableID := make(map[int64]struct{}, 0)
+	visitTableID := make(map[int64]struct{})
 	for _, keyRange := range builder.Request.KeyRanges {
 		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
 		if tableID > 0 {
