@@ -835,6 +835,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
+	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
 	ErrFieldInOrderNotSelect:                                 mysql.Message("Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s", nil),
 	ErrAggregateInOrderNotSelect:                             mysql.Message("Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s", nil),

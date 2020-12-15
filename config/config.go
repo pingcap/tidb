@@ -55,8 +55,6 @@ const (
 	DefIndexLimit = 64
 	// DefMaxOfIndexLimit is the maximum limitation of index on a single table for TiDB.
 	DefMaxOfIndexLimit = 64 * 8
-	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -90,23 +88,21 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host                        string `toml:"host" json:"host"`
-	AdvertiseAddress            string `toml:"advertise-address" json:"advertise-address"`
-	Port                        uint   `toml:"port" json:"port"`
-	Cors                        string `toml:"cors" json:"cors"`
-	Store                       string `toml:"store" json:"store"`
-	Path                        string `toml:"path" json:"path"`
-	Socket                      string `toml:"socket" json:"socket"`
-	Lease                       string `toml:"lease" json:"lease"`
-	RunDDL                      bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable                  bool   `toml:"split-table" json:"split-table"`
-	TokenLimit                  uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage            bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction                   string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
-	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -626,6 +622,8 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -644,8 +642,6 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistics:           32 << 30,
-	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
@@ -782,7 +778,9 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental:               Experimental{},
+	Experimental: Experimental{
+		AllowsExpressionIndex: false,
+	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
@@ -1001,9 +999,6 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
-	if c.MemQuotaStatistics < DefMinQuotaStatistics {
-		return fmt.Errorf("memory-quota-statistics should be greater than %dB", DefMinQuotaStatistics)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")

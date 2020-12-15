@@ -96,9 +96,8 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
-	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
-	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
+	TIDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -106,7 +105,6 @@ const (
 	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
 	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
 	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
-	TIDBMemQuotaNestedLoopApply   = "tidb_mem_quota_nestedloopapply"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -537,13 +535,13 @@ const (
 	DefDMLBatchSize                     = 0
 	DefMaxPreparedStmtCount             = -1
 	DefWaitTimeout                      = 0
+	DefTiDBMemQuotaApplyCache           = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin             = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin            = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                 = 32 << 30 // 32GB.
 	DefTiDBMemQuotaTopn                 = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupReader    = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin      = 32 << 30 // 32GB.
-	DefTiDBMemQuotaNestedLoopApply      = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL              = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                   = false
 	DefTiDBPProfSQLCPU                  = 0
