@@ -161,26 +161,37 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	tk.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
-	tk.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
 	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
+	// tk1 use to test partition table with index.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec("create database test_partition_1")
+	tk1.MustExec("use test_partition_1")
+	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+	tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+	tk1.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("drop database if exists test_partition_2;")
 	tk2.MustExec("create database test_partition_2")
 	tk2.MustExec("use test_partition_2")
-	tk2.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id))")
-	tk2.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id))")
+	tk2.MustExec("create table t1 (id int, a int, b int)")
+	tk2.MustExec("create table t2 (id int, a int, b int)")
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
 	var input []string
 	var output []struct {
-		SQL    string
-		Result []string
-		Plan   []string
+		SQL       string
+		Result    []string
+		Plan      []string
+		IndexPlan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	valid := false
@@ -188,10 +199,15 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			// Test for table reader.
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			// Test for plan with index.
+			output[i].IndexPlan = s.testData.ConvertRowsToStrings(tk1.MustQuery("explain " + tt).Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		result := tk.MustQuery(tt)
+		idxResult := tk1.MustQuery(tt)
+		result.Check(idxResult.Rows())
 		result.Check(testkit.Rows(output[i].Result...))
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {

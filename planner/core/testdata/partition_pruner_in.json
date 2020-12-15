@@ -86,7 +86,7 @@
   {
     "name": "TestListColumnsPartitionPruner",
     "cases": [
-      "select * from t1",
+      "select * from t1 order by id,a",
       "select * from t1 where a = 1 or b = 2",
       "select * from t1 where a = 1 and b = 2",
       "select * from t1 where a = 1 and b = 1",
@@ -98,7 +98,7 @@
       "select * from t1 where ( a=1 and b=1) or (a=6 and b=6)",
       "select * from t1 where a = 100 and b = 100",
       "select * from t1 join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id=7",
-      "select * from t1 left join t2 on true where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id = 7",
+      "select * from t1 left join t2 on true where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id = 7 order by t1.id,t1.a",
       "select * from t1 where a = 1",
       "select * from t1 where b = 1",
       "select * from t1 where b is null",
@@ -111,7 +111,7 @@
       "select * from t1 where a = 1 and false",
       "select * from t1 where a = 1 and true",
       "select * from t1 where a = 1 or false",
-      "select * from t1 where a = 1 or true",
+      "select * from t1 where a = 1 or true order by id,a",
       "select * from t1 where a = 1 or b in (100,200)",
       "select * from t1 where a = 100 or b in (1,2)",
       "select * from t1 where a = 100 or b in (1,6)",
