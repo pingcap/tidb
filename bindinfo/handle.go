@@ -150,13 +150,13 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	for _, row := range rows {
 		hash, meta, err := h.newBindRecord(row)
+		if err != nil {
+			logutil.BgLogger().Debug("[sql-bind] failed to generate bind record from data row", zap.Error(err))
+			continue
+		}
 		// Update lastUpdateTime to the newest one.
 		if meta.Bindings[0].UpdateTime.Compare(lastUpdateTime) > 0 {
 			lastUpdateTime = meta.Bindings[0].UpdateTime
-		}
-		if err != nil {
-			logutil.BgLogger().Info("update bindinfo failed", zap.Error(err))
-			continue
 		}
 
 		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
@@ -387,7 +387,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 		if bindRecord.updateTime.IsZero() {
 			err := tmpMap.flushFunc(bindRecord.bindRecord)
 			if err != nil {
-				logutil.BgLogger().Error("flush bind record failed", zap.Error(err))
+				logutil.BgLogger().Debug("[sql-bind] flush bind record failed", zap.Error(err))
 			}
 			bindRecord.updateTime = time.Now()
 			continue
@@ -600,7 +600,7 @@ func (h *BindHandle) CaptureBaselines() {
 	for i := range sqls {
 		stmt, err := parser4Capture.ParseOneStmt(sqls[i], "", "")
 		if err != nil {
-			logutil.BgLogger().Debug("parse SQL failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
@@ -620,7 +620,7 @@ func (h *BindHandle) CaptureBaselines() {
 		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
-			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] generate hints failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
@@ -638,7 +638,7 @@ func (h *BindHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
 	}
 }
@@ -682,7 +682,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	err := stmtNode.Restore(restoreCtx)
 	if err != nil {
-		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
+		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))
 	}
 	bindSQL := sb.String()
 	switch n := stmtNode.(type) {
@@ -712,7 +712,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.Logger(ctx).Warn("Unexpected statement type")
+	logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -840,7 +840,7 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
-		logutil.BgLogger().Warn("plan verification timed out", zap.Duration("timeElapsed", time.Since(startTime)))
+		logutil.BgLogger().Debug("[sql-bind] plan verification timed out", zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
 	}
 	<-resultChan
 	return -1, nil
@@ -910,7 +910,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
 		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
-		logutil.BgLogger().Warn("new plan rejected",
+		logutil.BgLogger().Debug("[sql-bind] new plan rejected",
 			zap.Duration("currentPlanTime", currentPlanTime),
 			zap.Duration("verifyPlanTime", verifyPlanTime),
 			zap.String("digestText", digestText),
