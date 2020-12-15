@@ -2216,6 +2216,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 		conf.Experimental.AllowsExpressionIndex = false
 	})
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
+	tk.MustGetErrMsg("create table t(a int, key ((a+1)));", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
