@@ -7148,6 +7148,9 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
 	tk.MustExec("create table e (e enum('a', 'b'))")
-	tk.MustExec("insert into e values ('a')")
+	tk.MustExec("insert into e values ('a'), ('b')")
 	tk.MustQuery("select * from e where case 1 when 0 then e end").Check(testkit.Rows())
+	tk.MustQuery("select * from e where case 1 when 1 then e end").Check(testkit.Rows("a", "b"))
+	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
 }
