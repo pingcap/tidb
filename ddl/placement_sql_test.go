@@ -687,25 +687,25 @@ PARTITION BY RANGE (c) (
 		expectErr error
 	}{
 		{
-			name:      "cross dc read",
+			name:      "cross dc read to sh by holding bj",
 			txnScope:  "bj",
 			sql:       "select * from t1 where c < 6",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
-			name:      "cross dc read",
+			name:      "cross dc read to global by holding bj",
 			txnScope:  "bj",
 			sql:       "select * from t1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
-			name:      "cross dc read",
+			name:      "read sh dc by holding sh",
 			txnScope:  "sh",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 		{
-			name:      "cross dc read",
+			name:      "read sh dc by holding global",
 			txnScope:  "global",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
