@@ -227,7 +227,10 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
-	builder.bundles = infoschema.GetInfoSchemaBySessionVars(sv).RuleBundles()
+	is := infoschema.GetInfoSchemaBySessionVars(sv)
+	if is != nil {
+		builder.bundles = is.RuleBundles()
+	}
 	return builder
 }
 
@@ -261,7 +264,7 @@ func (builder *RequestBuilder) verifyTxnScope() {
 	if builder.Request.TxnScope == "" {
 		builder.Request.TxnScope = oracle.GlobalTxnScope
 	}
-	if builder.Request.TxnScope == oracle.GlobalTxnScope {
+	if builder.Request.TxnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
 		return
 	}
 	visitTableID := make(map[int64]struct{})
