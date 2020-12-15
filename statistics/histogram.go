@@ -362,6 +362,9 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 				break
 			}
 			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			if hg.Buckets[bktIdx].NDV > 0 {
+				hg.Buckets[bktIdx].NDV--
+			}
 			pairIdx++
 			if cmpResult == 0 {
 				hg.Buckets[bktIdx].Repeat = 0
