@@ -486,6 +486,15 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
 	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
+
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
