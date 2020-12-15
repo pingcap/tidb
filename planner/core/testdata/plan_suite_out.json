@@ -685,12 +685,12 @@
         "Hints": "use_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), merge_join(@`del_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), merge_join(@`upd_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`)"
       },
@@ -1882,7 +1882,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
       }
     ]
   },
@@ -2218,34 +2218,6 @@
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOff",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "TableReader_7 2048.00 root  data:Selection_6",
-          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOn",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }

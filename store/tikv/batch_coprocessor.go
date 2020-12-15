@@ -345,8 +345,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		RecordTimeStat: true,
+		RecordScanStat: true,
 		TaskId:         b.req.TaskID,
 	})
 	req.StoreTp = kv.TiFlash

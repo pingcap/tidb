@@ -250,8 +250,8 @@
       // Test join hint for delete and update
       "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
       "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
-      "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
-      "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+      "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+      "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
       // Test complex delete.
       "delete from t where b < 1 order by d limit 1",
       // Test simple delete.
@@ -661,18 +661,6 @@
       "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
       "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
       "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
-    ]
-  },
-  {
-    "name": "TestPreferRangeScanOff",
-    "cases": [
-      "select * from test where age=5;"
-    ]
-  },
-  {
-    "name": "TestPreferRangeScanOn",
-    "cases": [
-      "select * from test where age=5;"
     ]
   }
 ]
