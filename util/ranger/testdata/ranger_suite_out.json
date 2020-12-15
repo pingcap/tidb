@@ -484,7 +484,7 @@
         "SQL": "select * from t where a < -1;",
         "Plan": [
           "Selection_5 3.20 root  lt(test.t.a, -1)",
-          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
           "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
         ],
         "Result": null
