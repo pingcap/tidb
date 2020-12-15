@@ -3556,25 +3556,20 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	// Test for generated column with bigint type.
-	count := 0
-	for i := 0; i < 4; i++ {
+	tableDefs := []string{
+		// Test for virtual generated column for list partition
+		`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`,
+		// Test for stored generated column for list partition
+		`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`,
+		// Test for virtual generated column for list columns partition
+		`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`,
+		// Test for stored generated column for list columns partition
+		`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`,
+	}
+	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-		count++
-		switch i {
-		case 0:
-			// Test for virtual generated column for list partition
-			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
-		case 1:
-			// Test for stored generated column for list partition
-			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
-		case 2:
-			// Test for virtual generated column for list columns partition
-			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
-		case 3:
-			// Test for stored generated column for list columns partition
-			tk.MustExec(`create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));`)
-		}
+		tk.MustExec(tbl)
 		// Test for insert
 		tk.MustExec("insert into t (a) values (1),(3),(5),(7),(9)")
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("1", "3", "5"))
@@ -3600,29 +3595,22 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 		_, err = tk.Exec("update t set a=a+10 where a = 2")
 		c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 	}
-	c.Assert(count, Equals, 4)
 }
 
 func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	// Test for generated column with year type.
-	count := 0
-	for i := 0; i < 2; i++ {
+	tableDefs := []string{
+		// Test for virtual generated column for list partition
+		`create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));`,
+		// Test for stored generated column for list partition
+		`create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));`,
+	}
+	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-		count++
-		switch i {
-		case 0:
-			// Test for virtual generated column for list partition
-			tk.MustExec(`create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));`)
-		case 1:
-			// Test for stored generated column for list partition
-			tk.MustExec(`create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));`)
-		}
-		if i == 0 {
-		} else {
-		}
+		tk.MustExec(tbl)
 		// Test for insert
 		tk.MustExec("insert into t (a) values (1),(3),(5),(7),(9)")
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("2001", "2003", "2005"))
@@ -3675,41 +3663,41 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 		_, err = tk.Exec("update t set a=a+10 where a = 2002")
 		c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 2012")
 	}
-	c.Assert(count, Equals, 2)
 }
 
 func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	// Test for generated column
-	count := 0
-	for i := 0; i < 4; i++ {
+	tableDefs := []string{
+		// Test for virtual generated column for datetime type in list partition.
+		`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+		// Test for stored generated column for datetime type in list partition.
+		`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+		// Test for virtual generated column for timestamp type in list partition.
+		`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+		// Test for stored generated column for timestamp type in list partition.
+		`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+		// Test for virtual generated column for timestamp type in list columns partition.
+		`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list columns(b) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+		// Test for stored generated column for timestamp type in list columns partition.
+		`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list columns(b) (
+				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`,
+	}
+	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-		count++
-		switch i {
-		case 0:
-			// Test for virtual generated column for datetime type.
-			tk.MustExec(`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
-				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
-				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`)
-		case 1:
-			// Test for stored generated column for datetime type.
-			tk.MustExec(`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
-				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
-				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`)
-		case 2:
-			// Test for virtual generated column for timestamp type.
-			tk.MustExec(`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
-				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
-				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`)
-		case 3:
-			// Test for stored generated column for timestamp type.
-			tk.MustExec(`create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
-				partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
-				partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));`)
-
-		}
+		tk.MustExec(tbl)
 		tk.MustExec("insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40')")
 		tk.MustQuery("select a from t partition (p0)").Check(testkit.Rows("2020-09-28 17:03:38"))
 		tk.MustQuery("select a from t where a = '2020-09-28 17:03:40'").Check(testkit.Rows("2020-09-28 17:03:40"))
@@ -3717,26 +3705,22 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 		tk.MustQuery("select a from t partition (p0)").Check(testkit.Rows())
 		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("2020-09-28 17:03:40", "2020-09-28 17:03:41"))
 	}
-	c.Assert(count, Equals, 4)
 }
 
 func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	// Test for generated column
-	count := 0
-	for i := 0; i < 2; i++ {
+	// Test for generated column with substr expression.
+	tableDefs := []string{
+		// Test for virtual generated column
+		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
+		// Test for stored generated column
+		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
+	}
+	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-		if i == 0 {
-			// Test for virtual generated column
-			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
-			count++
-		} else {
-			// Test for stored generated column
-			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
-			count++
-		}
+		tk.MustExec(tbl)
 		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
 		tk.MustQuery("select * from t where a = 'abc' order by a").Check(testkit.Rows("abc a"))
@@ -3745,7 +3729,6 @@ func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 		tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb"))
 		tk.MustQuery("select * from t where a = 'bbb' order by a").Check(testkit.Rows("bbb b"))
 	}
-	c.Assert(count, Equals, 2)
 }
 
 func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
@@ -3757,19 +3740,16 @@ func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	count := 0
-	for i := 0; i < 2; i++ {
+	tableDefs := []string{
+		// Test for virtual generated column with global index
+		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
+		// Test for stored generated column with global index
+		`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`,
+	}
+	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-		if i == 0 {
-			// Test for virtual generated column with global index
-			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
-			count++
-		} else {
-			// Test for stored generated column with global index
-			tk.MustExec(`create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));`)
-			count++
-		}
+		tk.MustExec(tbl)
 		tk.MustExec("alter table t add unique index (a)")
 		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
@@ -3792,7 +3772,6 @@ func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
 		//tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("acd"))
 		//tk.MustQuery("select a from t partition (p1) order by a").Check(testkit.Rows("bbb", "bbc"))
 	}
-	c.Assert(count, Equals, 2)
 }
 
 func (s *testSerialSuite) TestIssue20724(c *C) {
