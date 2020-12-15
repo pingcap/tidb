@@ -8,23 +8,15 @@ require (
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
-	github.com/coreos/go-etcd v2.0.0+incompatible // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
-	github.com/cpuguy83/go-md2man v1.0.10 // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.0.2
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/dustin/go-humanize v1.0.0 // indirect
-	github.com/elazarl/go-bindata-assetfs v1.0.0 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
-	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32 // indirect
-	github.com/go-bindata/go-bindata/v3 v3.1.3 // indirect
-	github.com/go-openapi/spec v0.19.7 // indirect
-	github.com/go-openapi/swag v0.19.8 // indirect
-	github.com/go-playground/universal-translator v0.17.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
@@ -37,11 +29,8 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/grpc-ecosystem/grpc-gateway v1.14.3 // indirect
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
-	github.com/kevinburke/go-bindata v3.18.0+incompatible // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/kr/pretty v0.2.0 // indirect
-	github.com/leodido/go-urn v1.2.0 // indirect
-	github.com/mailru/easyjson v0.7.1 // indirect
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/montanaflynn/stats v0.5.0 // indirect
@@ -60,7 +49,6 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20201126113434-70db5fb4b0dc
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20201130080042-c3ddfec58248
-	github.com/pingcap/pd/v4 v4.0.5-0.20200817114353-e465cafe8a91 // indirect
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
 	github.com/pingcap/tidb-tools v4.0.6-0.20200828085514-03575b185007+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
@@ -79,7 +67,6 @@ require (
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.2.0+incompatible // indirect
-	github.com/urfave/cli v1.22.2 // indirect
 	go.etcd.io/bbolt v1.3.5 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.7.0
@@ -98,7 +85,6 @@ require (
 	google.golang.org/api v0.15.1 // indirect
 	google.golang.org/genproto v0.0.0-20200108215221-bd8f9a0ef82f // indirect
 	google.golang.org/grpc v1.26.0
-	gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	honnef.co/go/tools v0.0.1-2020.1.6 // indirect
