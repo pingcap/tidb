@@ -14,8 +14,7 @@
 package oracles
 
 import (
-	"github.com/tikv/pd/pkg/testutil"
-	"go.uber.org/goleak"
+	"context"
 	"testing"
 	"time"
 
@@ -29,9 +28,9 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m, testutil.LeakOptions...)
-}
+//func TestMain(m *testing.M) {
+//	goleak.VerifyTestMain(m, testutil.LeakOptions...)
+//}
 
 var _ = Suite(&clientTestSuite{})
 
@@ -70,6 +69,28 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 	}
 }
 
-func TestPdOracle_GetTimestamp(t *testing.T) {
+func (s *clientTestSuite) TestPdOracle_GetStaleTimestamp(c *C) {
+	now := time.Now()
+	ts, err := s.pd.GetStaleTimestamp(context.Background(), 10)
+	c.Assert(err, IsNil)
 
+	duration := now.Sub(oracle.GetTimeFromTS(ts))
+	c.Assert(duration, LessEqual, 12*time.Second)
+	c.Assert(duration, GreaterEqual, 8*time.Second)
+
+	_, err = s.pd.GetStaleTimestamp(context.Background(), 1e12)
+	c.Assert(err, NotNil)
+
+	_, err = s.pd.GetStaleTimestamp(context.Background(), -2)
+	c.Assert(err, IsNil)
+
+	for i := int64(3); i < 1e9; i += i/100 + 1 {
+		now = time.Now()
+		ts, err = s.pd.GetStaleTimestamp(context.Background(), i)
+		c.Assert(err, IsNil)
+
+		duration = now.Sub(oracle.GetTimeFromTS(ts))
+		c.Assert(duration, LessEqual, time.Duration(i+2)*time.Second)
+		c.Assert(duration, GreaterEqual, time.Duration(i-2)*time.Second)
+	}
 }

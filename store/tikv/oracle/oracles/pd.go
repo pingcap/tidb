@@ -237,7 +237,17 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 	if !ok {
 		return 0, errors.Errorf("get stale timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
+
 	physicalTime := oracle.GetTimeFromTS(ts)
+	if physicalTime.Unix() <= prevSecond {
+		return 0, errors.Errorf("get invalid prevSecond, prevSecond must less than physicalTime, "+
+			"get prevSecond: %d, physicalTime: %d", prevSecond, physicalTime.Unix())
+	}
+
+	if prevSecond < 2 {
+		logutil.Logger(ctx).Warn("prevSecond may inaccurate when it less than 2",
+			zap.Int64("prev Second", prevSecond))
+	}
 	staleTime := physicalTime.Add(-time.Second * time.Duration(prevSecond))
 	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
 }
