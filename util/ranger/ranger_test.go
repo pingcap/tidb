@@ -654,7 +654,7 @@ create table t(
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
+func (s *testRangerSuite) TestIndexRangeForUnsignedAndOverflow(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -665,8 +665,21 @@ func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) ,decimal_unsigned decimal unsigned,key (decimal_unsigned), float_unsigned float unsigned,key(float_unsigned), double_unsigned double unsigned,key(double_unsigned))")
-
+	testKit.MustExec(`
+create table t(
+	a smallint(5) unsigned,
+	decimal_unsigned decimal unsigned,
+	float_unsigned float unsigned,
+	double_unsigned double unsigned,
+	col_int bigint,
+	col_float float,
+	index idx_a(a),
+	index idx_decimal_unsigned(decimal_unsigned),
+	index idx_float_unsigned(float_unsigned),
+	index idx_double_unsigned(double_unsigned),
+	index idx_int(col_int),
+	index idx_float(col_float)
+)`)
 	tests := []struct {
 		indexPos    int
 		exprStr     string
@@ -762,6 +775,42 @@ func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 			accessConds: "[gt(test.t.double_unsigned, -100)]",
 			filterConds: "[]",
 			resultStr:   "[[0,+inf]]",
+		},
+		// test for overflow value access index
+		{
+			indexPos:    4,
+			exprStr:     "col_int != 9223372036854775808",
+			accessConds: "[ne(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "col_int > 9223372036854775808",
+			accessConds: "[gt(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "col_int < 9223372036854775808",
+			accessConds: "[lt(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float > 1000000000000000000000000000000000000000",
+			accessConds: "[gt(test.t.col_float, 1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float < -1000000000000000000000000000000000000000",
+			accessConds: "[lt(test.t.col_float, -1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 	}
 

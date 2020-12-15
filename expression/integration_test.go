@@ -8307,3 +8307,26 @@ func (s *testIntegrationSuite2) TestCastCoer(c *C) {
 	tk.MustQuery("select coercibility(cast('a' as char(10)))").Check(testkit.Rows("2"))
 	tk.MustQuery("select coercibility(convert('abc', char(10)));").Check(testkit.Rows("2"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue17253(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint)")
+	tk.MustExec("insert into t values(9223372036854775807)")
+	tk.MustExec("alter table t add unique key idx(a)")
+	tk.MustQuery("select * from t where a != 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a <= 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a < 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a <= 9223372036854775807").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select * from t where a > 9223372036854775807").Check(testkit.Rows())
+	tk.MustQuery("select * from t where a > 9223372036854775808").Check(testkit.Rows())
+	tk.MustQuery("select * from t where a >= 9223372036854775808").Check(testkit.Rows())
+	tk.MustExec("create table t1 (a float)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("alter table t1 add unique key idx(a)")
+	tk.MustQuery("select * from t1 where a != 1e39").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 where a <= 1e39").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 where a > 1e39").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t,t1")
+}

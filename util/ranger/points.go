@@ -270,6 +270,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
+	value, op, isValidRange = handleBoundCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
@@ -338,6 +343,48 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 	}
 
 	return val, op, false
+}
+
+// handleBoundCol handles the case when column meets overflow value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !isUnsigned && !isNegative && val.GetUint64() > math.MaxInt64 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewIntDatum(math.MaxInt64)
+			}
+		}
+	case mysql.TypeFloat:
+		if !isUnsigned {
+			if val.GetFloat64() > math.MaxFloat32 {
+				switch op {
+				case ast.GT, ast.GE:
+					return val, op, false
+				case ast.NE, ast.LE, ast.LT:
+					op = ast.LE
+					val = types.NewFloat32Datum(math.MaxFloat32)
+				}
+			}
+			if val.GetFloat64() < -math.MaxFloat32 {
+				switch op {
+				case ast.LE, ast.LT:
+					return val, op, false
+				case ast.GT, ast.GE, ast.NE:
+					op = ast.GE
+					val = types.NewFloat32Datum(-math.MaxFloat32)
+				}
+			}
+		}
+	}
+	return val, op, true
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
