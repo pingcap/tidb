@@ -561,7 +561,9 @@
       "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
 
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
     ]
   },
   {
@@ -584,7 +586,8 @@
     "name": "TestPushdownDistinctEnableAggPushDownDisable",
     "cases": [
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
     ]
   },
   {
