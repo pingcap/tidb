@@ -354,13 +354,26 @@ func (s *testExpressionRewriterSuite) TestCompareMultiFieldsInSubquery(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("drop table if exists t1, t2, t3, t4;")
 	tk.MustExec("CREATE TABLE t1(c1 int, c2 int);")
 	tk.MustExec("CREATE TABLE t2(c1 int, c2 int);")
+	tk.MustExec("CREATE TABLE t3(c1 int, c2 int);")
+	tk.MustExec("CREATE TABLE t4(c1 int, c2 int);")
 	tk.MustExec("INSERT INTO t1 VALUES (0, 0), (NULL, NULL);")
 	tk.MustExec("INSERT INTO t2 VALUES (0, 0), (NULL, NULL);")
+	tk.MustExec("INSERT INTO t3 VALUES (1, 2);")
 	// issue #13551 and #21674
 	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
 	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1 FROM t2 LIMIT 1) = ANY (SELECT c1 FROM t1);").Check(testkit.Rows("0 0", "<nil> <nil>"))
 	tk.MustQuery("SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 order by c1 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);").Check(testkit.Rows())
+
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustExec("INSERT INTO t4 VALUES (1, 3);")
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows("1 2"))
+	tk.MustExec("INSERT INTO t4 VALUES (1, 2);")
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
+	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
+
 }
