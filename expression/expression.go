@@ -333,6 +333,9 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for _, expr := range exprList {
 		tp := expr.GetType()
 		eType := tp.EvalType()
+		if CanImplicitEvalReal(expr) {
+			eType = types.ETReal
+		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
@@ -340,7 +343,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 
 		// Take the implicit evalReal path if possible.
 		if CanImplicitEvalReal(expr) {
-			eType = types.ETReal
 			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
 				return nil, nil, err
 			}
@@ -348,7 +350,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, buf, sel, isZero)
+		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -388,8 +390,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, buf *chunk.Column, sel []int, isZero []int8) error {
-	eType := tp.EvalType()
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
