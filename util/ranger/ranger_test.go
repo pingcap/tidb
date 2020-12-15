@@ -1366,6 +1366,43 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 	}
 }
 
+func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test;")
+	testKit.MustExec("drop table if exists t;")
+	testKit.MustExec("CREATE TABLE `t` (" +
+		"a bit(1) DEFAULT NULL," +
+		"b int(11) DEFAULT NULL" +
+		") PARTITION BY HASH(a)" +
+		"PARTITIONS 3;")
+	testKit.MustExec("insert ignore into t values(-1, -1), (0, 0), (1, 1), (3, 3);")
+	testKit.MustExec("analyze table t;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
