@@ -340,7 +340,13 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		// Take the implicit evalReal path if possible.
+		if CanImplicitEvalReal(expr) {
+			eType = types.ETReal
+			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+				return nil, nil, err
+			}
+		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -481,6 +487,30 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		}
 	}
 	return nil
+}
+
+func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		err = expr.VecEvalReal(ctx, input, result)
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		result.ResizeFloat64(n, false)
+		f64s := result.Float64s()
+		for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+			value, isNull, err := expr.EvalReal(ctx, it)
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(ind, isNull)
+			} else {
+				f64s[ind] = value
+			}
+			ind++
+		}
+	}
+	return
 }
 
 // EvalExpr evaluates this expr according to its type.
