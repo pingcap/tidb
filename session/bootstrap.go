@@ -403,7 +403,7 @@ const (
 	version36 = 36
 	version37 = 37
 	version38 = 38
-	version39 = 39
+	// version39 will be redone in version46 so it's skipped here.
 	// version40 is the version that introduce new collation in TiDB,
 	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
@@ -421,9 +421,8 @@ const (
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
 	// version48 reset all deprecated concurrency related system-variables if they were all default value.
-	version48 = 48
 	// version49 introduces mysql.stats_extended table.
-	version49 = 49
+	// Both version48 and version49 will be redone in version55 and version56 so they're skipped here.
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
@@ -434,6 +433,10 @@ const (
 	version53 = 53
 	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
 	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
 )
 
 var (
@@ -475,7 +478,8 @@ var (
 		upgradeToVer36,
 		upgradeToVer37,
 		upgradeToVer38,
-		upgradeToVer39,
+		// We will redo upgradeToVer39 in upgradeToVer46,
+		// so upgradeToVer39 is skipped here.
 		upgradeToVer40,
 		upgradeToVer41,
 		upgradeToVer42,
@@ -484,13 +488,15 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
-		upgradeToVer48,
-		upgradeToVer49,
+		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
+		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
 		upgradeToVer53,
 		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
 	}
 )
 
@@ -1017,16 +1023,6 @@ func upgradeToVer38(s Session, ver int64) {
 	}
 }
 
-func upgradeToVer39(s Session, ver int64) {
-	if ver >= version39 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
-}
-
 func writeNewCollationParameter(s Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
 	b := varFalse
@@ -1122,61 +1118,6 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer48(s Session, ver int64) {
-	if ver >= version48 {
-		return
-	}
-	defValues := map[string]string{
-		variable.TiDBIndexLookupConcurrency:     "4",
-		variable.TiDBIndexLookupJoinConcurrency: "4",
-		variable.TiDBHashAggFinalConcurrency:    "4",
-		variable.TiDBHashAggPartialConcurrency:  "4",
-		variable.TiDBWindowConcurrency:          "4",
-		variable.TiDBProjectionConcurrency:      "4",
-		variable.TiDBHashJoinConcurrency:        "5",
-	}
-	names := make([]string, 0, len(defValues))
-	for n := range defValues {
-		names = append(names, n)
-	}
-
-	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
-	ctx := context.Background()
-	rs, err := s.Execute(ctx, selectSQL)
-	terror.MustNil(err)
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
-	for err == nil && req.NumRows() != 0 {
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			n := strings.ToLower(row.GetString(0))
-			v := row.GetString(1)
-			if defValue, ok := defValues[n]; !ok || defValue != v {
-				return
-			}
-		}
-		err = r.Next(ctx, req)
-	}
-	terror.MustNil(err)
-
-	mustExecute(s, "BEGIN")
-	v := strconv.Itoa(variable.ConcurrencyUnset)
-	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
-	for _, name := range names {
-		mustExecute(s, fmt.Sprintf(sql, v, name))
-	}
-	mustExecute(s, "COMMIT")
-}
-
-func upgradeToVer49(s Session, ver int64) {
-	if ver >= version49 {
-		return
-	}
-	doReentrantDDL(s, CreateStatsExtended)
-}
-
 func upgradeToVer50(s Session, ver int64) {
 	if ver >= version50 {
 		return
@@ -1224,6 +1165,67 @@ func upgradeToVer54(s Session, ver int64) {
 	if ver <= version38 {
 		writeMemoryQuotaQuery(s)
 	}
+}
+
+// When cherry-pick upgradeToVer52 to v4.0, we wrongly name it upgradeToVer48.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer48 will be missed.
+// So we redo upgradeToVer48 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer55(s Session, ver int64) {
+	if ver >= version55 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+// When cherry-pick upgradeToVer54 to v4.0, we wrongly name it upgradeToVer49.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
+// So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer56(s Session, ver int64) {
+	if ver >= version56 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
 }
 
 func writeMemoryQuotaQuery(s Session) {
@@ -1331,6 +1333,13 @@ func doDMLWorks(s Session) {
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.DynamicOnly)
+				}
+			}
+			if v.Name == variable.TiDBEnableChangeMultiSchema {
+				vVal = variable.BoolOff
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					// enable change multi schema in test case for compatibility with old cases.
+					vVal = variable.BoolOn
 				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)

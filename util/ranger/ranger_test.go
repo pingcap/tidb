@@ -654,7 +654,7 @@ create table t(
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
+func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -665,7 +665,7 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) )")
+	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) ,decimal_unsigned decimal unsigned,key (decimal_unsigned), float_unsigned float unsigned,key(float_unsigned), double_unsigned double unsigned,key(double_unsigned))")
 
 	tests := []struct {
 		indexPos    int
@@ -741,6 +741,27 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			accessConds: "[]",
 			filterConds: "[]",
 			resultStr:   "[]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "decimal_unsigned > -100",
+			accessConds: "[gt(test.t.decimal_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "float_unsigned > -100",
+			accessConds: "[gt(test.t.float_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "double_unsigned > -100",
+			accessConds: "[gt(test.t.double_unsigned, -100)]",
+			filterConds: "[]",
+			resultStr:   "[[0,+inf]]",
 		},
 	}
 
@@ -939,11 +960,11 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[-inf,1) (2,+inf]]",
 			length:      types.UnspecifiedLength,
 		},
-		//{
-		// `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
-		//	exprStr:   "a not between null and 0",
-		//	resultStr[(0,+inf]]
-		//},
+		// {
+		//  `a > null` will be converted to `castAsString(a) > null` which can not be extracted as access condition.
+		// 	exprStr:   "a not between null and 0",
+		// 	resultStr[(0,+inf]]
+		// },
 		{
 			colPos:      0,
 			exprStr:     "a between 2 and 1",
@@ -1193,7 +1214,7 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
-	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(255));")
 	testKit.MustExec("analyze table t0;")
 
 	var input []string
@@ -1342,6 +1363,43 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 		if i+1 == inputLen/2 {
 			testKit.MustExec("analyze table t2;")
 		}
+	}
+}
+
+func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test;")
+	testKit.MustExec("drop table if exists t;")
+	testKit.MustExec("CREATE TABLE `t` (" +
+		"a bit(1) DEFAULT NULL," +
+		"b int(11) DEFAULT NULL" +
+		") PARTITION BY HASH(a)" +
+		"PARTITIONS 3;")
+	testKit.MustExec("insert ignore into t values(-1, -1), (0, 0), (1, 1), (3, 3);")
+	testKit.MustExec("analyze table t;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 

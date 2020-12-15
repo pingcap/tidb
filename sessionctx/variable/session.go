@@ -168,9 +168,6 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
-
-	// TxnScope stores the value of 'txn_scope'.
-	TxnScope string
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -575,6 +572,9 @@ type SessionVars struct {
 	// EnableChangeColumnType is used to control whether to enable the change column type.
 	EnableChangeColumnType bool
 
+	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
+	EnableChangeMultiSchema bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -756,6 +756,25 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
+
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
+
+	GuaranteeExternalConsistency bool
+
+	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
+	AnalyzeVersion int
+}
+
+// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	if s.InRestrictedSQL {
+		return oracle.GlobalTxnScope
+	}
+	return s.TxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -826,75 +845,80 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]types.Datum),
-		UserVarTypes:                make(map[string]*types.FieldType),
-		systems:                     make(map[string]string),
-		stmtVars:                    make(map[string]string),
-		PreparedStmts:               make(map[uint32]interface{}),
-		PreparedStmtNameToID:        make(map[string]uint32),
-		PreparedParams:              make([]types.Datum, 0, 10),
-		TxnCtx:                      &TransactionContext{},
-		RetryInfo:                   &RetryInfo{},
-		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:               true,
-		AutoIncrementIncrement:      DefAutoIncrementIncrement,
-		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
-		StmtCtx:                     new(stmtctx.StatementContext),
-		AllowAggPushDown:            false,
-		AllowBCJ:                    false,
-		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                  DefTiDBRetryLimit,
-		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
-		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		preferRangeScan:             DefOptPreferRangeScan,
-		CorrelationThreshold:        DefOptCorrelationThreshold,
-		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		CPUFactor:                   DefOptCPUFactor,
-		CopCPUFactor:                DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:               DefOptNetworkFactor,
-		ScanFactor:                  DefOptScanFactor,
-		DescScanFactor:              DefOptDescScanFactor,
-		SeekFactor:                  DefOptSeekFactor,
-		MemoryFactor:                DefOptMemoryFactor,
-		DiskFactor:                  DefOptDiskFactor,
-		ConcurrencyFactor:           DefOptConcurrencyFactor,
-		EnableRadixJoin:             false,
-		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		L2CacheSize:                 cpuid.CPU.Cache.L2,
-		CommandValue:                uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:            DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:            DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
-		SequenceState:               NewSequenceState(),
-		WindowingUseHighPrecision:   true,
-		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
-		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:          DefTiDBFoundInBinding,
-		FoundInBinding:              DefTiDBFoundInBinding,
-		SelectLimit:                 math.MaxUint64,
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableParallelApply:         DefTiDBEnableParallelApply,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeColumnType:      DefTiDBChangeColumnType,
-		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    config.GetGlobalConfig().TxnScope,
-		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
+		Users:                        make(map[string]types.Datum),
+		UserVarTypes:                 make(map[string]*types.FieldType),
+		systems:                      make(map[string]string),
+		stmtVars:                     make(map[string]string),
+		PreparedStmts:                make(map[uint32]interface{}),
+		PreparedStmtNameToID:         make(map[string]uint32),
+		PreparedParams:               make([]types.Datum, 0, 10),
+		TxnCtx:                       &TransactionContext{},
+		RetryInfo:                    &RetryInfo{},
+		ActiveRoles:                  make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                true,
+		AutoIncrementIncrement:       DefAutoIncrementIncrement,
+		AutoIncrementOffset:          DefAutoIncrementOffset,
+		Status:                       mysql.ServerStatusAutocommit,
+		StmtCtx:                      new(stmtctx.StatementContext),
+		AllowAggPushDown:             false,
+		AllowBCJ:                     false,
+		OptimizerSelectivityLevel:    DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                   DefTiDBRetryLimit,
+		DisableTxnAutoRetry:          DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:             kv.PriorityLow,
+		allowInSubqToJoinAndAgg:      DefOptInSubqToJoinAndAgg,
+		preferRangeScan:              DefOptPreferRangeScan,
+		CorrelationThreshold:         DefOptCorrelationThreshold,
+		CorrelationExpFactor:         DefOptCorrelationExpFactor,
+		CPUFactor:                    DefOptCPUFactor,
+		CopCPUFactor:                 DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:  DefOptTiFlashConcurrencyFactor,
+		NetworkFactor:                DefOptNetworkFactor,
+		ScanFactor:                   DefOptScanFactor,
+		DescScanFactor:               DefOptDescScanFactor,
+		SeekFactor:                   DefOptSeekFactor,
+		MemoryFactor:                 DefOptMemoryFactor,
+		DiskFactor:                   DefOptDiskFactor,
+		ConcurrencyFactor:            DefOptConcurrencyFactor,
+		EnableRadixJoin:              false,
+		EnableVectorizedExpression:   DefEnableVectorizedExpression,
+		L2CacheSize:                  cpuid.CPU.Cache.L2,
+		CommandValue:                 uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:  DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:        DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:       DefWaitSplitRegionTimeout,
+		enableIndexMerge:             false,
+		EnableNoopFuncs:              DefTiDBEnableNoopFuncs,
+		replicaRead:                  kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:             DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
+		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:             DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:    DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                NewSequenceState(),
+		WindowingUseHighPrecision:    true,
+		PrevFoundInPlanCache:         DefTiDBFoundInPlanCache,
+		FoundInPlanCache:             DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:           DefTiDBFoundInBinding,
+		FoundInBinding:               DefTiDBFoundInBinding,
+		SelectLimit:                  math.MaxUint64,
+		AllowAutoRandExplicitInsert:  DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:         DefTiDBEnableClusteredIndex,
+		EnableParallelApply:          DefTiDBEnableParallelApply,
+		ShardAllocateStep:            DefTiDBShardAllocateStep,
+		EnableChangeColumnType:       DefTiDBChangeColumnType,
+		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
+		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                     config.GetGlobalConfig().TxnScope,
+		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
+		Enable1PC:                    DefTiDBEnable1PC,
+		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
+		AnalyzeVersion:               DefTiDBAnalyzeVersion,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -913,7 +937,6 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1250,7 +1273,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
 				return returnErr
 			}
-			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
+			// SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
 			// 1. tx_isolation
 			// 2. transaction_isolation
 			// The following if condition is used to deduplicate two same warnings.
@@ -1395,8 +1418,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBMemQuotaStatistics:
-		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1524,7 +1545,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationServer] = coll.Name
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		val = coll.Name
+	case CharacterSetConnection, CharacterSetClient, CharacterSetResults,
 		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
 			if name == CharacterSetResults {
@@ -1548,9 +1570,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharacterSetServer:
 			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
-		default:
-			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
@@ -1566,7 +1587,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBFoundInBinding:
 		s.FoundInBinding = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		oldConfig := config.GetGlobalConfig()
+		newValue := TiDBOptOn(val)
+		if oldConfig.EnableCollectExecutionInfo != newValue {
+			newConfig := *oldConfig
+			newConfig.EnableCollectExecutionInfo = newValue
+			config.StoreGlobalConfig(&newConfig)
+		}
 	case SQLSelectLimit:
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
@@ -1591,6 +1618,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
 		s.EnableChangeColumnType = TiDBOptOn(val)
+	case TiDBEnableChangeMultiSchema:
+		s.EnableChangeMultiSchema = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
@@ -1599,6 +1628,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:
 		s.EnabledRateLimitAction = TiDBOptOn(val)
+	case TiDBEnableAsyncCommit:
+		s.EnableAsyncCommit = TiDBOptOn(val)
+	case TiDBEnable1PC:
+		s.Enable1PC = TiDBOptOn(val)
+	case TiDBGuaranteeExternalConsistency:
+		s.GuaranteeExternalConsistency = TiDBOptOn(val)
+	case TiDBAnalyzeVersion:
+		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 	}
 	s.systems[name] = val
 	return nil
@@ -1653,6 +1690,8 @@ func SetLocalSystemVar(name string, val string) {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLErrorCountLimit:
 		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
+	case TiDBRowFormatVersion:
+		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
 	}
 }
 
@@ -1894,8 +1933,7 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MemQuotaStatistics defines the memory quota for the statistic Cache.
-	MemQuotaStatistics int64
+
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64
 

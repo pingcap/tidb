@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -88,7 +89,26 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdGet:
 		resp.Resp, err = c.usSvr.KvGet(ctx, req.Get())
 	case tikvrpc.CmdScan:
-		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
+		kvScanReq := req.Scan()
+		failpoint.Inject("rpcScanResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.ScanResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: kvScanReq.StartKey,
+							LockVersion: kvScanReq.Version - 1,
+							Key:         kvScanReq.StartKey,
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
+
+		resp.Resp, err = c.usSvr.KvScan(ctx, kvScanReq)
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			if val != nil {
@@ -162,7 +182,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 							PrimaryLock: batchGetReq.Keys[0],
 							LockVersion: batchGetReq.Version - 1,
 							Key:         batchGetReq.Keys[0],
-							LockTtl:     2000,
+							LockTtl:     50,
 							TxnSize:     1,
 							LockType:    kvrpcpb.Op_Put,
 						},
@@ -215,6 +235,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
+	case tikvrpc.CmdMPPConn:
+		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout)
+	case tikvrpc.CmdMPPTask:
+		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask())
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -225,13 +249,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
 	default:
-		err = errors.Errorf("unsupport this request type %v", req.Type)
+		err = errors.Errorf("not support this request type %v", req.Type)
 	}
 	if err != nil {
 		return nil, err
 	}
 	var regErr *errorpb.Error = nil
-	if req.Type != tikvrpc.CmdBatchCop {
+	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
 		regErr, err = resp.GetRegionError()
 	}
 	if err != nil {
@@ -256,6 +280,29 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 		Tikv_CoprocessorStreamClient: new(mockCopStreamClient),
 		Response:                     copResp,
 	}, nil
+}
+
+func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration) (*tikvrpc.MPPStreamResponse, error) {
+	mockServer := new(mockMPPConnectStreamServer)
+	err := c.usSvr.EstablishMPPConnection(r, mockServer)
+	if err != nil {
+		return nil, err
+	}
+	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0}
+	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
+	_, cancel := context.WithCancel(ctx)
+	streamResp.Lease.Cancel = cancel
+	streamResp.Timeout = timeout
+	first, err := streamResp.Recv()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	streamResp.MPPDataPacket = first
+	return streamResp, nil
+}
+
+func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
+	return c.usSvr.DispatchMPPTask(ctx, r)
 }
 
 func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
@@ -405,6 +452,21 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 	return nil, io.EOF
 }
 
+type mockMPPConnectionClient struct {
+	mockClientStream
+	mppResponses []*mpp.MPPDataPacket
+	idx          int
+}
+
+func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
+	if mock.idx < len(mock.mppResponses) {
+		ret := mock.mppResponses[mock.idx]
+		mock.idx++
+		return ret, nil
+	}
+	return nil, io.EOF
+}
+
 type mockServerStream struct{}
 
 func (mockServerStream) SetHeader(metadata.MD) error  { return nil }
@@ -421,5 +483,15 @@ type mockBatchCoprocessorStreamServer struct {
 
 func (mockBatchCopServer *mockBatchCoprocessorStreamServer) Send(response *coprocessor.BatchResponse) error {
 	mockBatchCopServer.batchResponses = append(mockBatchCopServer.batchResponses, response)
+	return nil
+}
+
+type mockMPPConnectStreamServer struct {
+	mockServerStream
+	mppResponses []*mpp.MPPDataPacket
+}
+
+func (mockMPPConnectStreamServer *mockMPPConnectStreamServer) Send(mppResponse *mpp.MPPDataPacket) error {
+	mockMPPConnectStreamServer.mppResponses = append(mockMPPConnectStreamServer.mppResponses, mppResponse)
 	return nil
 }

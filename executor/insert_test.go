@@ -1440,7 +1440,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	for _, enable := range []int{0, 1} {
+	for _, enable := range []int{1, 0} {
 		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -1481,6 +1481,17 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
 		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+
+		tk.MustExec("begin pessimistic;")
+		tk.MustExec("insert into t values ('a7', 'a', 10);")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustExec("rollback;")
 	}
 }
 
@@ -1532,4 +1543,24 @@ func combination(items []string) func() []string {
 		current++
 		return buf
 	}
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h enum(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
 }
