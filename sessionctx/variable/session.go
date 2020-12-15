@@ -936,8 +936,8 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
+		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
@@ -947,7 +947,6 @@ func NewSessionVars() *SessionVars {
 		MemQuotaTopn:              DefTiDBMemQuotaTopn,
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
-		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
 		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
@@ -1418,8 +1417,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBNestedLoopJoinCacheCapacity:
-		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
+	case TiDBMemQuotaApplyCache:
+		s.MemQuotaApplyCache = tidbOptInt64(val, DefTiDBMemQuotaApplyCache)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
@@ -1432,8 +1431,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-	case TIDBMemQuotaNestedLoopApply:
-		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		ProcessGeneralLog.Store(TiDBOptOn(val))
 	case TiDBPProfSQLCPU:
@@ -1933,9 +1930,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-
-	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
-	NestedLoopJoinCacheCapacity int64
+	// MemQuotaApplyCache defines the memory capacity for apply cache.
+	MemQuotaApplyCache int64
 
 	// The variables below do not take any effect anymore, it's remaining for compatibility.
 	// TODO: remove them in v4.1
@@ -1951,8 +1947,6 @@ type MemQuota struct {
 	MemQuotaIndexLookupReader int64
 	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
 	MemQuotaIndexLookupJoin int64
-	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
-	MemQuotaNestedLoopApply int64
 	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
 	MemQuotaDistSQL int64
 }
