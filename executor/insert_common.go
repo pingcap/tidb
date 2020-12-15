@@ -859,7 +859,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -879,12 +879,12 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
-func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}

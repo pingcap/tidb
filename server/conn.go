@@ -394,7 +394,7 @@ func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeRespo
 	packet.Capability = uint32(capability)
 
 	// be compatible with Protocol::HandshakeResponse41
-	packet.Capability = packet.Capability | mysql.ClientProtocol41
+	packet.Capability |= mysql.ClientProtocol41
 
 	offset += 2
 	// skip max packet size
@@ -1287,7 +1287,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
 	}
-
+	if !loadDataInfo.Table.Meta().IsBaseTable() {
+		return errors.New("can only load data into base tables")
+	}
 	err := cc.writeReq(ctx, loadDataInfo.Path)
 	if err != nil {
 		return err
@@ -1810,7 +1812,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		curRows = fetchedRows[:fetchSize]
 		fetchedRows = fetchedRows[fetchSize:]
 	} else {
-		curRows = fetchedRows[:]
+		curRows = fetchedRows
 		fetchedRows = fetchedRows[:0]
 	}
 	rs.StoreFetchedRows(fetchedRows)

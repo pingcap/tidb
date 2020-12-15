@@ -2209,6 +2209,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.DefaultWeekFormat,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,
@@ -2273,6 +2274,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2282,12 +2284,17 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
+	variable.TiDBAnalyzeVersion,
 }
 
 var (
@@ -2471,7 +2478,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query = query + vars.PreparedParams.String()
+			query += vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
