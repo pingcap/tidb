@@ -98,7 +98,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	h.Clear4Test()
+	h.Clear()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
 	c.Assert(err, IsNil)
@@ -150,7 +150,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.CurStatsVersion, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
