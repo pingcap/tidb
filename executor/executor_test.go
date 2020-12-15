@@ -7149,5 +7149,5 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustExec("drop table if exists e")
 	tk.MustExec("create table e (e enum('a', 'b'))")
 	tk.MustExec("insert into e values ('a')")
-	tk.MustExec("select * from e where case 1 when 0 then e end")
+	tk.MustQuery("select * from e where case 1 when 0 then e end").Check(testkit.Rows())
 }
