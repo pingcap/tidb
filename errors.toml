@@ -941,6 +941,11 @@ error = '''
 Internal : %s
 '''
 
+["planner:3029"]
+error = '''
+Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
+'''
+
 ["planner:3065"]
 error = '''
 Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s

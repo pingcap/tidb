@@ -1056,6 +1056,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
+		if v.Tp.EvalType() == types.ETString {
+			arg.SetCoercibility(expression.CoercibilityImplicit)
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeExpr:
