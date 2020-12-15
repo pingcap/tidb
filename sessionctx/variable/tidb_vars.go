@@ -97,7 +97,6 @@ const (
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
-	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
 	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
@@ -351,6 +350,9 @@ const (
 	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
 	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
+	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
+	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -560,6 +562,7 @@ const (
 	DefTiDBDDLErrorCountLimit           = 512
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
+	DefTiDBChangeMultiSchema            = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
