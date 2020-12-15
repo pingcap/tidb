@@ -429,6 +429,9 @@ func (bj BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
 		}
 		modifer := &binaryModifier{bj: bj}
 		bj = modifer.remove(pathExpr)
+		if modifer.err != nil {
+			return BinaryJSON{}, modifer.err
+		}
 	}
 	return bj, nil
 }
@@ -537,6 +540,9 @@ func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
 		return bm.bj
 	}
 	bm.doRemove(path)
+	if bm.err != nil {
+		return BinaryJSON{}
+	}
 	return bm.rebuild()
 }
 
@@ -578,7 +584,7 @@ func (bm *binaryModifier) doRemove(path PathExpression) {
 			elems = append(elems, parentBj.objectGetVal(i))
 		}
 	}
-	bm.modifyValue, _ = buildBinaryObject(keys, elems)
+	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
 	return
 }
 
@@ -842,7 +848,10 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 	for i, key := range keys {
 		values[i] = keyValMap[string(key)]
 	}
-	binaryObject, _ := buildBinaryObject(keys, values)
+	binaryObject, err := buildBinaryObject(keys, values)
+	if err != nil {
+		panic("mergeBinaryObject should never panic, please contact the TiDB team for help")
+	}
 	return binaryObject
 }
 
