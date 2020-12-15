@@ -241,7 +241,7 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 }
 
 func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uint64, error) {
-	ts, ok := o.getLastTS("")
+	ts, ok := o.getLastTS(oracle.GlobalTxnScope)
 	if !ok {
 		return 0, errors.Errorf("get stale timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
@@ -254,11 +254,6 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 	if physicalTime.Unix() <= prevSecond {
 		return 0, errors.Errorf("get invalid prevSecond, prevSecond must less than physicalTime, "+
 			"get prevSecond: %d, physicalTime: %d", prevSecond, physicalTime.Unix())
-	}
-
-	if prevSecond < 2 {
-		logutil.Logger(ctx).Warn("prevSecond may inaccurate when it less than 2",
-			zap.Int64("prev Second", prevSecond))
 	}
 
 	// formula in https://github.com/pingcap/tidb/issues/21522, in my case, I will use ntp instead.
