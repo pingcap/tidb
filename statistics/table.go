@@ -370,7 +370,10 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoBetweenRate
 	}
-	count := c.BetweenRowCount(a, b)
+	count, err := c.BetweenRowCount(sc, a, b)
+	if err != nil {
+		return 0
+	}
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}

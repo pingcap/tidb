@@ -337,6 +337,14 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		selSQL := fmt.Sprintf("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %d and hist_id = %d", col.TableID, col.ColumnID)
+		rows, _, err := reader.read(selSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
+		}
 		tbl.Columns[c.ID] = &statistics.Column{
 			PhysicalID: col.TableID,
 			Histogram:  *hg,
@@ -345,7 +353,9 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			TopN:       topN,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
+			StatsVer:   rows[0].GetInt64(0),
 		}
+		tbl.Columns[c.ID].Count = int64(tbl.Columns[c.ID].TotalRowCount())
 		h.statsCache.Update([]*statistics.Table{tbl}, nil, h.statsCache.GetVersion())
 		statistics.HistogramNeededColumns.Delete(col)
 	}
@@ -470,6 +480,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
+	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.Columns[histID]
@@ -495,7 +506,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
-			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID)
+			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -531,8 +542,9 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
-				StatsVer:   row.GetInt64(7),
+				StatsVer:   statsVer,
 			}
+			col.Count = int64(col.TotalRowCount())
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
@@ -777,8 +789,8 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 	return hg, nil
 }
 
-func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID int64) (int64, error) {
-	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
+func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, statsVer int64) (int64, error) {
+	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
 	rows, _, err := reader.read(selSQL)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -786,7 +798,28 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID int6
 	if rows[0].IsNull(0) {
 		return 0, nil
 	}
-	return rows[0].GetMyDecimal(0).ToInt()
+	count, err := rows[0].GetMyDecimal(0).ToInt()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if statsVer == statistics.Version2 {
+		// Before stats ver 2, histogram represents all data in this column.
+		// In stats ver 2, histogram + TopN represent all data in this column.
+		// So we need to add TopN total count here.
+		selSQL = fmt.Sprintf("select sum(count) from mysql.stats_top_n where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
+		rows, _, err = reader.read(selSQL)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !rows[0].IsNull(0) {
+			topNCount, err := rows[0].GetMyDecimal(0).ToInt()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			count += topNCount
+		}
+	}
+	return count, err
 }
 
 func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (version uint64, modifyCount, count int64, err error) {
