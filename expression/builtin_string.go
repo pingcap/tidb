@@ -3372,6 +3372,11 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 		locale = "en_US"
 	}
+	// TODO: support other locales.
+	if locale != "en_US" {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
+		locale = "en_US"
+	}
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
