@@ -7142,3 +7142,15 @@ func (s *testSuite) Test15492(c *C) {
 	tk.MustExec("insert into t values (2, 20), (1, 10), (3, 30)")
 	tk.MustQuery("select a + 1 as field1, a as field2 from t order by field1, field2 limit 2").Check(testkit.Rows("2 1", "3 2"))
 }
+
+func (s *testSuite) Test12201(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists e")
+	tk.MustExec("create table e (e enum('a', 'b'))")
+	tk.MustExec("insert into e values ('a'), ('b')")
+	tk.MustQuery("select * from e where case 1 when 0 then e end").Check(testkit.Rows())
+	tk.MustQuery("select * from e where case 1 when 1 then e end").Check(testkit.Rows("a", "b"))
+	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
+}
