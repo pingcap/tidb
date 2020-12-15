@@ -273,8 +273,13 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 const (
 	CurStatsVersion = Version2
 	Version0        = 0
-	Version1        = 1
-	Version2        = 2
+	// In Version1
+	// Column stats: CM Sketch is built in TiKV. Histogram is built from samples. TopN is extracted from CM Sketch.
+	//   TopN + CM Sketch represent all data. Histogram also represents all data.
+	Version1 = 1
+	// In Version2
+	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
+	Version2 = 2
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
