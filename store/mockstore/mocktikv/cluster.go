@@ -674,7 +674,7 @@ func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store 
 }
 
 func (s *Store) mergeLabels(labels []*metapb.StoreLabel) {
-	if len(s.meta.Labels) < 0 {
+	if len(s.meta.Labels) < 1 {
 		s.meta.Labels = labels
 		return
 	}
