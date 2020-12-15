@@ -161,6 +161,11 @@ error = '''
 Incorrect index name '%-.100s'
 '''
 
+["ddl:1286"]
+error = '''
+Unknown storage engine '%s'
+'''
+
 ["ddl:1292"]
 error = '''
 Truncated incorrect %-.64s value: '%-.128s'
@@ -269,6 +274,11 @@ Partition column values of incorrect type
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
+'''
+
+["ddl:1697"]
+error = '''
+VALUES value for partition '%-.64s' must have type INT
 '''
 
 ["ddl:1731"]
@@ -636,6 +646,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
+'''
+
 ["json:3069"]
 error = '''
 Invalid JSON data provided to function %s: %s
@@ -919,6 +934,16 @@ Unknown EXPLAIN format name: '%s'
 ["planner:1815"]
 error = '''
 Internal : %s
+'''
+
+["planner:3065"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s
+'''
+
+["planner:3066"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s
 '''
 
 ["planner:3105"]
@@ -1389,6 +1414,16 @@ TiKV server reports stale command
 ["tikv:9011"]
 error = '''
 TiKV max timestamp is not synced
+'''
+
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
 '''
 
 ["types:1063"]
