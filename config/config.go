@@ -103,7 +103,6 @@ type Config struct {
 	TempStoragePath    string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction          string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery      int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistics int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -643,7 +642,6 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistics:           32 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
