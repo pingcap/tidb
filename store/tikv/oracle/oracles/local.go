@@ -82,12 +82,6 @@ func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *o
 func (l *localOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts uint64, err error) {
 	physical := oracle.GetPhysical(time.Now().Add(-time.Second * time.Duration(prevSecond)))
 	ts = oracle.ComposeTS(physical, 0)
-	if l.lastTimeStampTS == ts {
-		l.n++
-		return ts + l.n, nil
-	}
-	l.lastTimeStampTS = ts
-	l.n = 0
 	return ts, nil
 }
 
