@@ -663,14 +663,10 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 		tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		ch <- 2
 	}()
+	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
 	ch <- 1
 	tk1.Exec("commit")
-	var isSession1 string
-	if 1 == <-ch {
-		isSession1 = "true"
-	}
-	c.Assert(isSession1, Equals, "true")
-	tk1.MustExec("rollback")
-	tk2.MustExec("rollback")
+	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
+	c.Assert(<-ch, Equals, 1)
 }
