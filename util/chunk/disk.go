@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 
+	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -68,7 +69,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
-		return
+		return errors2.Trace(err)
 	}
 	var underlying io.WriteCloser = l.disk
 	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
@@ -116,7 +117,7 @@ func (l *ListInDisk) flush() (err error) {
 		// after calling l.w.Close, we need to reopen it before reading rows.
 		l.disk, err = os.Open(l.disk.Name())
 		if err != nil {
-			return
+			return errors2.Trace(err)
 		}
 	}
 	return
