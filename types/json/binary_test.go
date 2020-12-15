@@ -416,7 +416,7 @@ func (s *testJSONSuite) TestGetKeys(c *C) {
 	b.WriteString("\": 1}")
 	parsedBJ, err := ParseBinaryFromString(b.String())
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:8129]TiDB doesn't yet support JSON object with key length >= 65536")
+	c.Assert(err.Error(), Equals, "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536")
 }
 
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {

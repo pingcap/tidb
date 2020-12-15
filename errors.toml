@@ -1558,7 +1558,7 @@ invalid week mode format: '%v'
 
 ["types:8129"]
 error = '''
-TiDB doesn't yet support JSON object with key length >= 65536
+TiDB does not yet support JSON objects with the key length >= 65536
 '''
 
 ["variable:1193"]
