@@ -823,6 +823,7 @@ const (
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
+	ErrAggregateOrderNonAggQuery                                    = 3029
 	ErrIncorrectType                                                = 3064
 	ErrFieldInOrderNotSelect                                        = 3065
 	ErrAggregateInOrderNotSelect                                    = 3066

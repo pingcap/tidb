@@ -365,7 +365,7 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	is := do.InfoSchema()
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -414,7 +414,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	is := do.InfoSchema()
 
 	tk := testkit.NewTestKit(c, s.store)
