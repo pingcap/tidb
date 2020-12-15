@@ -256,6 +256,7 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 	return builder
 }
 
+// SetRuleBundles set bundles in builder
 func (builder *RequestBuilder) SetRuleBundles(bundles map[string]*placement.Bundle) *RequestBuilder {
 	builder.bundles = bundles
 	return builder
