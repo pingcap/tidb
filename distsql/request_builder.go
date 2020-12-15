@@ -227,10 +227,6 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
-	is := infoschema.GetInfoSchemaBySessionVars(sv)
-	if is != nil {
-		builder.bundles = is.RuleBundles()
-	}
 	return builder
 }
 
@@ -257,6 +253,11 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 //   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
+	return builder
+}
+
+func (builder *RequestBuilder) SetRuleBundles(bundles map[string]*placement.Bundle) *RequestBuilder {
+	builder.bundles = bundles
 	return builder
 }
 

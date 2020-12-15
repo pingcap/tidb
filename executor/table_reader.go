@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -237,6 +238,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetTxnScope(extractTxnScope(txn)).
+		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
 		Build()
 	if err != nil {
 		return nil, err

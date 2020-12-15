@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -339,6 +340,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetMemTracker(e.memTracker).
 		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
+		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -533,6 +535,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetMemTracker(tracker).
 		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
+		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
 		Build()
 	if err != nil {
 		return err
