@@ -669,6 +669,9 @@ type SessionVars struct {
 	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
 	EvolvePlanBaselines bool
 
+	// EnableExtendedStats indicates whether we enable the extended statistics feature.
+	EnableExtendedStats bool
+
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
@@ -897,6 +900,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:             DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:          false,
 		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:             DefTiDBMetricSchemaStep,
@@ -1511,6 +1515,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.UsePlanBaselines = TiDBOptOn(val)
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
+	case TiDBEnableExtendedStats:
+		s.EnableExtendedStats = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
 		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
