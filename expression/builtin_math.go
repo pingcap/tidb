@@ -276,7 +276,8 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
 	if bf.tp.Decimal != types.UnspecifiedLength {
 		if argFieldTp.Decimal != types.UnspecifiedLength {
-			bf.tp.Flen = mathutil.Max(argFieldTp.Flen-argFieldTp.Decimal+bf.tp.Decimal, argFieldTp.Flen)
+			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
 		} else {
 			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
 		}
