@@ -2070,6 +2070,7 @@ func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
 	tk.MustExec("insert into t0 values (2, 2)")
 	tk.MustExec("insert into t0 values (3, 3)")
 
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c int, index(a, b, c))")
 
 	var input []string
