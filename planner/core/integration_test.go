@@ -2055,3 +2055,34 @@ func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
 		Check(testkit.Rows("0"))
 }
+
+func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (a int, b int, index(a, b))")
+	tk.MustExec("insert into t0 values (1, 1)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (3, 3)")
+
+	tk.MustExec("create table t1 (a int, b int, c int, index(a, b, c))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
