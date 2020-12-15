@@ -154,7 +154,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(err))
+			logutil.Logger(w.logCtx).Warn("[ddl] handle DDL job failed", zap.Error(err))
 		}
 	}
 }
@@ -350,8 +350,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(job)
 		}
 	}
-	switch job.Type {
-	case model.ActionRecoverTable:
+	if job.Type == model.ActionRecoverTable {
 		err = finishRecoverTable(w, t, job)
 	}
 	if err != nil {
@@ -935,7 +934,14 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			}
 		}
 	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.CtxVars[0].(int64)
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			diff.AffectedOpts = []*model.AffectedOption{
+				{
+					TableID: job.CtxVars[0].(int64),
+				},
+			}
+		}
 	default:
 		diff.TableID = job.TableID
 	}

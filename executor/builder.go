@@ -209,6 +209,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
+	case *plannercore.PhysicalTableSample:
+		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -1803,8 +1805,12 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
+		if _, ok := tblID2table[info.TblID]; ok {
+			multiUpdateOnSameTable[info.TblID] = true
+		}
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
@@ -1832,6 +1838,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
+		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}
@@ -1930,9 +1938,15 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
+	topNSize := new(int32)
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	statsVersion := new(int32)
+	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		TopNSize:   topNSize,
+		Version:    statsVersion,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -3688,21 +3702,20 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency:  v.Concurrency,
 	}
 
+	splitters := make([]partitionSplitter, len(v.ByItemArrays))
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		splitters := make([]partitionSplitter, len(v.ByItemArrays))
-		for i, hashByItemArray := range v.ByItemArrays {
-			hashSplitter := &partitionHashSplitter{
-				byItems:    hashByItemArray,
-				numWorkers: shuffle.concurrency,
-			}
-			copy(hashSplitter.byItems, hashByItemArray)
-			splitters[i] = hashSplitter
+		for i, byItems := range v.ByItemArrays {
+			splitters[i] = buildPartitionHashSplitter(shuffle.concurrency, byItems)
 		}
-		shuffle.splitters = splitters
+	case plannercore.PartitionRangeSplitterType:
+		for i, byItems := range v.ByItemArrays {
+			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
+		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
+	shuffle.splitters = splitters
 
 	shuffle.dataSources = make([]Executor, len(v.DataSources))
 	for i, dataSource := range v.DataSources {
@@ -3934,4 +3947,23 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 
 func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
+}
+
+func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &TableSampleExecutor{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		table:        v.TableInfo,
+		startTS:      startTS,
+	}
+	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+		e.sampler = newTableRegionSampler(
+			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
+	}
+	return e
 }

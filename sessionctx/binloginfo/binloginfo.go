@@ -58,13 +58,13 @@ type BinlogInfo struct {
 type BinlogStatus int
 
 const (
-	//BinlogStatusUnknown stands for unknown binlog status
+	// BinlogStatusUnknown stands for unknown binlog status
 	BinlogStatusUnknown BinlogStatus = iota
-	//BinlogStatusOn stands for the binlog is enabled
+	// BinlogStatusOn stands for the binlog is enabled
 	BinlogStatusOn
-	//BinlogStatusOff stands for the binlog is disabled
+	// BinlogStatusOff stands for the binlog is disabled
 	BinlogStatusOff
-	//BinlogStatusSkipping stands for the binlog status
+	// BinlogStatusSkipping stands for the binlog status
 	BinlogStatusSkipping
 )
 
