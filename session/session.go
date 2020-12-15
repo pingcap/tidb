@@ -2286,6 +2286,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableChangeMultiSchema,
 	variable.TiDBEnablePointGetCache,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
