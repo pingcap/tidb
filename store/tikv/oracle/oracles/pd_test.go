@@ -15,8 +15,6 @@ package oracles
 
 import (
 	"context"
-	"github.com/tikv/pd/pkg/testutil"
-	"go.uber.org/goleak"
 	"testing"
 	"time"
 
@@ -24,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/pkg/testutil"
+	"go.uber.org/goleak"
 )
 
 func TestT(t *testing.T) {
