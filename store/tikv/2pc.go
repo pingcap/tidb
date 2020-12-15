@@ -457,7 +457,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 
 	txn := c.txn
 	memBuf := txn.GetMemBuffer()
-	sizeHint := txn.us.GetMemBuffer().Len()
+	sizeHint := txn.us.GetMemBuffer().Count()
 	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
 

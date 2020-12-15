@@ -238,6 +238,8 @@ type MemBuffer interface {
 	Size() int
 	// Len returns the number of entries in the DB.
 	Len() int
+	// Count returns the number of keys in the DB.
+	Count() int
 	// Dirty returns whether the root staging buffer is updated.
 	Dirty() bool
 }

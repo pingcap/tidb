@@ -51,6 +51,7 @@ func (db *memdb) DeleteKey(key []byte) {
 	}
 	db.size -= len(db.vlog.getValue(x.vptr))
 	db.deleteNode(x)
+	db.len--
 }
 
 func (s *testMemDBSuite) TestGetSet(c *C) {
@@ -471,11 +472,14 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
 		if i%2 == 0 {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
+			db.UpdateFlags(buf[:], SetKeyLocked)
 		} else {
 			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
 		}
 	}
+	c.Assert(db.Len(), Equals, 5000)
+	c.Assert(db.Count(), Equals, 10000)
+
 	db.Cleanup(h)
 
 	for i := uint32(0); i < cnt; i++ {
@@ -493,7 +497,8 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		}
 	}
 
-	c.Assert(db.Len(), Equals, 5000)
+	c.Assert(db.Len(), Equals, 0)
+	c.Assert(db.Count(), Equals, 5000)
 	c.Assert(db.Size(), Equals, 20000)
 
 	it1, _ := db.Iter(nil, nil)

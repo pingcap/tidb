@@ -169,8 +169,19 @@ type memdb struct {
 
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
-	count           int
 	size            int
+
+	// Because we allow keys that have no value to be kept in memdb, we have two different points of view
+	// about the number of keys in memdb. If we take the keys of persistent flags into account, the result will equal
+	// the number of total nodes. This count is useful in some scenarios when we want to know the number of locked keys.
+	// Unfortunately, we have used separate storage for flags and values in the past,
+	// many modules still assume the return value of `Len` only take keys that have values into account,
+	// we need to maintain another counter for these scenarios.
+
+	// count is the number of nodes.
+	count int
+	// len is the number of keys which have value.
+	len int
 
 	vlogInvalid bool
 	dirty       bool
@@ -243,6 +254,7 @@ func (db *memdb) Reset() {
 	db.vlogInvalid = false
 	db.size = 0
 	db.count = 0
+	db.len = 0
 	db.vlog.reset()
 	db.allocator.reset()
 }
@@ -345,8 +357,12 @@ func (db *memdb) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
 	return db.vlog.getValue(x.vptr), true
 }
 
-func (db *memdb) Len() int {
+func (db *memdb) Count() int {
 	return db.count
+}
+
+func (db *memdb) Len() int {
+	return db.len
 }
 
 func (db *memdb) Size() int {
@@ -387,6 +403,10 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 
 	if value == nil {
 		return nil
+	}
+
+	if x.vptr.isNull() {
+		db.len++
 	}
 
 	db.setValue(x, value)
