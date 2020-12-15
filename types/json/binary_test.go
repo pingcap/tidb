@@ -353,7 +353,7 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	b.SetBytes(int64(len(benchStr)))
 	bj, _ := ParseBinaryFromString(benchStr)
 	for i := 0; i < b.N; i++ {
-		bj.MarshalJSON()
+		_, _ = bj.MarshalJSON()
 	}
 }
 

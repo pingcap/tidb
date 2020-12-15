@@ -360,11 +360,14 @@ func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, 
 		modifier := &binaryModifier{bj: bj}
 		switch mt {
 		case ModifyInsert:
-			bj = modifier.insert(pathExpr, value)
+			bj, err = modifier.insert(pathExpr, value)
 		case ModifyReplace:
 			bj = modifier.replace(pathExpr, value)
 		case ModifySet:
-			bj = modifier.set(pathExpr, value)
+			bj, err = modifier.set(pathExpr, value)
+		}
+		if err != nil {
+			return BinaryJSON{}, err
 		}
 	}
 	return bj, nil
@@ -414,7 +417,7 @@ func (bj BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res
 }
 
 // Remove removes the elements indicated by pathExprList from JSON.
-func (bj BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
+func (bj BinaryJSON) Remove(pathExprList []PathExpression) (_ BinaryJSON, err error) {
 	for _, pathExpr := range pathExprList {
 		if len(pathExpr.legs) == 0 {
 			// TODO: should return 3153(42000)
@@ -425,7 +428,10 @@ func (bj BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
 			return bj, errors.New("Invalid path expression")
 		}
 		modifer := &binaryModifier{bj: bj}
-		bj = modifer.remove(pathExpr)
+		bj, err = modifer.remove(pathExpr)
+		if err != nil {
+			return BinaryJSON{}, err
+		}
 	}
 	return bj, nil
 }
@@ -436,16 +442,19 @@ type binaryModifier struct {
 	modifyValue BinaryJSON
 }
 
-func (bm *binaryModifier) set(path PathExpression, newBj BinaryJSON) BinaryJSON {
+func (bm *binaryModifier) set(path PathExpression, newBj BinaryJSON) (BinaryJSON, error) {
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, path)
 	if len(result) > 0 {
 		bm.modifyPtr = &result[0].Value[0]
 		bm.modifyValue = newBj
-		return bm.rebuild()
+		return bm.rebuild(), nil
 	}
-	bm.doInsert(path, newBj)
-	return bm.rebuild()
+	err := bm.doInsert(path, newBj)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	return bm.rebuild(), nil
 }
 
 func (bm *binaryModifier) replace(path PathExpression, newBj BinaryJSON) BinaryJSON {
@@ -459,14 +468,17 @@ func (bm *binaryModifier) replace(path PathExpression, newBj BinaryJSON) BinaryJ
 	return bm.rebuild()
 }
 
-func (bm *binaryModifier) insert(path PathExpression, newBj BinaryJSON) BinaryJSON {
+func (bm *binaryModifier) insert(path PathExpression, newBj BinaryJSON) (BinaryJSON, error) {
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, path)
 	if len(result) > 0 {
-		return bm.bj
+		return bm.bj, nil
 	}
-	bm.doInsert(path, newBj)
-	return bm.rebuild()
+	err := bm.doInsert(path, newBj)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	return bm.rebuild(), nil
 }
 
 // doInsert inserts the newBj to its parent, and builds the new parent.
@@ -520,14 +532,17 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) (err e
 	return err
 }
 
-func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
+func (bm *binaryModifier) remove(path PathExpression) (BinaryJSON, error) {
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, path)
 	if len(result) == 0 {
-		return bm.bj
+		return bm.bj, nil
 	}
-	bm.doRemove(path)
-	return bm.rebuild()
+	err := bm.doRemove(path)
+	if err != nil {
+		return BinaryJSON{}, err
+	}
+	return bm.rebuild(), nil
 }
 
 func (bm *binaryModifier) doRemove(path PathExpression) (err error) {
