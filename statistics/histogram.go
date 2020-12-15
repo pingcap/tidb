@@ -837,6 +837,7 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+// TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
 	if c.StatsVer == Version2 {
 		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
@@ -844,6 +845,7 @@ func (c *Column) TotalRowCount() float64 {
 	return c.Histogram.TotalRowCount()
 }
 
+// GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
 func (c *Column) GetIncreaseFactor(totalCount int64) float64 {
 	columnCount := c.TotalRowCount()
 	if columnCount == 0 {
@@ -902,40 +904,40 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 			return float64(count), errors.Trace(err)
 		}
 		return c.Histogram.equalRowCount(val), nil
-	} else {
-		// 1. try to find this value in TopN
-		if c.TopN != nil {
-			valBytes, err := codec.EncodeKey(sc, nil, val)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			rowcount, ok := c.QueryTopN(valBytes)
-			if ok {
-				return float64(rowcount), nil
-			}
+	}
+	// Stats version == 2
+	// 1. try to find this value in TopN
+	if c.TopN != nil {
+		valBytes, err := codec.EncodeKey(sc, nil, val)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		// 2. try to find this value in bucket.repeats(the last value in every bucket)
-		index, match := c.Histogram.Bounds.LowerBound(0, &val)
-		if index%2 == 1 && match {
+		rowcount, ok := c.QueryTopN(valBytes)
+		if ok {
+			return float64(rowcount), nil
+		}
+	}
+	// 2. try to find this value in bucket.repeats(the last value in every bucket)
+	index, match := c.Histogram.Bounds.LowerBound(0, &val)
+	if index%2 == 1 && match {
+		return float64(c.Histogram.Buckets[index/2].Repeat), nil
+	}
+	if match {
+		cmp := chunk.GetCompareFunc(c.Histogram.Tp)
+		if cmp(c.Histogram.Bounds.GetRow(index), 0, c.Histogram.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(c.Histogram.Buckets[index/2].Repeat), nil
 		}
-		if match {
-			cmp := chunk.GetCompareFunc(c.Histogram.Tp)
-			if cmp(c.Histogram.Bounds.GetRow(index), 0, c.Histogram.Bounds.GetRow(index+1), 0) == 0 {
-				return float64(c.Histogram.Buckets[index/2].Repeat), nil
-			}
-		}
-		// 3. use evenly distribution assumption for the rest
-		cnt := c.Histogram.notNullCount()
-		for _, bkt := range c.Histogram.Buckets {
-			if cnt <= float64(bkt.Repeat) {
-				return 0, nil
-			}
-			cnt -= float64(bkt.Repeat)
-		}
-		ndv := c.NDV - int64(len(c.TopN.TopN)) - int64(len(c.Histogram.Buckets))
-		return cnt / float64(ndv), nil
 	}
+	// 3. use evenly distribution assumption for the rest
+	cnt := c.Histogram.notNullCount()
+	for _, bkt := range c.Histogram.Buckets {
+		if cnt <= float64(bkt.Repeat) {
+			return 0, nil
+		}
+		cnt -= float64(bkt.Repeat)
+	}
+	ndv := c.NDV - int64(len(c.TopN.TopN)) - int64(len(c.Histogram.Buckets))
+	return cnt / float64(ndv), nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
