@@ -360,14 +360,14 @@ func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, 
 		modifier := &binaryModifier{bj: bj}
 		switch mt {
 		case ModifyInsert:
-			bj, err = modifier.insert(pathExpr, value)
+			bj = modifier.insert(pathExpr, value)
 		case ModifyReplace:
 			bj = modifier.replace(pathExpr, value)
 		case ModifySet:
-			bj, err = modifier.set(pathExpr, value)
+			bj = modifier.set(pathExpr, value)
 		}
-		if err != nil {
-			return BinaryJSON{}, err
+		if modifier.err != nil {
+			return BinaryJSON{}, modifier.err
 		}
 	}
 	return bj, nil
@@ -437,21 +437,22 @@ type binaryModifier struct {
 	bj          BinaryJSON
 	modifyPtr   *byte
 	modifyValue BinaryJSON
+	err         error
 }
 
-func (bm *binaryModifier) set(path PathExpression, newBj BinaryJSON) (BinaryJSON, error) {
+func (bm *binaryModifier) set(path PathExpression, newBj BinaryJSON) BinaryJSON {
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, path)
 	if len(result) > 0 {
 		bm.modifyPtr = &result[0].Value[0]
 		bm.modifyValue = newBj
-		return bm.rebuild(), nil
+		return bm.rebuild()
 	}
-	err := bm.doInsert(path, newBj)
-	if err != nil {
-		return BinaryJSON{}, err
+	bm.doInsert(path, newBj)
+	if bm.err != nil {
+		return BinaryJSON{}
 	}
-	return bm.rebuild(), nil
+	return bm.rebuild()
 }
 
 func (bm *binaryModifier) replace(path PathExpression, newBj BinaryJSON) BinaryJSON {
@@ -465,33 +466,33 @@ func (bm *binaryModifier) replace(path PathExpression, newBj BinaryJSON) BinaryJ
 	return bm.rebuild()
 }
 
-func (bm *binaryModifier) insert(path PathExpression, newBj BinaryJSON) (BinaryJSON, error) {
+func (bm *binaryModifier) insert(path PathExpression, newBj BinaryJSON) BinaryJSON {
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, path)
 	if len(result) > 0 {
-		return bm.bj, nil
+		return bm.bj
 	}
-	err := bm.doInsert(path, newBj)
-	if err != nil {
-		return BinaryJSON{}, err
+	bm.doInsert(path, newBj)
+	if bm.err != nil {
+		return BinaryJSON{}
 	}
-	return bm.rebuild(), nil
+	return bm.rebuild()
 }
 
 // doInsert inserts the newBj to its parent, and builds the new parent.
-func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) (err error) {
+func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) {
 	parentPath, lastLeg := path.popOneLastLeg()
 	result := make([]BinaryJSON, 0, 1)
 	result = bm.bj.extractTo(result, parentPath)
 	if len(result) == 0 {
-		return nil
+		return
 	}
 	parentBj := result[0]
 	if lastLeg.typ == pathLegIndex {
 		bm.modifyPtr = &parentBj.Value[0]
 		if parentBj.TypeCode != TypeCodeArray {
 			bm.modifyValue = buildBinaryArray([]BinaryJSON{parentBj, newBj})
-			return nil
+			return
 		}
 		elemCount := parentBj.GetElemCount()
 		elems := make([]BinaryJSON, 0, elemCount+1)
@@ -500,10 +501,10 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) (err e
 		}
 		elems = append(elems, newBj)
 		bm.modifyValue = buildBinaryArray(elems)
-		return nil
+		return
 	}
 	if parentBj.TypeCode != TypeCodeObject {
-		return nil
+		return
 	}
 	bm.modifyPtr = &parentBj.Value[0]
 	elemCount := parentBj.GetElemCount()
@@ -525,8 +526,8 @@ func (bm *binaryModifier) doInsert(path PathExpression, newBj BinaryJSON) (err e
 		keys = append(keys, insertKey)
 		elems = append(elems, newBj)
 	}
-	bm.modifyValue, err = buildBinaryObject(keys, elems)
-	return err
+	bm.modifyValue, bm.err = buildBinaryObject(keys, elems)
+	return
 }
 
 func (bm *binaryModifier) remove(path PathExpression) BinaryJSON {
@@ -784,8 +785,7 @@ func MergeBinary(bjs []BinaryJSON) BinaryJSON {
 			remain = remain[1:]
 		} else {
 			objects, remain = getAdjacentObjects(remain)
-			binaryObject := mergeBinaryObject(objects)
-			results = append(results, binaryObject)
+			results = append(results, mergeBinaryObject(objects))
 		}
 	}
 	if len(results) == 1 {
