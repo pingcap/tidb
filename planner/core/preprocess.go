@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -1024,6 +1025,10 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (p *preprocessor) stmtType() string {
+	return "SELECT" // TODO: This needs to return SELECT, SHOW, DELETE, INSERT, UPDATE etc.
+}
+
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -1054,6 +1059,22 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
+		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
+		// unless we know that the user has permissions to it, should it exist.
+		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
+		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+			if !pm.RequestVerification(activeRoles, tn.Schema.L, tn.Name.O, "", mysql.AllPrivMask) {
+				u := currentUser.Username
+				h := currentUser.Hostname
+				if currentUser.AuthHostname != "" {
+					u = currentUser.AuthUsername
+					h = currentUser.AuthHostname
+				}
+				p.err = ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
+				return
+			}
+		}
 		p.err = err
 		return
 	}

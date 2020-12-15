@@ -984,6 +984,50 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'testnotexist'@'localhost';`)
+	mustExec(c, se, `CREATE DATABASE dbexists`)
+	mustExec(c, se, `CREATE TABLE dbexists.t1 (a int)`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "testnotexist", Hostname: "localhost"}, nil, nil), IsTrue)
+
+	tests := []struct {
+		stmt     string
+		stmtType string
+	}{
+		{
+			"SELECT * FROM %s.%s",
+			"SELECT",
+		},
+		/*
+			{
+				"SHOW CREATE TABLE %s.%s",
+				"SHOW",
+			},
+			{
+				"DELETE FROM %s.%s",
+				"DELETE",
+			},
+		*/
+	}
+
+	for _, t := range tests {
+
+		_, err1 := se.Execute(context.Background(), fmt.Sprintf(t.stmt, "dbexists", "t1"))
+		_, err2 := se.Execute(context.Background(), fmt.Sprintf(t.stmt, "dbnotexists", "t1"))
+
+		// Check the error is the same whether table exists or not.
+		c.Assert(terror.ErrorEqual(err1, err2), IsTrue)
+
+		// Check it is permission denied, not not found.
+		c.Assert(err2.Error(), Equals, fmt.Sprintf("[planner:1142]%s command denied to user 'testnotexist'@'localhost' for table 't1'", t.stmtType))
+
+	}
+
+}
+
 func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 	// Create file.
 	path := "/tmp/load_data_priv.csv"
