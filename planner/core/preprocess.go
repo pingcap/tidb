@@ -110,10 +110,11 @@ const (
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is   infoschema.InfoSchema
-	ctx  sessionctx.Context
-	err  error
-	flag preprocessorFlag
+	is     infoschema.InfoSchema
+	ctx    sessionctx.Context
+	err    error
+	flag   preprocessorFlag
+	stmtTp byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -122,45 +123,66 @@ type preprocessor struct {
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.DeleteStmt:
+		p.stmtTp = TypeDelete
+	case *ast.SelectStmt:
+		p.stmtTp = TypeSelect
+	case *ast.UpdateStmt:
+		p.stmtTp = TypeUpdate
+	case *ast.InsertStmt:
+		p.stmtTp = TypeInsert
 	case *ast.CreateTableStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.stmtTp = TypeDrop
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
+		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
+		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
+		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
+		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
+		p.stmtTp = TypeAlter
 		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
+		p.stmtTp = TypeDrop
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
+		p.stmtTp = TypeShow
 		p.resolveShowStmt(node)
 	case *ast.SetOprSelectList:
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
+		p.stmtTp = TypeDelete
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
+		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
 		p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		return in, true
 	case *ast.DropBindingStmt:
+		p.stmtTp = TypeDrop
 		EraseLastSemicolon(node.OriginNode)
 		if node.HintedNode != nil {
 			EraseLastSemicolon(node.HintedNode)
@@ -173,13 +195,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
 	case *ast.RepairTableStmt:
+		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
 	case *ast.CreateSequenceStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateSequenceStmt(node)
 	case *ast.DropSequenceStmt:
+		p.stmtTp = TypeDrop
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
 	case *ast.FuncCastExpr:
@@ -205,6 +230,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			}
 		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.stmtTp = TypeCreate
 		p.checkStatisticsOpGrammar(in)
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
@@ -235,6 +261,18 @@ const (
 	TypeUpdate
 	// TypeInsert for InsertStmt.
 	TypeInsert
+	// TypeDrop for DropStmt
+	TypeDrop
+	// TypeCreate for CreateStmt
+	TypeCreate
+	// TypeAlter for AlterStmt
+	TypeAlter
+	// TypeRename for RenameStmt
+	TypeRename
+	// TypeRepair for RepairStmt
+	TypeRepair
+	// TypeShow for ShowStmt
+	TypeShow
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -1026,7 +1064,29 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) stmtType() string {
-	return "SELECT" // TODO: This needs to return SELECT, SHOW, DELETE, INSERT, UPDATE etc.
+
+	switch p.stmtTp {
+	case TypeDelete:
+		return "DELETE"
+	case TypeUpdate:
+		return "UPDATE"
+	case TypeInsert:
+		return "INSERT"
+	case TypeDrop:
+		return "DROP"
+	case TypeCreate:
+		return "CREATE"
+	case TypeAlter:
+		return "ALTER"
+	case TypeRename:
+		return "DROP, ALTER"
+	case TypeRepair:
+		return "SELECT, INSERT"
+	case TypeShow:
+		return "SHOW"
+	default:
+		return "SELECT" // matches Select and uncaught cases.
+	}
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {

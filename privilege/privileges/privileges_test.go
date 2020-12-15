@@ -1001,16 +1001,14 @@ func (s *testPrivilegeSuite) TestTableNotExistNoPermissions(c *C) {
 			"SELECT * FROM %s.%s",
 			"SELECT",
 		},
-		/*
-			{
-				"SHOW CREATE TABLE %s.%s",
-				"SHOW",
-			},
-			{
-				"DELETE FROM %s.%s",
-				"DELETE",
-			},
-		*/
+		{
+			"SHOW CREATE TABLE %s.%s",
+			"SHOW",
+		},
+		{
+			"DELETE FROM %s.%s",
+			"DELETE",
+		},
 	}
 
 	for _, t := range tests {
