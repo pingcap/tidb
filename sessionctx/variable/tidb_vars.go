@@ -352,6 +352,9 @@ const (
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -562,6 +565,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
+	DefTiDBPointGetCache                = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
