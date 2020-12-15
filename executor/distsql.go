@@ -324,6 +324,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -333,6 +338,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(e.memTracker).
+		// FIXME: add unit test to cover this case
+		SetTxnScope(txnScope).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -512,6 +519,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -521,6 +533,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(tracker).
+		// FIXME: add unit test to cover this case
+		SetTxnScope(txnScope).
 		Build()
 	if err != nil {
 		return err

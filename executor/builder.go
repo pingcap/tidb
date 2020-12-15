@@ -3351,6 +3351,11 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	txnScope := txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
@@ -3358,6 +3363,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		// FIXME: add unit test to cover this case
+		SetTxnScope(txnScope).
 		Build()
 	if err != nil {
 		return nil, err
