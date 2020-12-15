@@ -53,17 +53,10 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 	return builder
 }
 
-// SetTableRangesForTables sets "KeyRanges" for "kv.Request" by converting multiples "tableRanges"
-// to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableRangesForTables(tids []int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges = TablesRangesToKVRanges(tids, tableRanges, fb)
-	}
-	return builder
-}
-
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
+// Note this function should be deleted or at least not exported, but currently
+// br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
@@ -89,20 +82,17 @@ func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementCont
 	return builder
 }
 
-// SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRanges sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, []int64{tid}, ranges)
-	}
-	return builder
+func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
+	return builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges, fb)
 }
 
-// SetCommonHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly for multiple tables.
-func (builder *RequestBuilder) SetCommonHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, tid, ranges)
+		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges, fb)
 	}
 	return builder
 }
@@ -296,13 +286,23 @@ func (builder *RequestBuilder) verifyTxnScope() {
 	}
 }
 
-// TableRangesToKVRanges converts table ranges to "KeyRange".
-func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	return TablesRangesToKVRanges([]int64{tid}, ranges, fb)
+// TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
+func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	if !isCommonHandle {
+		return tablesRangesToKVRanges(tid, ranges, fb), nil
+	}
+	return CommonHandleRangesToKVRanges(sc, tid, ranges)
 }
 
-// TablesRangesToKVRanges converts table ranges to "KeyRange".
-func TablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+// TableRangesToKVRanges converts table ranges to "KeyRange".
+// Note this function should not be exported, but currently
+// br refers to it, so have to keep it.
+func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+	return tablesRangesToKVRanges([]int64{tid}, ranges, fb)
+}
+
+// tablesRangesToKVRanges converts table ranges to "KeyRange".
+func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tids, ranges)
 	}
