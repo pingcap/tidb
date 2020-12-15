@@ -272,9 +272,9 @@ func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts 
 }
 
 func (o *pdOracle) setLastArrivalTS(ts uint64) {
-	lastArrivalTSInterface, ok := o.lastTSMap.Load(oracle.GlobalTxnScope)
+	lastArrivalTSInterface, ok := o.lastArrivalTSMap.Load(oracle.GlobalTxnScope)
 	if !ok {
-		lastArrivalTSInterface, _ = o.lastTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
+		lastArrivalTSInterface, _ = o.lastArrivalTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
 	}
 	lastArrivalTSPointer := lastArrivalTSInterface.(*uint64)
 	for {
