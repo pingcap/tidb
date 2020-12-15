@@ -7119,6 +7119,15 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
 }
 
+func (s *testSuite) TestIssue9918(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a year)")
+	tk.MustExec("insert into t values(0)")
+	tk.MustQuery("select cast(a as char) from t").Check(testkit.Rows("0000"))
+}
+
 func (s *testSuite) Test13004(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
