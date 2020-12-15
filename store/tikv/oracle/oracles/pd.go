@@ -36,7 +36,9 @@ type pdOracle struct {
 	c pd.Client
 	// txn_scope (string) -> lastTSPointer (*uint64)
 	lastTSMap sync.Map
-	quit      chan struct{}
+	// txn_scope (string) -> lastArrivalTSPointer (*uint64)
+	lastArrivalTSMap sync.Map
+	quit             chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
@@ -76,7 +78,9 @@ func (o *pdOracle) GetTimestamp(ctx context.Context, opt *oracle.Option) (uint64
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	tsArrival := o.getArrivalTimestamp(ctx)
 	o.setLastTS(ts, opt.TxnScope)
+	o.setLastArrivalTS(tsArrival)
 	return ts, nil
 }
 
@@ -129,6 +133,10 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 			zap.Duration("cost time", dist))
 	}
 	return oracle.ComposeTS(physical, logical), nil
+}
+
+func (o *pdOracle) getArrivalTimestamp(ctx context.Context) uint64 {
+	return oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0)
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
@@ -237,7 +245,11 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 	if !ok {
 		return 0, errors.Errorf("get stale timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
-
+	tsArrival, ok := o.getLastArrivalTS()
+	if !ok {
+		return 0, errors.Errorf("get last arrival timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
+	}
+	arrivalTime := oracle.GetTimeFromTS(tsArrival)
 	physicalTime := oracle.GetTimeFromTS(ts)
 	if physicalTime.Unix() <= prevSecond {
 		return 0, errors.Errorf("get invalid prevSecond, prevSecond must less than physicalTime, "+
@@ -248,7 +260,10 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 		logutil.Logger(ctx).Warn("prevSecond may inaccurate when it less than 2",
 			zap.Int64("prev Second", prevSecond))
 	}
-	staleTime := physicalTime.Add(-time.Second * time.Duration(prevSecond))
+
+	// formula in https://github.com/pingcap/tidb/issues/21522, in my case, I will use ntp instead.
+	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
+
 	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
 }
 
@@ -259,4 +274,29 @@ func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts 
 		return 0, errors.Wrap(err, "")
 	}
 	return ts, nil
+}
+
+func (o *pdOracle) setLastArrivalTS(ts uint64) {
+	lastArrivalTSInterface, ok := o.lastTSMap.Load(oracle.GlobalTxnScope)
+	if !ok {
+		lastArrivalTSInterface, _ = o.lastTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
+	}
+	lastArrivalTSPointer := lastArrivalTSInterface.(*uint64)
+	for {
+		lastArrivalTS := atomic.LoadUint64(lastArrivalTSPointer)
+		if ts <= lastArrivalTS {
+			return
+		}
+		if atomic.CompareAndSwapUint64(lastArrivalTSPointer, lastArrivalTS, ts) {
+			return
+		}
+	}
+}
+
+func (o *pdOracle) getLastArrivalTS() (uint64, bool) {
+	lastArrivalTSInterface, ok := o.lastArrivalTSMap.Load(oracle.GlobalTxnScope)
+	if !ok {
+		return 0, false
+	}
+	return atomic.LoadUint64(lastArrivalTSInterface.(*uint64)), true
 }

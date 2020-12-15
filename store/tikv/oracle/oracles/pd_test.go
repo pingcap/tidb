@@ -15,6 +15,8 @@ package oracles
 
 import (
 	"context"
+	"github.com/tikv/pd/pkg/testutil"
+	"go.uber.org/goleak"
 	"testing"
 	"time"
 
@@ -28,15 +30,17 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-//func TestMain(m *testing.M) {
-//	goleak.VerifyTestMain(m, testutil.LeakOptions...)
-//}
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m, testutil.LeakOptions...)
+}
 
 var _ = Suite(&clientTestSuite{})
 
 type clientTestSuite struct {
-	pdClient pd.Client
-	pd       *pdOracle
+	mvccStore *mocktikv.MVCCLevelDB
+	cluster   *mocktikv.Cluster
+	pdClient  pd.Client
+	pd        *pdOracle
 }
 
 var oracleUpdateInterval time.Duration = 2000
@@ -47,14 +51,19 @@ func (s *clientTestSuite) SetUpSuite(c *C) {
 	cluster := mocktikv.NewCluster(mvccStore)
 	pdCli := mocktikv.NewPDClient(cluster)
 	o, err := NewPdOracle(pdCli, oracleUpdateInterval*time.Millisecond)
+	s.mvccStore = mvccStore
+	s.cluster = cluster
 	s.pd = o.(*pdOracle)
 	s.pdClient = pdCli
 	c.Assert(err, IsNil)
 }
 
 func (s *clientTestSuite) TearDownSuite(c *C) {
+	err := s.mvccStore.Close()
+	c.Assert(err, IsNil)
 	s.pdClient.Close()
 	s.pd.Close()
+	time.Sleep(time.Second)
 }
 
 func TestPDOracle_UntilExpired(t *testing.T) {
@@ -69,10 +78,10 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 	}
 }
 
-//func (s *clientTestSuite) TestPdOracle_GetTimestamp(c *C) {
-//	opt := oracle.Option{}
-//	_, _ = s.pd.GetTimestamp(context.TODO(),&opt)
-//}
+func (s *clientTestSuite) TestPdOracle_GetTimestamp(c *C) {
+	opt := oracle.Option{}
+	_, _ = s.pd.GetTimestamp(context.Background(), &opt)
+}
 
 func (s *clientTestSuite) TestPdOracle_GetStaleTimestamp(c *C) {
 	now := time.Now()
