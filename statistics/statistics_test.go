@@ -275,7 +275,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
-	c.Check(int(count), Equals, 9)
+	c.Check(int(count), Equals, 5)
 
 	builder := SampleBuilder{
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
