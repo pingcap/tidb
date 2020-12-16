@@ -2034,6 +2034,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := s.newAsyncCommitTestKitWithInit(c)
 	tk3 := s.newAsyncCommitTestKitWithInit(c)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
 	tk.MustExec("begin pessimistic")
@@ -2099,6 +2102,9 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values (1, 1)")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2)")
