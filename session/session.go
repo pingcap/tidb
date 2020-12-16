@@ -2295,6 +2295,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (
