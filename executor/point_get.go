@@ -15,16 +15,20 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -127,6 +131,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+	}
+	if err := e.verifyTxnScope(); err != nil {
+		return err
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
@@ -370,6 +377,32 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
+}
+
+func (e *PointGetExecutor) verifyTxnScope() error {
+	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return nil
+	}
+	var tblID int64
+	if e.partInfo != nil {
+		tblID = e.partInfo.ID
+	} else {
+		tblID = e.tblInfo.ID
+	}
+	is := infoschema.GetInfoSchema(e.ctx)
+	bundle, ok := is.RuleBundles()[placement.GroupID(tblID)]
+	if !ok {
+		return nil
+	}
+	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	if !ok {
+		return nil
+	}
+	if leaderDC != txnScope {
+		return fmt.Errorf("table %v can not be read by %v txn_scope", tblID, txnScope)
+	}
+	return nil
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
