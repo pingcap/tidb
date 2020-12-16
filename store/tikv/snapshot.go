@@ -694,7 +694,7 @@ func extractScanDetail(execDetailsV2 *pb.ExecDetailsV2) *execdetails.ScanDetail 
 		scanDetail.ProcessTime = time.Duration(execDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
 		scanDetail.WaitTime = time.Duration(execDetailsV2.TimeDetail.WaitWallTimeMs) * time.Millisecond
 	}
-	if execDetailsV2.ScanDetailV2 != nil{
+	if execDetailsV2.ScanDetailV2 != nil {
 		scanDetail.TotalKeys = int64(execDetailsV2.ScanDetailV2.TotalVersions)
 		scanDetail.ProcessedKeys = int64(execDetailsV2.ScanDetailV2.ProcessedVersions)
 		scanDetail.RocksdbDeleteSkippedCount = execDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
