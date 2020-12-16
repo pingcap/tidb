@@ -7182,3 +7182,20 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
 }
+
+func (s *testSuite) TestIssue21451(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (en enum('c', 'b', 'a'));")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
+	tk.MustQuery("select max(en) from t;").Check(testkit.Rows("c"))
+	tk.MustQuery("select min(en) from t;").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t order by en;").Check(testkit.Rows("c", "b", "a"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
+	tk.MustQuery("select max(s) from t;").Check(testkit.Rows("c"))
+	tk.MustQuery("select min(s) from t;").Check(testkit.Rows("a"))
+	tk.MustExec("drop table t")
+}

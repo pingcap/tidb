@@ -367,7 +367,6 @@ func (e *TopNExec) keyColumnsLess(i, j int) bool {
 	return e.lessRow(rowI, rowJ)
 }
 
-// fixed Issues#21451
 func (e *TopNExec) initCompareFuncs() {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
