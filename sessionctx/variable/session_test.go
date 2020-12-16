@@ -53,7 +53,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TIDBMemQuotaTopn, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
-		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
