@@ -1963,6 +1963,12 @@ func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
 	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
 		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+
+	// ignore ORDER BY
+	tk.MustQuery("select count(v1) from ttest order by v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(v1) from ttest order by v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(distinct v1) from ttest order by v2").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(distinct v1) from ttest order by count(v2)").Check(testkit.Rows("2"))
 }
 
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
@@ -2022,6 +2028,12 @@ func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk.MustQuery("select distinct sum(v1) as z from ttest group by v2 order by z+1").Check(testkit.Rows("1", "4"))
 	tk.MustQuery("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1").Check(testkit.Rows("2", "5"))
 	tk.MustQuery("select distinct v1 as z from ttest order by v1+z").Check(testkit.Rows("1", "4"))
+
+	// ignore ORDER BY
+	tk.MustQuery("select distinct count(v1) from ttest order by v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by count(v1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by sum(v2)").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
