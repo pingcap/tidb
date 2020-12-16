@@ -3051,6 +3051,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	// ignore ORDER BY when there is aggregate without GROUP BY,
+	// e.g. select count(a) from t order by b;
 	ignoreOrderBy := hasAgg && sel.GroupBy == nil
 	if sel.OrderBy != nil && !ignoreOrderBy {
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {

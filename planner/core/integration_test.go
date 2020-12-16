@@ -1956,6 +1956,8 @@ func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	// #21112
 	tk.MustExec("drop table if exists ttest")
 	tk.MustExec("create table ttest (v1 int, v2 int)")
 	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
