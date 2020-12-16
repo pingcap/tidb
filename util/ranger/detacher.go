@@ -296,6 +296,48 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if eqOrInCount > 0 {
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
+			tmpConditions := newConditions
+			for i, cond := range tmpConditions {
+				var condList []expression.Expression
+				condList = append(condList, cond)
+				var beforeLen int
+				for _, resRange := range res.Ranges {
+					if beforeLen < len(resRange.LowVal) {
+						beforeLen = len(resRange.LowVal)
+					}
+				}
+				if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+					tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, condList, newCols, newLengths)
+					if err != nil {
+						return nil, err
+					}
+					if len(tailRes.Ranges) == 0 {
+						return &DetachRangeResult{}, nil
+					}
+					if len(tailRes.AccessConds) > 0 {
+						res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
+						res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
+						newConditions = append(newConditions[:i], newConditions[i+1:]...)
+					}
+					for _, resRange := range res.Ranges {
+						if eqOrInCount < len(resRange.LowVal) {
+							eqOrInCount = len(resRange.LowVal)
+						}
+					}
+					res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
+					if res.EqOrInCount > 0 {
+						if res.EqOrInCount == res.EqCondCount {
+							res.EqCondCount = res.EqCondCount + tailRes.EqCondCount
+						}
+						res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
+					}
+
+				}
+			}
+			if eqOrInCount < len(d.cols) {
+				newCols = d.cols[eqOrInCount:]
+				newLengths = d.lengths[eqOrInCount:]
+			}
 			tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, newConditions, newCols, newLengths)
 			if err != nil {
 				return nil, err
@@ -304,7 +346,14 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
+				for i, resRange := range res.Ranges {
+					var saveRange []*Range
+					saveRange = append(saveRange, resRange)
+					if len(resRange.LowVal) == eqOrInCount {
+						saveRange = appendRanges2PointRanges(saveRange, tailRes.Ranges)
+						res.Ranges[i] = saveRange[0]
+					}
+				}
 				res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
@@ -317,6 +366,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				}
 				res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
 			}
+
 			return res, nil
 		}
 		// `eqOrInCount` must be 0 when coming here.
