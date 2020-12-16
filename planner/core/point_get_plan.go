@@ -18,6 +18,9 @@ import (
 	"fmt"
 	math2 "math"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -389,7 +392,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x, false); fp != nil {
+		logutil.BgLogger().Info("MYLOG fast plan")
+		if fp := tryPointGetPlan(ctx, x, x.LockTp != ast.SelectLockNone); fp != nil {
+			logutil.BgLogger().Info("MYLOG fast plan got fp", zap.String("fp", fmt.Sprintln(*fp)))
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -404,6 +409,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
+		logutil.BgLogger().Info("MYLOG fast plan nil fp")
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
@@ -770,16 +776,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	check = check && ctx.GetSessionVars().ConnectionID > 0 && len(tbl.Indices) > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	loadLatestIndexes := func() bool {
-		latestIndexes, err = getLatestIndexInfo(ctx, tbl.ID, 0)
-		if err != nil {
-			return false
-		}
-		if latestIndexes == nil {
-			check = false
-		}
-		return true
-	}
 
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
@@ -790,7 +786,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
-				if !loadLatestIndexes() {
+				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				if err != nil {
+					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 					return nil
 				}
 			}
@@ -809,7 +807,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 			continue
 		}
 		if check && latestIndexes == nil {
-			if !loadLatestIndexes() {
+			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			if err != nil {
+				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 				return nil
 			}
 		}

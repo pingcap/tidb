@@ -2657,6 +2657,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		gbyCols                       []expression.Expression
 	)
 
+	// set for update read to true before building result set node
+	if sel.LockTp != ast.SelectLockNone {
+		b.isForUpdateRead = true
+	}
+
 	if sel.From != nil {
 		p, err = b.buildResultSetNode(ctx, sel.From.TableRefs)
 		if err != nil {

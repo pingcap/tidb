@@ -1989,9 +1989,16 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk2.MustExec("alter table t drop index iv")
 		tk2.MustExec("update t set v = 24 where v = 23")
 		tk2.MustExec("update t set v = 41 where v = 40")
-		tk.MustExec("delete from t where v = 24") // fast path
+		// fast path
+		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
+		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		tk.MustExec("delete from t where v = 24")
 		tk.CheckExecResult(1, 0)
-		tk.MustExec("delete from t where v >= 41 and v < 50") // common path
+		// common path
+		tk.MustQuery("select * from t where v >= 41 and v < 50").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v >= 41 and v < 50 for update").Check(testkit.Rows("4 41 400"))
+		tk.MustExec("delete from t where v >= 41 and v < 50")
 		tk.CheckExecResult(1, 0)
 		tk.MustExec("commit")
 		tk.MustQuery("select * from t").Check(testkit.Rows("3 32 300", "5 11 100", "6 60 600"))

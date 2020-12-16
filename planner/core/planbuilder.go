@@ -568,9 +568,6 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
-	if b.ctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(ctx).Info("MYLOG Build", zap.String("type", fmt.Sprintf("%T", node)))
-	}
 	b.optFlag |= flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
@@ -828,14 +825,14 @@ func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPat
 	return tiFlashPath
 }
 
-func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, error) {
+func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
 	dom := domain.GetDomain(ctx)
 	if dom == nil {
-		return nil, errors.New("domain not found for ctx")
+		return nil, false, errors.New("domain not found for ctx")
 	}
 	is := dom.InfoSchema()
 	if is.SchemaMetaVersion() == startVer {
-		return nil, nil
+		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
 	latestTbl, exist := is.TableByID(id)
@@ -845,10 +842,10 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 			latestIndexes[index.ID] = index
 		}
 	}
-	return latestIndexes, nil
+	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, startVer int64) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, ocheck bool, startVer int64) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -862,24 +859,14 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 
-	check = check && ctx.GetSessionVars().ConnectionID > 0 && len(tblInfo.Indices) > 0
+	check := ocheck && ctx.GetSessionVars().ConnectionID > 0 && len(tblInfo.Indices) > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	loadLatestIndexes := func() error {
-		latestIndexes, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
-		if err != nil {
-			return err
-		}
-		if latestIndexes == nil {
-			check = false
-		}
-		return nil
-	}
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			if check && latestIndexes == nil {
-				err = loadLatestIndexes()
+				latestIndexes, check, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
 					return nil, err
 				}
@@ -1024,7 +1011,6 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) 
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
-	b.isForUpdateRead = true
 	return selectLock
 }
 
@@ -1281,8 +1267,8 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	check := b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	if b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0 {
-		latestIndexes, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
+	if check {
+		latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1294,14 +1280,21 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
-			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
+			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
 				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
 			continue
 		}
 		if check {
 			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
-				logutil.BgLogger().Info("build physical index lookup reader, the index isn't public in forUpdateRead",
-					zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
+				forUpdateState := model.StateNone
+				if ok {
+					forUpdateState = latestIndex.State
+				}
+				logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public in forUpdateRead",
+					zap.String("index", idxInfo.Name.O),
+					zap.Stringer("state", idxInfo.State),
+					zap.Stringer("forUpdateRead state", forUpdateState),
+					zap.String("table", tblInfo.Name.O))
 				continue
 			}
 		}
