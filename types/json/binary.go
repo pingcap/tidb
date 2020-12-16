@@ -402,7 +402,7 @@ func ParseBinaryFromString(s string) (bj BinaryJSON, err error) {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 		return
 	}
-	if err = bj.UnmarshalJSON(data); err != nil {
+	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) {
 		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return
@@ -653,6 +653,9 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		keyEntryOff := keyEntryBegin + i*keyEntrySize
 		keyOff := len(buf) - docOff
 		keyLen := uint32(len(field.key))
+		if keyLen > math.MaxUint16 {
+			return nil, ErrJSONObjectKeyTooLong
+		}
 		endian.PutUint32(buf[keyEntryOff:], uint32(keyOff))
 		endian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(keyLen))
 		buf = append(buf, field.key...)
