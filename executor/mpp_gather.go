@@ -54,8 +54,9 @@ type MPPGather struct {
 }
 
 func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *plannercore.Fragment) ([]*kv.MPPTask, error) {
+	isCommonHandle := p.TableScan.Table.IsCommonHandle
 	if p.TableScan.Table.GetPartitionInfo() == nil {
-		return e.constructSinglePhysicalTable(ctx, p.TableScan.Table.ID, p.TableScan.Ranges)
+		return e.constructSinglePhysicalTable(ctx, p.TableScan.Table.ID, isCommonHandle, p.TableScan.Ranges)
 	}
 	tmp, _ := e.is.TableByID(p.TableScan.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
@@ -65,7 +66,7 @@ func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *plannercore.Fr
 	}
 	allTasks := make([]*kv.MPPTask, 0)
 	for _, part := range partitions {
-		partTasks, err := e.constructSinglePhysicalTable(ctx, part.GetPhysicalID(), p.TableScan.Ranges)
+		partTasks, err := e.constructSinglePhysicalTable(ctx, part.GetPhysicalID(), isCommonHandle, p.TableScan.Ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -75,8 +76,11 @@ func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *plannercore.Fr
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.
-func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
-	kvRanges := distsql.TableRangesToKVRanges(tableID, ranges, nil)
+func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID int64, isCommonHandle bool, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, isCommonHandle, ranges, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
 	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
 	if err != nil {

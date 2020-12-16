@@ -669,6 +669,16 @@ func compareInt64(x int64, y int64) int {
 	return 1
 }
 
+func compareFloat64(x float64, y float64) int {
+	if x < y {
+		return -1
+	} else if x == y {
+		return 0
+	}
+
+	return 1
+}
+
 func compareUint64(x uint64, y uint64) int {
 	if x < y {
 		return -1
@@ -734,7 +744,7 @@ func CompareBinary(left, right BinaryJSON) int {
 			case TypeCodeUint64:
 				cmp = compareFloat64Uint64(left.GetFloat64(), right.GetUint64())
 			case TypeCodeFloat64:
-				cmp = compareFloat64PrecisionLoss(left.GetFloat64(), right.GetFloat64())
+				cmp = compareFloat64(left.GetFloat64(), right.GetFloat64())
 			}
 		case TypeCodeString:
 			cmp = bytes.Compare(left.GetString(), right.GetString())
