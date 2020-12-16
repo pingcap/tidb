@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -1311,7 +1314,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify ui decimal(20, 10)")
 	tk.MustExec("alter table t modify f64 decimal(20, 10)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1".
-	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", mysql.ErrBadNumber)
 	tk.MustQuery("select * from t").Check(testkit.Rows("0.0000000000 0.0000000000 0.0000000000 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\""))
 
 	// double
@@ -1540,4 +1543,62 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	// MySQL will get "ERROR 1366 (HY000): Incorrect integer value: '"2020"' for column 'str' at row 1".
 	tk.MustExec("alter table t modify str year")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0 0 2001 0 2020 1991 2009 2020"))
+}
+
+// TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
+func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v varchar(10))")
+	tk.MustExec("insert into t values (1, \"123\");")
+	tk.MustExec("alter table t modify column v varchar(5);")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+
+	h := helper.NewHelper(s.store.(tikv.Storage))
+	data, err := h.GetMvccByEncodedKey(encodedKey)
+	c.Assert(err, IsNil)
+	// The new format will start with CodecVer = 128 (0x80).
+	c.Assert(data.Info.Writes[0].ShortValue, DeepEquals, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33})
+	tk.MustExec("drop table if exists t")
+}
+
+// Close issue #17530
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int4)")
+	_, err := tk.Exec("alter table t MODIFY COLUMN a tinyint(11)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 11, and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(20))")
+	tk.MustExec("insert into t values (12345678901234567890)")
+	_, err = tk.Exec("alter table t modify column a bigint")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type bigint(20) not match origin decimal(20,0), and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (a bigint(2))")
+	tk.MustExec("insert into a values(123456),(789123)")
+	_, err = tk.Exec("alter table a modify column a tinyint")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 20, and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t ( id int not null primary key auto_increment, token varchar(512) NOT NULL DEFAULT '', index (token))")
+	tk.MustExec("INSERT INTO t VALUES (NULL, 'aa')")
+	_, err = tk.Exec("ALTER TABLE t CHANGE COLUMN token token varchar(255) DEFAULT '' NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
 }

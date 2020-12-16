@@ -88,14 +88,13 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
 	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
-	c.Assert(vars.MemQuotaStatistics, Equals, config.GetGlobalConfig().MemQuotaStatistics)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
 	c.Assert(vars.MemQuotaTopn, Equals, int64(DefTiDBMemQuotaTopn))
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
-	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.MemQuotaApplyCache, Equals, int64(DefTiDBMemQuotaApplyCache))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
@@ -105,6 +104,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
+	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -172,8 +172,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
 		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
-		//TODO: Check it out and reopen this case.
-		//{"SYSTEM", "Local", false, 0},
+		// TODO: Check it out and reopen this case.
+		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
 		{"-6:00", "", true, 6 * time.Hour, nil},
 		{"+14:00", "", true, -14 * time.Hour, nil},
@@ -488,6 +488,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
+
+	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, types.NewStringDatum("3"))
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_analyze_version' can't be set to the value of '3'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {

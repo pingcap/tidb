@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -145,6 +146,13 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
@@ -363,7 +371,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"
@@ -998,6 +1006,29 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	// 255 is the collation id of mysql client 8 default collation_connection
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	c.Assert(err, IsNil)
+	testCase := []struct {
+		variable string
+		except   string
+	}{
+		{"collation_connection", "utf8mb4_bin"},
+		{"character_set_connection", "utf8mb4"},
+		{"character_set_client", "utf8mb4"},
+	}
+
+	for _, t := range testCase {
+		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+		c.Assert(b, IsTrue)
+		c.Assert(sVars, Equals, t.except)
+	}
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
