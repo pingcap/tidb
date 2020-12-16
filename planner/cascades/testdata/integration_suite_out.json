@@ -482,11 +482,10 @@
       {
         "SQL": "select approx_percentile(a, 50) from t order by b",
         "Plan": [
-          "Projection_8 1.00 root  Column#3",
-          "└─Sort_14 1.00 root  test.t.b",
-          "  └─HashAgg_11 1.00 root  funcs:approx_percentile(test.t.a, 50)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─TableReader_12 10000.00 root  data:TableFullScan_13",
-          "      └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_7 1.00 root  Column#3",
+          "└─HashAgg_8 1.00 root  funcs:approx_percentile(test.t.a, 50)->Column#3",
+          "  └─TableReader_9 10000.00 root  data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "2"
