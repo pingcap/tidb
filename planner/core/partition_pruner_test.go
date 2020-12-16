@@ -192,32 +192,35 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 		Pruner []testTablePartitionInfo
 	}
 	var output []struct {
-		SQL         string
-		Result      []string
-		Plan        []string
-		Pruner      []testTablePartitionInfo
-		IndexPlan   []string
-		IndexPruner []testTablePartitionInfo
+		SQL       string
+		Result    []string
+		Plan      []string
+		IndexPlan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	valid := false
 	for i, tt := range input {
+		// Test for table without index.
+		plan := tk.MustQuery("explain " + tt.SQL)
+		planTree := s.testData.ConvertRowsToStrings(plan.Rows())
+		// Test for table with index.
+		indexPlan := tk1.MustQuery("explain " + tt.SQL)
+		indexPlanTree := s.testData.ConvertRowsToStrings(indexPlan.Rows())
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Rows())
 			// Test for table without index.
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt.SQL).Rows())
-			output[i].Pruner = s.getPartitionInfoFromPlan(output[i].Plan)
+			output[i].Plan = planTree
 			// Test for table with index.
-			output[i].IndexPlan = s.testData.ConvertRowsToStrings(tk1.MustQuery("explain " + tt.SQL).Rows())
-			output[i].IndexPruner = s.getPartitionInfoFromPlan(output[i].IndexPlan)
+			output[i].IndexPlan = indexPlanTree
 		})
 		// compare the plan.
-		tk.MustQuery("explain " + tt.SQL).Check(testkit.Rows(output[i].Plan...))
+		plan.Check(testkit.Rows(output[i].Plan...))
+		indexPlan.Check(testkit.Rows(output[i].IndexPlan...))
 
 		// compare the pruner information.
-		s.checkPrunePartitionInfoEqual(c, tt.SQL, tt.Pruner, output[i].Pruner)
-		s.checkPrunePartitionInfoEqual(c, tt.SQL, tt.Pruner, output[i].IndexPruner)
+		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, planTree)
+		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, indexPlanTree)
 
 		// compare the result.
 		result := tk.MustQuery(tt.SQL)
@@ -239,8 +242,9 @@ type testTablePartitionInfo struct {
 	Partitions string
 }
 
-func (s *testPartitionPruneSuit) checkPrunePartitionInfoEqual(c *C, query string, infos1, infos2 []testTablePartitionInfo) {
-	comment := Commentf("%v != %v, the query is: %v", infos1, infos2, query)
+func (s *testPartitionPruneSuit) checkPrunePartitionInfo(c *C, query string, infos1 []testTablePartitionInfo, plan []string) {
+	infos2 := s.getPartitionInfoFromPlan(plan)
+	comment := Commentf("%v != %v, the query is: %v, the plan is:\n%v", infos1, infos2, query, strings.Join(plan, "\n"))
 	c.Assert(len(infos1), Equals, len(infos2), comment)
 	for i, info1 := range infos1 {
 		info2 := infos2[i]
