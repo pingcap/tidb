@@ -338,21 +338,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			}
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
-			scanDetail := &execdetails.ScanDetail{}
-			if batchGetResp.ExecDetailsV2.TimeDetail != nil {
-				scanDetail.WaitTime = time.Duration(batchGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
-				scanDetail.ProcessTime = time.Duration(batchGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
-			}
-			if batchGetResp.ExecDetailsV2.ScanDetailV2 != nil {
-				scanDetail.TotalKeys = int64(batchGetResp.ExecDetailsV2.ScanDetailV2.TotalVersions)
-				scanDetail.ProcessedKeys = int64(batchGetResp.ExecDetailsV2.ScanDetailV2.ProcessedVersions)
-				scanDetail.RocksdbDeleteSkippedCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
-				scanDetail.RocksdbKeySkippedCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
-				scanDetail.RocksdbBlockCacheHitCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
-				scanDetail.RocksdbBlockReadCount = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadCount
-				scanDetail.RocksdbBlockReadByte = batchGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
-			}
 			if s.mu.stats != nil {
+				scanDetail := extractScanDetail(batchGetResp.ExecDetailsV2)
 				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
@@ -480,21 +467,8 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
-			scanDetail := &execdetails.ScanDetail{}
-			if cmdGetResp.ExecDetailsV2.TimeDetail != nil {
-				scanDetail.WaitTime = time.Duration(cmdGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
-				scanDetail.ProcessTime = time.Duration(cmdGetResp.ExecDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
-			}
-			if cmdGetResp.ExecDetailsV2.ScanDetailV2 != nil {
-				scanDetail.TotalKeys = int64(cmdGetResp.ExecDetailsV2.ScanDetailV2.TotalVersions)
-				scanDetail.ProcessedKeys = int64(cmdGetResp.ExecDetailsV2.ScanDetailV2.ProcessedVersions)
-				scanDetail.RocksdbDeleteSkippedCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
-				scanDetail.RocksdbKeySkippedCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
-				scanDetail.RocksdbBlockCacheHitCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
-				scanDetail.RocksdbBlockReadCount = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadCount
-				scanDetail.RocksdbBlockReadByte = cmdGetResp.ExecDetailsV2.ScanDetailV2.RocksdbBlockReadByte
-			}
 			if s.mu.stats != nil {
+				scanDetail := extractScanDetail(cmdGetResp.ExecDetailsV2)
 				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
@@ -712,6 +686,24 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	if err4 != nil {
 		logutil.BgLogger().Error("error", zap.Error(err4))
 	}
+}
+
+func extractScanDetail(execDetailsV2 *pb.ExecDetailsV2) *execdetails.ScanDetail {
+	scanDetail := &execdetails.ScanDetail{}
+	if execDetailsV2.TimeDetail != nil {
+		scanDetail.ProcessTime = time.Duration(execDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
+		scanDetail.WaitTime = time.Duration(execDetailsV2.TimeDetail.WaitWallTimeMs) * time.Millisecond
+	}
+	if execDetailsV2.ScanDetailV2 != nil{
+		scanDetail.TotalKeys = int64(execDetailsV2.ScanDetailV2.TotalVersions)
+		scanDetail.ProcessedKeys = int64(execDetailsV2.ScanDetailV2.ProcessedVersions)
+		scanDetail.RocksdbDeleteSkippedCount = execDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
+		scanDetail.RocksdbKeySkippedCount = execDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
+		scanDetail.RocksdbBlockCacheHitCount = execDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
+		scanDetail.RocksdbBlockReadCount = execDetailsV2.ScanDetailV2.RocksdbBlockReadCount
+		scanDetail.RocksdbBlockReadByte = execDetailsV2.ScanDetailV2.RocksdbBlockReadByte
+	}
+	return scanDetail
 }
 
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
