@@ -1992,7 +1992,13 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		// fast path
 		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
 		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 23 for update").Check(testkit.Rows())
 		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		// test index look up
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id for update").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id for update").Check(testkit.Rows("2 24 200 2 24 200"))
 		tk.MustExec("delete from t where v = 24")
 		tk.CheckExecResult(1, 0)
 		// common path

@@ -18,9 +18,6 @@ import (
 	"fmt"
 	math2 "math"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -39,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -392,9 +391,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		logutil.BgLogger().Info("MYLOG fast plan")
 		if fp := tryPointGetPlan(ctx, x, x.LockTp != ast.SelectLockNone); fp != nil {
-			logutil.BgLogger().Info("MYLOG fast plan got fp", zap.String("fp", fmt.Sprintln(*fp)))
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -409,7 +406,6 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		logutil.BgLogger().Info("MYLOG fast plan nil fp")
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
@@ -773,7 +769,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return p
 	}
 
-	check = check && ctx.GetSessionVars().ConnectionID > 0 && len(tbl.Indices) > 0
+	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
 
