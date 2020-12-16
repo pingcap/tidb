@@ -3051,7 +3051,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if sel.OrderBy != nil {
+	ignoreOrderBy := hasAgg && sel.GroupBy == nil
+	if sel.OrderBy != nil && !ignoreOrderBy {
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 		} else {
