@@ -2430,10 +2430,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableAlterPartition:
-			if ctx.GetSessionVars().EnableAlterPartitionPlacement {
+			if ctx.GetSessionVars().EnableAlterPlacement {
 				err = d.AlterTablePartition(ctx, ident, spec)
 			} else {
-				err = errors.New("alter table partition alter partition is switched off by tidb_enable_alter_partition_placement")
+				err = errors.New("alter table partition alter partition is switched off by tidb_enable_alter_placement")
 			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...

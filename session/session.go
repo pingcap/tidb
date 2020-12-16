@@ -2286,7 +2286,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableChangeMultiSchema,
 	variable.TiDBEnablePointGetCache,
-	variable.TiDBEnableAlterPartitionPlacement,
+	variable.TiDBEnableAlterPlacement,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemQuotaApplyCache,
 	variable.TiDBEnableParallelApply,
