@@ -498,7 +498,7 @@ const (
 
 	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
 	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
-  
+
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )

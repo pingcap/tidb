@@ -776,7 +776,7 @@ type SessionVars struct {
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
-  
+
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 }
