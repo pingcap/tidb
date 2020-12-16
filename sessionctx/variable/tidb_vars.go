@@ -611,7 +611,7 @@ const (
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
-	DefTiDBEnableIndexMergeJoin         = true
+	DefTiDBEnableIndexMergeJoin         = false
 )
 
 // Process global variables.
