@@ -43,7 +43,10 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
-	builder.verifyTxnScope()
+	err := builder.verifyTxnScope()
+	if err != nil {
+		builder.err = err
+	}
 	return &builder.Request, builder.err
 }
 
@@ -232,7 +235,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 
 // SetTxnScope sets "TxnScope" flag for "kv.Request".
 func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
-	builder.TxnScope = scope
+	builder.Request.TxnScope = scope
 	return builder
 }
 
@@ -266,7 +269,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 	return builder
 }
 
-func (builder *RequestBuilder) verifyTxnScope() {
+func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.Request.TxnScope == "" {
 		builder.Request.TxnScope = oracle.GlobalTxnScope
 	}
@@ -279,8 +282,7 @@ func (builder *RequestBuilder) verifyTxnScope() {
 		if tableID > 0 {
 			visitTableID[tableID] = struct{}{}
 		} else {
-			builder.err = fmt.Errorf("requestBuilder can't decode tableID from keyRange")
-			return
+			return fmt.Errorf("requestBuilder can't decode tableID from keyRange")
 		}
 	}
 
@@ -294,10 +296,10 @@ func (builder *RequestBuilder) verifyTxnScope() {
 			continue
 		}
 		if dc != builder.TxnScope {
-			builder.err = fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.Request.TxnScope)
-			return
+			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.Request.TxnScope)
 		}
 	}
+	return nil
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
