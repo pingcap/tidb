@@ -297,15 +297,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
 			tmpConditions := newConditions
+			// For cases like `a = 1 and ((b = 1 and c = 1) or (b = 3)) and d = 3` on index (a,b,c),
+			// or condition cases need to be handled separately to take advantage of more index columns.
 			for i, cond := range tmpConditions {
 				var condList []expression.Expression
 				condList = append(condList, cond)
-				var beforeLen int
-				for _, resRange := range res.Ranges {
-					if beforeLen < len(resRange.LowVal) {
-						beforeLen = len(resRange.LowVal)
-					}
-				}
 				if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 					tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, condList, newCols, newLengths)
 					if err != nil {
