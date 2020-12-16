@@ -355,7 +355,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	return res, nil
 }
 
-// excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)`
+// excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)` to `i-1]` if `i` is integer.
+// For example, if p is `(3`, i.e., point { value: int(3), excl: true, start: true }, it is equal to `[4`, i.e., point { value: int(4), excl: false, start: true }.
+// Similarly, if p is `8)`, i.e., point { value: int(8), excl: true, start: false}, it is equal to `7]`, i.e., point { value: int(7), excl: false, start: false }.
 func excludeToIncludeForIntPoint(p point) point {
 	if !p.excl {
 		return p
@@ -373,8 +375,7 @@ func excludeToIncludeForIntPoint(p point) point {
 				p.excl = false
 			}
 		}
-	}
-	if p.value.Kind() == types.KindUint64 {
+	} else if p.value.Kind() == types.KindUint64 {
 		val := p.value.GetUint64()
 		if p.start {
 			if val != math.MaxUint64 {

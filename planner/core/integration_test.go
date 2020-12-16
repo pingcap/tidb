@@ -2073,6 +2073,12 @@ func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c int, index(a, b, c))")
 
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a float, b float, index(a, b))")
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a char(10), b char(10), c char(10), index(a, b, c))")
+
 	var input []string
 	var output []struct {
 		SQL  string
