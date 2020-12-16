@@ -68,7 +68,7 @@ const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
 	// Def TableColumnCountLimit is limit of the number of columns in a table
-	DefTableColumnCountLimit = 512
+	DefTableColumnCountLimit = 1017
 	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 	// DefTxnScope is the default value for TxnScope
@@ -652,7 +652,7 @@ var defaultConf = Config{
 	CheckMb4ValueInUTF8:          true,
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
-	TableColumnCountLimit:        512,
+	TableColumnCountLimit:        1017,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
