@@ -3555,6 +3555,7 @@ func (s *testSuite4) TestListPartitionWithAutoIncrement(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	// Test for generated column with bigint type.
 	tableDefs := []string{
 		// Test for virtual generated column for list partition
@@ -3568,7 +3569,6 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 	}
 	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 		tk.MustExec(tbl)
 		// Test for insert
 		tk.MustExec("insert into t (a) values (1),(3),(5),(7),(9)")
@@ -3600,6 +3600,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	// Test for generated column with year type.
 	tableDefs := []string{
 		// Test for virtual generated column for list partition
@@ -3609,7 +3610,6 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 	}
 	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 		tk.MustExec(tbl)
 		// Test for insert
 		tk.MustExec("insert into t (a) values (1),(3),(5),(7),(9)")
@@ -3668,6 +3668,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tableDefs := []string{
 		// Test for virtual generated column for datetime type in list partition.
 		`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
@@ -3696,7 +3697,6 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 	}
 	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 		tk.MustExec(tbl)
 		tk.MustExec("insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40')")
 		tk.MustQuery("select a from t partition (p0)").Check(testkit.Rows("2020-09-28 17:03:38"))
@@ -3710,6 +3710,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	// Test for generated column with substr expression.
 	tableDefs := []string{
 		// Test for virtual generated column
@@ -3719,7 +3720,6 @@ func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 	}
 	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 		tk.MustExec(tbl)
 		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
 		tk.MustQuery("select a from t partition (p0) order by a").Check(testkit.Rows("aaa", "abc", "acd"))
@@ -3734,6 +3734,7 @@ func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	// Test generated column with global index
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()
@@ -3748,7 +3749,6 @@ func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
 	}
 	for _, tbl := range tableDefs {
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 		tk.MustExec(tbl)
 		tk.MustExec("alter table t add unique index (a)")
 		tk.MustExec("insert into t (a) values  ('aaa'),('abc'),('acd')")
