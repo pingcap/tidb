@@ -1044,6 +1044,11 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+<<<<<<< HEAD
+=======
+	ErrInvalidTableSample                  = 8128
+	ErrJSONObjectKeyTooLong                = 8129
+>>>>>>> 608cc51d2... types: report error for json object with key length >= 65536 (#21779)
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200

@@ -1081,6 +1081,16 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
+<<<<<<< HEAD
+=======
+	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
+
+	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+
+	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
+
+>>>>>>> 608cc51d2... types: report error for json object with key length >= 65536 (#21779)
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:      mysql.Message("TiKV server timeout", nil),
