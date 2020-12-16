@@ -546,10 +546,14 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	tp := b.args[0].GetType()
+	if !mysql.HasUnsignedFlag(tp.Flag) {
 		res = strconv.FormatInt(val, 10)
 	} else {
 		res = strconv.FormatUint(uint64(val), 10)
+	}
+	if tp.Tp == mysql.TypeYear && res == "0" {
+		res = "0000"
 	}
 	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
@@ -1184,10 +1188,6 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
-	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
-		return 0, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val, true)
@@ -1870,6 +1870,10 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
+	}
+	// because we can't control the length of cast(float as char) for now, we can't determine the argLen
+	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
+		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)

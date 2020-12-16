@@ -1367,6 +1367,13 @@ func doDMLWorks(s Session) {
 					vVal = string(variable.DynamicOnly)
 				}
 			}
+			if v.Name == variable.TiDBEnableChangeMultiSchema {
+				vVal = variable.BoolOff
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					// enable change multi schema in test case for compatibility with old cases.
+					vVal = variable.BoolOn
+				}
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}

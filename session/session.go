@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -439,6 +440,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsReadOnly() {
 		return nil
 	}
+	err := s.checkPlacementPolicyBeforeCommit()
+	if err != nil {
+		return err
+	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
@@ -497,10 +502,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		return nil
 	}
 	var err error
-	err = s.checkPlacementPolicyBeforeCommit()
-	if err != nil {
-		return err
-	}
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -806,12 +807,18 @@ func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField
 }
 
 // ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
-func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
 		return nil, nil, err
 	}
+	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
@@ -825,13 +832,31 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 	}
 	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 	defer func() {
-		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-			s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
 		}
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-		s.sysSessionPool().Put(tmp)
 	}()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			}
+			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
@@ -844,22 +869,6 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 // If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 // Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
-
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
-	}
-	se := tmp.(*session)
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	defer s.sysSessionPool().Put(tmp)
-	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
 	txn, err := s.Txn(false)
 	if err != nil {
@@ -871,27 +880,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	if s.sessionVars.SnapshotTS != 0 {
 		snapshot = s.sessionVars.SnapshotTS
 	}
-	// Set snapshot.
-	if snapshot != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
-	}
-	return execRestrictedSQL(ctx, se, sql)
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql, sqlexec.ExecOptionWithSnapshot(snapshot))
 }
 
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
@@ -1647,6 +1636,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
+		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1654,10 +1644,11 @@ func (s *session) NewTxn(ctx context.Context) error {
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
-			zap.Uint64("txnStartTS", txnID))
+			zap.Uint64("txnStartTS", txnID),
+			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -1673,7 +1664,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	return nil
 }
@@ -2232,6 +2222,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.DefaultWeekFormat,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,
@@ -2296,6 +2287,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2305,12 +2297,18 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
+	variable.TiDBAnalyzeVersion,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (
@@ -2393,7 +2391,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2436,7 +2433,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(startTS)
+	txn, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 	if err != nil {
 		return err
 	}
@@ -2495,7 +2492,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query = query + vars.PreparedParams.String()
+			query += vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
@@ -2532,13 +2529,15 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
+	// Get the txnScope of the transaction we're going to commit.
+	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
 	if txnScope == "" {
-		txnScope = config.DefTxnScope
+		txnScope = oracle.GlobalTxnScope
 	}
-	if txnScope != config.DefTxnScope {
+	if txnScope != oracle.GlobalTxnScope {
 		is := infoschema.GetInfoSchema(s)
-		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
+		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
+		for physicalTableID := range deltaMap {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
@@ -2556,6 +2555,20 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
 				break
+			}
+			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
+			// if the physicalTableID belongs to a Table.
+			partitionID := physicalTableID
+			tbl, _, partitionDefInfo := is.FindTableByPartitionID(partitionID)
+			if tbl != nil {
+				tblInfo := tbl.Meta()
+				state := tblInfo.Partition.GetStateByID(partitionID)
+				if state == model.StateGlobalTxnOnly {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("Partition %s of table %s can not be written by local transactions when its placement policy is being altered",
+							tblInfo.Name, partitionDefInfo.Name))
+					break
+				}
 			}
 		}
 	}

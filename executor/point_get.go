@@ -338,31 +338,35 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return nil, err
 		}
 		// key does not exist in mem buffer, check the lock cache
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return val, nil
+		if e.lock {
+			var ok bool
+			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok {
+				return val, nil
+			}
 		}
 		// fallthrough to snapshot get.
 	}
 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
-		cacheDB := e.ctx.GetStore().GetMemCache()
-		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
-		// key does not exist then get from snapshot and set to cache
-		if val == nil {
-			val, err = e.snapshot.Get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
+		if e.ctx.GetSessionVars().EnablePointGetCache {
+			cacheDB := e.ctx.GetStore().GetMemCache()
+			val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+			// key does not exist then get from snapshot and set to cache
+			if val == nil {
+				val, err = e.snapshot.Get(ctx, key)
+				if err != nil {
+					return nil, err
+				}
 
-			err := cacheDB.Set(e.tblInfo.ID, key, val)
-			if err != nil {
-				return nil, err
+				err = cacheDB.Set(e.tblInfo.ID, key, val)
+				if err != nil {
+					return nil, err
+				}
 			}
+			return val, nil
 		}
-		return val, nil
 	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
@@ -464,20 +468,20 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
 			if col.ID == hid {
-				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

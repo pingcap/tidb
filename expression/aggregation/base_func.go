@@ -305,7 +305,7 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 }
 
 func (a *baseFuncDesc) typeInfer4PopOrSamp(ctx sessionctx.Context) {
-	//var_pop/std/var_samp/stddev_samp's return value type is double
+	// var_pop/std/var_samp/stddev_samp's return value type is double
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 }
