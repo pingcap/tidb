@@ -355,6 +355,9 @@ const (
 	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
+	// TiDBEnableAlterPartitionPlacement is used to control whether to enable alter table partition.
+	TiDBEnableAlterPartitionPlacement = "tidb_enable_alter_partition_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -569,6 +572,7 @@ const (
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
 	DefTiDBPointGetCache                = false
+	DefTiDBAlterPartitionPlacement      = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
