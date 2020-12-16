@@ -274,7 +274,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		builder.Request.TxnScope = oracle.GlobalTxnScope
 	}
 	if builder.Request.TxnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
-		return
+		return nil
 	}
 	visitTableID := make(map[int64]struct{})
 	for _, keyRange := range builder.Request.KeyRanges {
