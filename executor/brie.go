@@ -41,6 +41,10 @@ import (
 	importglue "github.com/pingcap/tidb-lightning/lightning/glue"
 	importlog "github.com/pingcap/tidb-lightning/lightning/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	pd "github.com/tikv/pd/client"
+	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -54,8 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
 )
 
 const (
@@ -83,7 +85,7 @@ type brieTaskProgress struct {
 	// We didn't keep it consistent with below two numeric fields. That is to say, user may see
 	// Import 99% -> Import 100% -> Post Process 100% , where 100% always means "Post Process"
 	// To avoid concurrency problems, always use getter/setter
-	cmd atomic.Value
+	cmd atomic2.String
 
 	// the percentage of completeness is `(100%) * current / total`.
 	// in order to keep those two fields consistent, we must acquire mutex firstly.
@@ -95,11 +97,7 @@ type brieTaskProgress struct {
 }
 
 func (p *brieTaskProgress) getCmd() string {
-	inner := p.cmd.Load()
-	if inner == nil {
-		return ""
-	}
-	return inner.(string)
+	return p.cmd.Load()
 }
 
 func (p *brieTaskProgress) setCmd(c string) {
@@ -124,6 +122,7 @@ func (p *brieTaskProgress) Close() {
 func (p *brieTaskProgress) getFraction() float64 {
 	p.lock.Lock()
 	if p.lock.total == 0 {
+		p.lock.Unlock()
 		return 0
 	}
 	result := 100 * float64(p.lock.current) / float64(p.lock.total)
@@ -145,7 +144,7 @@ type brieTaskInfo struct {
 	finishTime  atomic.Value
 	backupTS    uint64
 	archiveSize uint64
-	message     atomic.Value
+	message     atomic2.String
 }
 
 func (b *brieTaskInfo) getExecTime() types.Time {
@@ -189,11 +188,7 @@ func (b *brieTaskInfo) setArchiveSize(s uint64) {
 }
 
 func (b *brieTaskInfo) getMessage() string {
-	inner := b.message.Load()
-	if inner == nil {
-		return ""
-	}
-	return inner.(string)
+	return b.message.Load()
 }
 
 func (b *brieTaskInfo) SetMessage(m string) {
@@ -232,7 +227,7 @@ func (bq *brieQueue) registerTask(
 	item.progress.lock.total = 1
 	item.progress.setCmd(cmdWait)
 
-	// use base64 encode to avoid SQL injection
+	// use format.OutputFormat() to avoid SQL injection
 	sql := fmt.Sprintf(`INSERT INTO mysql.brie_tasks (
 				kind, origin_sql, queue_time, data_path, conn_id, status, progress, cancel
 			) VALUES ('%s', '%s', '%s', '%s', %d, '%s', %f, %d);`,
@@ -568,6 +563,7 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	tidbCfg := config.GetGlobalConfig()
 	if tidbCfg.Store != "tikv" {
+		// TODO: when support choose backend for IMPORT, allow mocktikv for tidb backend
 		b.err = ErrBRIERequireTiKV.GenWithStackByArgs(s.Kind, tidbCfg.Store)
 		return nil
 	}
