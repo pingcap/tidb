@@ -1181,6 +1181,10 @@ func BuildFinalModeAggregation(
 			finalAggFunc.HasDistinct = true
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
+			if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount {
+				// TODO: only work when the count() can be pushed down.
+				finalAggFunc.Name = ast.AggFuncSum
+			}
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				ft := types.NewFieldType(mysql.TypeLonglong)
 				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
@@ -1467,14 +1471,50 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
-		if partialAgg != nil {
-			partialAgg.SetChildren(mpp.p)
-			mpp.p = partialAgg
+		// TODO : && t.count() > float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount)
+		if p.SCtx().GetSessionVars().AllowMPPExecution && p.tp == plancodec.TypeHashAgg && len(p.GetChildReqProps(0).PartitionCols) > 0 {
+			if p.GetChildReqProps(0).PartitionTp == property.AnyType {
+				/// 1-phase agg: when the partition columns can be satisfied
+				/// only push down the original agg
+				p.self.SetChildren(mpp.p)
+				mpp.p = p.self
+				mpp.addCost(p.GetCost(inputRows, false))
+				return mpp
+			} else if mpp.partTp == property.HashType {
+				/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
+				// TODO: add collected partition agg
+				partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+				if partialAgg == nil {
+					return nil
+				}
+				// push down partial agg under the Exchange which is enforced
+				if receiver, ok := mpp.p.(*PhysicalExchangeReceiver); ok {
+					if sender, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
+						partialAgg.SetChildren(sender.children[0])
+						sender.children[0] = partialAgg
+					} else {
+						return nil
+					}
+				} else {
+					return nil
+				}
+				finalAgg.SetChildren(mpp.p)
+				mpp.p = finalAgg
+				mpp.addCost(p.GetCost(inputRows, false))
+				return mpp
+			} else {
+				return nil
+			}
+		} else {
+			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+			if partialAgg != nil {
+				partialAgg.SetChildren(mpp.p)
+				mpp.p = partialAgg
+			}
+			t = mpp.convertToRootTask(p.ctx)
+			inputRows = t.count()
+			attachPlan2Task(finalAgg, t)
 		}
-		t = mpp.convertToRootTask(p.ctx)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
