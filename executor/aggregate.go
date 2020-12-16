@@ -217,7 +217,6 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-		e.firstRowProcessed = 0
 		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
@@ -271,6 +270,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
+	e.firstRowProcessed = 0
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -772,8 +772,8 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.isAllFirstRow {
 		// If all the agg func is first row, we can return the result immediately
-		// once we have got row_count unique rows, so we optimize it by using a separate logic.
-		return e.executeFirstRow(ctx, chk)
+		// once we have got chk.RequiredRows() unique rows, so we optimize it by using a separate logic.
+		return e.executeAllFirstRow(ctx, chk)
 	}
 	// In this stage we consider all data from src as a single group.
 	if !e.prepared {
@@ -871,7 +871,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 	return partialResults
 }
 
-func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *HashAggExec) executeAllFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
 	for {
 		if e.firstRowProcessed == e.childResult.NumRows() {
 			mSize := e.childResult.MemoryUsage()
@@ -901,14 +901,13 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			groupKey := string(e.groupKeyBuffer[e.firstRowProcessed]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
-				partialResults := e.getPartialResults(groupKey)
-				for i, af := range e.PartialAggFuncs {
-					memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(e.firstRowProcessed)}, partialResults[i])
+				for _, af := range e.PartialAggFuncs {
+					partialResult, _ := af.AllocPartialResult()
+					_, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(e.firstRowProcessed)}, partialResult)
 					if err != nil {
 						return err
 					}
-					e.memTracker.Consume(memDelta)
-					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(e.ctx, partialResult, chk); err != nil {
 						return err
 					}
 				}
