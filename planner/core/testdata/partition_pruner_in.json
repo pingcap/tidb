@@ -96,6 +96,15 @@
         ]
       },
       {
+        "SQL": "select count(1) from t1 order by id,a",
+        "Pruner": [
+          {
+            "Table": "t1",
+            "Partitions": "all"
+          }
+        ]
+      },
+      {
         "SQL": "select * from t1 where a = 1 or b = 2",
         "Pruner": [
           {
@@ -105,7 +114,25 @@
         ]
       },
       {
+        "SQL": "select count(1) from t1 where a = 1 or b = 2",
+        "Pruner": [
+          {
+            "Table": "t1",
+            "Partitions": "p0"
+          }
+        ]
+      },
+      {
         "SQL": "select * from t1 where a = 1 and b = 2",
+        "Pruner": [
+          {
+            "Table": "t1",
+            "Partitions": "dual"
+          }
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where a = 1 and b = 2",
         "Pruner": [
           {
             "Table": "t1",
