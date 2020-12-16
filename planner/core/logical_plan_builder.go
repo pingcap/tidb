@@ -1560,6 +1560,19 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
+func (b *PlanBuilder) checkOrderByItems(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) error {
+	transformer := &itemTransformer{}
+	for _, item := range byItems {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
+		_, _, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, 0, false)
 }
@@ -3051,14 +3064,18 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	// ignore ORDER BY when there is aggregate without GROUP BY,
-	// e.g. select count(a) from t order by b;
-	ignoreOrderBy := hasAgg && sel.GroupBy == nil
-	if sel.OrderBy != nil && !ignoreOrderBy {
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+	if sel.OrderBy != nil {
+		// ignore ORDER BY when there is aggregate without GROUP BY,
+		// e.g. select count(a) from t order by b;
+		ignoreOrderBy := hasAgg && sel.GroupBy == nil
+		if ignoreOrderBy {
+			err = b.checkOrderByItems(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		} else {
-			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+			} else {
+				p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			}
 		}
 		if err != nil {
 			return nil, err
