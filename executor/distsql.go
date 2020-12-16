@@ -340,7 +340,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetMemTracker(e.memTracker).
 		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
-		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
@@ -535,7 +535,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetMemTracker(tracker).
 		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
-		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return err

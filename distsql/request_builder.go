@@ -257,8 +257,11 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 }
 
 // SetRuleBundles set bundles in builder
-func (builder *RequestBuilder) SetRuleBundles(bundles map[string]*placement.Bundle) *RequestBuilder {
-	builder.bundles = bundles
+func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
+	if is == nil {
+		return builder
+	}
+	builder.bundles = is.RuleBundles()
 	return builder
 }
 

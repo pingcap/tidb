@@ -238,7 +238,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetTxnScope(extractTxnScope(txn)).
-		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err

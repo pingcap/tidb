@@ -213,7 +213,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		SetMemTracker(e.memTracker).
 		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
-		SetRuleBundles(infoschema.GetInfoSchema(e.ctx).RuleBundles()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return err
