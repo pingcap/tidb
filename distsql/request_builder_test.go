@@ -539,6 +539,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -572,6 +573,7 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 
 	c.Assert(actual, DeepEquals, expect)
