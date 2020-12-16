@@ -59,7 +59,10 @@ func (txn *wrapTxn) Valid() bool {
 
 // GetUnionStore implements GetUnionStore
 func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
-	return nil
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.

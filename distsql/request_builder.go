@@ -256,7 +256,8 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 	return builder
 }
 
-// SetRuleBundles set bundles in builder
+// SetFromInfoSchema sets the following fields from infoSchema:
+// "bundles"
 func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
 	if is == nil {
 		return builder
