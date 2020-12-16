@@ -861,6 +861,10 @@ github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c/go.mod h1:ahpPrc7
 github.com/thda/tds v0.1.7/go.mod h1:isLIF1oZdXfkqVMJM8RyNrsjlHPlTKnPlnsBs7ngZcM=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/parser v0.0.0-20201214031037-5711ad4cde4b h1:L2i3TdEcd6xYQ0Z8zHbFJCwE5yzrX4qmnStyWbW/pvM=
+github.com/tiancaiamao/parser v0.0.0-20201214031037-5711ad4cde4b/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/tiancaiamao/parser v0.0.0-20201216062414-3d43b083e82c h1:C1hrKQEJOX+juW74wAMjqfs9aLT+yQDqlSS33iQe+OY=
+github.com/tiancaiamao/parser v0.0.0-20201216062414-3d43b083e82c/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=

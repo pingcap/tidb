@@ -2885,6 +2885,112 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 		PartitionNames: node.PartitionNames,
 	}
 	p.setSchemaAndNames(buildSplitRegionsSchema())
+	if len(node.SplitOpt.Statistics) > 0 {
+		if node.SplitOpt.Num == 0 {
+			return nil, errors.New("wrong region counts")
+		}
+		stmtCtx := b.ctx.GetSessionVars().StmtCtx
+		provided := make(map[string]*statistics.Column, len(node.SplitOpt.Statistics))
+		for _, assign := range node.SplitOpt.Statistics {
+			to := assign.Column
+			col, ok := assign.Expr.(*ast.ColumnNameExpr)
+			if !ok {
+				return nil, errors.New("must be another column")
+			}
+			from := col.Name
+			dbName := from.Schema
+			if dbName.L == "" {
+				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			}
+			tbl, err := b.is.TableByName(dbName, from.Table)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tbInfo := tbl.Meta()
+			if pi := tbInfo.GetPartitionInfo(); pi != nil {
+				return nil, errors.New("partition table is not supported yet")
+			}
+			stats := getStatsTable(b.ctx, tbInfo, tbInfo.ID)
+			if stats == nil || stats.Pseudo {
+				return nil, errors.New("get statistics failed")
+			}
+
+			colStat := stats.ColumnByName(from.Name.L)
+			if colStat == nil || colStat.IsInvalid(stmtCtx, false) {
+				continue
+			}
+			provided[to.Name.L] = colStat
+		}
+
+		if tblInfo.IsCommonHandle {
+			// Data distribution decided by primary key columns.
+			for _, idx := range tblInfo.Indices {
+				if idx.State != model.StatePublic {
+					continue
+				}
+				if !idx.Primary {
+					continue
+				}
+				// Only handle primary index for now.
+				regionCount := int(node.SplitOpt.Num)
+				matrix := make([]types.Datum, regionCount*len(idx.Columns))
+				colIdx := 0
+				for ; colIdx < len(idx.Columns); colIdx++ {
+					idxCol := idx.Columns[colIdx]
+					hist, ok := provided[idxCol.Name.L]
+					if !ok {
+						break
+					}
+					colOffset := idxCol.Offset
+					colInfo := tblInfo.Columns[colOffset]
+					regionRowsCount := hist.TotalRowCount() / float64(regionCount)
+
+					// Iterate the histogram to split the regions.
+					// Fill the data to the matrix column[colIdx].
+					sum, rowIdx := 0.0, 0
+					for cursor := 0; cursor < hist.Len() && rowIdx < regionCount; cursor++ {
+						if float64(hist.Buckets[cursor].Count) >= sum {
+							high := hist.GetUpper(cursor)
+							sum += regionRowsCount
+							var err error
+							matrix[rowIdx*len(idx.Columns)+colIdx], err = high.ConvertTo(stmtCtx, &colInfo.FieldType)
+							if err != nil {
+								return nil, errors.Trace(err)
+							}
+							rowIdx++
+						}
+					}
+					logutil.BgLogger().Debug("split by column histogram", zap.Int("colIdx", colIdx), zap.Int("rowIndex", rowIdx))
+				}
+				if colIdx == 0 {
+					return nil, errors.New("statistics of column histogram not available!")
+				}
+				// Fill more data to the matrix, which maybe not provided by the statistics.
+				for ; colIdx < len(idx.Columns); colIdx++ {
+					for rowIdx := 0; rowIdx < regionCount; rowIdx++ {
+						colOffset := idx.Columns[colIdx].Offset
+						colInfo := tblInfo.Columns[colOffset]
+						ft := colInfo.FieldType
+						matrix[rowIdx*len(idx.Columns)+colIdx] = types.GetMinValue(&ft)
+					}
+				}
+
+				// Calculate the values list for split region.
+				for i := 0; i < regionCount; i++ {
+					rowSize := len(idx.Columns)
+					row := matrix[i*rowSize : (i+1)*rowSize]
+					if row[0].IsNull() {
+						break
+					}
+					p.ValueLists = append(p.ValueLists, row)
+				}
+			}
+		} else {
+			// Only handle cluster index for now.
+		}
+		return p, nil
+	}
+
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
 		for i, valuesItem := range node.SplitOpt.ValueLists {

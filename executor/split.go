@@ -500,6 +500,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID
 }
 
 func (e *SplitTableRegionExec) getSplitTableKeysFromBound() ([][]byte, error) {
+	if e.num == 0 {
+		// A dummy operation.
+		e.done = true
+		return nil, nil
+	}
 	var keys [][]byte
 	pi := e.tableInfo.GetPartitionInfo()
 	if pi == nil {
