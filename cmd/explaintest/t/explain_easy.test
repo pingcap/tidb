@@ -210,3 +210,10 @@ create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) 
 explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 drop table if exists t;
+
+create table t(a int, b int);
+explain select (select count(n.a) from t) from t n;
+explain select (select sum((select count(a)))) from t;
+explain select count(a) from t group by b order by (select count(a));
+explain select (select sum(count(a))) from t;
+drop table if exists t;

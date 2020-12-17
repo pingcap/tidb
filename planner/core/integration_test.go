@@ -2059,6 +2059,8 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values (1,1),(2,1),(2,2),(3,1),(3,2),(3,3)")
+
+	// Sub-queries in SELECT fields
 	// from SELECT fields
 	tk.MustQuery("select (select count(a)) from t").Check(testkit.Rows("6"))
 	tk.MustQuery("select (select (select (select count(a)))) from t").Check(testkit.Rows("6"))
@@ -2083,6 +2085,14 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	// from GROUP BY
 	tk.MustQuery("select (select count(a) from t group by count(n.a)) from t n").Check(testkit.Rows("6"))
 	tk.MustQuery("select (select count(distinct a) from t group by count(n.a)) from t n").Check(testkit.Rows("3"))
+
+	// Sub-queries in HAVING
+	tk.MustQuery("select sum(a) from t having (select count(a)) = 0").Check(testkit.Rows())
+	tk.MustQuery("select sum(a) from t having (select count(a)) > 0").Check(testkit.Rows("14"))
+
+	// Sub-queries in ORDER BY
+	tk.MustQuery("select count(a) from t group by b order by (select count(a))").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select count(a) from t group by b order by (select -count(a))").Check(testkit.Rows("3", "2", "1"))
 
 	// Nested aggregate (correlated aggregate inside aggregate)
 	tk.MustQuery("select (select sum(count(a))) from t").Check(testkit.Rows("6"))

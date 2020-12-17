@@ -225,11 +225,17 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		}
 		// combine identical aggregate functions
 		combined := false
-		for j, oldFunc := range plan4Agg.AggFuncs {
+		for j := 0; j < i; j++ {
+			oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
 			if oldFunc.Equal(b.ctx, newFunc) {
-				aggIndexMap[i] = j
+				aggIndexMap[i] = aggIndexMap[j]
 				combined = true
 				if _, ok := correlatedAggMap[aggFunc]; ok {
+					if _, ok = b.correlatedAggMapper[aggFuncList[j]]; !ok {
+						b.correlatedAggMapper[aggFuncList[j]] = &expression.CorrelatedColumn{
+							Column: *schema4Agg.Columns[aggIndexMap[j]],
+						}
+					}
 					b.correlatedAggMapper[aggFunc] = b.correlatedAggMapper[aggFuncList[j]]
 				}
 				break
@@ -2348,12 +2354,27 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 	}
 	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
-		resolver.correlatedAggFuncs = resolver.correlatedAggFuncs[:0]
 		_, ok := field.Expr.Accept(resolver)
 		if !ok {
 			return nil, resolver.err
 		}
 		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+	}
+	if sel.Having != nil {
+		_, ok := sel.Having.Expr.Accept(resolver)
+		if !ok {
+			return nil, resolver.err
+		}
+		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			_, ok := item.Expr.Accept(resolver)
+			if !ok {
+				return nil, resolver.err
+			}
+			correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+		}
 	}
 	correlatedAggMap := make(map[*ast.AggregateFuncExpr]int)
 	for _, aggFunc := range correlatedAggList {
