@@ -763,6 +763,8 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
