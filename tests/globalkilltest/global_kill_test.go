@@ -126,6 +126,7 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
+		fmt.Sprintf("--config=%s", "./config.toml")
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
@@ -143,6 +144,7 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
+		fmt.Sprintf("--config=%s", "./config.toml")
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
