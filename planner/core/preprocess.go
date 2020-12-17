@@ -935,6 +935,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
 		}
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
 			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
@@ -952,6 +955,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
