@@ -31,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
@@ -117,7 +119,7 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeList:
-		return generateListPartitionExpr(ctx, pi, columns, names)
+		return generateListPartitionExpr(ctx, tblInfo, columns, names)
 	}
 	panic("cannot reach here")
 }
@@ -201,13 +203,16 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 type ForListPruning struct {
 	Exprs     []expression.Expression
 	ExprCols  []*expression.Column
-	ColPrunes []ForListColumnPruning
+	ColPrunes []*ForListColumnPruning
 }
 
 // ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
-	Exprs   []expression.Expression
+	//Exprs            []expression.Expression
 	ExprCol *expression.Column
+	Col     *model.ColumnInfo
+	// The map is column value -> partition index.
+	ValueToPartition map[string]int
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -401,9 +406,10 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 	return deDupCols, offset, nil
 }
 
-func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
+	pi := tblInfo.GetPartitionInfo()
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	pruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	schema := expression.NewSchema(columns...)
@@ -428,7 +434,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		pruneExprs = append(pruneExprs, pruneExpr)
 	}
 
-	colPrunes, err := generateListColumnsPruneExpr(ctx, pi, schema, columns, names, p)
+	colPrunes, err := generateListColumnsPruneExpr(ctx, tblInfo, schema, columns, names, p)
 	if err != nil {
 		return nil, err
 	}
@@ -440,40 +446,31 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	return ret, nil
 }
 
-func generateListColumnsPruneExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
-	schema *expression.Schema, columns []*expression.Column, names types.NameSlice, p *parser.Parser) ([]ForListColumnPruning, error) {
+func generateListColumnsPruneExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
+	schema *expression.Schema, columns []*expression.Column, names types.NameSlice, p *parser.Parser) ([]*ForListColumnPruning, error) {
 	// list columns pruner only useful when `len(pi.columns) >= 2`.
+	pi := tblInfo.GetPartitionInfo()
 	if len(pi.Columns) < 2 {
 		return nil, nil
 	}
-	colPrunes := make([]ForListColumnPruning, 0, len(pi.Columns))
-	for i := range pi.Columns {
-		colPrune := ForListColumnPruning{}
-		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[i].L)
+	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
+	for colIdx := range pi.Columns {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
+		if colInfo == nil {
+			panic("should never happen")
+		}
+		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[colIdx].L)
 		if idx < 0 {
 			panic("should never happen")
 		}
-		colExprs := []*expression.Column{columns[idx]}
-		for _, def := range pi.Definitions {
-			colPruneExpr, err := generateListColumnPruneExprStr(ctx, pi, schema, names, i, &def, p)
-			if err != nil {
-				return nil, err
-			}
-			expr, err := parseSimpleExprWithNames(p, ctx, colPruneExpr, schema, names)
-			if err != nil {
-				// If it got an error here, ddl may hang forever, so this error log is important.
-				logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", colPruneExpr), zap.Error(err))
-				return nil, errors.Trace(err)
-			}
-			// Since need to change the column index of the expresion, clone the expression first.
-			expr, cols := updateExprColIdxForPartitionPrune(expr, colExprs)
-			if len(cols) == 0 {
-				panic("should never happen")
-			}
-			if colPrune.ExprCol == nil {
-				colPrune.ExprCol = cols[0]
-			}
-			colPrune.Exprs = append(colPrune.Exprs, expr)
+		colPrune := &ForListColumnPruning{
+			ExprCol:          columns[idx],
+			Col:              colInfo,
+			ValueToPartition: make(map[string]int),
+		}
+		err := colPrune.buildListColumnValueToPartitionMap(ctx, tblInfo, colIdx, schema, names, p)
+		if err != nil {
+			return nil, err
 		}
 		colPrunes = append(colPrunes, colPrune)
 	}
@@ -502,38 +499,53 @@ func generateListPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInf
 	return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 }
 
-func generateListColumnPruneExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
-	schema *expression.Schema, names types.NameSlice, colIdx int, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
-	var colName = pi.Columns[colIdx].L
-	var buf = bytes.NewBuffer(make([]byte, 0, 8))
-	hasNull := false
-	fmt.Fprintf(buf, "(`%s` in (", colName)
-	for i, vs := range def.InValues {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		buf.WriteString(vs[colIdx])
-		// check null
-		if hasNull {
-			continue
-		}
-		expr, err := parseSimpleExprWithNames(p, ctx, vs[colIdx], schema, names)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		v, err := expr.Eval(chunk.Row{})
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		if v.IsNull() {
-			hasNull = true
+// buildListColumnValueToPartitionMap builds list column value map.
+// The map is column value -> partition index.
+// colIdx is the column index in the list columns.
+func (b *ForListColumnPruning) buildListColumnValueToPartitionMap(ctx sessionctx.Context, tblInfo *model.TableInfo, colIdx int,
+	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
+	pi := tblInfo.GetPartitionInfo()
+	sc := ctx.GetSessionVars().StmtCtx
+	for partitionIdx, def := range pi.Definitions {
+		for _, vs := range def.InValues {
+			vstr := vs[colIdx]
+			expr, err := parseSimpleExprWithNames(p, ctx, vstr, schema, names)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			v, err := expr.Eval(chunk.Row{})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			key, err := b.genKey(sc, v)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			b.ValueToPartition[string(key)] = partitionIdx
 		}
 	}
-	buf.WriteString("))")
-	if hasNull {
-		fmt.Fprintf(buf, " or (%s is null)", colName)
+	return nil
+}
+
+func (b *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Datum) ([]byte, error) {
+	v, err := v.ConvertTo(sc, &b.Col.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return buf.String(), nil
+	return codec.EncodeKey(sc, nil, v)
+}
+
+// LocatePartition locates partition by the column value
+func (b *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v types.Datum) (int, error) {
+	key, err := b.genKey(sc, v)
+	if err != nil {
+		return -1, errors.Trace(err)
+	}
+	partitionIdx, ok := b.ValueToPartition[string(key)]
+	if !ok {
+		return -1, nil
+	}
+	return partitionIdx, nil
 }
 
 func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,

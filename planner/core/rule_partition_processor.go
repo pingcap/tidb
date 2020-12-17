@@ -378,18 +378,16 @@ func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFun
 	if len(condCols) != 1 {
 		return l.fullRange, nil
 	}
-	var pruneExprs []expression.Expression
-	var pruneCol *expression.Column
-	for _, colPrune := range l.pruneList.ColPrunes {
-		if colPrune.ExprCol.ID == condCols[0].ID {
-			pruneExprs = colPrune.Exprs
-			pruneCol = colPrune.ExprCol
+	var colPrune *tables.ForListColumnPruning
+	for _, cp := range l.pruneList.ColPrunes {
+		if cp.Col.ID == condCols[0].ID {
+			colPrune = cp
 		}
 	}
-	if len(pruneExprs) == 0 {
+	if colPrune == nil {
 		return l.fullRange, nil
 	}
-	return l.locatePartitionsByConditions([]expression.Expression{cond}, []*expression.Column{pruneCol}, pruneExprs)
+	return l.locateColumnPartitionsByConditions([]expression.Expression{cond}, colPrune)
 }
 
 func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
@@ -410,6 +408,56 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used, err := l.locatePartitionsByConditions(conds, l.pruneList.ExprCols, l.pruneList.Exprs)
 	if err != nil {
 		return nil, err
+	}
+	return used, nil
+}
+
+func (l *listPartitionPruner) locateColumnPartitionsByConditions(conds []expression.Expression, colPrune *tables.ForListColumnPruning) (map[int]struct{}, error) {
+	cols := make([]*expression.Column, 0, 1)
+	colLen := make([]int, 0, 1)
+	col := colPrune.ExprCol.Clone().(*expression.Column)
+	if uniqueID, ok := l.colIDToUniqueID[col.ID]; ok {
+		col.UniqueID = uniqueID
+	}
+	cols = append(cols, col)
+	colLen = append(colLen, types.UnspecifiedLength)
+
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen)
+	if err != nil {
+		return nil, err
+	}
+
+	ranges := detachedResult.Ranges
+	used := make(map[int]struct{}, len(ranges))
+	sc := l.ctx.GetSessionVars().StmtCtx
+	for _, r := range ranges {
+		if r.IsPointNullable(sc) {
+			if len(r.HighVal) != len(cols) {
+				// For list columns partition, can't locate partition. such as: (a,b) in ((1,2)),
+				// if only know one of the column value, we still can't evaluate this expression, so just return here.
+				if len(l.pi.Columns) > 0 {
+					return l.fullRange, nil
+				}
+				// For the list partition, if the first argument is null,
+				// then the list partition expression should also be null.
+				if !r.HighVal[0].IsNull() {
+					return l.fullRange, nil
+				}
+			}
+			found, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if err != nil {
+				return nil, err
+			}
+			if found == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[found].Name.L) {
+				continue
+			}
+			used[found] = struct{}{}
+		} else {
+			return l.fullRange, nil
+		}
 	}
 	return used, nil
 }
