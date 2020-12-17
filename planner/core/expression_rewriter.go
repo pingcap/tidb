@@ -67,7 +67,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+	b, savedBlockNames := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -78,6 +78,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if err != nil {
 		return nil, err
 	}
+	sctx.GetSessionVars().PlannerSelectBlockAsName = savedBlockNames
 	return newExpr, nil
 }
 
@@ -410,6 +411,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 		return inNode, true
 	case *ast.FuncCallExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
@@ -417,10 +419,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.CaseExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions["case"]; ok {
 			er.disableFoldCounter++
 		}
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
+			er.tryFoldCounter++
+		}
+	case *ast.BinaryOperationExpr:
+		er.asScalar = true
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
 	case *ast.SetCollationExpr:
@@ -432,16 +440,41 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
-	var condition expression.Expression
-	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
-		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
-		// as normal column equal condition.
-		if lCol, ok := l.(*expression.Column); !ok || !mysql.HasNotNullFlag(lCol.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rColCopy := *rCol
-			rColCopy.InOperand = true
-			r = &rColCopy
+	if er.asScalar || not {
+		if expression.GetRowLen(r) == 1 {
+			rCol := r.(*expression.Column)
+			// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+			// as normal column equal condition.
+			if !expression.ExprNotNull(l) || !expression.ExprNotNull(rCol) {
+				rColCopy := *rCol
+				rColCopy.InOperand = true
+				r = &rColCopy
+			}
+		} else {
+			rowFunc := r.(*expression.ScalarFunction)
+			rargs := rowFunc.GetArgs()
+			args := make([]expression.Expression, 0, len(rargs))
+			modified := false
+			for i, rarg := range rargs {
+				larg := expression.GetFuncArg(l, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(rarg) {
+					rCol := rarg.(*expression.Column)
+					rColCopy := *rCol
+					rColCopy.InOperand = true
+					rarg = &rColCopy
+					modified = true
+				}
+				args = append(args, rarg)
+			}
+			if modified {
+				r, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)
+				if er.err != nil {
+					return
+				}
+			}
 		}
 	}
+	var condition expression.Expression
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
 	if er.err != nil {
 		return
@@ -497,6 +530,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
 				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
 				if er.err != nil {
 					return v, true
@@ -505,6 +539,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		} else if v.Op == opcode.NE {
 			if v.All {
 				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
 				if er.err != nil {
 					return v, true
@@ -818,7 +853,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		if v.Not || asScalar {
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
-			if !mysql.HasNotNullFlag(lexpr.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			if !expression.ExprNotNull(lexpr) || !expression.ExprNotNull(rCol) {
 				rColCopy := *rCol
 				rColCopy.InOperand = true
 				rexpr = &rColCopy
@@ -826,7 +861,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		}
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
-		for _, col := range np.Schema().Columns {
+		for i, col := range np.Schema().Columns {
+			larg := expression.GetFuncArg(lexpr, i)
+			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+				rarg := *col
+				rarg.InOperand = true
+				col = &rarg
+			}
 			args = append(args, col)
 		}
 		rexpr, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)
@@ -990,6 +1031,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.UnaryOperationExpr:
 		er.unaryOpToExpression(v)
 	case *ast.BinaryOperationExpr:
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
+			er.tryFoldCounter--
+		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
@@ -1012,6 +1056,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.err = er.checkTimePrecision(v.Tp)
 		if er.err != nil {
 			return retNode, false
+		}
+
+		if v.Tp.EvalType() == types.ETString {
+			arg.SetCoercibility(expression.CoercibilityImplicit)
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
@@ -1117,17 +1165,27 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sessionVars := er.b.ctx.GetSessionVars()
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar,
-				er.ctxStack[stkLen-1].GetType(),
+			tp := er.ctxStack[stkLen-1].GetType()
+			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
+			// Store the field type of the variable into SessionVars.UserVarTypes.
+			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
+			// GetVar has not been executed to fill the SessionVars.Users.
+			sessionVars.UsersLock.Lock()
+			sessionVars.UserVarTypes[name] = tp
+			sessionVars.UsersLock.Unlock()
 			return
 		}
-		f, err := er.newFunction(ast.GetVar,
-			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-			types.NewFieldType(mysql.TypeString),
-			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		sessionVars.UsersLock.RLock()
+		tp, ok := sessionVars.UserVarTypes[name]
+		sessionVars.UsersLock.RUnlock()
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeVarString)
+			tp.Flen = mysql.MaxFieldVarCharLength
+		}
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = err
 			return
@@ -1160,7 +1218,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType := variable.GetNativeValType(name, val)
+	nativeVal, nativeType := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
@@ -1470,6 +1528,40 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
+func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Expression) {
+	stkLen := len(er.ctxStack)
+	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
+	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
+	switch expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) {
+	case types.ETInt:
+		castFunc = expression.WrapWithCastAsInt
+	case types.ETReal:
+		castFunc = expression.WrapWithCastAsReal
+	case types.ETDecimal:
+		castFunc = expression.WrapWithCastAsDecimal
+	case types.ETString:
+		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+			// string kind expression do not need cast
+			if e.GetType().EvalType().IsStringKind() {
+				return e
+			}
+			return expression.WrapWithCastAsString(ctx, e)
+		}
+	case types.ETDatetime:
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
+		return
+	default:
+		return
+	}
+
+	expr = castFunc(er.sctx, expr)
+	lexp = castFunc(er.sctx, lexp)
+	rexp = castFunc(er.sctx, rexp)
+	return
+}
+
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-3:]...)
@@ -1477,13 +1569,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
-
-	if expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) == types.ETDatetime {
-		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
-		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
-		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
-	}
+	expr, lexp, rexp := er.wrapExpWithCast()
 
 	var op string
 	var l, r expression.Expression
@@ -1644,25 +1730,40 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
-		idx, err := expression.FindFieldName(join.redundantNames, v)
-		if err != nil {
-			er.err = err
-			return
-		}
-		if idx >= 0 {
-			er.ctxStackAppend(join.redundantSchema.Columns[idx], join.redundantNames[idx])
-			return
-		}
-	}
 	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
 		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
+		return
+	}
+	col, name, err := findFieldNameFromNaturalUsingJoin(er.p, v)
+	if err != nil {
+		er.err = err
+		return
+	} else if col != nil {
+		er.ctxStackAppend(col, name)
 		return
 	}
 	if er.b.curClause == globalOrderByClause {
 		er.b.curClause = orderByClause
 	}
 	er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.b.curClause])
+}
+
+func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
+	switch x := p.(type) {
+	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
+	case *LogicalJoin:
+		if x.redundantSchema != nil {
+			idx, err := expression.FindFieldName(x.redundantNames, v)
+			if err != nil {
+				return nil, nil, err
+			}
+			if idx >= 0 {
+				return x.redundantSchema.Columns[idx], x.redundantNames[idx], nil
+			}
+		}
+	}
+	return nil, nil, nil
 }
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {

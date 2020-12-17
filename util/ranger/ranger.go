@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -92,7 +93,13 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		return point, errors.Trace(err)
+		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrInvalidYear) {
+			// see issue #20101: overflow when converting integer to year
+		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
+		} else {
+			return point, errors.Trace(err)
+		}
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {
@@ -518,25 +525,15 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 }
 
 // points2EqOrInCond constructs a 'EQUAL' or 'IN' scalar function based on the
-// 'points'. The target column is extracted from the 'expr'.
+// 'points'. `col` is the target column to construct the Equal or In condition.
 // NOTE:
-// 1. 'expr' must be either 'EQUAL' or 'IN' function.
-// 2. 'points' should not be empty.
-func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
+// 1. 'points' should not be empty.
+func points2EqOrInCond(ctx sessionctx.Context, points []point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
-	sf, _ := expr.(*expression.ScalarFunction)
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := sf.GetArgs()[0].GetType()
+	retType := col.GetType()
 	args := make([]expression.Expression, 0, len(points)/2)
-	if sf.FuncName.L == ast.EQ {
-		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
-			args = append(args, c)
-		} else if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
-			args = append(args, c)
-		}
-	} else {
-		args = append(args, sf.GetArgs()[0])
-	}
+	args = append(args, col)
 	for i := 0; i < len(points); i = i + 2 {
 		value := &expression.Constant{
 			Value:   points[i].value,
@@ -548,7 +545,7 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
 }
 
 // DetachCondAndBuildRangeForPartition will detach the index filters from table filters.

@@ -1152,7 +1152,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
@@ -1262,6 +1262,9 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 }
 
 func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
 	// Not support Cardinality and Dependency statistics type for now.
 	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
 		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Cardinality and Dependency statistics types are not supported")
@@ -1302,6 +1305,9 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 }
 
 func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
 	db := e.ctx.GetSessionVars().CurrentDB
 	if db == "" {
 		return core.ErrNoDB
@@ -1314,6 +1320,9 @@ func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
 		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+	}
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

@@ -200,6 +200,16 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// ExprNotNull checks if an expression is possible to be null.
+func ExprNotNull(expr Expression) bool {
+	if c, ok := expr.(*Constant); ok {
+		return !c.Value.IsNull()
+	}
+	// For ScalarFunction, the result would not be correct until we support maintaining
+	// NotNull flag for it.
+	return mysql.HasNotNullFlag(expr.GetType().Flag)
+}
+
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
 //		INSERT INTO t VALUES ("999999999999999999");
@@ -321,10 +331,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
-		eType := expr.GetType().EvalType()
-		if expr.GetType().Hybrid() {
-			eType = types.ETInt
-		}
+		tp := expr.GetType()
+		eType := tp.EvalType()
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
@@ -334,7 +342,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		err = toBool(ctx.GetSessionVars().StmtCtx, tp, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -374,7 +382,8 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, buf *chunk.Column, sel []int, isZero []int8) error {
+	eType := tp.EvalType()
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -433,11 +442,28 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
-				if err != nil {
-					return err
+				var fVal float64
+				var err error
+				sVal := buf.GetString(i)
+				if tp.Hybrid() {
+					switch tp.Tp {
+					case mysql.TypeEnum, mysql.TypeSet:
+						fVal = float64(len(sVal))
+					case mysql.TypeBit:
+						var bl types.BinaryLiteral = buf.GetBytes(i)
+						iVal, err := bl.ToInt(sc)
+						if err != nil {
+							return err
+						}
+						fVal = float64(iVal)
+					}
+				} else {
+					fVal, err = types.StrToFloat(sc, sVal, false)
+					if err != nil {
+						return err
+					}
 				}
-				if iVal == 0 {
+				if fVal == 0 {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -789,7 +815,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -1006,7 +1032,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4,
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
-		ast.IsIPv6:
+		ast.IsIPv6,
+		ast.UUID:
 		ret = true
 
 	// A special case: Only push down Round by signature
@@ -1180,7 +1207,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsDecimal:
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
+			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
 			return true
 		default:
 			return false
