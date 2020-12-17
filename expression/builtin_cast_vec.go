@@ -48,6 +48,9 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			if types.ErrOverflow.Equal(err) {
 				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 			}
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			}
 			if err != nil {
 				return err
 			}
