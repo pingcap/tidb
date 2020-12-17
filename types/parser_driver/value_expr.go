@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -100,7 +101,8 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("_")
 			ctx.WriteKeyWord(n.Type.Charset)
 		}
-		ctx.WriteString(n.GetString())
+		// Replace '\' to '\\' regardless of sql_mode "NO_BACKSLASH_ESCAPES", which is the same as MySQL.
+		ctx.WriteString(strings.ReplaceAll(n.GetString(), "\\", "\\\\"))
 	case types.KindBytes:
 		ctx.WriteString(n.GetString())
 	case types.KindMysqlDecimal:

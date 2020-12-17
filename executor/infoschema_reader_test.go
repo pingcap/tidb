@@ -365,7 +365,7 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	is := do.InfoSchema()
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -414,7 +414,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
 	do := s.dom
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	is := do.InfoSchema()
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -821,8 +821,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 
 	// Test it would get null set when get the sys schema.
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Check([][]interface{}{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('mysql', 'metrics_schema');").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]interface{}{})
 	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
 
 	tk.MustExec("use test")
@@ -838,6 +837,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 22)
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

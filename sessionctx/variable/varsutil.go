@@ -285,8 +285,7 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply:
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	}
 }

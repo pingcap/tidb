@@ -2631,10 +2631,15 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+		decimalArg1 := int(types.MaxFsp)
+		if args[1].GetType().EvalType() != types.ETString {
+			decimalArg1 = 0
+		}
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
+		bf.args[1].GetType().Decimal = decimalArg1
 		sig = &builtinExtractDatetimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 	} else {
@@ -2665,11 +2670,38 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	dt, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	dtStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	switch strings.ToUpper(unit) {
+	case "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+		dur, err := types.ParseDuration(sc, dtStr, types.GetFsp(dtStr))
+		if err != nil {
+			return 0, true, err
+		}
+		res, err := types.ExtractDurationNum(&dur, unit)
+		if err != nil {
+			return 0, true, err
+		}
+		dt, err := types.ParseDatetime(sc, dtStr)
+		if err != nil {
+			return res, false, nil
+		}
+		if dt.Hour() == dur.Hour() && dt.Minute() == dur.Minute() && dt.Second() == dur.Second() && dt.Year() > 0 {
+			res, err = types.ExtractDatetimeNum(&dt, unit)
+		}
+		return res, err != nil, err
+	}
+	dt, err := types.ParseDatetime(sc, dtStr)
+	if err != nil {
+		if !terror.ErrorEqual(err, types.ErrWrongValue) {
+			return 0, true, err
+		}
+	}
 	if dt.IsZero() {
+		dt.SetFsp(int8(b.args[1].GetType().Decimal))
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 			isNull, err := handleInvalidZeroTime(b.ctx, dt)
 			return 0, isNull, err
@@ -5820,10 +5852,8 @@ func (b *builtinMakeTimeSig) makeTime(hour int64, minute int64, second float64, 
 		hour = 838
 		overflow = true
 	}
-	if hour == -838 || hour == 838 {
-		if second > 59 {
-			second = 59
-		}
+	if (hour == -838 || hour == 838) && minute == 59 && second > 59 {
+		overflow = true
 	}
 	if overflow {
 		minute = 59
