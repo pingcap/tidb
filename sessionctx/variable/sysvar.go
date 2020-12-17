@@ -388,7 +388,10 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
-func checkCharacterValid(normalizedValue string) (string, error) {
+func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+	if normalizedValue == "" {
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+	}
 	cht, _, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
@@ -592,10 +595,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs("character_set_filesystem", "NULL"))
-		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, "character_set_filesystem")
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
@@ -625,10 +625,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
 	{Scope: ScopeNone, Name: "have_profiling", Value: "NO"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs("character_set_client", "NULL"))
-		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, "character_set_client")
 	}},
 	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: BoolOn, Type: TypeBool},
@@ -704,7 +701,7 @@ var defaultSysVars = []*SysVar{
 		if normalizedValue == "" {
 			return normalizedValue, nil
 		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, "")
 	}},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag_delay", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_schema", Value: ""},
@@ -836,10 +833,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs("character_set_database", "NULL"))
-		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, "character_set_database")
 	}},
 	{Scope: ScopeNone, Name: "have_symlink", Value: "YES"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "storage_engine", Value: "InnoDB"},
@@ -931,18 +925,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "200", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs("character_set_connection", "NULL"))
-		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, "character_set_connection")
 	}},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		if normalizedValue == "" {
-			return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(CharacterSetServer, "NULL"))
-		}
-		return checkCharacterValid(normalizedValue)
+		return checkCharacterValid(normalizedValue, CharacterSetServer)
 	}},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_instances", Value: "402"},
