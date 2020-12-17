@@ -1560,6 +1560,7 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
+// checkOrderByItems checks for errors in ORDER BY items.
 func (b *PlanBuilder) checkOrderByItems(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) error {
 	transformer := &itemTransformer{}
 	for _, item := range byItems {
@@ -3067,9 +3068,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	if sel.OrderBy != nil {
 		// ignore ORDER BY when there is aggregate without GROUP BY,
-		// e.g. select count(a) from t order by b;
+		// e.g.
+		// select count(a) from t order by b;
+		// select count(a) from t order by count(b);
 		ignoreOrderBy := hasAgg && sel.GroupBy == nil
 		if ignoreOrderBy {
+			// here we have to check for regular errors such as `Unknown column` or `Invalid use of group function`
+			// even if we don't build sort for ORDER BY. This is compatible with MySQL.
 			err = b.checkOrderByItems(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		} else {
 			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
