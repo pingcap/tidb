@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -232,15 +233,15 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql text NOT NULL  ,
-      	bind_sql text NOT NULL ,
-      	default_db text  NOT NULL,
-		status text NOT NULL,
-		create_time timestamp(3) NOT NULL,
-		update_time timestamp(3) NOT NULL,
-		charset text NOT NULL,
-		collation text NOT NULL,
-		source varchar(10) NOT NULL default 'unknown',
+		original_sql TEXT NOT NULL,
+		bind_sql TEXT NOT NULL,
+		default_db TEXT NOT NULL,
+		status TEXT NOT NULL,
+		create_time TIMESTAMP(3) NOT NULL,
+		update_time TIMESTAMP(3) NOT NULL,
+		charset TEXT NOT NULL,
+		collation TEXT NOT NULL,
+		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -396,6 +397,8 @@ const (
 	version48 = 48
 	// version49 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
 	version49 = 49
+	// version50 fixes the bug of concurrent create / drop binding
+	version50 = 50
 )
 
 var (
@@ -448,6 +451,7 @@ var (
 		upgradeToVer47,
 		upgradeToVer48,
 		upgradeToVer49,
+		upgradeToVer50,
 	}
 )
 
@@ -1103,6 +1107,24 @@ func upgradeToVer49(s Session, ver int64) {
 	}
 }
 
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	insertBuiltinBindInfoRow(s)
+}
+
+func initBindInfoTable(s Session) {
+	mustExecute(s, CreateBindInfoTable)
+	insertBuiltinBindInfoRow(s)
+}
+
+func insertBuiltinBindInfoRow(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES ("%s", "%s", "mysql", "%s", "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", "%s")`,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin)
+	mustExecute(s, sql)
+}
+
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
@@ -1166,7 +1188,7 @@ func doDDLWorks(s Session) {
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
-	mustExecute(s, CreateBindInfoTable)
+	initBindInfoTable(s)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
