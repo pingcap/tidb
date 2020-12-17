@@ -50,7 +50,9 @@ var (
 	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 
 	// Sequence usage privilege check.
-	errSequenceAccessDenied = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
+	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
+	errUnsupportedJSONComparison = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet,
+		pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
@@ -81,19 +83,4 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	}
 	sc.AppendWarning(ErrDivisionByZero)
 	return nil
-}
-
-// unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
-func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
-	for _, arg := range args {
-		tp := arg.GetType().Tp
-		if types.ResultMergeType(tp) == types.ETString && tp == pmysql.TypeJSON {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(
-				dbterror.ClassExpression.NewStdErr(
-					mysql.ErrNotSupportedYet,
-					pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil)),
-			)
-			break
-		}
-	}
 }

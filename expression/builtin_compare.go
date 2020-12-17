@@ -384,49 +384,11 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 }
 
 func aggregateType(args []Expression) *types.FieldType {
-	aggType := *args[0].GetType()
-	var (
-		newUnsignedFlag   = mysql.HasUnsignedFlag(aggType.Flag)
-		mixedUnsignedFlag = false
-	)
-	for i := 1; i < len(args); i++ {
-		item := args[i].GetType()
-		mixedUnsignedFlag = mixedUnsignedFlag || (newUnsignedFlag != mysql.HasUnsignedFlag(item.Flag))
-		aggType.Tp = types.MergeFieldType(aggType.Tp, item.Tp)
-		aggType.Decimal = int(math.Max(float64(aggType.Decimal), float64(item.Decimal)))
+	fieldTypes := make([]*types.FieldType, len(args))
+	for i := range fieldTypes {
+		fieldTypes[i] = args[i].GetType()
 	}
-
-	if mixedUnsignedFlag && types.IsTypeInteger(aggType.Tp) {
-		bumpRange := false
-		for i := range args {
-			item := args[i].GetType()
-			bumpRange = bumpRange ||
-				(mysql.HasUnsignedFlag(item.Flag) &&
-					(item.Tp == aggType.Tp || item.Tp == mysql.TypeBit))
-		}
-		if bumpRange {
-			newType := mysql.TypeUnspecified
-			switch aggType.Tp {
-			case mysql.TypeTiny:
-				newType = mysql.TypeShort
-			case mysql.TypeShort:
-				newType = mysql.TypeInt24
-			case mysql.TypeInt24:
-				newType = mysql.TypeLong
-			case mysql.TypeLong:
-				newType = mysql.TypeLonglong
-			case mysql.TypeLonglong:
-				newType = mysql.TypeNewDecimal
-			}
-			aggType.Tp = newType
-		}
-	}
-
-	if mysql.HasUnsignedFlag(aggType.Flag) && !mixedUnsignedFlag {
-		aggType.Flag |= mysql.UnsignedFlag
-	}
-
-	return &aggType
+	return types.AggFieldType(fieldTypes)
 }
 
 // ResolveType4Between resolves eval type for between expression.
@@ -452,11 +414,12 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-// ResolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func ResolveType4Extremum(args []Expression) types.EvalType {
+// resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func resolveType4Extremum(args []Expression) types.EvalType {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
+	aggType.EvalType()
 	if types.ResultMergeType(aggType.Tp) == types.ETString {
 		for i := range args {
 			item := args[i].GetType()
@@ -473,6 +436,17 @@ func ResolveType4Extremum(args []Expression) types.EvalType {
 	return aggType.EvalType()
 }
 
+// unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
+func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
+	for _, arg := range args {
+		tp := arg.GetType().Tp
+		if types.ResultMergeType(tp) == types.ETString && tp == mysql.TypeJSON {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedJSONComparison)
+			break
+		}
+	}
+}
+
 type greatestFunctionClass struct {
 	baseFunctionClass
 }
@@ -481,7 +455,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp := ResolveType4Extremum(args)
+	tp := resolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
@@ -696,7 +670,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp := ResolveType4Extremum(args)
+	tp := resolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
@@ -870,8 +844,9 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		strRes  string
-		timeRes types.Time
+		// timeRes will be converted to a strRes only when the arguments is a valid datetime value.
+		strRes  string // Record the strRes of each arguments.
+		timeRes types.Time // Record the time representation of a valid arguments.
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {

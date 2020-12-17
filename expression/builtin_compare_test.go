@@ -258,6 +258,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}
 }
 
+// greatest/least function is compatible with MySQL 8.0
 func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
