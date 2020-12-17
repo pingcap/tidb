@@ -546,10 +546,14 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	tp := b.args[0].GetType()
+	if !mysql.HasUnsignedFlag(tp.Flag) {
 		res = strconv.FormatInt(val, 10)
 	} else {
 		res = strconv.FormatUint(uint64(val), 10)
+	}
+	if tp.Tp == mysql.TypeYear && res == "0" {
+		res = "0000"
 	}
 	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
@@ -603,6 +607,9 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Dur
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		}
+		if types.ErrTruncatedWrongVal.Equal(err) {
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		}
 		return res, true, err
 	}
@@ -1133,6 +1140,12 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalInt(b.ctx, row)
 	}
+
+	// Take the implicit evalInt path if possible.
+	if CanImplicitEvalInt(b.args[0]) {
+		return b.args[0].EvalInt(b.ctx, row)
+	}
+
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1181,6 +1194,12 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalReal(b.ctx, row)
 	}
+
+	// Take the implicit evalReal path if possible.
+	if CanImplicitEvalReal(b.args[0]) {
+		return b.args[0].EvalReal(b.ctx, row)
+	}
+
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1741,18 +1760,31 @@ func (i inCastContext) String() string {
 // @see BuildCastFunction4Union
 const inUnionCastContext inCastContext = 0
 
-// hasSpecialCast checks if this expr has its own special cast function.
-// for example(#9713): when doing arithmetic using results of function DayName,
-// "Monday" should be regarded as 0, "Tuesday" should be regarded as 1 and so on.
-func hasSpecialCast(ctx sessionctx.Context, expr Expression, tp *types.FieldType) bool {
+// CanImplicitEvalInt represents the builtin functions that have an implicit path to evaluate as integer,
+// regardless of the type that type inference decides it to be.
+// This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as integer.
+// See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
+func CanImplicitEvalInt(expr Expression) bool {
 	switch f := expr.(type) {
 	case *ScalarFunction:
 		switch f.FuncName.L {
 		case ast.DayName:
-			switch tp.EvalType() {
-			case types.ETInt, types.ETReal:
-				return true
-			}
+			return true
+		}
+	}
+	return false
+}
+
+// CanImplicitEvalReal represents the builtin functions that have an implicit path to evaluate as real,
+// regardless of the type that type inference decides it to be.
+// This is a nasty way to match the weird behavior of MySQL functions like `dayname()` being implicitly evaluated as real.
+// See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
+func CanImplicitEvalReal(expr Expression) bool {
+	switch f := expr.(type) {
+	case *ScalarFunction:
+		switch f.FuncName.L {
+		case ast.DayName:
+			return true
 		}
 	}
 	return false
@@ -1770,10 +1802,6 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	if hasSpecialCast(ctx, expr, tp) {
-		return expr
-	}
-
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:

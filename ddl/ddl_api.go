@@ -1111,7 +1111,7 @@ func checkTooLongColumn(cols []*model.ColumnInfo) error {
 }
 
 func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
-	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(len(colDefs)) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil

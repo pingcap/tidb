@@ -2140,6 +2140,8 @@ func (s *testSchemaSuite) TestRetrySchemaChangeForEmptyChange(c *C) {
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("commit")
 
+	// TODO remove this enable after fixing table delta map.
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk.MustExec("begin pessimistic")
 	tk1.MustExec("alter table t add k int")
 	tk.MustExec("select * from t for update")
