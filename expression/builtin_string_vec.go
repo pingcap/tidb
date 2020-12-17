@@ -2917,6 +2917,10 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 		} else {
 			locale = localeBuf.GetString(i)
 		}
+		if strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
+			locale = "en_US"
+		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
 		dStr := strconv.FormatInt(d, 10)
