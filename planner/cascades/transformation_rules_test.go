@@ -127,6 +127,9 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 				NewRulePushSelDownWindow(),
 				NewRuleMergeAdjacentSelection(),
 			},
+			memo.OperandJoin: {
+				NewRuleTransformJoinCondToSel(),
+			},
 		},
 		TransformationRuleBatch{ // TiKV layer
 			memo.OperandSelection: {
