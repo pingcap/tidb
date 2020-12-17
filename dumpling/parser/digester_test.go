@@ -54,6 +54,7 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select 1 / 2", "select ? / ?"},
 		{"select * from t where a = 40 limit ?, ?", "select * from t where a = ? limit ..."},
 		{"select * from t where a > ?", "select * from t where a > ?"},
+		{"select @a=b from t", "select @a = b from t"},
 	}
 	for _, test := range tests {
 		normalized := parser.Normalize(test.input)
