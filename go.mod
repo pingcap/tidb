@@ -51,7 +51,7 @@ require (
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
 	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20201209065231-aa39b1b86217
+	github.com/pingcap/tipb v0.0.0-20201217093034-daf46606de18
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1

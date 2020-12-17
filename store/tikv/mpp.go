@@ -75,6 +75,9 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
 	pbResp *mpp.MPPDataPacket
+	detail *CopRuntimeStats
+	respTime time.Duration
+	respSize int64
 
 	err error
 }
@@ -91,16 +94,26 @@ func (m *mppResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently.
 func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
-	return nil
+	return m.detail
 }
 
 // MemSize returns how many bytes of memory this response use
 func (m *mppResponse) MemSize() int64 {
-	return int64(m.pbResp.Size())
+	if m.respSize != 0 {
+		return m.respSize
+	}
+
+	if m.detail != nil {
+		m.respSize += int64(sizeofExecDetails)
+	}
+	if m.pbResp != nil {
+		m.respSize += int64(m.pbResp.Size())
+	}
+	return m.respSize
 }
 
 func (m *mppResponse) RespTime() time.Duration {
-	return 0
+	return m.respTime
 }
 
 type mppIterator struct {
@@ -248,7 +261,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// TODO: cancel the whole process when some error happens
 	for {
-		err := m.handleMPPStreamResponse(resp, req)
+		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.sendError(err)
 			return
@@ -284,7 +297,7 @@ func (m *mppIterator) Close() error {
 	return nil
 }
 
-func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -296,7 +309,18 @@ func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 
 	resp := &mppResponse{
 		pbResp: response,
+		detail: new(CopRuntimeStats),
 	}
+
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
 	m.sendToRespCh(resp)
 	return

@@ -428,6 +428,13 @@ type CopRuntimeStats struct {
 	copDetails *CopDetails
 }
 
+func maxInt32(a int32, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // RecordOneCopTask records a specific cop tasks's execution detail.
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
@@ -435,7 +442,8 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.stats[address] = append(crs.stats[address],
 		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows)})
+			rows:    int64(*summary.NumProducedRows),
+		    concurrency: maxInt32(1, int32(summary.GetConcurrency()))})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -469,24 +477,26 @@ func (crs *CopRuntimeStats) String() string {
 
 	var totalTasks int64
 	var totalIters int32
+	var totalConcurrency int32
 	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalIters += stat.loop
+			totalConcurrency += stat.concurrency
 			totalTasks++
 		}
 	}
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
+		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d, concurrency:%d}", FormatDuration(procTimes[0]), totalIters, totalConcurrency))
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v, concurrency:%v}",
 			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks, totalConcurrency))
 	}
 	if detail := crs.copDetails; detail != nil {
 		crs.writeField(buf, "total_keys", detail.TotalKeys)
@@ -549,6 +559,8 @@ type BasicRuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
+	// concurrency
+	concurrency int32
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -562,6 +574,7 @@ func (e *BasicRuntimeStats) Clone() RuntimeStats {
 		loop:    e.loop,
 		consume: e.consume,
 		rows:    e.rows,
+		concurrency: e.concurrency,
 	}
 }
 
@@ -574,6 +587,7 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.loop += tmp.loop
 	e.consume += tmp.consume
 	e.rows += tmp.rows
+	e.concurrency += tmp.concurrency
 }
 
 // Tp implements the RuntimeStats interface.
@@ -646,7 +660,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d, concurrency:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.concurrency)
 }
 
 // GetTime get the int64 total time

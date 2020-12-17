@@ -29,7 +29,7 @@ import (
 )
 
 // DispatchMPPTasks dispathes all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
 	if resp == nil {
 		err := errors.New("client returns nil response")
@@ -49,6 +49,8 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		ctx:        sctx,
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		encodeType: encodeType,
+		copPlanIDs: planIDs,
+		rootPlanID: rootID,
 	}, nil
 
 }
