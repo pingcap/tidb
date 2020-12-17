@@ -190,6 +190,11 @@ repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
 max-index-length = 3080
+<<<<<<< HEAD
+=======
+index-limit = 70
+table-column-count-limit = 4000
+>>>>>>> ce704c8f8... config, ddl: make `TableColumnCountLimit` configurable or be compatible with MySQL (#21612)
 skip-register-to-dashboard = true
 [performance]
 txn-total-size-limit=2000
@@ -247,6 +252,11 @@ engines = ["tiflash"]
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+<<<<<<< HEAD
+=======
+	c.Assert(conf.IndexLimit, Equals, 70)
+	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
+>>>>>>> ce704c8f8... config, ddl: make `TableColumnCountLimit` configurable or be compatible with MySQL (#21612)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 
 	_, err = f.WriteString(`
@@ -440,6 +450,33 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testConfigSuite) TestIndexLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLimit int, shouldBeValid bool) {
+		conf.IndexLimit = indexLimit
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefIndexLimit, true)
+	checkValid(DefIndexLimit-1, false)
+	checkValid(DefMaxOfIndexLimit, true)
+	checkValid(DefMaxOfIndexLimit+1, false)
+}
+
+func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
+		conf.TableColumnCountLimit = uint32(tableColumnLimit)
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefTableColumnCountLimit, true)
+	checkValid(DefTableColumnCountLimit-1, false)
+	checkValid(DefMaxOfTableColumnCountLimit, true)
+	checkValid(DefMaxOfTableColumnCountLimit+1, false)
+}
+
+>>>>>>> ce704c8f8... config, ddl: make `TableColumnCountLimit` configurable or be compatible with MySQL (#21612)
 func (s *testConfigSuite) TestParsePath(c *C) {
 	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
 	c.Assert(err, IsNil)

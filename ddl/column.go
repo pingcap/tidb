@@ -26,7 +26,13 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/ddl/util"
+=======
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
+>>>>>>> ce704c8f8... config, ddl: make `TableColumnCountLimit` configurable or be compatible with MySQL (#21612)
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -614,7 +620,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(colNum int) error {
-	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(colNum) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
