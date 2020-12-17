@@ -1596,6 +1596,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		}
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
+		// and MySQL doc https://dev.mysql.com/doc/refman/5.7/en/group-by-handling.html
 		if hasDistinct && projExprs != nil {
 			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
 			if err != nil {
