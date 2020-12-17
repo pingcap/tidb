@@ -852,6 +852,12 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalInt(b.ctx, input, result)
 	}
+
+	// Take the implicit evalInt path if possible.
+	if CanImplicitEvalInt(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+
 	result.ResizeInt64(n, false)
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -1557,6 +1563,12 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalReal(b.ctx, input, result)
 	}
+
+	// Take the implicit evalReal path if possible.
+	if CanImplicitEvalReal(b.args[0]) {
+		return b.args[0].VecEvalReal(b.ctx, input, result)
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
