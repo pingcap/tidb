@@ -934,9 +934,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Flen > mysql.MaxFloatingTypeWidth {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
-		}
-		if tp.Flen < tp.Decimal {
-			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+			if tp.Flen < tp.Decimal {
+				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+			}
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
@@ -956,6 +956,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
+
 		if tp.Flen < tp.Decimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
