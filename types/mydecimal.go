@@ -432,9 +432,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 	wordsInt, wordsFrac, err := fixWordCntError(wordsInt, wordsFrac)
 	if err != nil {
 		digitsFrac = wordsFrac * digitsPerWord
-		if err == ErrTruncated {
-			err = nil
-		}
 		if err == ErrOverflow {
 			digitsInt = wordsInt * digitsPerWord
 		}
