@@ -59,12 +59,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 		t.Errorf("expect exceed err but get nil")
 	}
 
-	_, err = o.GetStaleTimestamp(context.Background(), -2)
-	if err != nil {
-		t.Errorf("%v\n", err)
-	}
-
-	for i := int64(3); i < 1e9; i += i/100 + 1 {
+	for i := uint64(3); i < 1e9; i += i/100 + 1 {
 		start = time.Now()
 		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 		oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))

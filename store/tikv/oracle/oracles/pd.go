@@ -239,10 +239,10 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	}
 }
 
-func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uint64, error) {
+func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond uint64) (uint64, error) {
 	ts, ok := o.getLastTS(oracle.GlobalTxnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
 	tsArrival, ok := o.getLastArrivalTS()
 	if !ok {
@@ -250,9 +250,8 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 	}
 	arrivalTime := oracle.GetTimeFromTS(tsArrival)
 	physicalTime := oracle.GetTimeFromTS(ts)
-	if physicalTime.Unix() <= prevSecond {
-		return 0, errors.Errorf("get invalid prevSecond, prevSecond must less than physicalTime, "+
-			"get prevSecond: %d, physicalTime: %d", prevSecond, physicalTime.Unix())
+	if uint64(physicalTime.Unix()) <= prevSecond {
+		return 0, errors.Errorf("invalid prevSecond %v", prevSecond)
 	}
 
 	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
@@ -261,10 +260,10 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond int64) (uin
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
-func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond int64) (ts uint64, err error) {
+func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond uint64) (ts uint64, err error) {
 	ts, err = o.getStaleTimestamp(ctx, prevSecond)
 	if err != nil {
-		return 0, errors.Wrap(err, "")
+		return 0, errors.Trace(err)
 	}
 	return ts, nil
 }
