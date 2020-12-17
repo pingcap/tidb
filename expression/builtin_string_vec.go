@@ -2864,16 +2864,15 @@ func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64,
 			d = formatMaxDecimals
 		}
 
-		var locale string
+		locale := "en_US"
 		if localeBuf == nil {
 			// FORMAT(x, d)
-			locale = "en_US"
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-			locale = "en_US"
-		} else {
-			locale = localeBuf.GetString(i)
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
+			// TODO: support other locales.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -2905,16 +2904,15 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 			d = formatMaxDecimals
 		}
 
-		var locale string
+		locale := "en_US"
 		if localeBuf == nil {
 			// FORMAT(x, d)
-			locale = "en_US"
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-			locale = "en_US"
-		} else {
-			locale = localeBuf.GetString(i)
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
+			// TODO: support other locales.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
