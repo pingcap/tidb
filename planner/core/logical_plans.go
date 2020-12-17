@@ -1022,6 +1022,7 @@ type LogicalLock struct {
 	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
+	noPushDownLock   bool
 }
 
 // WindowFrame represents a window function frame.
