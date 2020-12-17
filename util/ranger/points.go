@@ -351,6 +351,10 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	if isUnsigned {
+		return val, op, true
+	}
+
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !isUnsigned && !isNegative && val.GetUint64() > math.MaxInt64 {
