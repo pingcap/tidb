@@ -34,10 +34,18 @@ import (
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"github.com/pingcap/tidb/config"
 )
 
 func TestGlobalKill(t *testing.T) {
 	CustomVerboseFlag = true
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
 	TestingT(t)
 }
 
