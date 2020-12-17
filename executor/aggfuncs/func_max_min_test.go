@@ -66,7 +66,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 			if i == 0 {
 				memDeltas[i] = int64(len(curVal.Name))
 				preEnumVal = curVal
-			} else if isMax && curVal.Value > preEnumVal.Value || !isMax && curVal.Value < preEnumVal.Value {
+			} else if isMax && curVal.Name > preEnumVal.Name || !isMax && curVal.Name < preEnumVal.Name {
 				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
 				preEnumVal = curVal
 			}
@@ -75,7 +75,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 			if i == 0 {
 				memDeltas[i] = int64(len(curVal.Name))
 				preSetVal = curVal
-			} else if isMax && curVal.Value > preSetVal.Value || !isMax && curVal.Value < preSetVal.Value {
+			} else if isMax && curVal.Name > preSetVal.Name || !isMax && curVal.Name < preSetVal.Name {
 				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
 				preSetVal = curVal
 			}
@@ -100,7 +100,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 
 	setA, _ := types.ParseSet(elems, "a", mysql.DefaultCollationName)    // setA.Value == 1
 	setAB, _ := types.ParseSet(elems, "a,b", mysql.DefaultCollationName) // setAB.Value == 3
-	setAC, _ := types.ParseSet(elems, "a,c", mysql.DefaultCollationName) // setAC.Value == 5
+	// setAC, _ := types.ParseSet(elems, "a,c", mysql.DefaultCollationName) // setAC.Value == 5
+	setC, _ := types.ParseSet(elems, "c", mysql.DefaultCollationName) // setC.Value == 4
 
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
@@ -115,7 +116,7 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
 		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, json.CreateBinary(int64(4)), json.CreateBinary(int64(4)), json.CreateBinary(int64(4))),
 		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumE, enumE),
-		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setAC, setAC, setAC),
+		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setC, setC, setC),
 
 		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, 0, 2, 0),
 		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, 0, 2, 0),

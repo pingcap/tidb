@@ -7192,21 +7192,18 @@ func (s *testSuite) TestIssue21451(c *C) {
 	tk.MustQuery("select min(en) from t;").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from t order by en;").Check(testkit.Rows("c", "b", "a"))
 	tk.MustExec("drop table t")
-
 	tk.MustExec("create table t(s set('c', 'b', 'a'));")
 	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
 	tk.MustQuery("select max(s) from t;").Check(testkit.Rows("c"))
 	tk.MustQuery("select min(s) from t;").Check(testkit.Rows("a"))
-	
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(id int, en enum('c', 'b', 'a'))")
 	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
 	tk.MustQuery("select id, max(en) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
 	tk.MustQuery("select id, min(en) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
-	
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(id int, en set('c', 'b', 'a'));")
 	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
 	tk.MustQuery("select id, max(en) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
-	tk.MustQuery("select id, min(en) from t where id=1 group by id;").Check(testkit.Rows("1 a"))	
+	tk.MustQuery("select id, min(en) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
 }
