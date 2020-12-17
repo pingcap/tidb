@@ -507,17 +507,20 @@ EXPLAIN SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_na
 id	count	task	operator info
 StreamAgg_22	1.00	root	funcs:count(1)
 └─HashAgg_25	1.00	root	group by:col_0, col_1, col_2, funcs:firstrow(1)
-  └─Projection_41	0.01	root	a.stat_date, a.show_date, coalesce(test.b.region_name, "不详")
-    └─IndexJoin_28	0.01	root	left outer join, inner:TableReader_27, outer key:a.region_id, inner key:test.b.id
-      ├─Union_30	0.01	root	
-      │ ├─Projection_31	0.00	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(registration_num)
-      │ │ └─Projection_32	0.00	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, 0
-      │ │   └─TableDual_33	0.00	root	rows:0
-      │ └─Projection_34	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(test.test01.registration_num)
-      │   └─Selection_35	0.01	root	gt(cast(test.test01.registration_num), 0)
-      │     └─TableReader_38	0.01	root	data:Selection_37
-      │       └─Selection_37	0.01	cop	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
-      │         └─TableScan_36	10000.00	cop	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Projection_44	0.02	root	a.stat_date, a.show_date, coalesce(test.b.region_name, "不详")
+    └─IndexJoin_28	0.02	root	left outer join, inner:TableReader_27, outer key:a.region_id, inner key:test.b.id
+      ├─Union_30	0.02	root	
+      │ ├─Projection_31	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(registration_num)
+      │ │ └─Projection_32	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, 0
+      │ │   └─Selection_33	0.01	root	gt(cast(0), 0)
+      │ │     └─TableReader_36	0.01	root	data:Selection_35
+      │ │       └─Selection_35	0.01	cop	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │ │         └─TableScan_34	10000.00	cop	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
+      │ └─Projection_37	0.01	root	test.test01.stat_date, test.test01.show_date, test.test01.region_id, cast(test.test01.registration_num)
+      │   └─Selection_38	0.01	root	gt(cast(test.test01.registration_num), 0)
+      │     └─TableReader_41	0.01	root	data:Selection_40
+      │       └─Selection_40	0.01	cop	eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │         └─TableScan_39	10000.00	cop	table:test01, range:[-inf,+inf], keep order:false, stats:pseudo
       └─TableReader_27	1.00	root	data:TableScan_26
         └─TableScan_26	1.00	cop	table:b, range: decided by [a.region_id], keep order:false, stats:pseudo
 drop table if exists t;
