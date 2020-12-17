@@ -714,7 +714,6 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	ctx := context.Background()
 	var err error
 
 	// for length
@@ -1110,12 +1109,9 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("12,332.1000 12,332 12,332.20"))
 	result = tk.MustQuery(`select format(NULL, 4), format(12332.2, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil>"))
-	rs, err := tk.Exec(`select format(12332.2, 2,'es_EC');`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "not support for the specific locale")
-	c.Assert(rs.Close(), IsNil)
+	result = tk.MustQuery(`select format(12332.2, 2,'es_EC');`)
+	result.Check(testkit.Rows("12,332.20"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1649 Unknown locale: 'es_EC'"))
 
 	// for field
 	result = tk.MustQuery(`select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);`)
