@@ -2222,10 +2222,10 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
-	groupByCols := la.GetGroupByCols()
 	for _, taskTp := range taskTypes {
 		// TODO: enum more subsets of partition columns
 		if taskTp == property.MppTaskType {
+			groupByCols := la.GetGroupByCols()
 			/// 1-phase agg: when the partition columns can be satisfied
 			if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
 				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols, Enforced: true}
