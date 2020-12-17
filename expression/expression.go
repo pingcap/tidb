@@ -331,20 +331,36 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
+<<<<<<< HEAD
 		eType := expr.GetType().EvalType()
 		if expr.GetType().Hybrid() {
 			eType = types.ETInt
+=======
+		tp := expr.GetType()
+		eType := tp.EvalType()
+		if CanImplicitEvalReal(expr) {
+			eType = types.ETReal
+>>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		// Take the implicit evalReal path if possible.
+		if CanImplicitEvalReal(expr) {
+			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+				return nil, nil, err
+			}
+		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
+<<<<<<< HEAD
 		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+=======
+		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+>>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -384,7 +400,11 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
+<<<<<<< HEAD
 func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+=======
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+>>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -471,6 +491,30 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
 	}
 	return nil
+}
+
+func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		err = expr.VecEvalReal(ctx, input, result)
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		result.ResizeFloat64(n, false)
+		f64s := result.Float64s()
+		for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+			value, isNull, err := expr.EvalReal(ctx, it)
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(ind, isNull)
+			} else {
+				f64s[ind] = value
+			}
+			ind++
+		}
+	}
+	return
 }
 
 // EvalExpr evaluates this expr according to its type.
