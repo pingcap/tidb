@@ -2274,6 +2274,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2284,7 +2285,10 @@ var builtinGlobalVariable = []string{
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
@@ -2292,6 +2296,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (
