@@ -351,12 +351,16 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
+<<<<<<< HEAD
 		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(number))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
+=======
+		return ZeroDuration, errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
+>>>>>>> b25f62dce... expression: fix compatibility behaviors in time_format with MySQL (#21559)
 	}
 	if neg {
 		dur.Duration = -dur.Duration
