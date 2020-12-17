@@ -2870,7 +2870,7 @@ func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64,
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-		} else if strings.EqualFold(localeBuf.GetString(i), "en_US") {
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}
@@ -2910,7 +2910,7 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-		} else if strings.EqualFold(localeBuf.GetString(i), "en_US") {
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}

@@ -3370,7 +3370,7 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 	}
 	if isNull {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-	} else if strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 	}
 	locale = "en_US"
