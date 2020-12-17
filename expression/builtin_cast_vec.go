@@ -636,7 +636,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	tp := b.args[0].GetType()
+	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isYearType := tp.Tp == mysql.TypeYear
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
@@ -649,6 +651,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 			str = strconv.FormatInt(i64s[i], 10)
 		} else {
 			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		if isYearType && str == "0" {
+			str = "0000"
 		}
 		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err != nil {
@@ -847,6 +852,12 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalInt(b.ctx, input, result)
 	}
+
+	// Take the implicit evalInt path if possible.
+	if CanImplicitEvalInt(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+
 	result.ResizeInt64(n, false)
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -1552,6 +1563,12 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalReal(b.ctx, input, result)
 	}
+
+	// Take the implicit evalReal path if possible.
+	if CanImplicitEvalReal(b.args[0]) {
+		return b.args[0].VecEvalReal(b.ctx, input, result)
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
