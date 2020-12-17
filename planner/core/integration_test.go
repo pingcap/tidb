@@ -1953,6 +1953,18 @@ func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("11 12"))
 }
 
+func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
+		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
+		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+}
+
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
 	// #20598
 	tk := testkit.NewTestKit(c, s.store)
@@ -2086,4 +2098,25 @@ func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
 	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
 		"1",
 	))
+}
+
+// Test for issue https://github.com/pingcap/tidb/issues/21607.
+func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (a) values (1);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
+		Check(testkit.Rows("0"))
 }
