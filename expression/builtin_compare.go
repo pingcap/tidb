@@ -845,7 +845,7 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
 		// timeRes will be converted to a strRes only when the arguments is a valid datetime value.
-		strRes  string // Record the strRes of each arguments.
+		strRes  string     // Record the strRes of each arguments.
 		timeRes types.Time // Record the time representation of a valid arguments.
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
