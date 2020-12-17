@@ -2433,7 +2433,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			if ctx.GetSessionVars().EnableAlterPlacement {
 				err = d.AlterTablePartition(ctx, ident, spec)
 			} else {
-				err = errors.New("alter table partition alter partition is switched off by tidb_enable_alter_placement")
+				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
 			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
