@@ -685,12 +685,12 @@
         "Hints": "use_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), merge_join(@`del_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), merge_join(@`upd_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`)"
       },
@@ -1641,6 +1641,22 @@
         "Result": [
           "1"
         ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg_13 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
+          "└─PartitionUnion_14 16000.00 root  ",
+          "  ├─HashAgg_17 8000.00 root  group by:Column#15, funcs:firstrow(Column#13)->Column#6, funcs:firstrow(Column#14)->Column#5",
+          "  │ └─Projection_37 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#13, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#14, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#15",
+          "  │   └─TableReader_23 10000.00 root  data:TableFullScan_22",
+          "  │     └─TableFullScan_22 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  └─HashAgg_28 8000.00 root  group by:Column#18, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#5",
+          "    └─Projection_38 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#16, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#17, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#18",
+          "      └─TableReader_34 10000.00 root  data:TableFullScan_33",
+          "        └─TableFullScan_33 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   },
@@ -1808,6 +1824,19 @@
         "Result": [
           "1"
         ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg_10 16000.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
+          "└─Projection_11 20000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#3",
+          "  └─PartitionUnion_12 20000.00 root  ",
+          "    ├─TableReader_14 10000.00 root  data:TableFullScan_13",
+          "    │ └─TableFullScan_13 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "    └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   },

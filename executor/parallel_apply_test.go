@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
@@ -548,12 +549,50 @@ func (s *testSuite) TestApplyCacheRatio(c *C) {
 	// 10%
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (1, 1)")
 	c.Assert(checkRatio("10.000%"), IsTrue)
+	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
+	c.Assert(checkRatio(""), IsFalse)
+	tk.MustExec("set tidb_mem_quota_apply_cache = 33554432")
+
 	// 20%
 	tk.MustExec("truncate t1")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (2, 2), (1, 1)")
 	c.Assert(checkRatio("20.000%"), IsTrue)
+	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
+	c.Assert(checkRatio(""), IsFalse)
+	tk.MustExec("set tidb_mem_quota_apply_cache = 33554432")
 	// 50%
 	tk.MustExec("truncate t1")
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)")
 	c.Assert(checkRatio("50.000%"), IsTrue)
+	tk.MustExec("set tidb_mem_quota_apply_cache = 0")
+	c.Assert(checkRatio(""), IsFalse)
+}
+
+func (s *testSuite) TestApplyGoroutinePanic(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1, 1), (1, 1), (2, 2), (2, 3), (2, 3), (1, 1), (1, 1), (2, 2), (2, 3), (2, 3)")
+	tk.MustExec("insert into t2 values (2, 2), (3,3), (-1, 1), (5, 4), (2, 2), (3,3), (-1, 1), (5, 4)")
+
+	// no panic
+	sql := "select (select count(*) from t2 where t2.a > t1.a and t2.b > t1.a) from t1"
+	checkApplyPlan(c, tk, sql, 1)
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("4", "4", "4", "4", "4", "4", "6", "6", "6", "6"))
+
+	// panic in a inner worker
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic", "panic"), IsNil)
+	err := tk.QueryToErr(sql)
+	c.Assert(err, NotNil) // verify errors are not be ignored
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelApplyInnerWorkerPanic"), IsNil)
+
+	for _, panicName := range []string{"parallelApplyInnerWorkerPanic", "parallelApplyOuterWorkerPanic", "parallelApplyGetCachePanic", "parallelApplySetCachePanic"} {
+		panicPath := fmt.Sprintf("github.com/pingcap/tidb/executor/%v", panicName)
+		c.Assert(failpoint.Enable(panicPath, "panic"), IsNil)
+		err := tk.QueryToErr(sql)
+		c.Assert(err, NotNil) // verify errors are not be ignored
+		c.Assert(failpoint.Disable(panicPath), IsNil)
+	}
 }

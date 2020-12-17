@@ -103,6 +103,9 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleTransformApplyToJoin(),
 		NewRulePullSelectionUpApply(),
 	},
+	memo.OperandJoin: {
+		NewRuleTransformJoinCondToSel(),
+	},
 }
 
 // TiKVLayerOptimizationBatch does the optimization related to TiKV layer.
@@ -836,9 +839,111 @@ func (r *PushLimitDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	return []*memo.GroupExpr{newLimitExpr}, true, false, nil
 }
 
+type pushDownJoin struct {
+}
+
+func (r *pushDownJoin) predicatePushDown(
+	sctx sessionctx.Context,
+	predicates []expression.Expression,
+	join *plannercore.LogicalJoin,
+	leftSchema *expression.Schema,
+	rightSchema *expression.Schema,
+) (
+	leftCond []expression.Expression,
+	rightCond []expression.Expression,
+	remainCond []expression.Expression,
+	dual plannercore.LogicalPlan,
+) {
+	var equalCond []*expression.ScalarFunction
+	var leftPushCond, rightPushCond, otherCond []expression.Expression
+	switch join.JoinType {
+	case plannercore.SemiJoin, plannercore.InnerJoin:
+		tempCond := make([]expression.Expression, 0,
+			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(predicates))
+		tempCond = append(tempCond, join.LeftConditions...)
+		tempCond = append(tempCond, join.RightConditions...)
+		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
+		tempCond = append(tempCond, join.OtherConditions...)
+		tempCond = append(tempCond, predicates...)
+		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
+		tempCond = expression.PropagateConstant(sctx, tempCond)
+		// Return table dual when filter is constant false or null.
+		dual := plannercore.Conds2TableDual(join, tempCond)
+		if dual != nil {
+			return leftCond, rightCond, remainCond, dual
+		}
+		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftSchema, rightSchema, true, true)
+		join.LeftConditions = nil
+		join.RightConditions = nil
+		join.EqualConditions = equalCond
+		join.OtherConditions = otherCond
+		leftCond = leftPushCond
+		rightCond = rightPushCond
+	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin,
+		plannercore.RightOuterJoin:
+		lenJoinConds := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
+		joinConds := make([]expression.Expression, 0, lenJoinConds)
+		for _, equalCond := range join.EqualConditions {
+			joinConds = append(joinConds, equalCond)
+		}
+		joinConds = append(joinConds, join.LeftConditions...)
+		joinConds = append(joinConds, join.RightConditions...)
+		joinConds = append(joinConds, join.OtherConditions...)
+		join.EqualConditions = nil
+		join.LeftConditions = nil
+		join.RightConditions = nil
+		join.OtherConditions = nil
+		remainCond = make([]expression.Expression, len(predicates))
+		copy(remainCond, predicates)
+		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
+		if join.JoinType == plannercore.RightOuterJoin {
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
+		} else {
+			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+		}
+		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
+		join.AppendJoinConds(eq, left, right, other)
+		// Return table dual when filter is constant false or null.
+		dual := plannercore.Conds2TableDual(join, remainCond)
+		if dual != nil {
+			return leftCond, rightCond, remainCond, dual
+		}
+		if join.JoinType == plannercore.RightOuterJoin {
+			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
+			// Only derive right where condition, because left where condition cannot be pushed down
+			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, false, true)
+			rightCond = rightPushCond
+			// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
+			derivedLeftJoinCond, _ := plannercore.DeriveOtherConditions(join, leftSchema, rightSchema, true, false)
+			leftCond = append(join.LeftConditions, derivedLeftJoinCond...)
+			join.LeftConditions = nil
+			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+			remainCond = append(remainCond, leftPushCond...)
+		} else {
+			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
+			// Only derive left where condition, because right where condition cannot be pushed down
+			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftSchema, rightSchema, true, false)
+			leftCond = leftPushCond
+			// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
+			_, derivedRightJoinCond := plannercore.DeriveOtherConditions(join, leftSchema, rightSchema, false, true)
+			rightCond = append(join.RightConditions, derivedRightJoinCond...)
+			join.RightConditions = nil
+			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+			remainCond = append(remainCond, rightPushCond...)
+		}
+	default:
+		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
+	}
+	leftCond = expression.RemoveDupExprs(sctx, leftCond)
+	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+
+	return
+}
+
 // PushSelDownJoin pushes Selection through Join.
 type PushSelDownJoin struct {
 	baseRule
+	pushDownJoin
 }
 
 // NewRulePushSelDownJoin creates a new Transformation PushSelDownJoin.
@@ -860,13 +965,14 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
-	oldSel *plannercore.LogicalSelection,
+	sctx sessionctx.Context,
+	blockOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
 	if len(conditions) == 0 {
 		return childGroup
 	}
-	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(oldSel.SCtx(), oldSel.SelectBlockOffset())
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, blockOffset)
 	groupExpr := memo.NewGroupExpr(newSel)
 	groupExpr.SetChildren(childGroup)
 	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)
@@ -878,97 +984,20 @@ func buildChildSelectionGroup(
 func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	joinExpr := old.Children[0].GetExpr()
-	// TODO: we need to create a new LogicalJoin here.
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
+	newJoin := join.Shallow()
 	sctx := sel.SCtx()
 	leftGroup := old.Children[0].GetExpr().Children[0]
 	rightGroup := old.Children[0].GetExpr().Children[1]
-	var equalCond []*expression.ScalarFunction
-	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond, remainCond []expression.Expression
-	switch join.JoinType {
-	case plannercore.SemiJoin, plannercore.InnerJoin:
-		tempCond := make([]expression.Expression, 0,
-			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(sel.Conditions))
-		tempCond = append(tempCond, join.LeftConditions...)
-		tempCond = append(tempCond, join.RightConditions...)
-		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
-		tempCond = append(tempCond, join.OtherConditions...)
-		tempCond = append(tempCond, sel.Conditions...)
-		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
-		tempCond = expression.PropagateConstant(sctx, tempCond)
-		// Return table dual when filter is constant false or null.
-		dual := plannercore.Conds2TableDual(join, tempCond)
-		if dual != nil {
-			return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, false, true, nil
-		}
-		equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(tempCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, true, true)
-		join.LeftConditions = nil
-		join.RightConditions = nil
-		join.EqualConditions = equalCond
-		join.OtherConditions = otherCond
-		leftCond = leftPushCond
-		rightCond = rightPushCond
-	case plannercore.LeftOuterJoin, plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin,
-		plannercore.RightOuterJoin:
-		lenJoinConds := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
-		joinConds := make([]expression.Expression, 0, lenJoinConds)
-		for _, equalCond := range join.EqualConditions {
-			joinConds = append(joinConds, equalCond)
-		}
-		joinConds = append(joinConds, join.LeftConditions...)
-		joinConds = append(joinConds, join.RightConditions...)
-		joinConds = append(joinConds, join.OtherConditions...)
-		join.EqualConditions = nil
-		join.LeftConditions = nil
-		join.RightConditions = nil
-		join.OtherConditions = nil
-		remainCond = make([]expression.Expression, len(sel.Conditions))
-		copy(remainCond, sel.Conditions)
-		nullSensitive := join.JoinType == plannercore.AntiLeftOuterSemiJoin || join.JoinType == plannercore.LeftOuterSemiJoin
-		if join.JoinType == plannercore.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, rightGroup.Prop.Schema, leftGroup.Prop.Schema, nullSensitive)
-		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx(), joinConds, remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, nullSensitive)
-		}
-		eq, left, right, other := join.ExtractOnCondition(joinConds, leftGroup.Prop.Schema, rightGroup.Prop.Schema, false, false)
-		join.AppendJoinConds(eq, left, right, other)
-		// Return table dual when filter is constant false or null.
-		dual := plannercore.Conds2TableDual(join, remainCond)
-		if dual != nil {
-			return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, false, true, nil
-		}
-		if join.JoinType == plannercore.RightOuterJoin {
-			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
-			// Only derive right where condition, because left where condition cannot be pushed down
-			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, false, true)
-			rightCond = rightPushCond
-			// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
-			derivedLeftJoinCond, _ := plannercore.DeriveOtherConditions(join, true, false)
-			leftCond = append(join.LeftConditions, derivedLeftJoinCond...)
-			join.LeftConditions = nil
-			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, leftPushCond...)
-		} else {
-			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
-			// Only derive left where condition, because right where condition cannot be pushed down
-			equalCond, leftPushCond, rightPushCond, otherCond = join.ExtractOnCondition(remainCond, leftGroup.Prop.Schema, rightGroup.Prop.Schema, true, false)
-			leftCond = leftPushCond
-			// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
-			_, derivedRightJoinCond := plannercore.DeriveOtherConditions(join, false, true)
-			rightCond = append(join.RightConditions, derivedRightJoinCond...)
-			join.RightConditions = nil
-			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, rightPushCond...)
-		}
-	default:
-		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
+	leftCond, rightCond, remainCond, dual := r.predicatePushDown(sctx, sel.Conditions, newJoin, leftGroup.Prop.Schema, rightGroup.Prop.Schema)
+	if dual != nil {
+		return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, true, true, nil
 	}
-	leftCond = expression.RemoveDupExprs(sctx, leftCond)
-	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+
 	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
-	leftGroup = buildChildSelectionGroup(sel, leftCond, leftGroup)
-	rightGroup = buildChildSelectionGroup(sel, rightCond, rightGroup)
-	newJoinExpr := memo.NewGroupExpr(join)
+	leftGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), leftCond, leftGroup)
+	rightGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), rightCond, rightGroup)
+	newJoinExpr := memo.NewGroupExpr(newJoin)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	if len(remainCond) > 0 {
 		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
@@ -978,6 +1007,51 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		newSelExpr.AddAppliedRule(r)
 		return []*memo.GroupExpr{newSelExpr}, true, false, nil
 	}
+	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// TransformJoinCondToSel convert Join(len(cond) > 0) to Join-->(Sel, Sel).
+type TransformJoinCondToSel struct {
+	baseRule
+	pushDownJoin
+}
+
+// NewRuleTransformJoinCondToSel creates a new Transformation TransformJoinCondToSel.
+// The pattern of this rule is: `Join`.
+func NewRuleTransformJoinCondToSel() Transformation {
+	rule := &TransformJoinCondToSel{}
+	rule.pattern = memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *TransformJoinCondToSel) Match(expr *memo.ExprIter) bool {
+	if expr.GetExpr().HasAppliedRule(r) {
+		return false
+	}
+	join := expr.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	return len(join.EqualConditions) > 0 || len(join.LeftConditions) > 0 ||
+		len(join.RightConditions) > 0 || len(join.OtherConditions) > 0
+}
+
+// OnTransform implements Transformation interface.
+// This rule tries to transform Join conditions to Selection. Besides, this rule fulfills the `XXXConditions` field of Join.
+func (r *TransformJoinCondToSel) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	join := old.GetExpr().ExprNode.(*plannercore.LogicalJoin)
+	newJoin := join.Shallow()
+	sctx := join.SCtx()
+	leftGroup := old.GetExpr().Children[0]
+	rightGroup := old.GetExpr().Children[1]
+	leftCond, rightCond, _, dual := r.predicatePushDown(sctx, []expression.Expression{}, newJoin, leftGroup.Prop.Schema, rightGroup.Prop.Schema)
+	if dual != nil {
+		return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, true, true, nil
+	}
+	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
+	leftGroup = buildChildSelectionGroup(sctx, join.SelectBlockOffset(), leftCond, leftGroup)
+	rightGroup = buildChildSelectionGroup(sctx, join.SelectBlockOffset(), rightCond, rightGroup)
+	newJoinExpr := memo.NewGroupExpr(newJoin)
+	newJoinExpr.SetChildren(leftGroup, rightGroup)
+	newJoinExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
 }
 
@@ -2267,7 +2341,7 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	for _, aggFunc := range agg.AggFuncs {
 		copyFunc := aggFunc.Clone()
-		//WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
+		// WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
 		copyFunc.WrapCastForAggArgs(agg.SCtx())
 		copyFuncs = append(copyFuncs, copyFunc)
 		for _, arg := range copyFunc.Args {

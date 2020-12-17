@@ -235,6 +235,27 @@
     ]
   },
   {
+    "Name": "TestPreferRangeScan",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " TableReader   root ",
+          " └─Selection   cop  eq(test.test.age, ?)",
+          "   └─TableScan cop  table:test, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:test, index:idx_age(age), range:[?,?], keep order:false",
+          " └─TableScan cop  table:test, keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestNormalizedPlanForDiffStore",
     "Cases": [
       {

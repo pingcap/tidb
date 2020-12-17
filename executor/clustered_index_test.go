@@ -191,6 +191,28 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
 	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
 	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
+	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21502.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
+	tk.MustExec("delete from t where c_int = 5;")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568#issuecomment-741601887
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (11, 'abc', null, null);")
+	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
+	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
 }
 
 func (s *testClusteredSuite) TestIssue20002(c *C) {

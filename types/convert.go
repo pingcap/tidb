@@ -353,7 +353,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
+		return ZeroDuration, errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
 	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
@@ -633,16 +633,31 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 
 // ConvertJSONToDecimal casts JSON into decimal.
 func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+	var err error = nil
 	res := new(MyDecimal)
-	if j.TypeCode != json.TypeCodeString {
-		f64, err := ConvertJSONToFloat(sc, j)
-		if err != nil {
-			return res, errors.Trace(err)
+	switch j.TypeCode {
+	case json.TypeCodeObject, json.TypeCodeArray:
+		res = res.FromInt(0)
+	case json.TypeCodeLiteral:
+		switch j.Value[0] {
+		case json.LiteralNil, json.LiteralFalse:
+			res = res.FromInt(0)
+		default:
+			res = res.FromInt(1)
 		}
-		err = res.FromFloat64(f64)
+	case json.TypeCodeInt64:
+		res = res.FromInt(j.GetInt64())
+	case json.TypeCodeUint64:
+		res = res.FromUint(j.GetUint64())
+	case json.TypeCodeFloat64:
+		err = res.FromFloat64(j.GetFloat64())
+	case json.TypeCodeString:
+		err = res.FromString(j.GetString())
+	}
+	err = sc.HandleTruncate(err)
+	if err != nil {
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 
