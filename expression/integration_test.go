@@ -8324,7 +8324,6 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
 }
 
-
 func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
