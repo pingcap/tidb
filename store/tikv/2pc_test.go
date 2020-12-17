@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 type testCommitterSuite struct {
@@ -89,6 +91,13 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
+	return txn.(*tikvTxn)
+}
+
+func (s *testCommitterSuite) beginAsyncCommit(c *C) *tikvTxn {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.EnableAsyncCommit, true)
 	return txn.(*tikvTxn)
 }
 
@@ -324,7 +333,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 }
 
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
@@ -601,12 +610,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithStartTS(committer.startTS + 2)
+	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.startTS+2)
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.ctx, []byte("x"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithStartTS(math.MaxUint64)
+	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.ctx, []byte("x"))
 	c.Assert(err, IsNil)
@@ -682,7 +691,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 
 	lr := newLockResolver(s.store)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
-	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
@@ -1022,6 +1031,29 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 	return &res
 }
 
+func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
+	untouchedIndexKey := kv.Key("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	noValueIndexKey := kv.Key("t00000001_i000000002")
+	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
+	txn := s.begin(c)
+	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
+	c.Assert(err, IsNil)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	err = txn.LockKeys(context.Background(), lockCtx, untouchedIndexKey, noValueIndexKey)
+	c.Assert(err, IsNil)
+	commit, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	mutation := commit.mutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
+	c.Assert(mutation.Len(), Equals, 2)
+	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedIndexKey))
+	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
+	c.Assert(mutation.GetOp(1), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetKey(1), BytesEquals, []byte(noValueIndexKey))
+	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
+}
+
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
 	// Split into two region and let k1 k2 in different regions.
 	s.cluster.SplitKeys(kv.Key("z"), kv.Key("a"), 2)
@@ -1187,18 +1219,13 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
 func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
-
 	// Prepare two regions first: (, 100) and [100, )
 	region, _ := s.cluster.GetRegionByKey([]byte{50})
 	newRegionID := s.cluster.AllocID()
 	newPeerID := s.cluster.AllocID()
 	s.cluster.Split(region.Id, newRegionID, []byte{100}, []uint64{newPeerID}, newPeerID)
 
-	txn := s.begin(c)
+	txn := s.beginAsyncCommit(c)
 	var val [1024]byte
 	for i := byte(50); i < 120; i++ {
 		err := txn.Set([]byte{i}, val[:])
@@ -1226,17 +1253,12 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 }
 
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
-
 	ctx := context.Background()
 	pk := kv.Key("tpk")
 	pkVal := []byte("pkVal")
 	k1 := kv.Key("tk1")
 	k1Val := []byte("k1Val")
-	txn1 := s.begin(c)
+	txn1 := s.beginAsyncCommit(c)
 	err := txn1.Set(pk, pkVal)
 	c.Assert(err, IsNil)
 	err = txn1.Set(k1, k1Val)
@@ -1258,12 +1280,11 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.KeysLimit = 16
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
 	})
 
-	txn := s.begin(c)
+	txn := s.beginAsyncCommit(c)
 	buf := []byte{0, 0, 0, 0}
 	// Set 16 keys, each key is 4 bytes long. So the total size of keys is 64 bytes.
 	for i := 0; i < 16; i++ {

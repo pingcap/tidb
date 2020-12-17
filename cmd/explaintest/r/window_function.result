@@ -66,7 +66,7 @@ Projection_7	10000.00	root		Column#6
 explain select sum(a) over(partition by a order by b) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
-└─Shuffle_12	10000.00	root		execution info: concurrency:4, data source:TableReader_10
+└─Shuffle_12	10000.00	root		execution info: concurrency:4, data sources:[TableReader_10]
   └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row)
     └─Sort_11	10000.00	root		test.t.a, test.t.b
       └─TableReader_10	10000.00	root		data:TableFullScan_9
@@ -74,7 +74,7 @@ Projection_7	10000.00	root		Column#6
 explain select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
-└─Shuffle_12	10000.00	root		execution info: concurrency:4, data source:TableReader_10
+└─Shuffle_12	10000.00	root		execution info: concurrency:4, data sources:[TableReader_10]
   └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between unbounded preceding and current row)
     └─Sort_11	10000.00	root		test.t.a, test.t.b
       └─TableReader_10	10000.00	root		data:TableFullScan_9
@@ -82,7 +82,7 @@ Projection_7	10000.00	root		Column#6
 explain select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
-└─Shuffle_12	10000.00	root		execution info: concurrency:4, data source:TableReader_10
+└─Shuffle_12	10000.00	root		execution info: concurrency:4, data sources:[TableReader_10]
   └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between 1 preceding and 1 following)
     └─Sort_11	10000.00	root		test.t.a, test.t.b
       └─TableReader_10	10000.00	root		data:TableFullScan_9
@@ -90,7 +90,7 @@ Projection_7	10000.00	root		Column#6
 explain select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
-└─Shuffle_12	10000.00	root		execution info: concurrency:4, data source:TableReader_10
+└─Shuffle_12	10000.00	root		execution info: concurrency:4, data sources:[TableReader_10]
   └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between 1 preceding and 1 following)
     └─Sort_11	10000.00	root		test.t.a, test.t.b
       └─TableReader_10	10000.00	root		data:TableFullScan_9
@@ -98,7 +98,7 @@ Projection_7	10000.00	root		Column#6
 explain select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	estRows	task	access object	operator info
 Projection_7	10000.00	root		Column#6
-└─Shuffle_12	10000.00	root		execution info: concurrency:4, data source:TableReader_10
+└─Shuffle_12	10000.00	root		execution info: concurrency:4, data sources:[TableReader_10]
   └─Window_8	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
     └─Sort_11	10000.00	root		test.t.a, test.t.c
       └─TableReader_10	10000.00	root		data:TableFullScan_9
@@ -119,7 +119,7 @@ analyze table t1;
 explain select sum(a) over(partition by b) from t1;
 id	estRows	task	access object	operator info
 Projection_7	3.00	root		Column#4
-└─Shuffle_12	3.00	root		execution info: concurrency:2, data source:TableReader_10
+└─Shuffle_12	3.00	root		execution info: concurrency:2, data sources:[TableReader_10]
   └─Window_8	3.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#4 over(partition by test.t1.b)
     └─Sort_11	3.00	root		test.t1.b
       └─TableReader_10	3.00	root		data:TableFullScan_9

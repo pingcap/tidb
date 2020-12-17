@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -597,16 +598,28 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	}
 }
 
-func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
+func (s *testSerialSuite) mustExecDDL(tk *testkit.TestKit, c *C, sql string) {
+	tk.MustExec(sql)
+	c.Assert(s.domain.Reload(), IsNil)
+}
+
+func (s *testSerialSuite) TestPointGetReadLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Se.GetSessionVars().EnablePointGetCache = false
+	}()
+
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "lock tables point read")
 
 	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -618,7 +631,7 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	explain = fmt.Sprintf("%v", rows[0])
 	ok := strings.Contains(explain, "num_rpc")
 	c.Assert(ok, IsFalse)
-	tk.MustExec("unlock tables")
+	s.mustExecDDL(tk, c, "unlock tables")
 
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -626,7 +639,7 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	c.Assert(explain, Matches, ".*num_rpc.*")
 
 	// Test cache release after unlocking tables.
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "lock tables point read")
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
@@ -638,18 +651,19 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	ok = strings.Contains(explain, "num_rpc")
 	c.Assert(ok, IsFalse)
 
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "unlock tables")
+	s.mustExecDDL(tk, c, "lock tables point read")
 
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*num_rpc.*")
 
-	tk.MustExec("unlock tables")
+	s.mustExecDDL(tk, c, "unlock tables")
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
@@ -678,4 +692,129 @@ func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
 	explain = fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*num_rpc.*")
 	tk.MustExec("unlock tables")
+}
+
+func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
+	var wg sync.WaitGroup
+	errCh := make(chan error)
+
+	testLock := func(rc bool, key string, tableName string) {
+		doneCh := make(chan struct{}, 1)
+		tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
+
+		errCh <- tk1.ExecToErr("use test")
+		errCh <- tk2.ExecToErr("use test")
+		errCh <- tk1.ExecToErr("set session tidb_enable_clustered_index = 0")
+
+		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 1)", tableName))
+
+		if rc {
+			errCh <- tk1.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
+			errCh <- tk2.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
+		}
+
+		// select for update
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+		// lock exist key
+		errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where id = 1 and v = 1 for update", tableName))
+		// read committed will not lock non-exist key
+		if rc {
+			errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where id = 2 and v = 2 for update", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(2, 2, 2)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
+			// tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(150 * time.Millisecond)
+		errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 2 2",
+			"1 1 10",
+		))
+
+		// update
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+		// lock exist key
+		errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = 3 where id = 2 and v = 2", tableName))
+		// read committed will not lock non-exist key
+		if rc {
+			errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v =4 where id = 3 and v = 3", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(2, 2, 20)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(150 * time.Millisecond)
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"1 1 10",
+			"3 3 3",
+			"2 2 20",
+		))
+
+		// delete
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+		// lock exist key
+		errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where id = 3 and v = 3", tableName))
+		// read committed will not lock non-exist key
+		if rc {
+			errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where id = 4 and v = 4", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(4, 4, 4)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 30)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(50 * time.Millisecond)
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"1 1 10",
+			"2 2 20",
+			"4 4 4",
+			"3 3 30",
+		))
+		wg.Done()
+	}
+
+	for i, one := range []struct {
+		rc  bool
+		key string
+	}{
+		{rc: false, key: "primary key"},
+		{rc: false, key: "unique key"},
+		{rc: true, key: "primary key"},
+		{rc: true, key: "unique key"},
+	} {
+		wg.Add(1)
+		tableName := fmt.Sprintf("t_%d", i)
+		go testLock(one.rc, one.key, tableName)
+	}
+
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+	for err := range errCh {
+		c.Assert(err, IsNil)
+	}
 }

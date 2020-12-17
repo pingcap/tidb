@@ -58,6 +58,16 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("do @a := (select * from t where i = 1)")
+	tk2.MustExec("insert into t values (2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite3) TestSetRoleAllCorner(c *C) {
@@ -590,7 +600,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -753,6 +763,8 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")

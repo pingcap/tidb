@@ -502,3 +502,30 @@ func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
 
 	tk.MustQuery("select * from t2 partition (p1) where t2.a = 6;").Check(testkit.Rows())
 }
+
+func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t4")
+	tk.MustExec(`CREATE TABLE t4(
+	a bit(1) DEFAULT NULL,
+	b int(11) DEFAULT NULL
+	) PARTITION BY HASH(a)
+	PARTITIONS 3`)
+	defer tk.MustExec("drop tables if exists t4")
+	tk.MustExec("INSERT INTO t4 VALUES(0, 0)")
+	tk.MustExec("INSERT INTO t4 VALUES(1, 1)")
+	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
+	result.Check(testkit.Rows("\x01 1"))
+}
+
+func (ts *testSuite) TestIssue21574(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
+}
