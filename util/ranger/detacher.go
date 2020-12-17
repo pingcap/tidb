@@ -349,6 +349,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					if len(resRange.LowVal) == eqOrInCount {
 						saveRange = appendRanges2PointRanges(saveRange, tailRes.Ranges)
 						res.Ranges[i] = saveRange[0]
+					} else if len(resRange.LowVal) < eqOrInCount {
+						res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
 					}
 				}
 				res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
