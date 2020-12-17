@@ -55,6 +55,26 @@ function help_message()
 '
 }
 
+function start_cluster()
+{
+   ${PD} --name=pd --data-dir=pd &>pd.log &
+   sleep 10
+   
+   ${TIKV} --pd=127.0.0.1:2379 -s tikv --addr=0.0.0.0:20160 --advertise-addr=127.0.0.1:20160 &>tikv.log  &
+   sleep 10
+   
+   ${TIDB} -P 5000 -status 8000 -store tikv -path "127.0.0.1:2379" &>tidb.log &
+}
+
+function clean_cluster()
+{
+    set +e
+    killall -9 -r tidb-server
+    killall -9 -r tikv-server
+    killall -9 -r pd-server
+    set -e
+}
+
 function go_tests()
 {
     go test -args $*
@@ -69,5 +89,12 @@ while getopts "h" opt; do
     esac
 done
 
+clean_cluster
+
+start_cluster
+
 go_tests
+
+clean_cluster
+
 echo "globalkilltest end"
