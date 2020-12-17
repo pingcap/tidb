@@ -98,7 +98,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	h.Clear4Test()
+	h.Clear()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
 	c.Assert(err, IsNil)
@@ -188,6 +188,7 @@ func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
 func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")

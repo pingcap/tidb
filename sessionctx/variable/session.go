@@ -575,6 +575,9 @@ type SessionVars struct {
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
 
+	// EnablePointGetCache is used to cache value for point get for read only scenario.
+	EnablePointGetCache bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -665,6 +668,9 @@ type SessionVars struct {
 
 	// EvolvePlanBaselines indicates whether we will evolve the plan baselines.
 	EvolvePlanBaselines bool
+
+	// EnableExtendedStats indicates whether we enable the extended statistics feature.
+	EnableExtendedStats bool
 
 	// Unexported fields should be accessed and set through interfaces like GetReplicaRead() and SetReplicaRead().
 
@@ -770,6 +776,9 @@ type SessionVars struct {
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
+
+	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
+	TrackAggregateMemoryUsage bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -897,6 +906,7 @@ func NewSessionVars() *SessionVars {
 		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:             DefTiDBUsePlanBaselines,
 		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:          false,
 		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
 		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
 		MetricSchemaStep:             DefTiDBMetricSchemaStep,
@@ -914,6 +924,7 @@ func NewSessionVars() *SessionVars {
 		ShardAllocateStep:            DefTiDBShardAllocateStep,
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
 		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
+		EnablePointGetCache:          DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
@@ -939,9 +950,8 @@ func NewSessionVars() *SessionVars {
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
-		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
+		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
 		// TODO: remove them in v4.1
@@ -951,7 +961,6 @@ func NewSessionVars() *SessionVars {
 		MemQuotaTopn:              DefTiDBMemQuotaTopn,
 		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
 		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
-		MemQuotaNestedLoopApply:   DefTiDBMemQuotaNestedLoopApply,
 		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
@@ -1422,10 +1431,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBMemQuotaStatistics:
-		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
-	case TIDBNestedLoopJoinCacheCapacity:
-		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
+	case TiDBMemQuotaApplyCache:
+		s.MemQuotaApplyCache = tidbOptInt64(val, DefTiDBMemQuotaApplyCache)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
@@ -1438,8 +1445,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
 	case TIDBMemQuotaIndexLookupJoin:
 		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-	case TIDBMemQuotaNestedLoopApply:
-		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		ProcessGeneralLog.Store(TiDBOptOn(val))
 	case TiDBPProfSQLCPU:
@@ -1516,6 +1521,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.UsePlanBaselines = TiDBOptOn(val)
 	case TiDBEvolvePlanBaselines:
 		s.EvolvePlanBaselines = TiDBOptOn(val)
+	case TiDBEnableExtendedStats:
+		s.EnableExtendedStats = TiDBOptOn(val)
 	case TiDBIsolationReadEngines:
 		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
 		for _, engine := range strings.Split(val, ",") {
@@ -1626,6 +1633,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableChangeMultiSchema:
 		s.EnableChangeMultiSchema = TiDBOptOn(val)
+	case TiDBEnablePointGetCache:
+		s.EnablePointGetCache = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
@@ -1642,6 +1651,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.GuaranteeExternalConsistency = TiDBOptOn(val)
 	case TiDBAnalyzeVersion:
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
+	case TiDBTrackAggregateMemoryUsage:
+		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1939,10 +1950,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MemQuotaStatistics defines the memory quota for the statistic Cache.
-	MemQuotaStatistics int64
-	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
-	NestedLoopJoinCacheCapacity int64
+	// MemQuotaApplyCache defines the memory capacity for apply cache.
+	MemQuotaApplyCache int64
 
 	// The variables below do not take any effect anymore, it's remaining for compatibility.
 	// TODO: remove them in v4.1
@@ -1958,8 +1967,6 @@ type MemQuota struct {
 	MemQuotaIndexLookupReader int64
 	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
 	MemQuotaIndexLookupJoin int64
-	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
-	MemQuotaNestedLoopApply int64
 	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
 	MemQuotaDistSQL int64
 }
