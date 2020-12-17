@@ -3929,7 +3929,9 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
 	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
-	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+	// `k` is dual table and the test must make `k` as inner table of index join, but a TODO here, `a` as the inner
+	// table will cause the data race of txn.
+	tk.MustQuery("select /*+ inl_join(k) */ a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
 		Check(testkit.Rows("1 a"))
 }
 
