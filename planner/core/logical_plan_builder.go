@@ -279,10 +279,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
-func (b *PlanBuilder) buildTableRefsWithoutCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
-	return b.buildTableRefs(ctx, from, false)
-}
-
 func (b *PlanBuilder) buildTableRefsWithCache(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
 	return b.buildTableRefs(ctx, from, true)
 }
@@ -3276,7 +3272,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.pushMap(nil)
 
 	hasAgg := b.detectSelectAgg(sel)
-	if hasAgg || sel.GroupBy != nil {
+	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
 		// of this sub-query are actually correlated aggregates from the outer querym And they have already been built
@@ -3290,6 +3286,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			for agg, idx := range totalMap {
 				totalMap[agg] = aggIndexMap[idx]
 			}
+		} else {
+			hasAgg = false
 		}
 	}
 
