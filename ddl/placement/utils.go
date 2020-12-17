@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -150,4 +151,23 @@ func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
 		}
 	}
 	return false
+}
+
+// VerifyTxnScope verify whether the txnScope and visited table break the leader rule's dcLocation.
+func VerifyTxnScope(txnScope string, tableID int64, bundles map[string]*Bundle) bool {
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return true
+	}
+	bundle, ok := bundles[GroupID(tableID)]
+	if !ok {
+		return true
+	}
+	leaderDC, ok := GetLeaderDCByBundle(bundle, DCLabelKey)
+	if !ok {
+		return true
+	}
+	if leaderDC != txnScope {
+		return false
+	}
+	return true
 }

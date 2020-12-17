@@ -391,18 +391,11 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblID = e.tblInfo.ID
 	}
 	is := infoschema.GetInfoSchema(e.ctx)
-	bundle, ok := is.RuleBundles()[placement.GroupID(tblID)]
-	if !ok {
+	valid := placement.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
+	if valid {
 		return nil
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
-	if !ok {
-		return nil
-	}
-	if leaderDC != txnScope {
-		return fmt.Errorf("table %v can not be read by %v txn_scope", tblID, txnScope)
-	}
-	return nil
+	return fmt.Errorf("table %v can not be read by %v txn_scope", tblID, txnScope)
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
