@@ -623,19 +623,39 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
+	compareAsString := arg0.TypeCode != json.TypeCodeObject && arg0.TypeCode != json.TypeCodeArray
+	var str string
+	if compareAsString {
+		str = arg0.String()
+	}
 	var hasNull bool
 	for _, arg := range b.args[1:] {
-		evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
-		if err != nil {
-			return 0, true, err
-		}
-		if isNull {
-			hasNull = true
-			continue
-		}
-		result := json.CompareBinary(evaledArg, arg0)
-		if result == 0 {
-			return 1, false, nil
+		tp := arg.GetType().Tp
+		if compareAsString && tp != mysql.TypeJSON {
+			evaledArg, isNull, err := arg.EvalString(b.ctx, row)
+			if err != nil {
+				return 0, true, err
+			}
+			if isNull {
+				hasNull = true
+				continue
+			}
+			if evaledArg == str {
+				return 1, false, nil
+			}
+		} else {
+			evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
+			if err != nil {
+				return 0, true, err
+			}
+			if isNull {
+				hasNull = true
+				continue
+			}
+			result := json.CompareBinary(evaledArg, arg0)
+			if result == 0 {
+				return 1, false, nil
+			}
 		}
 	}
 	return 0, hasNull, nil
