@@ -357,7 +357,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if !isUnsigned && !isNegative && val.GetUint64() > math.MaxInt64 {
+		if !isNegative && val.GetUint64() > math.MaxInt64 {
 			switch op {
 			case ast.GT, ast.GE:
 				return val, op, false
@@ -367,27 +367,26 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 			}
 		}
 	case mysql.TypeFloat:
-		if !isUnsigned {
-			if val.GetFloat64() > math.MaxFloat32 {
-				switch op {
-				case ast.GT, ast.GE:
-					return val, op, false
-				case ast.NE, ast.LE, ast.LT:
-					op = ast.LE
-					val = types.NewFloat32Datum(math.MaxFloat32)
-				}
+		if val.GetFloat64() > math.MaxFloat32 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewFloat32Datum(math.MaxFloat32)
 			}
-			if val.GetFloat64() < -math.MaxFloat32 {
-				switch op {
-				case ast.LE, ast.LT:
-					return val, op, false
-				case ast.GT, ast.GE, ast.NE:
-					op = ast.GE
-					val = types.NewFloat32Datum(-math.MaxFloat32)
-				}
+		}
+		if val.GetFloat64() < -math.MaxFloat32 {
+			switch op {
+			case ast.LE, ast.LT:
+				return val, op, false
+			case ast.GT, ast.GE, ast.NE:
+				op = ast.GE
+				val = types.NewFloat32Datum(-math.MaxFloat32)
 			}
 		}
 	}
+
 	return val, op, true
 }
 
