@@ -1309,21 +1309,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				se.StmtRollback()
-			} else {
-				se.StmtCommit()
-			}
-		}
-	}
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
