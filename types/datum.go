@@ -1295,6 +1295,7 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 	}
 	if err != nil {
+		ret.SetMysqlDecimal(dec)
 		return ret, err
 	}
 	if dec.negative && mysql.HasUnsignedFlag(target.Flag) {
