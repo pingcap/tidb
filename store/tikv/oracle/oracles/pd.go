@@ -35,9 +35,9 @@ const slowDist = 30 * time.Millisecond
 type pdOracle struct {
 	c pd.Client
 	// txn_scope (string) -> lastTSPointer (*uint64)
-	lastTSMap            sync.Map
-	lastArrivalTSPointer *uint64
-	quit                 chan struct{}
+	lastTSMap     sync.Map
+	lastArrivalTS uint64
+	quit          chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
@@ -246,7 +246,7 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond uint64) (ui
 	}
 	tsArrival, ok := o.getLastArrivalTS()
 	if !ok {
-		return 0, errors.Errorf("get last arrival timestamp, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get last arrival timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(tsArrival)
 	physicalTime := oracle.GetTimeFromTS(ts)
@@ -269,15 +269,13 @@ func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond uint64) (ts
 }
 
 func (o *pdOracle) setLastArrivalTS(ts uint64) {
-	if o.lastArrivalTSPointer == nil {
-		o.lastArrivalTSPointer = new(uint64)
-	}
-	atomic.StoreUint64(o.lastArrivalTSPointer, ts)
+	atomic.StoreUint64(&o.lastArrivalTS, ts)
 }
 
 func (o *pdOracle) getLastArrivalTS() (uint64, bool) {
-	if o.lastArrivalTSPointer == nil {
-		return 0, false
+	ts := atomic.LoadUint64(&o.lastArrivalTS)
+	if ts > 0 {
+		return ts, true
 	}
-	return atomic.LoadUint64(o.lastArrivalTSPointer), true
+	return 0, false
 }
