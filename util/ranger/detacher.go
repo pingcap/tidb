@@ -388,7 +388,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			continue
 		}
-		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
+		accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 		newConditions = append(newConditions, accesses[i])
 	}
 	for i, cond := range accesses {
