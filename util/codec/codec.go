@@ -1209,15 +1209,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = append(buf[i], NilFlag)
 			} else {
 				buf[i] = append(buf[i], decimalFlag)
-				precision := ft.Flen
-				frac := ft.Decimal
-				if precision == 0 {
-					precision, frac = ds[i].PrecisionAndFrac()
-				}
-				if frac > mysql.MaxDecimalScale {
-					frac = mysql.MaxDecimalScale
-				}
-				buf[i], err = EncodeDecimal(buf[i], &ds[i], precision, frac)
+				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.Flen, ft.Decimal)
 				if terror.ErrorEqual(err, types.ErrTruncated) {
 					err = sc.HandleTruncate(err)
 				} else if terror.ErrorEqual(err, types.ErrOverflow) {
