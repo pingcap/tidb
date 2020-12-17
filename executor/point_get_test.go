@@ -610,6 +610,12 @@ func (s *testSerialSuite) TestPointGetReadLock(c *C) {
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Se.GetSessionVars().EnablePointGetCache = false
+	}()
+
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
