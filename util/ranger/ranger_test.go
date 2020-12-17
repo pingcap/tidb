@@ -867,6 +867,22 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 	}{
 		{
 			colPos:      0,
+			exprStr:     "(a = 2 or a = 2) and (a = 2 or a = 2)",
+			accessConds: "[or(eq(test.t.a, 2), eq(test.t.a, 2)) or(eq(test.t.a, 2), eq(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[2,2]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
+			exprStr:     "(a = 2 or a = 1) and (a = 3 or a = 4)",
+			accessConds: "[or(eq(test.t.a, 2), eq(test.t.a, 1)) or(eq(test.t.a, 3), eq(test.t.a, 4))]",
+			filterConds: "[]",
+			resultStr:   "[]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
 			exprStr:     "a = 1 and b > 1",
 			accessConds: "[eq(test.t.a, 1)]",
 			filterConds: "[gt(test.t.b, 1)]",
