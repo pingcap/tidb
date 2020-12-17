@@ -93,7 +93,7 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 }
 
 func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
-	elems := []string{"a", "b", "c", "d", "e"}
+	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnum(elems, "e", mysql.DefaultCollationName)
