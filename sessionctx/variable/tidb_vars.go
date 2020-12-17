@@ -73,6 +73,9 @@ const (
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
 
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -352,6 +355,9 @@ const (
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -432,6 +438,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
@@ -489,6 +498,9 @@ const (
 
 	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
+
+	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
+	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
 
 // Default TiDB system variable values.
@@ -562,6 +574,7 @@ const (
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
+	DefTiDBPointGetCache                = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
@@ -600,13 +613,14 @@ const (
 	DefTiDBShardAllocateStep            = math.MaxInt64
 	DefTiDBEnableTelemetry              = true
 	DefTiDBEnableParallelApply          = false
-	DefTiDBEnableAmendPessimisticTxn    = true
+	DefTiDBEnableAmendPessimisticTxn    = false
 	DefTiDBPartitionPruneMode           = "static-only"
 	DefTiDBEnableRateLimitAction        = true
 	DefTiDBEnableAsyncCommit            = false
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
+	DefTiDBTrackAggregateMemoryUsage    = false
 )
 
 // Process global variables.
