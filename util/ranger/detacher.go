@@ -477,8 +477,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			continue
 		}
-		if allSinglePoints(sctx.GetSessionVars().StmtCtx, cols[i]) {
-			accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
+		if allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i]) {
+			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
 		} else {
 			accesses[i] = nil
