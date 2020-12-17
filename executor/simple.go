@@ -1081,11 +1081,25 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	if !config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		conf := config.GetGlobalConfig()
+		if s.TiDBExtension || conf.CompatibleKillQuery {
+			sm := e.ctx.GetSessionManager()
+			if sm == nil {
+				return nil
+			}
+			sm.Kill(s.ConnectionID, s.Query)
+		} else {
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return nil
+	}
+
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil
 	}
-
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
