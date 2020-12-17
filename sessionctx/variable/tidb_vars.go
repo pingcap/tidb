@@ -495,6 +495,9 @@ const (
 
 	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
+
+	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
+	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
 
 // Default TiDB system variable values.
@@ -614,6 +617,7 @@ const (
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
+	DefTiDBTrackAggregateMemoryUsage    = false
 )
 
 // Process global variables.
