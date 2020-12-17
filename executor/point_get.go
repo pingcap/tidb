@@ -50,9 +50,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	if p.Lock {
 		b.hasLock = true
 	}
-	if p.TrackMem {
-		e.trackMem = true
-	}
 	e.Init(p, startTS)
 	return e
 }
@@ -86,8 +83,6 @@ type PointGetExecutor struct {
 
 	stats *runtimeStatsWithSnapshot
 
-	// control if track mem
-	trackMem   bool
 	memTracker *memory.Tracker
 }
 
@@ -149,15 +144,16 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 
-	if e.trackMem {
-		e.memTracker = memory.NewTracker(e.id, -1)
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	}
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
+	//memory usage decreases
+	e.memTracker.Consume(-e.memTracker.BytesConsumed())
+
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
@@ -260,9 +256,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	if e.memTracker != nil {
-		e.memTracker.Consume(int64(len(val)))
-	}
+	e.memTracker.Consume(int64(len(val)))
+
 	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
@@ -270,6 +265,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	err = FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
 		e.schema, e.columns, e.ctx, req)
+
+	e.memTracker.Consume(req.MemoryUsage())
 	if err != nil {
 		return err
 	}

@@ -3145,8 +3145,8 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 }
 
-// Test MEMORY_QUOTA hint in POINT_GET/BATCH_POINT_GET
-func (s *testSessionSuite2) TestPointGetStmtHints(c *C) {
+// Test memory track in POINT_GET/BATCH_POINT_GET for issue 21653
+func (s *testSessionSuite2) TestPointGetMemoryTracking(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")

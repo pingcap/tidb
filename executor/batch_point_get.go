@@ -70,8 +70,6 @@ type BatchPointGetExec struct {
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
 
-	// control if track mem
-	trackMem   bool
 	memTracker *memory.Tracker
 }
 
@@ -129,15 +127,16 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 
-	if e.trackMem {
-		e.memTracker = memory.NewTracker(e.id, -1)
-		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	}
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
+	//memory usage decreases
+	e.memTracker.Consume(-e.memTracker.BytesConsumed())
+
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
@@ -163,9 +162,6 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		if e.memTracker != nil {
-			e.memTracker.Consume(int64(len(val)))
-		}
 		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
@@ -174,6 +170,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
+	e.memTracker.Consume(req.MemoryUsage())
 	if err != nil {
 		return err
 	}
@@ -362,6 +359,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
+		// track memory
+		e.memTracker.Consume(int64(len(key)) + int64(len(val)))
+
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
 				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
