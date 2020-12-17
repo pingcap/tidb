@@ -64,6 +64,8 @@ const (
 		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -79,8 +81,6 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -439,6 +439,8 @@ const (
 	version55 = 55
 	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
 	version56 = 56
+	// version57 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version57 = 57
 )
 
 var (
@@ -499,6 +501,7 @@ var (
 		upgradeToVer54,
 		upgradeToVer55,
 		upgradeToVer56,
+		upgradeToVer57,
 	}
 )
 
@@ -1228,6 +1231,14 @@ func upgradeToVer56(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer57(s Session, ver int64) {
+	if ver >= version57 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
 }
 
 func writeMemoryQuotaQuery(s Session) {

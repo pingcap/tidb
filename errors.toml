@@ -936,6 +936,11 @@ error = '''
 Internal : %s
 '''
 
+["planner:3029"]
+error = '''
+Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
+'''
+
 ["planner:3065"]
 error = '''
 Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s
@@ -1549,6 +1554,11 @@ invalid year
 ["types:8037"]
 error = '''
 invalid week mode format: '%v'
+'''
+
+["types:8129"]
+error = '''
+TiDB does not yet support JSON objects with the key length >= 65536
 '''
 
 ["variable:1193"]
