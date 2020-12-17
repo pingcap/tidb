@@ -163,6 +163,9 @@ func (d *sqlDigester) normalize(sql string) {
 	}
 	d.lexer.reset("")
 	for i, token := range d.tokens {
+		if token.tok == singleAtIdentifier {
+			d.buffer.WriteString("@")
+		}
 		d.buffer.WriteString(token.lit)
 		if i != len(d.tokens)-1 {
 			d.buffer.WriteRune(' ')
