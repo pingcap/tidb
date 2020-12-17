@@ -190,6 +190,7 @@ max-server-connections = 200
 mem-quota-query = 10000
 max-index-length = 3080
 index-limit = 70
+table-column-count-limit = 4000
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 txn-scope = "dc-1"
@@ -264,6 +265,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.IndexLimit, Equals, 70)
+	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
@@ -484,6 +486,18 @@ func (s *testConfigSuite) TestIndexLimit(c *C) {
 	checkValid(DefIndexLimit-1, false)
 	checkValid(DefMaxOfIndexLimit, true)
 	checkValid(DefMaxOfIndexLimit+1, false)
+}
+
+func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
+		conf.TableColumnCountLimit = uint32(tableColumnLimit)
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefTableColumnCountLimit, true)
+	checkValid(DefTableColumnCountLimit-1, false)
+	checkValid(DefMaxOfTableColumnCountLimit, true)
+	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {
