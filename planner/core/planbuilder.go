@@ -1266,15 +1266,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	check := b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
-	if check {
-		latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
-		if err != nil {
-			return nil, nil, err
-		}
-		if latestIndexes == nil {
-			check = false
-		}
-	}
 
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
@@ -1284,6 +1275,12 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 				zap.Stringer("state", idxInfo.State),
 				zap.String("table", tblInfo.Name.O))
 			continue
+		}
+		if check && latestIndexes == nil {
+			latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		if check {
 			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
