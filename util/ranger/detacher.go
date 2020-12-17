@@ -296,10 +296,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if eqOrInCount > 0 {
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
-			tmpConditions := newConditions
+			saveConditions := newConditions
 			// For cases like `a = 1 and ((b = 1 and c = 1) or (b = 3)) and d = 3` on index (a,b,c),
 			// or condition cases need to be handled separately to take advantage of more index columns.
-			for i, cond := range tmpConditions {
+			for i, cond := range saveConditions {
 				var condList []expression.Expression
 				condList = append(condList, cond)
 				if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -318,6 +318,12 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					for _, resRange := range res.Ranges {
 						if eqOrInCount < len(resRange.LowVal) {
 							eqOrInCount = len(resRange.LowVal)
+							if eqOrInCount < len(d.cols) {
+								newCols = d.cols[eqOrInCount:]
+								newLengths = d.lengths[eqOrInCount:]
+							} else if eqOrInCount == len(d.cols) {
+								res.RemainedConds = append(res.RemainedConds, newConditions...)
+							}
 						}
 					}
 					res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
@@ -327,12 +333,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 						}
 						res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
 					}
-
 				}
-			}
-			if eqOrInCount < len(d.cols) {
-				newCols = d.cols[eqOrInCount:]
-				newLengths = d.lengths[eqOrInCount:]
 			}
 			tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, newConditions, newCols, newLengths)
 			if err != nil {
@@ -362,7 +363,6 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				}
 				res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
 			}
-
 			return res, nil
 		}
 		// `eqOrInCount` must be 0 when coming here.
