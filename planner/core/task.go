@@ -1471,8 +1471,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		// TODO : && t.count() > float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount)
-		if p.SCtx().GetSessionVars().AllowMPPExecution && p.tp == plancodec.TypeHashAgg && len(p.GetChildReqProps(0).PartitionCols) > 0 {
+		// TODO : && t.count() > float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
+		if p.SCtx().GetSessionVars().AllowMPPExecution && p.tp == plancodec.TypeHashAgg {
 			if p.GetChildReqProps(0).PartitionTp == property.AnyType {
 				/// 1-phase agg: when the partition columns can be satisfied
 				/// only push down the original agg
