@@ -37,8 +37,11 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	bundles map[string]*placement.Bundle
-	err     error
+	sv *variable.SessionVars
+	// txnScope indicates the value of txn_scope
+	txnScope string
+	bundles  map[string]*placement.Bundle
+	err      error
 }
 
 // Build builds a "kv.Request".
@@ -220,6 +223,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		// Concurrency may be set to 1 by SetDAGRequest
 		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	}
+	builder.sv = sv
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
@@ -235,7 +239,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 
 // SetTxnScope sets "TxnScope" flag for "kv.Request".
 func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
-	builder.Request.TxnScope = scope
+	builder.txnScope = scope
 	return builder
 }
 
@@ -270,10 +274,10 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.Request.TxnScope == "" {
-		builder.Request.TxnScope = oracle.GlobalTxnScope
+	if builder.txnScope == "" {
+		builder.txnScope = oracle.GlobalTxnScope
 	}
-	if builder.Request.TxnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
+	if builder.txnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
 		return nil
 	}
 	visitTableID := make(map[int64]struct{})
@@ -295,8 +299,8 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		if !ok {
 			continue
 		}
-		if dc != builder.TxnScope {
-			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.Request.TxnScope)
+		if dc != builder.txnScope {
+			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
 		}
 	}
 	return nil

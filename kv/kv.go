@@ -406,8 +406,6 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
-	// TxnScope indicates the value of txn_scope
-	TxnScope string
 }
 
 // ResultSubset represents a result subset from a single storage unit.
