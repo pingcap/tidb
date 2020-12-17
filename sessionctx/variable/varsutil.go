@@ -126,6 +126,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
