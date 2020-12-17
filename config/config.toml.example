@@ -486,6 +486,8 @@ history-size = 24
 [experimental]
 # enable creating expression index.
 allow-expression-index = false
+# enable global kill.
+enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]
