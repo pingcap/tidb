@@ -553,6 +553,31 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestIgnoreOrderBy(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	s.testData.OnRecord(func() {
+		output = make([]string, len(input))
+	})
+
+	ctx := context.Background()
+	for i, tt := range input {
+		comment := Commentf("case:%d, for %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(lp), Equals, output[i], comment)
+	}
+}
+
 func (s *testPlanSuite) TestSortByItemsPruning(c *C) {
 	defer testleak.AfterTest(c)()
 	var (

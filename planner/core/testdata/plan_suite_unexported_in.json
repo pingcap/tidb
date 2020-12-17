@@ -408,6 +408,15 @@
     ]
   },
   {
+    "name": "TestIgnoreOrderBy",
+    "cases": [
+      "select count(a) from t order by a",
+      "select count(a) from t order by b",
+      "select count(a) from t order by count(a)",
+      "select count(a), count(b) from t order by count(a+b)"
+    ]
+  },
+  {
     "name": "TestSortByItemsPruning",
     "cases": [
       "select * from t where a > 1 order by a asc, a asc limit 10",

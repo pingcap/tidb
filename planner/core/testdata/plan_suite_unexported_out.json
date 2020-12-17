@@ -778,6 +778,15 @@
     ]
   },
   {
+    "name": "TestIgnoreOrderBy",
+    "cases": [
+      "DataScan(t)->Aggr(count(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a))->Projection",
+      "DataScan(t)->Aggr(count(test.t.a),count(test.t.b))->Projection"
+    ]
+  },
+  {
     "Name": "TestSortByItemsPruning",
     "Cases": [
       [
