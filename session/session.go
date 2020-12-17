@@ -1301,6 +1301,21 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	sessVars := se.sessionVars
+
+	// Record diagnostic information for DML statements
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
+		defer func() {
+			sessVars.LastQueryInfo = variable.QueryInfo{
+				TxnScope:    sessVars.TxnScope,
+				StartTS:     sessVars.TxnCtx.StartTS,
+				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+			}
+			if err != nil {
+				sessVars.LastQueryInfo.ErrMsg = err.Error()
+			}
+		}()
+	}
+
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
@@ -1309,21 +1324,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				se.StmtRollback()
-			} else {
-				se.StmtCommit()
-			}
-		}
-	}
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
@@ -2274,6 +2274,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2284,13 +2285,17 @@ var builtinGlobalVariable = []string{
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (

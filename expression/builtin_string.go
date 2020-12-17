@@ -3370,8 +3370,10 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 	}
 	if isNull {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-		locale = "en_US"
+	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 	}
+	locale = "en_US"
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
@@ -3549,7 +3551,7 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-		return "", true, nil
+		b.tp.Flen = mysql.MaxBlobWidth
 	}
 
 	// encode
