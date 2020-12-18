@@ -74,8 +74,8 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
-	pbResp *mpp.MPPDataPacket
-	detail *CopRuntimeStats
+	pbResp   *mpp.MPPDataPacket
+	detail   *CopRuntimeStats
 	respTime time.Duration
 	respSize int64
 

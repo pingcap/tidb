@@ -441,9 +441,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
 		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
-			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows),
-		    concurrency: maxInt32(1, int32(summary.GetConcurrency()))})
+			consume:     int64(*summary.TimeProcessedNs),
+			rows:        int64(*summary.NumProducedRows),
+			concurrency: maxInt32(1, int32(summary.GetConcurrency()))})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -571,9 +571,9 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	return &BasicRuntimeStats{
-		loop:    e.loop,
-		consume: e.consume,
-		rows:    e.rows,
+		loop:        e.loop,
+		consume:     e.consume,
+		rows:        e.rows,
 		concurrency: e.concurrency,
 	}
 }
