@@ -6692,6 +6692,7 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
 }
 
+<<<<<<< HEAD
 func (s *testSuite) TestIssue22201(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));").Check(testkit.Rows("<nil>"))
@@ -6724,4 +6725,9 @@ func (s *testSuiteP1) TestIssue22941(c *C) {
 
 	rs = tk.MustQuery(`SELECT  bmp.mpid,  bmp.mpid IS NULL,bmp.mpid IS NOT NULL FROM m c LEFT JOIN mp bmp ON c.mid = bmp.mid  WHERE c.ParentId = '0'`)
 	rs.Check(testkit.Rows("<nil> 1 0"))
+=======
+func (s *testSuite) TestIssue15563(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
+>>>>>>> e9b11b72a... util: fix bad number error with DISTINCT when dividing long decimals (#21783)
 }
