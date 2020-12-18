@@ -408,14 +408,18 @@ func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.E
 	if isFull {
 		return l.fullRange, nil
 	}
-	return location.GetPartitionIdx(), nil
+	used := make(map[int]struct{}, len(location))
+	for _, pg := range location {
+		used[pg.PartIdx] = struct{}{}
+	}
+	return used, nil
 }
 
 func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expression) (map[int]struct{}, error) {
 	if len(conds) == 0 {
 		return l.fullRange, nil
 	}
-	exprCols := l.listPrune.ExprCols
+	exprCols := l.listPrune.PruneExprCols
 	pruneExpr := l.listPrune.PruneExpr
 	ranges, err := l.detachCondAndBuildRange(conds, exprCols...)
 	if err != nil {
