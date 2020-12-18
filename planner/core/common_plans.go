@@ -388,16 +388,16 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		if err != nil {
 			return err
 		}
-	case *Update:
-		ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			// make constant expression store paramMarker
-			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		}
+	// case *Update:
+	// 	ok, err = IsPointUpdateByAutoCommit(sctx, p)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if ok {
+	// 		// make constant expression store paramMarker
+	// 		sctx.GetSessionVars().StmtCtx.PointExec = true
+	// 		p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+	// 	}
 	}
 	if ok {
 		// just cache point plan now
