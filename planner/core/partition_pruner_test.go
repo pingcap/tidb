@@ -14,7 +14,9 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"math/rand"
 	"sort"
 	"strings"
 
@@ -305,4 +307,135 @@ func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
 		}
 	}
 	return ""
+}
+
+func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	for count := 0; count < 10; count++ {
+		partitionNum := rand.Intn(30) + 1
+		valueNum := rand.Intn(30) + 1
+		condNum := 100
+
+		partitionDefs := make([][]string, partitionNum)
+		for id := 0; id < valueNum; id++ {
+			for a := 0; a < valueNum; a++ {
+				for b := 0; b < valueNum; b++ {
+					idx := rand.Intn(partitionNum)
+					partitionDefs[idx] = append(partitionDefs[idx], fmt.Sprintf("(%v,%v,%v)", b, id, a))
+				}
+			}
+		}
+		createSQL := bytes.NewBuffer(make([]byte, 0, 1024*1024))
+		// Generate table definition.
+		colNames := []string{"id", "a", "b"}
+		createSQL.WriteString("create table t1 (id int, a int, b int")
+		// Generate Index definition.
+		if rand.Int()%2 == 0 {
+			createSQL.WriteString(", index (")
+			n := rand.Intn(len(colNames)) + 1
+			cols := map[string]struct{}{}
+			for i := 0; i < n; i++ {
+				col := colNames[rand.Intn(len(colNames))]
+				cols[col] = struct{}{}
+			}
+			cnt := 0
+			for col := range cols {
+				if cnt > 0 {
+					createSQL.WriteString(",")
+				}
+				createSQL.WriteString(col)
+				cnt++
+			}
+			createSQL.WriteString(")")
+		}
+		createSQL.WriteString(" ) partition by list columns (b, id, a) (")
+
+		for i := range partitionDefs {
+			if i > 0 {
+				createSQL.WriteString(",")
+			}
+			createSQL.WriteString(fmt.Sprintf("partition p%v values in (", i))
+			for idx, v := range partitionDefs[i] {
+				if idx > 0 {
+					createSQL.WriteString(",")
+				}
+				createSQL.WriteString(v)
+			}
+			createSQL.WriteString(")")
+		}
+		createSQL.WriteString(")")
+
+		// Create table.
+		tk.MustExec("drop database if exists test_partition;")
+		tk.MustExec("create database test_partition")
+		tk.MustExec("use test_partition")
+		tk.MustExec(createSQL.String())
+
+		tk1 := testkit.NewTestKit(c, s.store)
+		tk1.MustExec("drop database if exists test_partition_1;")
+		tk1.MustExec("create database test_partition_1")
+		tk1.MustExec("use test_partition_1")
+		tk1.MustExec("create table t1 (id int, a int, b int)")
+
+		// prepare data.
+		for _, def := range partitionDefs {
+			insert := fmt.Sprintf("insert into t1 (b,id,a) values %v", strings.Join(def, ","))
+			tk.MustExec(insert)
+			tk1.MustExec(insert)
+
+			// Test query without condition
+			query := fmt.Sprintf("select * from t1 order by id,a,b")
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		}
+
+		// Test for single column condition.
+		for i := 0; i < valueNum+1; i++ {
+			query := fmt.Sprintf("select * from t1 where id = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+			query = fmt.Sprintf("select * from t1 where a = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+			query = fmt.Sprintf("select * from t1 where b = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		}
+		// Test for multi-columns condition.
+		genCond := func() string {
+			col := colNames[rand.Intn(len(colNames))]
+			value := rand.Intn(valueNum + 2)
+			switch rand.Int() % 3 {
+			case 0:
+				return fmt.Sprintf(" %v = %v ", col, value)
+			case 1:
+				return fmt.Sprintf(" %v = %v ", value, col)
+			default:
+				buf := bytes.NewBuffer(nil)
+				buf.WriteString(fmt.Sprintf(" %v in (", col))
+				n := rand.Intn(valueNum+5) + 1
+				for i := 0; i < n; i++ {
+					if i > 0 {
+						buf.WriteString(",")
+					}
+					value := rand.Intn(valueNum + 2)
+					buf.WriteString(fmt.Sprintf("%v", value))
+				}
+				buf.WriteString(")")
+				return buf.String()
+			}
+		}
+		for i := 0; i < 10000; i++ {
+			condCnt := rand.Intn(condNum) + 1
+			query := bytes.NewBuffer(nil)
+			query.WriteString("select * from t1 where ")
+			for j := 0; j < condCnt; j++ {
+				if j > 0 {
+					if rand.Int()%2 == 0 {
+						query.WriteString(" and ")
+					} else {
+						query.WriteString(" or ")
+					}
+				}
+				query.WriteString(genCond())
+			}
+			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
+		}
+	}
 }
