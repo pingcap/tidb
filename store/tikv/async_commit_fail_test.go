@@ -179,7 +179,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		primary := txn.committer.primary()
 		bo := NewBackofferWithVars(context.Background(), 5000, nil)
-		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false)
+		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
 		c.Assert(err, IsNil)
 		c.Assert(txnStatus.IsCommitted(), IsFalse)
 		c.Assert(txnStatus.action, Equals, kvrpcpb.Action_NoAction)
