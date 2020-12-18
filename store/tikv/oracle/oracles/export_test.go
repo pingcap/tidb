@@ -55,3 +55,11 @@ func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 		atomic.StoreUint64(lastTSPointer, ts)
 	}
 }
+
+// SetEmptyPDOracleLastTs exports PD oracle's global last ts to test.
+func SetEmptyPDOracleLastArrivalTs(oc oracle.Oracle, ts uint64) {
+	switch o := oc.(type) {
+	case *pdOracle:
+		o.setLastArrivalTS(ts)
+	}
+}
