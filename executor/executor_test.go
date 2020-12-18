@@ -7302,3 +7302,8 @@ func (s *testSuite) TestIssue21451(c *C) {
 	tk.MustQuery("select * from t order by e limit 1;").Check(testkit.Rows("e"))
 	tk.MustExec("drop table t")
 }
+
+func (s *testSuite) TestIssue15563(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
+}
