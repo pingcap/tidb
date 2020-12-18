@@ -780,6 +780,9 @@ type SessionVars struct {
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
 
+	// EnableIndexMergeJoin indicates whether to enable index merge join.
+	EnableIndexMergeJoin bool
+
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
 }
@@ -937,6 +940,7 @@ func NewSessionVars() *SessionVars {
 		Enable1PC:                    DefTiDBEnable1PC,
 		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
 		AnalyzeVersion:               DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:         DefTiDBEnableIndexMergeJoin,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1657,6 +1661,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.GuaranteeExternalConsistency = TiDBOptOn(val)
 	case TiDBAnalyzeVersion:
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
+	case TiDBEnableIndexMergeJoin:
+		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	}
