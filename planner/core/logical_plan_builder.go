@@ -3335,17 +3335,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
 		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
-		// of this sub-query are actually correlated aggregates from the outer querym And they have already been built
-		// in the outer query. The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
-		if len(aggFuncs) > 0 || sel.GroupBy != nil {
-			var aggIndexMap map[int]int
-			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
-			if err != nil {
-				return nil, err
-			}
-			for agg, idx := range totalMap {
-				totalMap[agg] = aggIndexMap[idx]
-			}
+		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
+		// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
+		if len(aggFuncs) == 0 && sel.GroupBy == nil {
+			hasAgg = false
+		}
+	}
+	if hasAgg {
+		var aggIndexMap map[int]int
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+		if err != nil {
+			return nil, err
+		}
+		for agg, idx := range totalMap {
+			totalMap[agg] = aggIndexMap[idx]
 		}
 	}
 
