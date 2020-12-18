@@ -1193,6 +1193,13 @@ func (s *testSuite5) TestShowVar(c *C) {
 			c.Check(res.Rows(), HasLen, 1)
 		}
 	}
+	// Test for switch variable which shouldn't seen by users.
+	for _, one := range variable.FeatureSwitchVariables {
+		res := tk.MustQuery("show variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+		res = tk.MustQuery("show global variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+	}
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
