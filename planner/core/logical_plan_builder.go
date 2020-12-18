@@ -3307,8 +3307,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			for agg, idx := range totalMap {
 				totalMap[agg] = aggIndexMap[idx]
 			}
-		} else {
-			hasAgg = false
 		}
 	}
 
