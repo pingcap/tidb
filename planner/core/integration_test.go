@@ -2097,6 +2097,11 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	// Nested aggregate (correlated aggregate inside aggregate)
 	tk.MustQuery("select (select sum(count(a))) from t").Check(testkit.Rows("6"))
 	tk.MustQuery("select (select sum(sum(a))) from t").Check(testkit.Rows("14"))
+
+	// Combining aggregates
+	tk.MustQuery("select count(a), (select count(a)) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select sum(distinct b), count(a), (select count(a)), (select cnt from (select sum(distinct b) as cnt) n) from t").
+		Check(testkit.Rows("6 6 6 6"))
 }
 
 func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {

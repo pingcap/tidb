@@ -1683,6 +1683,10 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
 			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
 		},
+		{
+			sql:  "select sum(a), sum(a), count(a), (select count(a)) from t",
+			best: "Apply{DataScan(t)->Aggr(sum(test.t.a),count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
+		},
 	}
 
 	ctx := context.TODO()

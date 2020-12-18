@@ -833,4 +833,16 @@ Projection_11	1.00	root		Column#5
   └─StreamAgg_32(Probe)	1.00	root		funcs:sum(Column#9)->Column#5
     └─Projection_39	1.00	root		cast(Column#4, decimal(42,0) BINARY)->Column#9
       └─TableDual_37	1.00	root		rows:1
+explain select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
+id	estRows	task	access object	operator info
+Projection_16	8000.00	root		Column#4, Column#4, Column#5
+└─Sort_17	8000.00	root		Column#5
+  └─HashJoin_19	8000.00	root		CARTESIAN left outer join
+    ├─TableDual_33(Build)	1.00	root		rows:1
+    └─HashJoin_21(Probe)	8000.00	root		CARTESIAN left outer join
+      ├─TableDual_31(Build)	1.00	root		rows:1
+      └─HashAgg_27(Probe)	8000.00	root		group by:test.t.b, funcs:sum(Column#13)->Column#4, funcs:count(Column#14)->Column#5
+        └─TableReader_28	8000.00	root		data:HashAgg_23
+          └─HashAgg_23	8000.00	cop[tikv]		group by:test.t.b, funcs:sum(test.t.a)->Column#13, funcs:count(test.t.a)->Column#14
+            └─TableFullScan_26	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;

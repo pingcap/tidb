@@ -216,4 +216,5 @@ explain select (select count(n.a) from t) from t n;
 explain select (select sum((select count(a)))) from t;
 explain select count(a) from t group by b order by (select count(a));
 explain select (select sum(count(a))) from t;
+explain select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 drop table if exists t;
