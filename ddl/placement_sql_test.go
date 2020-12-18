@@ -637,4 +637,3 @@ alter placement policy
 		testFunc(testcase.name, testcase.hook, testcase.expectErr)
 	}
 }
-
