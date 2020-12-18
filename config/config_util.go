@@ -61,6 +61,7 @@ var (
 		"CheckMb4ValueInUTF8":             {},
 		"EnableStreaming":                 {},
 		"TxnLocalLatches.Capacity":        {},
+		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
 		"OpenTracing.Enable":              {},
 		"PreparedPlanCache.Enabled":       {},
