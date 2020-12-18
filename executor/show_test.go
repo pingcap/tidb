@@ -1173,6 +1173,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
 		// When ScopeSession only. `show global variables` must return empty.
 		if v.Scope == variable.ScopeSession {
 			showSQL = "show variables like '" + v.Name + "'"
