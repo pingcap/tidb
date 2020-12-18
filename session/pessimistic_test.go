@@ -2238,7 +2238,7 @@ func (s *testPessimisticSuite) TestIssue21688(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (k1 int, k2 int, v int, unique key (k1))")
-	tk.MustExec("insert into t values (1, 1, null), (2, 2, 2)")
+	tk.MustExec("insert into t values (1, 1, null), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5)")
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -2257,8 +2257,9 @@ func (s *testPessimisticSuite) TestIssue21688(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk.MustExec("select * from t where (k1, v) in ((1, 2)) for update")
-	time.Sleep(2 * time.Second)
 	tk2.MustExec("select * from t where (k1, v) in ((1, 3)) for update nowait")
+	tk.MustExec("select * from t where (k1, v) in ((2, 3), (4, 4)) for update")
+	tk2.MustExec("select * from t where (k1, v) in ((2, 3), (5, 5)) for update nowait")
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
