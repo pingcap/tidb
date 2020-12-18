@@ -2130,3 +2130,17 @@ func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
 		Check(testkit.Rows("0"))
 }
+
+// Test for issue https://github.com/pingcap/tidb/issues/18320
+func (s *testIntegrationSuite) TestNonaggregateColumnWithSingleValueInOnlyFullGroupByMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6), (7, 8, 9)")
+	tk.MustQuery("select a, count(b) from t where a = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a, count(b) from t where a = 10").Check(testkit.Rows("<nil> 0"))
+	tk.MustQuery("select a, c, sum(b) from t where a = 1 group by c").Check(testkit.Rows("1 3 2"))
+	tk.MustGetErrMsg("select a from t where a = 1 order by count(b)", "[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustQuery("select a from t where a = 1 having count(b) > 0").Check(testkit.Rows("1"))
+}

@@ -323,11 +323,11 @@ Projection_11	10000.00	root		Column#11
   ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
-    └─IndexMergeJoin_46	12.50	root		inner join, inner:TableReader_41, outer key:test.t.a, inner key:test.t.a
+    └─IndexJoin_42	12.50	root		inner join, inner:TableReader_39, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
       ├─IndexReader_33(Build)	10.00	root		index:IndexRangeScan_32
       │ └─IndexRangeScan_32	10.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader_41(Probe)	1.00	root		data:TableRangeScan_40
-        └─TableRangeScan_40	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:true, stats:pseudo
+      └─TableReader_39(Probe)	1.00	root		data:TableRangeScan_38
+        └─TableRangeScan_38	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection_11	10000.00	root		Column#11
@@ -335,13 +335,13 @@ Projection_11	10000.00	root		Column#11
   ├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
-    └─IndexMergeJoin_48	12.49	root		inner join, inner:TableReader_43, outer key:test.t.c, inner key:test.t.a
+    └─IndexJoin_44	12.49	root		inner join, inner:TableReader_41, outer key:test.t.c, inner key:test.t.a, equal cond:eq(test.t.c, test.t.a)
       ├─IndexLookUp_35(Build)	9.99	root		
       │ ├─IndexRangeScan_32(Build)	10.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo
       │ └─Selection_34(Probe)	9.99	cop[tikv]		not(isnull(test.t.c))
       │   └─TableRowIDScan_33	10.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-      └─TableReader_43(Probe)	1.00	root		data:TableRangeScan_42
-        └─TableRangeScan_42	1.00	cop[tikv]	table:t1	range: decided by [test.t.c], keep order:true, stats:pseudo
+      └─TableReader_41(Probe)	1.00	root		data:TableRangeScan_40
+        └─TableRangeScan_40	1.00	cop[tikv]	table:t1	range: decided by [test.t.c], keep order:false, stats:pseudo
 insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 3, 4),(5,3,5);
 analyze table t;
 explain select t.c in (select count(*) from t s, t t1 where s.b = t.a and s.b = 3 and s.a = t1.a) from t;
