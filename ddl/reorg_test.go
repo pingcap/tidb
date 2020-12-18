@@ -116,7 +116,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartKey, DeepEquals, kv.Key(handle.Encoded()))
 			c.Assert(info.currElement, DeepEquals, e)
-			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndKey()
+			_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
 			c.Assert(doneHandle, IsNil)
 			break
 		}

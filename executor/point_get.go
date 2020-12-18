@@ -350,21 +350,23 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
-		cacheDB := e.ctx.GetStore().GetMemCache()
-		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
-		// key does not exist then get from snapshot and set to cache
-		if val == nil {
-			val, err = e.snapshot.Get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
+		if e.ctx.GetSessionVars().EnablePointGetCache {
+			cacheDB := e.ctx.GetStore().GetMemCache()
+			val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+			// key does not exist then get from snapshot and set to cache
+			if val == nil {
+				val, err = e.snapshot.Get(ctx, key)
+				if err != nil {
+					return nil, err
+				}
 
-			err := cacheDB.Set(e.tblInfo.ID, key, val)
-			if err != nil {
-				return nil, err
+				err = cacheDB.Set(e.tblInfo.ID, key, val)
+				if err != nil {
+					return nil, err
+				}
 			}
+			return val, nil
 		}
-		return val, nil
 	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
