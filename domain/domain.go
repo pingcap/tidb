@@ -765,20 +765,22 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return err
 	}
 
-	if do.etcdClient != nil {
-		err := do.acquireServerID(ctx)
-		if err != nil {
-			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-			do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
-		} else {
-			do.isLostConnectionToPD.Set(0)
-		}
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Set(0)
+			}
 
-		do.wg.Add(1)
-		go do.serverIDKeeper()
-	} else {
-		// set serverID for standalone deployment to enable 'KILL'.
-		atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
 	}
 
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
