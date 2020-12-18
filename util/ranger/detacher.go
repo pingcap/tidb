@@ -358,56 +358,73 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 // excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)` to `i-1]` if `i` is integer.
 // For example, if p is `(3`, i.e., point { value: int(3), excl: true, start: true }, it is equal to `[4`, i.e., point { value: int(4), excl: false, start: true }.
 // Similarly, if p is `8)`, i.e., point { value: int(8), excl: true, start: false}, it is equal to `7]`, i.e., point { value: int(7), excl: false, start: false }.
-func excludeToIncludeForIntPoint(p point) point {
+// If return value is nil, it means p is unsatisfiable. For example, `(MaxInt64` is unsatisfiable.
+func excludeToIncludeForIntPoint(p *point) *point {
 	if !p.excl {
 		return p
 	}
 	if p.value.Kind() == types.KindInt64 {
 		val := p.value.GetInt64()
 		if p.start {
-			if val != math.MaxInt64 {
-				p.value.SetInt64(val + 1)
-				p.excl = false
+			if val == math.MaxInt64 {
+				return nil
 			}
+			p.value.SetInt64(val + 1)
+			p.excl = false
 		} else {
-			if val != math.MinInt64 {
-				p.value.SetInt64(val - 1)
-				p.excl = false
+			if val == math.MinInt64 {
+				return nil
 			}
+			p.value.SetInt64(val - 1)
+			p.excl = false
 		}
 	} else if p.value.Kind() == types.KindUint64 {
 		val := p.value.GetUint64()
 		if p.start {
-			if val != math.MaxUint64 {
-				p.value.SetUint64(val + 1)
-				p.excl = false
+			if val == math.MaxUint64 {
+				return nil
 			}
+			p.value.SetUint64(val + 1)
+			p.excl = false
 		} else {
-			if val != 0 {
-				p.value.SetUint64(val - 1)
-				p.excl = false
+			if val == 0 {
+				return nil
 			}
+			p.value.SetUint64(val - 1)
+			p.excl = false
 		}
 	}
 	return p
 }
 
-func allSinglePoints(sc *stmtctx.StatementContext, points []point) bool {
-	if len(points)%2 == 1 {
-		return false
-	}
+// If there exists an interval whose length is large than 0, return nil. Otherwise remove all unsatisfiable intervals
+// and return array of single point intervals.
+func allSinglePoints(sc *stmtctx.StatementContext, points []point) []point {
+	pos := 0
 	for i := 0; i < len(points); i += 2 {
-		points[i] = excludeToIncludeForIntPoint(points[i])
-		points[i+1] = excludeToIncludeForIntPoint(points[i+1])
-		if !points[i].start || points[i+1].start || points[i].excl || points[i+1].excl {
-			return false
+		// Remove unsatisfiable interval. For example, (MaxInt64, +inf) and (-inf, MinInt64) is unsatisfiable.
+		left := excludeToIncludeForIntPoint(&points[i])
+		if left == nil {
+			continue
 		}
-		cmp, err := points[i].value.CompareDatum(sc, &points[i+1].value)
+		right := excludeToIncludeForIntPoint(&points[i+1])
+		if right == nil {
+			continue
+		}
+		// If interval is not a single point, just return nil.
+		if !left.start || right.start || left.excl || right.excl {
+			return nil
+		}
+		cmp, err := left.value.CompareDatum(sc, &right.value)
 		if err != nil || cmp != 0 {
-			return false
+			return nil
 		}
+		// If interval is a single point, add it back to array.
+		points[pos] = *left
+		points[pos+1] = *right
+		pos += 2
 	}
-	return true
+	return points[:pos]
 }
 
 func allEqOrIn(expr expression.Expression) bool {
@@ -477,11 +494,17 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			}
 			continue
 		}
-		if allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i]) {
+		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i])
+		if points[i] == nil {
+			// There exists an interval whose length is larger than
+			accesses[i] = nil
+		} else if len(points[i]) == 0 {
+			// Early termination if false expression found
+			return nil, nil, nil, true
+		} else {
+			// All Intervals are single points
 			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
-		} else {
-			accesses[i] = nil
 		}
 	}
 	for i, offset := range offsets {
