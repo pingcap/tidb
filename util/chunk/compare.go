@@ -26,7 +26,7 @@ import (
 type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
 // GetCompareTopNFunc get a compare function for the field type used by TopNExec
-// As EnumSet field type is sorted by name in TopNExec, but by value in SortExec
+// as enum and set field type is sorted by name in TopNExec, but by value in SortExec
 func GetCompareTopNFunc(tp *types.FieldType) CompareFunc {
 	switch tp.Tp {
 	case mysql.TypeSet, mysql.TypeEnum:
