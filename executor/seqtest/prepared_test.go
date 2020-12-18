@@ -736,7 +736,7 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		tk.MustExec(`prepare s1 from 'insert t (data) values (?)'`)
 
 		tk.MustExec(`set @a = '1'`)
-		tk.MustExec(`execute stmt1 using @a;`)
+		tk.MustExec(`execute s1 using @a;`)
 
 		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
 		tk.MustExec(`execute stmt1 using @b;`)
