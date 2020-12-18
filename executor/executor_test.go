@@ -3990,7 +3990,8 @@ func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
 	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
-	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+	// TODO here: index join cause the data race of txn.
+	tk.MustQuery("select /*+ inl_merge_join(a) */ a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
 		Check(testkit.Rows("1 a"))
 }
 
@@ -7265,4 +7266,9 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustQuery("select * from e where case 1 when 1 then e end").Check(testkit.Rows("a", "b"))
 	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite) TestIssue15563(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
