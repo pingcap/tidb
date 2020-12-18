@@ -549,7 +549,17 @@ func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+<<<<<<< HEAD
 	res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, b.tp.Decimal)
+=======
+
+	if b.args[0].GetType().Tp == mysql.TypeYear {
+		res, err = types.ParseTimeFromYear(b.ctx.GetSessionVars().StmtCtx, val)
+	} else {
+		res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, int8(b.tp.Decimal))
+	}
+
+>>>>>>> b232a23e7... expression, types: fix datetime and year comparison error (#20233)
 	if err != nil {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
