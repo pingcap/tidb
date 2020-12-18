@@ -17,6 +17,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -145,9 +148,25 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 }
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("MYLOG post optimize begin", zap.String("plan tp", plan.TP()),
+			zap.String("plan", plan.ExplainInfo()))
+	}
 	plan = eliminatePhysicalProjection(plan)
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("MYLOG post optimize phase 1", zap.String("plan tp", plan.TP()),
+			zap.String("plan", plan.ExplainInfo()))
+	}
 	plan = InjectExtraProjection(plan)
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("MYLOG post optimize phase 2", zap.String("plan tp", plan.TP()),
+			zap.String("plan", plan.ExplainInfo()))
+	}
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("MYLOG post optimize phase 3", zap.String("plan tp", plan.TP()),
+			zap.String("plan", plan.ExplainInfo()))
+	}
 	plan = enableParallelApply(sctx, plan)
 	return plan
 }
@@ -238,6 +257,7 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	var batchPointGet *BatchPointGetPlan
 	var physLock *PhysicalLock
 	var unionScan *PhysicalUnionScan
+	var selection *PhysicalSelection
 	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
 			return false
@@ -251,6 +271,8 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 			physLock = x
 		case *PhysicalUnionScan:
 			unionScan = x
+		case *PhysicalSelection:
+			selection = x
 		}
 		return true
 	})
@@ -262,7 +284,7 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	}
 	if physLock != nil {
 		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
-		if !lock || physLock.noPushDownLock {
+		if !lock || selection != nil {
 			return p
 		}
 		if pointGet != nil {

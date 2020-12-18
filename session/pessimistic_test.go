@@ -1091,12 +1091,18 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 	tk.MustQuery("select c + 1 from t where k = 2 and c = 2 for update").Check(testkit.Rows())
 	explainStr := tk.MustQuery("explain select c + 1 from t where k = 2 and c = 2 for update").Rows()[0][0].(string)
 	c.Assert(strings.Contains(explainStr, "UnionScan"), IsFalse)
-	tk.MustQuery("select * from t where k in (4, 5, 7) for update").Check(testkit.Rows("5 5"))
+	tk.MustQuery("select * from t where k = 3 and c = 3 for update").Check(testkit.Rows("3 3"))
+	tk.MustQuery("select c + 1 from t where k = 5 for update").Check(testkit.Rows("6"))
+	tk.MustQuery("select * from t where k in (4, 7) for update").Check(testkit.Rows())
 
 	tk1.MustExec("begin pessimistic")
 	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
+	c.Check(err, IsNil)
+	err = tk1.ExecToErr("select * from t where k = 3 for update nowait")
 	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
+	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	err = tk1.ExecToErr("select * from t where k = 5 for update nowait")
 	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
 	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
@@ -1111,9 +1117,11 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
+	c.Check(err, IsNil)
+	err = tk1.ExecToErr("select * from t where k = 5 for update nowait")
 	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
-	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(err, IsNil)
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 }
@@ -2220,4 +2228,37 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
 	*/
+}
+
+func (s *testPessimisticSuite) TestIssue21688(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (k1 int, k2 int, v int, unique key (k1))")
+	tk.MustExec("insert into t values (1, 1, null), (2, 2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where (k1, v) in ((1, null)) for update")
+	tk2.MustExec("select * from t where (k1, v) in ((1, null)) for update nowait")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where (k2, v) in ((1, null)) for update")
+	tk2.MustExec("select * from t where (k2, v) in ((1, null)) for update nowait")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where (k1, v) in ((1, 2)) for update")
+	time.Sleep(2 * time.Second)
+	tk2.MustExec("select * from t where (k1, v) in ((1, 3)) for update nowait")
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
 }
