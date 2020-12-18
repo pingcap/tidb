@@ -49,7 +49,7 @@ const newLine = "\n"
 
 const builtinCompareImports = `import (
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	//"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 `

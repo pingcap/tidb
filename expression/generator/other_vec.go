@@ -49,7 +49,7 @@ const newLine = "\n"
 const builtinOtherImports = `import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
+	//"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )

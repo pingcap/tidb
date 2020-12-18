@@ -95,6 +95,12 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		}
 	} else {
 		bf, err = newBaseBuiltinFunc(ctx, c.funcName, args, types.ETInt)
+		bf.tp = &types.FieldType{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
 	}
 
 	if err != nil {
@@ -152,7 +158,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
-		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+		//sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil
 }
@@ -627,12 +633,10 @@ func (b *builtinInJSONSig) Clone() builtinFunc {
 
 func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
+	var hasNull bool
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	//compareAsStr := arg0.TypeCode != json.TypeCodeArray && arg0.TypeCode != json.TypeCodeObject
-	//arg0Str := arg0.String()
-	var hasNull bool
 	for _, arg := range b.args[1:] {
 		eq, isNull, err := CompareJSONWithExpr(b.ctx, arg0, arg, row)
 		if err != nil {
@@ -643,7 +647,7 @@ func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 			continue
 		}
 		if eq == 1 {
-			break
+			return 1, hasNull, err
 		}
 	}
 	return 0, hasNull, nil

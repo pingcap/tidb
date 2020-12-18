@@ -1444,6 +1444,12 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
 	} else {
 		bf, err = newBaseBuiltinFunc(ctx, c.funcName, args, types.ETInt)
+		bf.tp = &types.FieldType{
+			Tp:      mysql.TypeLonglong,
+			Flen:    mysql.MaxIntWidth,
+			Decimal: 0,
+			Flag:    mysql.BinaryFlag,
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -2736,13 +2742,23 @@ func CompareJSONWithExpr(ctx sessionctx.Context, arg0 json.BinaryJSON, arg Expre
 			}
 		case json.TypeCodeFloat64:
 			var argVal float64
-			if evalTp != types.ETReal {
-				return
+			if evalTp == types.ETReal {
+				argVal, hasNull, err = arg.EvalReal(ctx, row)
+				if argVal == arg0.GetFloat64() {
+					eq = 1
+				}
+			} else if evalTp == types.ETDecimal {
+				var decimal *types.MyDecimal
+				decimal, hasNull, err = arg.EvalDecimal(ctx, row)
+				if err != nil {
+					return
+				}
+				argVal, err = decimal.ToFloat64()
+				if argVal == arg0.GetFloat64() {
+					eq = 1
+				}
 			}
-			argVal, hasNull, err = arg.EvalReal(ctx, row)
-			if argVal == arg0.GetFloat64() {
-				eq = 1
-			}
+			return
 		case json.TypeCodeString:
 			var argVal string
 			if evalTp != types.ETString {
@@ -2753,6 +2769,25 @@ func CompareJSONWithExpr(ctx sessionctx.Context, arg0 json.BinaryJSON, arg Expre
 				eq = 1
 			}
 		case json.TypeCodeLiteral:
+			var argVal int64
+			if evalTp != types.ETInt {
+				return
+			}
+			argVal, hasNull, err = arg.EvalInt(ctx, row)
+			switch arg0.Value[0] {
+			case json.LiteralTrue:
+				if argVal == 1 {
+					eq = 1
+				}
+			case json.LiteralFalse:
+				if argVal == 0 {
+					eq = 1
+				}
+			default:
+			}
+		default:
+			// for object and array, it can only equal to JSON
+			eq = 0
 		}
 	}
 	return

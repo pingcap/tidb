@@ -7224,6 +7224,8 @@ func (s *testSuite) Test11883(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (f1 json)")
+	tk.MustExec("insert into t1(f1) values ('\"asd\"'),('\"asdf\"'),('\"asasas\"')")
+	tk.MustQuery("select f1 from t1 where json_extract(f1,\"$\") in (\"asd\",\"asasas\",\"asdf\")").Check(testkit.Rows("\"asd\"", "\"asdf\"", "\"asasas\""))
 	tk.MustExec("insert into t1 values ('{\"fs\": \"1.0\", \"is\": \"2\", \"ls\": \"true\", \"f\": 1.0, \"i\": 2, \"l\": true, \"n\": null}')")
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.fs') in ('1.0')").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.fs') in (1.0)").Check(testkit.Rows())
@@ -7235,7 +7237,7 @@ func (s *testSuite) Test11883(c *C) {
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.i') in ('2')").Check(testkit.Rows())
 	// note the following test case is not compatible with MySQL, it should return 0 rows, but we can't distinguish `1`
 	// from `true` after parsing, so we can only compromise on this.
-	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.l') in (1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.l') in (1)").Check(testkit.Rows("1")) // the result is 0 rows in MySQL
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.l') in (true)").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.ls') in ('true')").Check(testkit.Rows("1"))
 	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.n') in (null)").Check(testkit.Rows())
