@@ -133,6 +133,34 @@ var DeferredFunctions = map[string]struct{}{
 	ast.UTCDate:          {},
 }
 
+// AllowedFuncMap stores functions which can be used in the partition expression.
+var AllowedFuncMap = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.ToSeconds:     {},
+	ast.DayOfMonth:    {},
+	ast.Month:         {},
+	ast.DayOfYear:     {},
+	ast.Quarter:       {},
+	ast.YearWeek:      {},
+	ast.Year:          {},
+	ast.Weekday:       {},
+	ast.DayOfWeek:     {},
+	ast.Day:           {},
+	ast.Hour:          {},
+	ast.Minute:        {},
+	ast.Second:        {},
+	ast.TimeToSec:     {},
+	ast.MicroSecond:   {},
+	ast.UnixTimestamp: {},
+	ast.FromDays:      {},
+	ast.Extract:       {},
+	ast.Abs:           {},
+	ast.Ceiling:       {},
+	ast.DateDiff:      {},
+	ast.Floor:         {},
+	ast.Mod:           {},
+}
+
 // inequalFunctions stores functions which cannot be propagated from column equal condition.
 var inequalFunctions = map[string]struct{}{
 	ast.IsNull: {},

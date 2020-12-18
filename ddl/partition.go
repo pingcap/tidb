@@ -1707,6 +1707,10 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 
 func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
+	case *ast.FuncCallExpr:
+		if _, ok := expression.AllowedFuncMap[v.FnName.L]; !ok {
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		}
 	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
 		*ast.SetCollationExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
@@ -1725,6 +1729,7 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 	}
 	return nil
 }
+
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
 	expr, ok := e.(*ast.FuncCallExpr)
 	if !ok {
