@@ -85,9 +85,15 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	arg0Tp := args[0].GetType().EvalType()
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = args[0].GetType().EvalType()
+		argiTp := args[i].GetType().EvalType()
+		// if arg0 is JSON, we only won't implicitly cast args to JSON
+		if arg0Tp != types.ETJson {
+			argiTp = arg0Tp
+		}
+		argTps[i] = argiTp
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
@@ -618,44 +624,70 @@ func (b *builtinInJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
+func compareJSONWithExpr(ctx sessionctx.Context, arg0 json.BinaryJSON, arg Expression, row chunk.Row) (eq int64, hasNull bool, err error) {
+	fieldTp := arg.GetType()
+	evalTp := fieldTp.EvalType()
+	if evalTp == types.ETJson {
+		var argVal json.BinaryJSON
+		argVal, hasNull, err = arg.EvalJSON(ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		eq = int64(json.CompareBinary(argVal, arg0))
+	} else {
+		switch arg0.TypeCode {
+		case json.TypeCodeUint64, json.TypeCodeInt64:
+			var argVal int64
+			if evalTp != types.ETInt {
+				return
+			}
+			argVal, hasNull, err = arg.EvalInt(ctx, row)
+			if argVal == arg0.GetInt64() {
+				eq = 1
+			}
+		case json.TypeCodeFloat64:
+			var argVal float64
+			if evalTp != types.ETReal {
+				return
+			}
+			argVal, hasNull, err = arg.EvalReal(ctx, row)
+			if argVal == arg0.GetFloat64() {
+				eq = 1
+			}
+		case json.TypeCodeString:
+			var argVal string
+			if evalTp != types.ETString {
+				return
+			}
+			argVal, hasNull, err = arg.EvalString(ctx, row)
+			if argVal == string(arg0.GetString()) {
+				eq = 1
+			}
+		case json.TypeCodeLiteral:
+		}
+	}
+	return
+}
+
 func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	compareAsString := arg0.TypeCode != json.TypeCodeObject && arg0.TypeCode != json.TypeCodeArray
-	var str string
-	if compareAsString {
-		str = arg0.String()
-	}
+	//compareAsStr := arg0.TypeCode != json.TypeCodeArray && arg0.TypeCode != json.TypeCodeObject
+	//arg0Str := arg0.String()
 	var hasNull bool
 	for _, arg := range b.args[1:] {
-		tp := arg.GetType().Tp
-		if compareAsString && tp != mysql.TypeJSON {
-			evaledArg, isNull, err := arg.EvalString(b.ctx, row)
-			if err != nil {
-				return 0, true, err
-			}
-			if isNull {
-				hasNull = true
-				continue
-			}
-			if evaledArg == str {
-				return 1, false, nil
-			}
-		} else {
-			evaledArg, isNull, err := arg.EvalJSON(b.ctx, row)
-			if err != nil {
-				return 0, true, err
-			}
-			if isNull {
-				hasNull = true
-				continue
-			}
-			result := json.CompareBinary(evaledArg, arg0)
-			if result == 0 {
-				return 1, false, nil
-			}
+		eq, isNull, err := compareJSONWithExpr(b.ctx, arg0, arg, row)
+		if err != nil {
+			return 0, true, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		if eq == 1 {
+			break
 		}
 	}
 	return 0, hasNull, nil

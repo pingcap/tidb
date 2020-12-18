@@ -7219,6 +7219,31 @@ func (s *testSuite) Test13004(c *C) {
 	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
 
+func (s *testSuite) Test11883(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (f1 json)")
+	tk.MustExec("insert into t1 values ('{\"fs\": \"1.0\", \"is\": \"2\", \"ls\": \"true\", \"f\": 1.0, \"i\": 2, \"l\": true, \"n\": null}')")
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.fs') in ('1.0')").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.fs') in (1.0)").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.f') in (1.0)").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.f') in ('1.0')").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.is') in ('2')").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.is') in (2)").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.i') in (2)").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.i') in ('2')").Check(testkit.Rows())
+	// note the following test case is not compatible with MySQL, it should return 0 rows, but we can't distinguish `1`
+	// from `true` after parsing, so we can only compromise on this.
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.l') in (1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.l') in (true)").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.ls') in ('true')").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.n') in (null)").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.n') in ('null')").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.n') in (0)").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t1 where json_extract(f1, '$.n') in (cast('null' as json))").Check(testkit.Rows("1"))
+}
+
 func (s *testSuite) Test12178(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

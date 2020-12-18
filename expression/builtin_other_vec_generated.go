@@ -585,5 +585,5 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinInJSONSig) vectorized() bool {
-	return true
+	return false
 }
