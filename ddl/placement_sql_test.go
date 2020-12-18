@@ -29,7 +29,12 @@ func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
@@ -290,7 +295,11 @@ add placement policy
 func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	defer tk.MustExec("drop table if exists t1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	initTable := func() []string {
 		bundles := make(map[string]*placement.Bundle)
@@ -333,7 +342,11 @@ func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
@@ -474,7 +487,11 @@ func (s *testDBSuite1) TestAbortTxnIfPlacementChanged(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp1")
-	defer tk.MustExec("drop table if exists tp1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists tp1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table tp1 (c int)
 PARTITION BY RANGE (c) (
@@ -485,6 +502,11 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
 	tk1.MustExec("use test")
+
+	tk1.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk1.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 	_, err = tk.Exec(`alter table tp1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  "]'
@@ -528,6 +550,11 @@ add placement policy
 func (s *testDBSuite1) TestGlobalTxnState(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
