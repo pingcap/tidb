@@ -1086,6 +1086,41 @@
           "2",
           "3"
         ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t1 where t1.a > 1 and t1.b in (select t2.b from t2 where t1.a = t2.a)",
+        "Plan": [
+          "Apply_23 2666.67 root  semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "├─TableReader_24(Build) 2666.67 root  data:Selection_25",
+          "│ └─Selection_25 2666.67 cop[tikv]  not(isnull(test.t1.b))",
+          "│   └─TableRangeScan_26 3333.33 cop[tikv] table:t1 range:(1,+inf], keep order:false, stats:pseudo",
+          "└─Projection_27(Probe) 8000.00 root  test.t2.b",
+          "  └─TableReader_28 8000.00 root  data:Selection_29",
+          "    └─Selection_29 8000.00 cop[tikv]  eq(test.t1.a, test.t2.a), not(isnull(test.t2.b))",
+          "      └─TableFullScan_30 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2 22",
+          "3 33"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t1 where t1.a > 1 and t1.b < (select max(t2.b) from t2 where t1.a = t2.a)",
+        "Plan": [
+          "Projection_36 2133.33 root  test.t1.a, test.t1.b",
+          "└─Selection_37 2133.33 root  lt(test.t1.b, Column#5)",
+          "  └─Apply_39 2666.67 root  CARTESIAN left outer join",
+          "    ├─TableReader_40(Build) 2666.67 root  data:Selection_41",
+          "    │ └─Selection_41 2666.67 cop[tikv]  not(isnull(test.t1.b))",
+          "    │   └─TableRangeScan_42 3333.33 cop[tikv] table:t1 range:(1,+inf], keep order:false, stats:pseudo",
+          "    └─MaxOneRow_43(Probe) 1.00 root  ",
+          "      └─HashAgg_48 1.00 root  funcs:max(Column#6)->Column#5",
+          "        └─TableReader_49 1.00 root  data:HashAgg_50",
+          "          └─HashAgg_50 1.00 cop[tikv]  funcs:max(test.t2.b)->Column#6",
+          "            └─Selection_46 8000.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "              └─TableFullScan_47 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": []
       }
     ]
   },

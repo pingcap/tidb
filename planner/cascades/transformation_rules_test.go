@@ -71,7 +71,7 @@ func testGroupToString(input []string, output []struct {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)
 		})
-		c.Assert(ToString(group), DeepEquals, output[i].Result)
+		c.Assert(ToString(group), DeepEquals, output[i].Result, Commentf("sql: [%s]", output[i].SQL))
 	}
 }
 
@@ -123,6 +123,7 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 				NewRulePushSelDownProjection(),
 				NewRulePushSelDownAggregation(),
 				NewRulePushSelDownJoin(),
+				NewRulePushSelDownApply(),
 				NewRulePushSelDownUnionAll(),
 				NewRulePushSelDownWindow(),
 				NewRuleMergeAdjacentSelection(),

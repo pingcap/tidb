@@ -69,6 +69,7 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
 		NewRulePushSelDownJoin(),
+		NewRulePushSelDownApply(),
 		NewRulePushSelDownUnionAll(),
 		NewRulePushSelDownWindow(),
 		NewRuleMergeAdjacentSelection(),
@@ -926,8 +927,23 @@ func (r *pushDownJoin) predicatePushDown(
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 			remainCond = append(remainCond, rightPushCond...)
 		}
-	default:
-		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
+	case plannercore.AntiSemiJoin:
+		predicates = expression.PropagateConstant(join.SCtx(), predicates)
+		// Return table dual when filter is constant false or null.
+		dual := plannercore.Conds2TableDual(join, predicates)
+		if dual != nil {
+			return leftCond, rightCond, remainCond, dual
+		}
+		// `predicates` should only contain left conditions or constant filters.
+		_, leftPushCond, rightPushCond, _ = join.ExtractOnCondition(predicates, leftSchema, rightSchema, true, true)
+		// Do not derive `is not null` for anti join, since it may cause wrong results.
+		// For example:
+		// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
+		// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
+		// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
+		leftCond = leftPushCond
+		rightCond = append(join.RightConditions, rightPushCond...)
+		join.RightConditions = nil
 	}
 	leftCond = expression.RemoveDupExprs(sctx, leftCond)
 	rightCond = expression.RemoveDupExprs(sctx, rightCond)
@@ -1048,6 +1064,61 @@ func (r *TransformJoinCondToSel) OnTransform(old *memo.ExprIter) (newExprs []*me
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	newJoinExpr.AddAppliedRule(r)
 	return []*memo.GroupExpr{newJoinExpr}, true, false, nil
+}
+
+// PushSelDownApply pushes selection through apply.
+type PushSelDownApply struct {
+	baseRule
+	pushDownJoin
+}
+
+// NewRulePushSelDownApply creates a new transformation PushSelDownApply.
+func NewRulePushSelDownApply() Transformation {
+	rule := &PushSelDownApply{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandSelection, memo.EngineTiDBOnly,
+		memo.NewPattern(memo.OperandApply, memo.EngineTiDBOnly),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *PushSelDownApply) Match(expr *memo.ExprIter) bool {
+	return !expr.GetExpr().HasAppliedRule(r)
+}
+
+// OnTransform implements Transformation interface.
+func (r *PushSelDownApply) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
+	joinExpr := old.Children[0].GetExpr()
+	apply := joinExpr.ExprNode.(*plannercore.LogicalApply)
+	join := &apply.LogicalJoin
+	newJoin := join.Shallow()
+	sctx := sel.SCtx()
+	leftGroup := old.Children[0].GetExpr().Children[0]
+	rightGroup := old.Children[0].GetExpr().Children[1]
+	leftCond, rightCond, remainCond, dual := r.predicatePushDown(sctx, sel.Conditions, newJoin, leftGroup.Prop.Schema, rightGroup.Prop.Schema)
+	if dual != nil {
+		return []*memo.GroupExpr{memo.NewGroupExpr(dual)}, true, true, nil
+	}
+
+	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
+	leftGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), leftCond, leftGroup)
+	rightGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), rightCond, rightGroup)
+	newApply := plannercore.LogicalApply{
+		LogicalJoin: *newJoin,
+	}.Init(sctx, sel.SelectBlockOffset())
+	newApplyExpr := memo.NewGroupExpr(newApply)
+	newApplyExpr.SetChildren(leftGroup, rightGroup)
+	if len(remainCond) > 0 {
+		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
+		newSel.Conditions = remainCond
+		newSelExpr := memo.NewGroupExpr(newSel)
+		newSelExpr.SetChildren(memo.NewGroupWithSchema(newApplyExpr, old.Children[0].Prop.Schema))
+		newSelExpr.AddAppliedRule(r)
+		return []*memo.GroupExpr{newSelExpr}, true, false, nil
+	}
+	return []*memo.GroupExpr{newApplyExpr}, true, false, nil
 }
 
 // PushSelDownUnionAll pushes selection through union all.
