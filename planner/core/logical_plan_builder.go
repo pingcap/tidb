@@ -2283,7 +2283,7 @@ func checkColFuncDepend(
 	p LogicalPlan,
 	name *types.FieldName,
 	tblInfo *model.TableInfo,
-	gbyColNames map[*types.FieldName]struct{},
+	gbyOrSingleValueColNames map[*types.FieldName]struct{},
 	whereDependNames, joinDependNames map[*types.FieldName]*types.FieldName,
 ) bool {
 	for _, index := range tblInfo.Indices {
@@ -2308,16 +2308,16 @@ func checkColFuncDepend(
 				break
 			}
 			iName := p.OutputNames()[iIdx]
-			if _, ok := gbyColNames[iName]; ok {
+			if _, ok := gbyOrSingleValueColNames[iName]; ok {
 				continue
 			}
 			if wCol, ok := whereDependNames[iName]; ok {
-				if _, ok = gbyColNames[wCol]; ok {
+				if _, ok = gbyOrSingleValueColNames[wCol]; ok {
 					continue
 				}
 			}
 			if jCol, ok := joinDependNames[iName]; ok {
-				if _, ok = gbyColNames[jCol]; ok {
+				if _, ok = gbyOrSingleValueColNames[jCol]; ok {
 					continue
 				}
 			}
@@ -2346,16 +2346,16 @@ func checkColFuncDepend(
 			break
 		}
 		pCol := p.OutputNames()[pIdx]
-		if _, ok := gbyColNames[pCol]; ok {
+		if _, ok := gbyOrSingleValueColNames[pCol]; ok {
 			continue
 		}
 		if wCol, ok := whereDependNames[pCol]; ok {
-			if _, ok = gbyColNames[wCol]; ok {
+			if _, ok = gbyOrSingleValueColNames[wCol]; ok {
 				continue
 			}
 		}
 		if jCol, ok := joinDependNames[pCol]; ok {
-			if _, ok = gbyColNames[jCol]; ok {
+			if _, ok = gbyOrSingleValueColNames[jCol]; ok {
 				continue
 			}
 		}
@@ -2371,14 +2371,14 @@ type ErrExprLoc struct {
 	Loc    string
 }
 
-func checkExprInGroupBy(
+func checkExprInGroupByOrIsSingleValue(
 	p LogicalPlan,
 	expr ast.ExprNode,
 	offset int,
 	loc string,
-	gbyColNames map[*types.FieldName]struct{},
+	gbyOrSingleValueColNames map[*types.FieldName]struct{},
 	gbyExprs []ast.ExprNode,
-	notInGbyColNames map[*types.FieldName]ErrExprLoc,
+	notInGbyOrSingleValueColNames map[*types.FieldName]ErrExprLoc,
 ) {
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
@@ -2400,8 +2400,8 @@ func checkExprInGroupBy(
 	colMap := make(map[*types.FieldName]struct{}, len(p.Schema().Columns))
 	allColFromExprNode(p, expr, colMap)
 	for col := range colMap {
-		if _, ok := gbyColNames[col]; !ok {
-			notInGbyColNames[col] = ErrExprLoc{Offset: offset, Loc: loc}
+		if _, ok := gbyOrSingleValueColNames[col]; !ok {
+			notInGbyOrSingleValueColNames[col] = ErrExprLoc{Offset: offset, Loc: loc}
 		}
 	}
 }
@@ -2415,28 +2415,55 @@ func (b *PlanBuilder) checkOnlyFullGroupBy(p LogicalPlan, sel *ast.SelectStmt) (
 	return err
 }
 
+func addGbyOrSingleValueColName(p LogicalPlan, colName *ast.ColumnName, gbyOrSingleValueColNames map[*types.FieldName]struct{}) {
+	idx, err := expression.FindFieldName(p.OutputNames(), colName)
+	if err != nil || idx < 0 {
+		return
+	}
+	gbyOrSingleValueColNames[p.OutputNames()[idx]] = struct{}{}
+}
+
+func extractSingeValueColNamesFromWhere(p LogicalPlan, where ast.ExprNode, gbyOrSingleValueColNames map[*types.FieldName]struct{}) {
+	whereConditions := splitWhere(where)
+	for _, cond := range whereConditions {
+		binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
+		if !ok || binOpExpr.Op != opcode.EQ {
+			continue
+		}
+		if colExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr); ok {
+			if _, ok := binOpExpr.R.(ast.ValueExpr); ok {
+				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+			}
+		} else if colExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr); ok {
+			if _, ok := binOpExpr.L.(ast.ValueExpr); ok {
+				addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
+			}
+		}
+	}
+}
+
 func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
-	gbyColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
+	gbyOrSingleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	for _, byItem := range sel.GroupBy.Items {
 		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
 		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
-			idx, err := expression.FindFieldName(p.OutputNames(), colExpr.Name)
-			if err != nil || idx < 0 {
-				continue
-			}
-			gbyColNames[p.OutputNames()[idx]] = struct{}{}
+			addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 		} else {
 			gbyExprs = append(gbyExprs, expr)
 		}
 	}
+	// MySQL permits a nonaggregate column not named in a GROUP BY clause when ONLY_FULL_GROUP_BY SQL mode is enabled,
+	// provided that this column is limited to a single value.
+	// See https://dev.mysql.com/doc/refman/5.7/en/group-by-handling.html for details.
+	extractSingeValueColNamesFromWhere(p, sel.Where, gbyOrSingleValueColNames)
 
-	notInGbyColNames := make(map[*types.FieldName]ErrExprLoc, len(sel.Fields.Fields))
+	notInGbyOrSingleValueColNames := make(map[*types.FieldName]ErrExprLoc, len(sel.Fields.Fields))
 	for offset, field := range sel.Fields.Fields {
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupBy(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyColNames, gbyExprs, notInGbyColNames)
+		checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 	}
 
 	if sel.OrderBy != nil {
@@ -2451,17 +2478,17 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 					continue
 				}
 			}
-			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyColNames, gbyExprs, notInGbyColNames)
+			checkExprInGroupByOrIsSingleValue(p, item.Expr, offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 		}
 	}
-	if len(notInGbyColNames) == 0 {
+	if len(notInGbyOrSingleValueColNames) == 0 {
 		return nil
 	}
 
 	whereDepends := buildWhereFuncDepend(p, sel.Where)
 	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
-	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyColNames))
-	for name, errExprLoc := range notInGbyColNames {
+	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyOrSingleValueColNames))
+	for name, errExprLoc := range notInGbyOrSingleValueColNames {
 		tblInfo := tblInfoFromCol(sel.From.TableRefs, name)
 		if tblInfo == nil {
 			continue
@@ -2469,7 +2496,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		if _, ok := tblMap[tblInfo]; ok {
 			continue
 		}
-		if checkColFuncDepend(p, name, tblInfo, gbyColNames, whereDepends, joinDepends) {
+		if checkColFuncDepend(p, name, tblInfo, gbyOrSingleValueColNames, whereDepends, joinDepends) {
 			tblMap[tblInfo] = struct{}{}
 			continue
 		}
@@ -2485,35 +2512,59 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 }
 
 func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
-	resolver := colResolverForOnlyFullGroupBy{}
+	resolver := colResolverForOnlyFullGroupBy{
+		firstOrderByAggColIdx: -1,
+	}
 	resolver.curClause = fieldList
 	for idx, field := range sel.Fields.Fields {
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
-		err := resolver.Check()
-		if err != nil {
-			return err
-		}
 	}
-	if resolver.firstNonAggCol != nil {
+	if len(resolver.nonAggCols) > 0 {
 		if sel.Having != nil {
 			sel.Having.Expr.Accept(&resolver)
-			err := resolver.Check()
-			if err != nil {
-				return err
-			}
 		}
 		if sel.OrderBy != nil {
 			resolver.curClause = orderByClause
 			for idx, byItem := range sel.OrderBy.Items {
 				resolver.exprIdx = idx
 				byItem.Expr.Accept(&resolver)
-				err := resolver.Check()
-				if err != nil {
-					return err
-				}
 			}
 		}
+	}
+	if resolver.firstOrderByAggColIdx != -1 && len(resolver.nonAggCols) > 0 {
+		// SQL like `select a from t where a = 1 order by count(b)` is illegal.
+		return ErrAggregateOrderNonAggQuery.GenWithStackByArgs(resolver.firstOrderByAggColIdx + 1)
+	}
+	if !resolver.hasAggFuncOrAnyValue || len(resolver.nonAggCols) == 0 {
+		return nil
+	}
+	singleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
+	extractSingeValueColNamesFromWhere(p, sel.Where, singleValueColNames)
+	whereDepends := buildWhereFuncDepend(p, sel.Where)
+	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
+	tblMap := make(map[*model.TableInfo]struct{}, len(resolver.nonAggCols))
+	for i, colName := range resolver.nonAggCols {
+		idx, err := expression.FindFieldName(p.OutputNames(), colName)
+		if err != nil || idx < 0 {
+			return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(resolver.nonAggColIdxs[i]+1, colName.Name.O)
+		}
+		fieldName := p.OutputNames()[idx]
+		if _, ok := singleValueColNames[fieldName]; ok {
+			continue
+		}
+		tblInfo := tblInfoFromCol(sel.From.TableRefs, fieldName)
+		if tblInfo == nil {
+			continue
+		}
+		if _, ok := tblMap[tblInfo]; ok {
+			continue
+		}
+		if checkColFuncDepend(p, fieldName, tblInfo, singleValueColNames, whereDepends, joinDepends) {
+			tblMap[tblInfo] = struct{}{}
+			continue
+		}
+		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(resolver.nonAggColIdxs[i]+1, colName.Name.O)
 	}
 	return nil
 }
@@ -2521,9 +2572,9 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel 
 // colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
 // If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
-	firstNonAggCol        *ast.ColumnName
+	nonAggCols            []*ast.ColumnName
 	exprIdx               int
-	firstNonAggColIdx     int
+	nonAggColIdxs         []int
 	hasAggFuncOrAnyValue  bool
 	firstOrderByAggColIdx int
 	curClause             clauseCode
@@ -2544,9 +2595,8 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 			return node, true
 		}
 	case *ast.ColumnNameExpr:
-		if c.firstNonAggCol == nil {
-			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
-		}
+		c.nonAggCols = append(c.nonAggCols, t.Name)
+		c.nonAggColIdxs = append(c.nonAggColIdxs, c.exprIdx)
 		return node, true
 	case *ast.SubqueryExpr:
 		return node, true
@@ -2556,17 +2606,6 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
-}
-
-func (c *colResolverForOnlyFullGroupBy) Check() error {
-	if c.hasAggFuncOrAnyValue && c.firstNonAggCol != nil {
-		if c.curClause == fieldList {
-			return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
-		} else if c.curClause == orderByClause {
-			return ErrAggregateOrderNonAggQuery.GenWithStackByArgs(c.firstOrderByAggColIdx + 1)
-		}
-	}
-	return nil
 }
 
 type colNameResolver struct {
