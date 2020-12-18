@@ -680,7 +680,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrStoredFunctionPreventsSwitchSQLLogBin:                 mysql.Message("Cannot change the sqlLogBin inside a stored function or trigger", nil),
 	ErrFailedReadFromParFile:                                 mysql.Message("Failed to read from the .par file", nil),
 	ErrValuesIsNotIntType:                                    mysql.Message("VALUES value for partition '%-.64s' must have type INT", nil),
-	ErrAccessDeniedNoPassword:                                mysql.Message("Access denied for user '%-.48s'@'%-.64s'", []int{0, 1}),
+	ErrAccessDeniedNoPassword:                                mysql.Message("Access denied for user '%-.48s'@'%-.64s'", nil),
 	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for users authenticating via plugins", nil),
 	ErrGrantPluginUserExists:                                 mysql.Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
 	ErrTruncateIllegalFk:                                     mysql.Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
