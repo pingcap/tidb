@@ -1072,8 +1072,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
 	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
 	cmpType := getBaseCmpType(lhsEvalType, rhsEvalType, lhsFieldType, rhsFieldType)
-	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
-		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
+	if rhsFieldType.Tp == mysql.TypeJSON || lhsFieldType.Tp == mysql.TypeJSON {
 		cmpType = types.ETJson
 	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
 		// date[time] <cmp> date[time]
@@ -1438,7 +1437,14 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	var bf baseBuiltinFunc
+	// for now we only consider not implicitly casting non-JSON value to JSON if they are compared for equality
+	// the compatibility of the behavior for other types of comparison is leave for the future.
+	if tp != types.ETJson || c.funcName != ast.EQ {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	} else {
+		bf, err = newBaseBuiltinFunc(ctx, c.funcName, args, types.ETInt)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2113,7 +2119,19 @@ func (b *builtinEQJSONSig) Clone() builtinFunc {
 }
 
 func (b *builtinEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	return resOfEQ(CompareJSON(b.ctx, b.args[0], b.args[1], row, row))
+	var arg0, arg1 Expression
+	if b.args[0].GetType().EvalType() == types.ETJson {
+		arg0, arg1 = b.args[0], b.args[1]
+	} else {
+		arg0, arg1 = b.args[1], b.args[0]
+	}
+	val0, isNull0, err := arg0.EvalJSON(b.ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	val, isNull, err = CompareJSONWithExpr(b.ctx, val0, arg1, row)
+	isNull = isNull || isNull0
+	return
 }
 
 type builtinNEIntSig struct {
@@ -2692,4 +2710,50 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// CompareJSONWithExpr compares a BinaryJSON value with a expression of unknow type, return eq = 1 upon equality
+func CompareJSONWithExpr(ctx sessionctx.Context, arg0 json.BinaryJSON, arg Expression, row chunk.Row) (eq int64, hasNull bool, err error) {
+	fieldTp := arg.GetType()
+	evalTp := fieldTp.EvalType()
+	if evalTp == types.ETJson {
+		var argVal json.BinaryJSON
+		argVal, hasNull, err = arg.EvalJSON(ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		eq = int64(json.CompareBinary(argVal, arg0))
+	} else {
+		switch arg0.TypeCode {
+		case json.TypeCodeUint64, json.TypeCodeInt64:
+			var argVal int64
+			if evalTp != types.ETInt {
+				return
+			}
+			argVal, hasNull, err = arg.EvalInt(ctx, row)
+			if argVal == arg0.GetInt64() {
+				eq = 1
+			}
+		case json.TypeCodeFloat64:
+			var argVal float64
+			if evalTp != types.ETReal {
+				return
+			}
+			argVal, hasNull, err = arg.EvalReal(ctx, row)
+			if argVal == arg0.GetFloat64() {
+				eq = 1
+			}
+		case json.TypeCodeString:
+			var argVal string
+			if evalTp != types.ETString {
+				return
+			}
+			argVal, hasNull, err = arg.EvalString(ctx, row)
+			if argVal == string(arg0.GetString()) {
+				eq = 1
+			}
+		case json.TypeCodeLiteral:
+		}
+	}
+	return
 }

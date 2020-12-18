@@ -171,7 +171,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
-// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
 // the vectorization falls back to the scalar execution.
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -369,7 +369,7 @@ var typesMap = []TypeContext{
 	TypeString,
 	TypeDatetime,
 	TypeDuration,
-	TypeJSON,
+	//TypeJSON,
 }
 
 func generateDotGo(fileName string, compares []CompareContext, types []TypeContext) (err error) {

@@ -229,46 +229,6 @@ func (b *builtinLTDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val < 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinLTJSONSig) vectorized() bool {
-	return true
-}
-
 func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETReal, n)
@@ -474,46 +434,6 @@ func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinLEDurationSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val <= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinLEJSONSig) vectorized() bool {
 	return true
 }
 
@@ -725,46 +645,6 @@ func (b *builtinGTDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val > 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinGTJSONSig) vectorized() bool {
-	return true
-}
-
 func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETReal, n)
@@ -970,46 +850,6 @@ func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinGEDurationSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val >= 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinGEJSONSig) vectorized() bool {
 	return true
 }
 
@@ -1221,46 +1061,6 @@ func (b *builtinEQDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val == 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinEQJSONSig) vectorized() bool {
-	return true
-}
-
 func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETReal, n)
@@ -1469,46 +1269,6 @@ func (b *builtinNEDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	result.MergeNulls(buf0, buf1)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		val := json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i))
-		if val != 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
-	}
-	return nil
-}
-
-func (b *builtinNEJSONSig) vectorized() bool {
-	return true
-}
-
 func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETReal, n)
@@ -1714,46 +1474,6 @@ func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinNullEQDurationSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalJSON(b.ctx, input, buf0); err != nil {
-		return err
-	}
-	buf1, err := b.bufAllocator.get(types.ETJson, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalJSON(b.ctx, input, buf1); err != nil {
-		return err
-	}
-
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		isNull0 := buf0.IsNull(i)
-		isNull1 := buf1.IsNull(i)
-		switch {
-		case isNull0 && isNull1:
-			i64s[i] = 1
-		case isNull0 != isNull1:
-			i64s[i] = 0
-		case json.CompareBinary(buf0.GetJSON(i), buf1.GetJSON(i)) == 0:
-			i64s[i] = 1
-		}
-	}
-	return nil
-}
-
-func (b *builtinNullEQJSONSig) vectorized() bool {
 	return true
 }
 
@@ -2102,68 +1822,5 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 }
 
 func (b *builtinCoalesceDurationSig) vectorized() bool {
-	return true
-}
-
-// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
-// the vectorization falls back to the scalar execution.
-func (b *builtinCoalesceJSONSig) fallbackEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-
-	result.ReserveJSON(n)
-	for i := 0; i < n; i++ {
-		res, isNull, err := b.evalJSON(input.GetRow(i))
-		if err != nil {
-			return err
-		}
-		if isNull {
-			result.AppendNull()
-			continue
-		}
-		result.AppendJSON(res)
-	}
-	return nil
-}
-
-func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	argLen := len(b.args)
-
-	bufs := make([]*chunk.Column, argLen)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
-	for i := 0; i < argLen; i++ {
-		buf, err := b.bufAllocator.get(types.ETInt, n)
-		if err != nil {
-			return err
-		}
-		defer b.bufAllocator.put(buf)
-		err = b.args[i].VecEvalJSON(b.ctx, input, buf)
-		afterWarns := sc.WarningCount()
-		if err != nil || afterWarns > beforeWarns {
-			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
-			}
-			return b.fallbackEvalJSON(input, result)
-		}
-		bufs[i] = buf
-	}
-	result.ReserveJSON(n)
-
-	for i := 0; i < n; i++ {
-		for j := 0; j < argLen; j++ {
-			if !bufs[j].IsNull(i) {
-				result.AppendJSON(bufs[j].GetJSON(i))
-				break
-			}
-			if j == argLen-1 && bufs[j].IsNull(i) {
-				result.AppendNull()
-			}
-		}
-	}
-	return nil
-}
-
-func (b *builtinCoalesceJSONSig) vectorized() bool {
 	return true
 }

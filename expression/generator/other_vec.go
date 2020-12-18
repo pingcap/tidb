@@ -424,7 +424,7 @@ var inSigsTmpl = []sig{
 	{SigName: "builtinInRealSig", Input: TypeReal, Output: TypeInt},
 	{SigName: "builtinInTimeSig", Input: TypeDatetime, Output: TypeInt},
 	{SigName: "builtinInDurationSig", Input: TypeDuration, Output: TypeInt},
-	{SigName: "builtinInJSONSig", Input: TypeJSON, Output: TypeInt},
+	//{SigName: "builtinInJSONSig", Input: TypeJSON, Output: TypeInt},
 }
 
 type function struct {

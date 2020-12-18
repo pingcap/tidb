@@ -172,22 +172,6 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				inGener{*newDefaultGener(0.2, types.ETDuration)},
 			},
 		},
-		// builtinInJSONSig
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETJson,
-				types.ETJson,
-				types.ETJson,
-				types.ETJson,
-			},
-			geners: []dataGenerator{
-				inGener{*newDefaultGener(0.2, types.ETJson)},
-				inGener{*newDefaultGener(0.2, types.ETJson)},
-				inGener{*newDefaultGener(0.2, types.ETJson)},
-				inGener{*newDefaultGener(0.2, types.ETJson)},
-			},
-		},
 		// builtinInIntSig with const arguments
 		{
 			retEvalType: types.ETInt,
@@ -264,19 +248,6 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				nil,
 				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
 				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
-			},
-		},
-		// builtinInJSONSig with const arguments
-		{
-			retEvalType: types.ETInt,
-			childrenTypes: []types.EvalType{
-				types.ETJson,
-				types.ETJson, types.ETJson,
-			},
-			constants: []*Constant{
-				nil,
-				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 			},
 		},
 	},
