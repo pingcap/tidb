@@ -824,6 +824,10 @@ func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPat
 	return tiFlashPath
 }
 
+func isForUpdateReadSelectLock(lock ast.SelectLockType) bool {
+	return lock == ast.SelectLockForUpdate || lock == ast.SelectLockForUpdateNoWait
+}
+
 func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
 	dom := domain.GetDomain(ctx)
 	if dom == nil {
