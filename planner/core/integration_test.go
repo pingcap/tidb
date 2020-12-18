@@ -2211,4 +2211,4 @@ func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
-} 
+}
