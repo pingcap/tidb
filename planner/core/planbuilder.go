@@ -452,6 +452,19 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+<<<<<<< HEAD
+=======
+
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
+
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
+	cachedResultSetNodes  map[*ast.Join]LogicalPlan
+	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
+>>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 }
 
 type handleColHelper struct {
@@ -550,12 +563,24 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
+<<<<<<< HEAD
 		ctx:           sctx,
 		is:            is,
 		colMapper:     make(map[*ast.ColumnNameExpr]int),
 		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
 		hintProcessor: processor,
 	}
+=======
+		ctx:                   sctx,
+		is:                    is,
+		colMapper:             make(map[*ast.ColumnNameExpr]int),
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:         processor,
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
+	}, savedBlockNames
+>>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 }
 
 // Build builds the ast node to a Plan.

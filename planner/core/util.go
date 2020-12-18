@@ -27,9 +27,11 @@ import (
 )
 
 // AggregateFuncExtractor visits Expr tree.
-// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
+// It collects AggregateFuncExpr from AST Node.
 type AggregateFuncExtractor struct {
-	inAggregateFuncExpr bool
+	// skipAggMap stores correlated aggregate functions which have been built in outer query,
+	// so extractor in sub-query will skip these aggregate functions.
+	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 	// AggFuncs is the collected AggregateFuncExprs.
 	AggFuncs []*ast.AggregateFuncExpr
 }
@@ -37,9 +39,13 @@ type AggregateFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
+<<<<<<< HEAD
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = true
 	case *ast.SelectStmt, *ast.UnionStmt:
+=======
+	case *ast.SelectStmt, *ast.SetOprStmt:
+>>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 		return n, true
 	}
 	return n, false
@@ -49,8 +55,9 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = false
-		a.AggFuncs = append(a.AggFuncs, v)
+		if _, ok := a.skipAggMap[v]; !ok {
+			a.AggFuncs = append(a.AggFuncs, v)
+		}
 	}
 	return n, true
 }
