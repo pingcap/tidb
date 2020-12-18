@@ -3788,6 +3788,8 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select bit_and(a) from t")
 	result.Check(testkit.Rows("18446744073709551615"))
+	result = tk.MustQuery("select count(1) from (select count(1) from t) as t1")
+	result.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
@@ -8322,6 +8324,23 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 		testkit.Rows("838:59:59 18446744072635875328"))
 	tk.MustQuery("show warnings;").Check(
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
+}
+
+func (s *testIntegrationSuite) TestIssue11333(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(col1 decimal);")
+	tk.MustExec(" insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);")
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows("0"))
+	tk.MustExec("create table t1(col1 decimal(65,30));")
+	tk.MustExec(" insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);")
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("0.000000000000000000000000000000"))
+	tk.MustQuery(`select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000000"))
+	tk.MustQuery(`select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
+	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 }
 
 func (s *testSuite) TestIssue12206(c *C) {
