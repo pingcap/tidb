@@ -518,10 +518,18 @@ func (s *testSuite3) TestKillStmt(c *C) {
 		serverID: 0,
 	}
 	tk.Se.SetSessionManager(sm)
+	tk.MustExec("kill 1")
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
-	result := tk.MustQuery("show warnings")
+	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// truncated
@@ -541,6 +549,7 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
