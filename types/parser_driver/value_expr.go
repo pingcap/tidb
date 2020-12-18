@@ -46,6 +46,9 @@ func init() {
 	ast.NewDecimal = func(str string) (interface{}, error) {
 		dec := new(types.MyDecimal)
 		err := dec.FromString(hack.Slice(str))
+		if err == types.ErrTruncated {
+			err = nil
+		}
 		return dec, err
 	}
 	ast.NewHexLiteral = func(str string) (interface{}, error) {
