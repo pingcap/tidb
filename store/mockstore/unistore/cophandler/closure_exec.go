@@ -1501,6 +1501,15 @@ func (e *hashAggProcessor) Finish() error {
 		e.oldRowBuf = append(e.oldRowBuf, gk...)
 		e.oldChunks = appendRow(e.oldChunks, e.oldRowBuf, i)
 	}
+	if e.aggCtx.execDetail.numIterations == 0 && e.aggCtx.execDetail.numProducedRows == 0 &&
+		len(e.aggCtxsMap) == 0 && len(e.outputOff) == 1 {
+		for _, exec := range e.dagReq.GetExecutors() {
+			if exec.Tp == tipb.ExecType_TypeStreamAgg {
+				e.aggCtx.execDetail.updateOnlyRows(1)
+				e.oldChunks = appendRow(e.oldChunks, make([]byte, 1), 0)
+			}
+		}
+	}
 	return nil
 }
 

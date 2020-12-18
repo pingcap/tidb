@@ -578,6 +578,9 @@ type SessionVars struct {
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
+	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
+	EnableAlterPlacement bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -754,6 +757,9 @@ type SessionVars struct {
 	// LastTxnInfo keeps track the info of last committed transaction.
 	LastTxnInfo kv.TxnInfo
 
+	// LastQueryInfo keeps track the info of last query.
+	LastQueryInfo QueryInfo
+
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
@@ -922,6 +928,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeColumnType:       DefTiDBChangeColumnType,
 		EnableChangeMultiSchema:      DefTiDBChangeMultiSchema,
 		EnablePointGetCache:          DefTiDBPointGetCache,
+		EnableAlterPlacement:         DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                     config.GetGlobalConfig().TxnScope,
@@ -1632,6 +1639,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeMultiSchema = TiDBOptOn(val)
 	case TiDBEnablePointGetCache:
 		s.EnablePointGetCache = TiDBOptOn(val)
+	case TiDBEnableAlterPlacement:
+		s.EnableAlterPlacement = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
@@ -2315,4 +2324,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
+type QueryInfo struct {
+	TxnScope    string `json:"txn_scope"`
+	StartTS     uint64 `json:"start_ts"`
+	ForUpdateTS uint64 `json:"for_update_ts"`
+	ErrMsg      string `json:"error,omitempty"`
 }
