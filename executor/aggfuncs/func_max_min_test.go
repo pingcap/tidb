@@ -98,9 +98,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnum(elems, "e", mysql.DefaultCollationName)
 
-	setA, _ := types.ParseSet(elems, "a", mysql.DefaultCollationName)    // setA.Value == 1
-	setAB, _ := types.ParseSet(elems, "a,b", mysql.DefaultCollationName) // setAB.Value == 3
 	setC, _ := types.ParseSet(elems, "c", mysql.DefaultCollationName)    // setC.Value == 4
+	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
@@ -114,8 +113,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
 		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
 		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, json.CreateBinary(int64(4)), json.CreateBinary(int64(4)), json.CreateBinary(int64(4))),
-		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumE, enumE),
-		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setC, setC, setC),
+		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumC, enumE),
+		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setED, setED, setED),
 
 		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, 0, 2, 0),
 		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, 0, 2, 0),
@@ -126,8 +125,8 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
 		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, json.CreateBinary(int64(0)), json.CreateBinary(int64(2)), json.CreateBinary(int64(0))),
-		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumC, enumA),
-		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setA, setAB, setA),
+		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumA, enumA),
+		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
