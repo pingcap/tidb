@@ -1996,6 +1996,9 @@ func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk.MustQuery("select count(v1) from ttest order by v2").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(distinct v1) from ttest order by v2").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(distinct v1) from ttest order by count(v2)").Check(testkit.Rows("2"))
+
+	tk.MustGetErrMsg("select distinct count(v1) from ttest order by sum(v3)",
+		"[planner:1054]Unknown column 'v3' in 'order clause'")
 }
 
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
