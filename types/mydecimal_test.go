@@ -508,6 +508,7 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 		{"1e 1dddd ", "10", ErrTruncated},
 		{"1e - 1", "1", ErrTruncated},
 		{"1e -1", "0.1", nil},
+		{"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "0.000000000000000000000000000000000000000000000000000000000000000000000000", ErrTruncated},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
