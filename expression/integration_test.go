@@ -7327,8 +7327,6 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue19892(c *C) {
 	defer s.cleanEnv(c)
@@ -7646,4 +7644,3 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 	tk.MustQuery("select  `a` DIV ( ROUND( ( SCHEMA() ), '1978-05-18 03:35:52.043591' ) ) from `t12209`;").Check(
 		testkit.Rows("<nil>"))
 }
->>>>>>> 25a94e5f2... expression:truncate decimal value instead of return error (#21691)
