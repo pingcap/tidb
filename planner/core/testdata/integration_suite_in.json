@@ -61,6 +61,13 @@
     ]
   },
   {
+    "name": "TestIndexMergeHint4CNF",
+    "cases": [
+      "explain select * from t where b = 1 and (a = 1 or c = 1)",
+      "explain select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)"
+    ]
+  },
+  {
     "name": "TestSubqueryWithTopN",
     "cases": [
       "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)",
