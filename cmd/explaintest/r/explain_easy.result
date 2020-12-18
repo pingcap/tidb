@@ -652,15 +652,9 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain select * from (select * from t order by (select 2)) t order by a, b;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Sort_12	10000.00	root		test.t.a:asc, test.t.b:asc
-└─TableReader_18	10000.00	root		data:TableFullScan_17
-  └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-=======
 Sort_13	10000.00	root		test.t.a, test.t.b
 └─TableReader_19	10000.00	root		data:TableFullScan_18
   └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
->>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 explain select * from (select * from t order by c) t order by a, b;
 id	estRows	task	access object	operator info
 Sort_6	10000.00	root		test.t.a:asc, test.t.b:asc

@@ -39,13 +39,7 @@ type AggregateFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-<<<<<<< HEAD
-	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = true
 	case *ast.SelectStmt, *ast.UnionStmt:
-=======
-	case *ast.SelectStmt, *ast.SetOprStmt:
->>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 		return n, true
 	}
 	return n, false

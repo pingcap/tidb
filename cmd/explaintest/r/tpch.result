@@ -711,22 +711,6 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-<<<<<<< HEAD
-Projection_52	1304801.67	root		tpch.partsupp.ps_partkey, Column#18
-└─Sort_53	1304801.67	root		Column#18:desc
-  └─Selection_55	1304801.67	root		gt(Column#18, NULL)
-    └─HashAgg_58	1631002.09	root		group by:Column#44, funcs:sum(Column#42)->Column#18, funcs:firstrow(Column#43)->tpch.partsupp.ps_partkey
-      └─Projection_79	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#42, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
-        └─HashJoin_62	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
-          ├─HashJoin_70(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-          │ ├─TableReader_75(Build)	1.00	root		data:Selection_74
-          │ │ └─Selection_74	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
-          │ │   └─TableFullScan_73	25.00	cop[tikv]	table:nation	keep order:false
-          │ └─TableReader_72(Probe)	500000.00	root		data:TableFullScan_71
-          │   └─TableFullScan_71	500000.00	cop[tikv]	table:supplier	keep order:false
-          └─TableReader_77(Probe)	40000000.00	root		data:TableFullScan_76
-            └─TableFullScan_76	40000000.00	cop[tikv]	table:partsupp	keep order:false
-=======
 Projection_57	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
 └─Sort_58	1304801.67	root		Column#35:desc
   └─Selection_60	1304801.67	root		gt(Column#35, NULL)
@@ -741,7 +725,6 @@ Projection_57	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
           │   └─TableFullScan_81	500000.00	cop[tikv]	table:supplier	keep order:false
           └─TableReader_87(Probe)	40000000.00	root		data:TableFullScan_86
             └─TableFullScan_86	40000000.00	cop[tikv]	table:partsupp	keep order:false
->>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
 /*
 Q12 Shipping Modes and Order Priority Query
 This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority

@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -452,19 +452,13 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
-<<<<<<< HEAD
-=======
-
-	// isSampling indicates whether the query is sampling.
-	isSampling bool
 
 	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
 	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
 	cachedResultSetNodes  map[*ast.Join]LogicalPlan
-	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
->>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
+	cachedHandleHelperMap map[*ast.Join]map[int64][]*expression.Column
 }
 
 type handleColHelper struct {
@@ -563,24 +557,15 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-<<<<<<< HEAD
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
-		hintProcessor: processor,
-	}
-=======
 		ctx:                   sctx,
 		is:                    is,
 		colMapper:             make(map[*ast.ColumnNameExpr]int),
-		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
 		hintProcessor:         processor,
 		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
-		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
-	}, savedBlockNames
->>>>>>> f687ebd91... planner: fix correlated aggregates which should be evaluated in outer query (#21431)
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]*expression.Column),
+	}
 }
 
 // Build builds the ast node to a Plan.
