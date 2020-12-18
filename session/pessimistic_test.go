@@ -2244,6 +2244,8 @@ func (s *testPessimisticSuite) TestIssue21688(c *C) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustExec("select * from t where (k1, v) in ((1, null)) for update")
 	tk2.MustExec("select * from t where (k1, v) in ((1, null)) for update nowait")
+	tk.MustExec("select * from t where (k1, v) in ((2, null), (6, null)) for update")
+	tk2.MustExec("select * from t where (k1, v) in ((2, null), (6, null)) for update nowait")
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
@@ -2251,6 +2253,8 @@ func (s *testPessimisticSuite) TestIssue21688(c *C) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustExec("select * from t where (k2, v) in ((1, null)) for update")
 	tk2.MustExec("select * from t where (k2, v) in ((1, null)) for update nowait")
+	tk.MustExec("select * from t where (k2, v) in ((2, null), (6, null)) for update")
+	tk2.MustExec("select * from t where (k2, v) in ((2, null), (6, null)) for update nowait")
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
