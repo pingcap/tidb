@@ -375,8 +375,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 				op = ast.LE
 				val = types.NewFloat32Datum(math.MaxFloat32)
 			}
-		}
-		if val.GetFloat64() < -math.MaxFloat32 {
+		} else if val.GetFloat64() < -math.MaxFloat32 {
 			switch op {
 			case ast.LE, ast.LT:
 				return val, op, false
