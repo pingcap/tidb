@@ -642,17 +642,11 @@ func (s *testDBSuite1) TestCrossDCQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec(`create table t1 (c int primary key, d int,e int)
+	tk.MustExec(`create table t1 (c int primary key)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
-
-	tk.MustExec(`alter table t1 add index idx_d (d);`)
-	tk.MustExec(`alter table t1 add index idx_e (e);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
 
 	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
@@ -692,12 +686,6 @@ PARTITION BY RANGE (c) (
 		sql       string
 		expectErr error
 	}{
-		{
-			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "bj",
-			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c< 5 and ( d =5 or e = 5 );",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
 		{
 			name:      "cross dc read to sh by holding bj, TableReader",
 			txnScope:  "bj",
