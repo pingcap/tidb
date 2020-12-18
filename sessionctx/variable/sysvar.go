@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -387,6 +388,17 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
+func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+	if normalizedValue == "" {
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+	}
+	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	if err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return cht, nil
+}
+
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "gtid_mode", Value: BoolOff, Type: TypeBool},
@@ -582,7 +594,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: "timestamp", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_filesystem")
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
 			return normalizedValue, errors.Trace(err)
@@ -610,7 +624,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
 	{Scope: ScopeNone, Name: "have_profiling", Value: "NO"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_client")
+	}},
 	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "ndb_distribution", Value: ""},
@@ -681,7 +697,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLBigSelects, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		return checkCharacterValid(normalizedValue, "")
+	}},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag_delay", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_schema", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity_max", Value: "2000"},
@@ -811,7 +832,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_database")
+	}},
 	{Scope: ScopeNone, Name: "have_symlink", Value: "YES"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "storage_engine", Value: "InnoDB"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_log_off", Value: "0"},
@@ -901,10 +924,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: Flush, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "200", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_connection")
+	}},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharacterSetServer)
+	}},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_instances", Value: "402"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndbinfo_show_hidden", Value: ""},
