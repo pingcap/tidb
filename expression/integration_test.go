@@ -8362,14 +8362,12 @@ func (s *testIntegrationSuite) TestCrossDCQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec(`create table t1 (c int primary key, d int,e int)
+	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	tk.MustExec(`alter table t1 add index idx_d (d);`)
-	tk.MustExec(`alter table t1 add index idx_e (e);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
@@ -8413,9 +8411,15 @@ PARTITION BY RANGE (c) (
 		expectErr error
 	}{
 		{
+			name:      "cross dc read to sh by holding bj, IndexLookUp",
+			txnScope:  "bj",
+			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
+		{
 			name:      "cross dc read to sh by holding bj, IndexMerge",
 			txnScope:  "bj",
-			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c< 5 and ( d =5 or e = 5 );",
+			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
@@ -8447,12 +8451,19 @@ PARTITION BY RANGE (c) (
 		c.Log(testcase.name)
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
-		err = tk.QueryToErr(testcase.sql)
-		if testcase.expectErr != nil {
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, ".*can not be read by.*")
+		res, err := tk.Exec(testcase.sql)
+		_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
+		var checkErr error
+		if err != nil {
+			checkErr = err
 		} else {
-			c.Assert(err, IsNil)
+			checkErr = resErr
+		}
+		if testcase.expectErr != nil {
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Matches, ".*can not be read by.*")
+		} else {
+			c.Assert(checkErr, IsNil)
 		}
 	}
 }
