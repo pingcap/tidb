@@ -326,7 +326,6 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 							}
 						}
 					}
-					res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
 					if res.EqOrInCount > 0 {
 						if res.EqOrInCount == res.EqCondCount {
 							res.EqCondCount = res.EqCondCount + tailRes.EqCondCount
