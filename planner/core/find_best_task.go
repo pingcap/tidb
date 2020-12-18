@@ -602,11 +602,11 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 func (ds *DataSource) findBestTask(propp *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
-	prop := propp.Clone()
-	if prop == nil {
+	if propp == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
+	prop := propp.Clone()
 
 	t = ds.getTask(prop)
 	if t != nil {

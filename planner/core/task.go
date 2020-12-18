@@ -1472,38 +1472,36 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		// TODO : && t.count() > float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
-		if p.SCtx().GetSessionVars().AllowMPPExecution && p.tp == plancodec.TypeHashAgg {
-			if p.GetChildReqProps(0).PartitionTp == property.AnyType {
-				/// 1-phase agg: when the partition columns can be satisfied
+		if mpp.partTp == property.HashType {
+			if receiver, ok := mpp.p.(*PhysicalExchangeReceiver); !ok {
+				/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 				/// only push down the original agg
 				p.self.SetChildren(mpp.p)
 				mpp.p = p.self
 				mpp.addCost(p.GetCost(inputRows, false))
 				return mpp
-			} else if mpp.partTp == property.HashType {
+			} else {
 				/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
 				// TODO: add collected partition agg
 				partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 				if partialAgg == nil {
-					return nil
+					finalAgg.SetChildren(mpp.p)
+					mpp.p = finalAgg
+					mpp.addCost(p.GetCost(inputRows, false))
+					return mpp
 				}
-				// push down partial agg under the Exchange which is enforced
-				if receiver, ok := mpp.p.(*PhysicalExchangeReceiver); ok {
-					if sender, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
-						partialAgg.SetChildren(sender.children[0])
-						sender.children[0] = partialAgg
-					} else {
-						return nil
-					}
+				if _, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
+					// NOTE: new a mpp task and set partial and final agg
+					newMpp := mpp.oldMppTask.enforceExchangerImpl(mpp.oldProp)
+					partialAgg.SetChildren(newMpp.p.Children()[0].Children()[0])
+					newMpp.p.Children()[0].SetChildren(partialAgg)
+					finalAgg.SetChildren(newMpp.p)
+					newMpp.p = finalAgg
+					newMpp.addCost(p.GetCost(inputRows, false))
+					return newMpp
 				} else {
 					return nil
 				}
-				finalAgg.SetChildren(mpp.p)
-				mpp.p = finalAgg
-				mpp.addCost(p.GetCost(inputRows, false))
-				return mpp
-			} else {
-				return nil
 			}
 		} else {
 			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
@@ -1573,6 +1571,9 @@ type mppTask struct {
 
 	ts        *PhysicalTableScan
 	receivers []*PhysicalExchangeReceiver
+
+	oldProp    *property.PhysicalProperty
+	oldMppTask *mppTask
 }
 
 func (t *mppTask) count() float64 {
@@ -1669,10 +1670,12 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
 	return &mppTask{
-		p:         receiver,
-		cst:       t.cst,
-		partTp:    prop.PartitionTp,
-		hashCols:  prop.PartitionCols,
-		receivers: []*PhysicalExchangeReceiver{receiver},
+		p:          receiver,
+		cst:        t.cst,
+		partTp:     prop.PartitionTp,
+		hashCols:   prop.PartitionCols,
+		receivers:  []*PhysicalExchangeReceiver{receiver},
+		oldMppTask: t,
+		oldProp:    prop,
 	}
 }
