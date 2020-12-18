@@ -593,6 +593,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			}
 		}
 	}
+	// Generated Column should make overflow error as warning if sql mode not strict.
+	if !e.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+		e.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = true
+		defer func() {
+			e.ctx.GetSessionVars().StmtCtx.OverflowAsWarning = false
+		}()
+	}
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
