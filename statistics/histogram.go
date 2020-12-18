@@ -936,7 +936,11 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		}
 		cnt -= float64(bkt.Repeat)
 	}
-	ndv := c.NDV - int64(len(c.TopN.TopN)) - int64(len(c.Histogram.Buckets))
+	topNLen := int64(0)
+	if c.TopN != nil {
+		topNLen = int64(len(c.TopN.TopN))
+	}
+	ndv := c.NDV - topNLen - int64(len(c.Histogram.Buckets))
 	return cnt / float64(ndv), nil
 }
 
