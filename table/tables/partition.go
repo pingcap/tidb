@@ -201,13 +201,15 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 
 // ForListPruning is used for list partition pruning.
 type ForListPruning struct {
-	Expr      expression.Expression
+	// LocateExpr uses to locate partition by row.
+	LocateExpr expression.Expression
+	// PruneExpr uses to prune partition in partition pruner.
 	PruneExpr expression.Expression
 	ExprCols  []*expression.Column
-	// The map is column value -> partition idx
-	ValueMap map[int64]int
-	// NullPartitionIdx is the partition idx for null value.
-	NullPartitionIdx int
+	// valueMap is column value -> partition idx
+	valueMap map[int64]int
+	// nullPartitionIdx is the partition idx for null value.
+	nullPartitionIdx int
 
 	// For list columns partition
 	ColPrunes []*ForListColumnPruning
@@ -217,12 +219,12 @@ type ForListPruning struct {
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
-	ValueMap map[string]PartitionValueLocation
+	valueMap map[string]ListPartitionLocation
 }
 
-type PartitionValueLocation []PartitionValueGroup
+type ListPartitionLocation []ListPartitionGroup
 
-func (ps PartitionValueLocation) IsEmpty() bool {
+func (ps ListPartitionLocation) IsEmpty() bool {
 	for _, pg := range ps {
 		if len(pg.GroupIdxs) > 0 {
 			return false
@@ -231,7 +233,7 @@ func (ps PartitionValueLocation) IsEmpty() bool {
 	return true
 }
 
-func (ps PartitionValueLocation) FindByPartitionIdx(partIdx int) int {
+func (ps ListPartitionLocation) FindByPartitionIdx(partIdx int) int {
 	for i, p := range ps {
 		if p.PartIdx == partIdx {
 			return i
@@ -240,7 +242,7 @@ func (ps PartitionValueLocation) FindByPartitionIdx(partIdx int) int {
 	return -1
 }
 
-func (ps PartitionValueLocation) GetPartitionIdx() map[int]struct{} {
+func (ps ListPartitionLocation) GetPartitionIdx() map[int]struct{} {
 	pidxs := make(map[int]struct{}, len(ps))
 	for _, p := range ps {
 		pidxs[p.PartIdx] = struct{}{}
@@ -248,57 +250,55 @@ func (ps PartitionValueLocation) GetPartitionIdx() map[int]struct{} {
 	return pidxs
 }
 
-func (ps PartitionValueLocation) MergeLocation(location PartitionValueLocation) PartitionValueLocation {
-	for _, loc := range location {
-		idx := ps.FindByPartitionIdx(loc.PartIdx)
-		if idx < 0 {
-			ps = append(ps, loc)
-			continue
-		}
-		ps[idx].Merge(loc)
-	}
-	return ps
+type listPartitionLocationMerger struct {
+	location ListPartitionLocation
 }
 
-type PartitionValueLocationIntersect struct {
+func NewListPartitionLocationMerger() *listPartitionLocationMerger {
+	return &listPartitionLocationMerger{}
+}
+
+func (p *listPartitionLocationMerger) GetLocation() ListPartitionLocation {
+	return p.location
+}
+
+func (p *listPartitionLocationMerger) MergePartitionGroup(pg ListPartitionGroup) {
+	idx := p.location.FindByPartitionIdx(pg.PartIdx)
+	if idx < 0 {
+		p.location = append(p.location, pg.Copy())
+		return
+	}
+	p.location[idx].GroupIdxs = append(p.location[idx].GroupIdxs, pg.GroupIdxs...)
+}
+
+func (p *listPartitionLocationMerger) Merge(location ListPartitionLocation) {
+	for _, pg := range location {
+		p.MergePartitionGroup(pg)
+	}
+}
+
+type listPartitionLocationIntersect struct {
 	initialized bool
-	pgs         PartitionValueLocation
+	location    ListPartitionLocation
 }
 
-func (p *PartitionValueLocationIntersect) GetPartitionLocation() PartitionValueLocation {
-	return p.pgs
+func NewListPartitionLocationIntersect() *listPartitionLocationIntersect {
+	return &listPartitionLocationIntersect{}
 }
 
-func (p *PartitionValueLocationIntersect) GetPartitionIdx() []int {
-	pidxs := make([]int, 0, len(p.pgs))
-	for _, pg := range p.pgs {
-		if len(pg.GroupIdxs) == 0 {
-			continue
-		}
-		pidxs = append(pidxs, pg.PartIdx)
-	}
-	return pidxs
+func (p *listPartitionLocationIntersect) GetLocation() ListPartitionLocation {
+	return p.location
 }
 
-func (p *PartitionValueLocationIntersect) Intersect(inputPgs []PartitionValueGroup) bool {
+func (p *listPartitionLocationIntersect) Intersect(inputPgs []ListPartitionGroup) bool {
 	if !p.initialized {
 		p.initialized = true
-		// copy here.
-		p.pgs = make([]PartitionValueGroup, 0, len(inputPgs))
-		p.pgs = append(p.pgs, inputPgs...)
-		//for _, pg := range inputPgs {
-		//	groupIdxs := make([]int, len(pg.GroupIdxs))
-		//	copy(groupIdxs, pg.GroupIdxs)
-		//	p.pgs = append(p.pgs, PartitionValueGroup{
-		//		PartIdx:   pg.PartIdx,
-		//		GroupIdxs: groupIdxs,
-		//	})
-		//}
-		//p.pgs = append(p.pgs, inputPgs...)
+		p.location = make([]ListPartitionGroup, 0, len(inputPgs))
+		p.location = append(p.location, inputPgs...)
 		return true
 	}
-	currPgs := p.pgs
-	var remainPgs []PartitionValueGroup
+	currPgs := p.location
+	var remainPgs []ListPartitionGroup
 	for _, inputPg := range inputPgs {
 		pgIdx := currPgs.FindByPartitionIdx(inputPg.PartIdx)
 		if pgIdx < 0 {
@@ -310,11 +310,11 @@ func (p *PartitionValueLocationIntersect) Intersect(inputPgs []PartitionValueGro
 		}
 		remainPgs = append(remainPgs, pg)
 	}
-	p.pgs = remainPgs
+	p.location = remainPgs
 	return len(remainPgs) > 0
 }
 
-func (pg *PartitionValueGroup) Intersect(inputPg PartitionValueGroup) bool {
+func (pg *ListPartitionGroup) Intersect(inputPg ListPartitionGroup) bool {
 	if pg.PartIdx != inputPg.PartIdx {
 		return false
 	}
@@ -328,14 +328,7 @@ func (pg *PartitionValueGroup) Intersect(inputPg PartitionValueGroup) bool {
 	return len(groupIdxs) > 0
 }
 
-func (pg *PartitionValueGroup) Merge(inputPg PartitionValueGroup) {
-	groupIdxs := make([]int, 0, len(pg.GroupIdxs)+len(inputPg.GroupIdxs))
-	groupIdxs = append(groupIdxs, pg.GroupIdxs...)
-	groupIdxs = append(groupIdxs, inputPg.GroupIdxs...)
-	pg.GroupIdxs = groupIdxs
-}
-
-func (pg *PartitionValueGroup) findGroupIdx(inputGroupIdx int) bool {
+func (pg *ListPartitionGroup) findGroupIdx(inputGroupIdx int) bool {
 	for _, gidx := range pg.GroupIdxs {
 		if gidx == inputGroupIdx {
 			return true
@@ -358,9 +351,18 @@ func (pg *PartitionValueGroup) findGroupIdx(inputGroupIdx int) bool {
 //
 //}
 
-type PartitionValueGroup struct {
+type ListPartitionGroup struct {
 	PartIdx   int
 	GroupIdxs []int
+}
+
+func (p ListPartitionGroup) Copy() ListPartitionGroup {
+	groupIdxs := make([]int, len(p.GroupIdxs))
+	copy(groupIdxs, p.GroupIdxs)
+	return ListPartitionGroup{
+		PartIdx:   p.PartIdx,
+		GroupIdxs: groupIdxs,
+	}
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -588,7 +590,7 @@ func (lp *ForListPruning) generateListPruneExpr(ctx sessionctx.Context, tblInfo 
 		return errors.Trace(err)
 	}
 	pruneExpr, _ := updateExprColIdxForPartitionPrune(expr, exprCols)
-	lp.Expr = expr.Clone()
+	lp.LocateExpr = expr.Clone()
 	lp.PruneExpr = pruneExpr
 	lp.ExprCols = exprCols
 	err = lp.buildListPartitionValueMap(ctx, tblInfo, schema, names, p)
@@ -617,7 +619,7 @@ func (lp *ForListPruning) generateListColumnsPruneExpr(ctx sessionctx.Context, t
 		colPrune := &ForListColumnPruning{
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
-			ValueMap: make(map[string]PartitionValueLocation),
+			valueMap: make(map[string]ListPartitionLocation),
 		}
 		err := colPrune.buildPartitionValueMap(ctx, tblInfo, colIdx, schema, names, p)
 		if err != nil {
@@ -649,8 +651,8 @@ func updateExprColIdxForPartitionPrune(expr expression.Expression, deDupCols []*
 func (b *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	pi := tblInfo.GetPartitionInfo()
-	b.ValueMap = map[int64]int{}
-	b.NullPartitionIdx = -1
+	b.valueMap = map[int64]int{}
+	b.nullPartitionIdx = -1
 	for partitionIdx, def := range pi.Definitions {
 		for _, vs := range def.InValues {
 			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names)
@@ -662,10 +664,10 @@ func (b *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tblI
 				return errors.Trace(err)
 			}
 			if isNull {
-				b.NullPartitionIdx = partitionIdx
+				b.nullPartitionIdx = partitionIdx
 				continue
 			}
-			b.ValueMap[v] = partitionIdx
+			b.valueMap[v] = partitionIdx
 		}
 	}
 	return nil
@@ -684,30 +686,19 @@ func (b *ForListColumnPruning) buildPartitionValueMap(ctx sessionctx.Context, tb
 			if err != nil {
 				return errors.Trace(err)
 			}
-			pgs, ok := b.ValueMap[key]
-			if !ok {
-				pgs = append(pgs, PartitionValueGroup{
-					PartIdx:   partitionIdx,
-					GroupIdxs: []int{groupIdx},
-				})
-				b.ValueMap[key] = pgs
-				continue
-			}
-			found := false
-			for i := range pgs {
-				if pgs[i].PartIdx == partitionIdx {
-					pgs[i].GroupIdxs = append(pgs[i].GroupIdxs, groupIdx)
-					found = true
-					break
+			location, ok := b.valueMap[key]
+			if ok {
+				idx := location.FindByPartitionIdx(partitionIdx)
+				if idx != -1 {
+					location[idx].GroupIdxs = append(location[idx].GroupIdxs, groupIdx)
+					continue
 				}
 			}
-			if !found {
-				pgs = append(pgs, PartitionValueGroup{
-					PartIdx:   partitionIdx,
-					GroupIdxs: []int{groupIdx},
-				})
-				b.ValueMap[key] = pgs
-			}
+			location = append(location, ListPartitionGroup{
+				PartIdx:   partitionIdx,
+				GroupIdxs: []int{groupIdx},
+			})
+			b.valueMap[key] = location
 		}
 	}
 	return nil
@@ -741,9 +732,9 @@ func (b *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Datu
 // LocatePartition locates partition by the column value
 func (b *ForListPruning) LocatePartition(value int64, isNull bool) (int, error) {
 	if isNull {
-		return b.NullPartitionIdx, nil
+		return b.nullPartitionIdx, nil
 	}
-	partitionIdx, ok := b.ValueMap[value]
+	partitionIdx, ok := b.valueMap[value]
 	if !ok {
 		return -1, nil
 	}
@@ -751,12 +742,12 @@ func (b *ForListPruning) LocatePartition(value int64, isNull bool) (int, error) 
 }
 
 // LocatePartition locates partition by the column value
-func (b *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v types.Datum) (PartitionValueLocation, error) {
+func (b *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v types.Datum) (ListPartitionLocation, error) {
 	key, err := b.genKey(sc, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	location, ok := b.ValueMap[string(key)]
+	location, ok := b.valueMap[string(key)]
 	if !ok {
 		return nil, nil
 	}
@@ -973,27 +964,24 @@ func (t *partitionedTable) locateListPartition(ctx sessionctx.Context, pi *model
 	sc := ctx.GetSessionVars().StmtCtx
 	partitionIdx := -1
 	if listPrune.ColPrunes != nil {
-		intersection := PartitionValueLocationIntersect{}
+		intersect := NewListPartitionLocationIntersect()
 		for _, colPrune := range listPrune.ColPrunes {
 			location, err := colPrune.LocatePartition(sc, r[colPrune.ExprCol.Index])
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			if !intersection.Intersect(location) {
+			if !intersect.Intersect(location) {
 				break
 			}
 		}
-		pidxs := intersection.GetPartitionIdx()
-		switch len(pidxs) {
-		case 0:
+		location := intersect.GetLocation()
+		if location.IsEmpty() {
 			partitionIdx = -1
-		case 1:
-			partitionIdx = pidxs[0]
-		default:
-			panic("should never happen")
+		} else {
+			partitionIdx = location[0].PartIdx
 		}
 	} else {
-		value, isNull, err := listPrune.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		value, isNull, err := listPrune.LocateExpr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

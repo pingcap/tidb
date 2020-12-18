@@ -311,10 +311,10 @@ func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
 
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	for count := 0; count < 10; count++ {
-		partitionNum := rand.Intn(30) + 1
-		valueNum := rand.Intn(30) + 1
-		condNum := 100
+	for count := 0; count < 5; count++ {
+		partitionNum := rand.Intn(10) + 1
+		valueNum := rand.Intn(10) + 1
+		condNum := 20
 
 		partitionDefs := make([][]string, partitionNum)
 		for id := 0; id < valueNum; id++ {
@@ -325,6 +325,14 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 				}
 			}
 		}
+		validIdx := 0
+		for _, def := range partitionDefs {
+			if len(def) > 0 {
+				partitionDefs[validIdx] = def
+				validIdx++
+			}
+		}
+		partitionDefs = partitionDefs[:validIdx]
 		createSQL := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 		// Generate table definition.
 		colNames := []string{"id", "a", "b"}
@@ -421,7 +429,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 				return buf.String()
 			}
 		}
-		for i := 0; i < 10000; i++ {
+		for i := 0; i < 500; i++ {
 			condCnt := rand.Intn(condNum) + 1
 			query := bytes.NewBuffer(nil)
 			query.WriteString("select * from t1 where ")
@@ -435,6 +443,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 				}
 				query.WriteString(genCond())
 			}
+			query.WriteString(" order by id,a,b")
 			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
 		}
 	}
