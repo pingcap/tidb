@@ -204,7 +204,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 		if len(agg.GroupByItems) != 0 {
 			return agg
 		}
-		
+
 		cols := agg.GetUsedCols()
 		for _, col := range cols {
 			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {

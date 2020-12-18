@@ -7295,7 +7295,7 @@ func (s *testSuite) TestIssue21451(c *C) {
 	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
 	tk.MustQuery("select id, max(s) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
 	tk.MustQuery("select id, min(s) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
-	
+
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(e enum('e','d','c','b','a'))")
 	tk.MustExec("insert into t values ('e'),('d'),('c'),('b'),('a');")
