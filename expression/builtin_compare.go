@@ -1056,6 +1056,8 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 		return types.ETString
 	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
 		return types.ETInt
+	} else if lhs&rhs == types.ETDecimal&types.ETString {
+		return types.ETReal
 	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
