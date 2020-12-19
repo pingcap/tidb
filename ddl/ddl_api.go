@@ -2707,7 +2707,15 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, errors.Trace(err)
 	}
 
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
+	recordIsNil := true
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		recordIsNil = false
+		return false, nil
+	})
+	if err != nil {
+		return col, err
+	}
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), !recordIsNil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2742,6 +2750,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode: ctx.GetSessionVars().SQLMode,
+		},
 	}
 
 	err = d.doDDLJob(ctx, job)

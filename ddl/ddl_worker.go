@@ -634,7 +634,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
-		ver, err = onAddColumn(d, t, job)
+		ver, err = w.onAddColumn(d, t, job)
 	case model.ActionAddColumns:
 		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:

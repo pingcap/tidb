@@ -214,6 +214,9 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err = e.processSetList(); err != nil {
 		return err
 	}
+	//if e.Table.Meta().CannotInsertFlag {
+	//	return ErrBadDB
+	//}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0

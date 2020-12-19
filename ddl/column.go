@@ -169,7 +169,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 	return tblInfo, columnInfo, col, pos, offset, nil
 }
 
-func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropColumn(t, job)
@@ -209,6 +209,9 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	originalState := columnInfo.State
 	switch columnInfo.State {
 	case model.StateNone:
+		//if job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
+		tblInfo.CannotInsertFlag = true
+		//}
 		// none -> delete only
 		columnInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfo.State)
@@ -237,13 +240,21 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
+		//if job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
+		if (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) && (col.OriginDefaultValue == "0000-00-00" || col.OriginDefaultValue == "0000-00-00 00:00:00") {
+			err := checkRecordsDuringAddColumn(w, tblInfo, job, col)
+			if err != nil {
+				return ver, err
+			}
+		}
+		//}
 		adjustColumnInfoInAddColumn(tblInfo, offset)
 		columnInfo.State = model.StatePublic
+		tblInfo.CannotInsertFlag = false
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
@@ -252,6 +263,33 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func checkRecordsDuringAddColumn(w *worker, tblInfo *model.TableInfo, job *model.Job, col *model.ColumnInfo) error {
+	sql := fmt.Sprintf("select * from `%s`.`%s` limit 1", job.SchemaName, tblInfo.Name.String())
+	ctx, err := w.sessPool.get()
+	defer w.sessPool.put(ctx)
+	if err != nil {
+		return err
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return err
+	}
+	if len(rows) != 0 {
+		colVal := ""
+		switch col.Tp {
+		case mysql.TypeDate:
+			colVal = "0000-00-00"
+		case mysql.TypeDatetime:
+			colVal = "0000-00-00 00:00:00"
+		}
+		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), colVal, col.Name, col.Offset+1)
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	//tblInfo.CannotInsertFlag = true
+	return nil
 }
 
 func checkAddColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, []bool, error) {
@@ -553,7 +591,7 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 		// But currently will be ok, because we can't cancel the drop column job when the job is running,
 		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
 		// More info about this problem, see PR#9115.
-		originDefVal, err := generateOriginDefaultValue(colInfo)
+		originDefVal, err := generateOriginDefaultValue(colInfo, false)
 		if err != nil {
 			return err
 		}
@@ -1661,7 +1699,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, sqlModeCheck bool) (interface{}, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
@@ -1674,6 +1712,12 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 			}
 			defVal := types.NewCollateMysqlEnumDatum(defEnum, col.Collate)
 			return defVal.ToString()
+		case mysql.TypeDate, mysql.TypeDatetime:
+			if sqlModeCheck {
+				err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), "0000-00-00", col.Name, col.Offset+1)
+				return nil, err
+			}
+			fallthrough
 		default:
 			zeroVal := table.GetZeroValue(col)
 			odValue, err = zeroVal.ToString()
