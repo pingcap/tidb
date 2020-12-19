@@ -205,17 +205,18 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 			return agg
 		}
 
-		cols := agg.GetUsedCols()
-		for _, col := range cols {
-			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
-				return agg
-			}
-		}
 		// Make sure that all of the aggFuncs are Max or Min.
 		for _, aggFunc := range agg.AggFuncs {
 			if aggFunc.Name != ast.AggFuncMax && aggFunc.Name != ast.AggFuncMin {
 				return agg
 			}
+			
+			cols := agg.GetUsedCols()
+			for _, col := range cols {
+				if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
+					return agg
+				}
+			}			
 		}
 		if len(agg.AggFuncs) == 1 {
 			// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
