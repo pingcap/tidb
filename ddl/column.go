@@ -209,9 +209,9 @@ func (w *worker) onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	originalState := columnInfo.State
 	switch columnInfo.State {
 	case model.StateNone:
-		//if job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
-		tblInfo.CannotInsertFlag = true
-		//}
+		if (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) && (col.OriginDefaultValue == "0000-00-00" || col.OriginDefaultValue == "0000-00-00 00:00:00") && job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
+			tblInfo.CannotInsertFlag = true
+		}
 		// none -> delete only
 		columnInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfo.State)
@@ -250,7 +250,9 @@ func (w *worker) onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		//}
 		adjustColumnInfoInAddColumn(tblInfo, offset)
 		columnInfo.State = model.StatePublic
-		tblInfo.CannotInsertFlag = false
+		if (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) && (col.OriginDefaultValue == "0000-00-00" || col.OriginDefaultValue == "0000-00-00 00:00:00") && job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
+			tblInfo.CannotInsertFlag = false
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -288,7 +290,6 @@ func checkRecordsDuringAddColumn(w *worker, tblInfo *model.TableInfo, job *model
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
-	//tblInfo.CannotInsertFlag = true
 	return nil
 }
 
