@@ -118,6 +118,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+		{`200442 Monday`, `%X%V %W`, types.FromDate(2004, 10, 18, 0, 0, 0, 0)},
 	}
 	for i, tt := range tests {
 		var t types.Time

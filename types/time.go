@@ -2766,9 +2766,41 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.setHour(t.getHour() + 12)
 		}
-	} else {
-		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
-			t.setHour(0)
+	} else if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+		t.setHour(0)
+	} else  if weekDay, ok := ctx["%W"]; ok {
+		if weekNumber, ok := ctx["%V"]; ok {
+			sundayFirstDayOfWeek := true
+			// Number of days since year 0 till 1st Jan of this year.
+			days := calcDaynr(t.Year(), 1, 1)
+			// Which day of week is 1st Jan of this year.
+			weekday1 := calcWeekday(days, sundayFirstDayOfWeek);
+			// Below we are going to sum:
+			// 1) number of days since year 0 till 1st day of 1st week of this year
+			// 2) number of days between 1st week and our week
+			// 3) and position of our day in the week
+			days = days + (weekNumber - 1) * 7
+			if sundayFirstDayOfWeek {
+				if weekday1 != 0 {
+					days = days + 7 - weekday1 + weekDay % 7;
+				} else {
+					days = days - weekday1 + weekDay % 7;
+				}
+			} else {
+				if weekday1 <= 3 {
+					days = days - weekday1 +  (weekDay - 1);
+				} else {
+					days = days + 7 - weekday1 + (weekDay - 1);
+				}
+			}
+
+			if days <= 0 /* || days > MaxDayNumver */ {
+				return errors.New("....")
+			}
+			yy,mm,dd := getDateFromDaynr(uint(days))
+			t.setYear(uint16(yy))
+			t.setMonth(uint8(mm))
+			t.setDay(uint8(dd))
 		}
 	}
 	return nil
@@ -2885,11 +2917,11 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%D": dayOfMonthWithSuffix,       // Day of the month with English suffix (0th, 1st, 2nd, 3rd)
 	// "%U": weekMode0,                  // Week (00..53), where Sunday is the first day of the week; WEEK() mode 0
 	// "%u": weekMode1,                  // Week (00..53), where Monday is the first day of the week; WEEK() mode 1
-	// "%V": weekMode2,                  // Week (01..53), where Sunday is the first day of the week; WEEK() mode 2; used with %X
+	"%V": weekMode2,                  // Week (01..53), where Sunday is the first day of the week; WEEK() mode 2; used with %X
 	// "%v": weekMode3,                  // Week (01..53), where Monday is the first day of the week; WEEK() mode 3; used with %x
-	// "%W": weekdayName,                // Weekday name (Sunday..Saturday)
+	"%W": weekdayName,                // Weekday name (Sunday..Saturday)
 	// "%w": dayOfWeek,                  // Day of the week (0=Sunday..6=Saturday)
-	// "%X": yearOfWeek,                 // Year for the week where Sunday is the first day of the week, numeric, four digits; used with %V
+	"%X": yearOfWeek,                 // Year for the week where Sunday is the first day of the week, numeric, four digits; used with %V
 	// "%x": yearOfWeek,                 // Year for the week, where Monday is the first day of the week, numeric, four digits; used with %v
 }
 
@@ -3186,6 +3218,35 @@ func fullNameMonth(t *CoreTime, input string, ctx map[string]int) (string, bool)
 		if strings.HasPrefix(input, month) {
 			t.setMonth(uint8(i + 1))
 			return input[len(month):], true
+		}
+	}
+	return input, false
+}
+
+func yearOfWeek(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	v, succ := parseDigits(input, 4)
+	if !succ {
+		return input, false
+	}
+	t.setYear(uint16(v))
+	return input[4:], true
+}
+
+func weekMode2(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	v, succ := parseDigits(input, 2)
+	// v should be in [01, 53]
+	if !succ || v == 0 || v > 53 {
+		return input, false
+	}
+	ctx["%V"] = v
+	return input[2:], true
+}
+
+func weekdayName(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	for i, weekday := range WeekdayNames {
+		if strings.HasPrefix(input, weekday) {
+			ctx["%W"] = i + 1
+			return input[len(weekday):], true
 		}
 	}
 	return input, false
