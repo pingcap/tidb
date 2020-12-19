@@ -7300,6 +7300,11 @@ func (s *testSuite) TestIssue21451(c *C) {
 	tk.MustExec("create table t(e enum('e','d','c','b','a'))")
 	tk.MustExec("insert into t values ('e'),('d'),('c'),('b'),('a');")
 	tk.MustQuery("select * from t order by e limit 1;").Check(testkit.Rows("e"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(s set('e', 'd', 'c', 'b', 'a'))")
+	tk.MustExec("insert into t values ('e'),('d'),('c'),('b'),('a');")
+	tk.MustQuery("select * from t order by e limit 1;").Check(testkit.Rows("e"))
 	tk.MustExec("drop table t")
 }
 
