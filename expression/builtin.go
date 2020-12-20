@@ -148,6 +148,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
 
+	orgArgs := make([]Expression, len(args))
+	copy(orgArgs, args)
+
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
@@ -167,6 +170,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
+		generateRetFlag(args[i], argTps[i], orgArgs)
 	}
 
 	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
@@ -905,4 +909,26 @@ func GetBuiltinList() []string {
 	}
 	sort.Strings(res)
 	return res
+}
+
+func generateRetFlag(res Expression, evalType types.EvalType, args []Expression) {
+	if len(args) < 2 {
+		return
+	}
+	var retType = res.GetType()
+	lhs, rhs := args[0], args[1]
+	if fun, ok := res.(*ScalarFunction); (ok && fun.FuncName.L == ast.Cast) || res.GetType().Tp == mysql.TypeBit {
+		if evalType == types.ETInt || evalType == types.ETReal {
+			lfg, rfg := args[0].GetType().Flag, args[1].GetType().Flag
+			// set signedFlag to 0 when bit convert explicitly or implicitly to int or real
+			if mysql.TypeBit == lhs.GetType().Tp || mysql.TypeBit == rhs.GetType().Tp {
+				retType.Flag |= mysql.UnsignedFlag
+				if mysql.TypeBit == rhs.GetType().Tp {
+					retType.Flag &= ^(mysql.UnsignedFlag ^ lfg)
+				} else {
+					retType.Flag &= ^(mysql.UnsignedFlag ^ rfg)
+				}
+			}
+		}
+	}
 }
