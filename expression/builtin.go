@@ -280,12 +280,6 @@ func generateRetFlag(res Expression, evalType types.EvalType, args []Expression)
 					retType.Flag &= ^(mysql.UnsignedFlag ^ rfg)
 				}
 			}
-		} else if evalType == types.ETDecimal && (mysql.TypeEnum == lhs.GetType().Tp || mysql.TypeEnum == rhs.GetType().Tp) {
-			// set Flen and Decimal as unspecified length(-1) when the enum type is compare with decimal type,avoid loss of data,
-			// like the enum'z'(26), wher Flen=2,Decimal=2 the enum=26.00 but when Flen= 1,Decimal=2 the enum=9
-			if mysql.TypeNewDecimal == retType.Tp {
-				retType.Flen, retType.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-			}
 		}
 	}
 }
