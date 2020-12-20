@@ -241,7 +241,7 @@ func (w *worker) onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		// reorganization -> public
 		// Adjust table column offset.
 		//if job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
-		if (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) && (col.OriginDefaultValue == "0000-00-00" || col.OriginDefaultValue == "0000-00-00 00:00:00") {
+		if (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) && (col.OriginDefaultValue == "0000-00-00" || col.OriginDefaultValue == "0000-00-00 00:00:00") && job.ReorgMeta.SQLMode.HasNoZeroDateMode() {
 			err := checkRecordsDuringAddColumn(w, tblInfo, job, col)
 			if err != nil {
 				return ver, err
