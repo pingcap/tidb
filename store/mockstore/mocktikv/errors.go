@@ -96,7 +96,7 @@ func (e *ErrConflict) Error() string {
 type ErrDeadlock struct {
 	LockTS         uint64
 	LockKey        []byte
-	DealockKeyHash uint64
+	DeadlockKeyHash uint64
 }
 
 func (e *ErrDeadlock) Error() string {

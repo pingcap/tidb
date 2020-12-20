@@ -549,7 +549,7 @@ func (mvcc *MVCCLevelDB) pessimisticLockMutation(batch *leveldb.Batch, mutation 
 				return &ErrDeadlock{
 					LockKey:        mutation.Key,
 					LockTS:         dec.lock.startTS,
-					DealockKeyHash: errDeadlock.KeyHash,
+					DeadlockKeyHash: errDeadlock.KeyHash,
 				}
 			}
 			return dec.lock.lockErr(mutation.Key)

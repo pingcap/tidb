@@ -87,7 +87,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			Deadlock: &kvrpcpb.Deadlock{
 				LockTs:          dead.LockTS,
 				LockKey:         dead.LockKey,
-				DeadlockKeyHash: dead.DealockKeyHash,
+				DeadlockKeyHash: dead.DeadlockKeyHash,
 			},
 		}
 	}
