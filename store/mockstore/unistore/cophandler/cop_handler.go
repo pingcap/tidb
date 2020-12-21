@@ -147,7 +147,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		}
 		return nil
 	}
-	return buildResp(chunks, closureExec, []int64{}, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {

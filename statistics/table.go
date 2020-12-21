@@ -632,9 +632,6 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
-	if coverAll && len(idx.Histogram.Buckets) > 0 && idx.Histogram.Buckets[0].NDV > 0 {
-		return idx.Histogram.equalRowCount(val), nil
-	}
 
 	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
 	if err != nil {

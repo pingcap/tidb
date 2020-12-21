@@ -226,21 +226,16 @@ func (hg *Histogram) AppendBucketWithNDV(lower *types.Datum, upper *types.Datum,
 	hg.Bounds.AppendDatum(0, upper)
 }
 
-func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
-	len := hg.Len()
-	hg.Bounds.TruncateTo(2*len - 1)
-	hg.Bounds.AppendDatum(0, upper)
-	hg.Buckets[len-1].Count = count
-	hg.Buckets[len-1].Repeat = repeat
-}
-
-func (hg *Histogram) updateLastBucketV2(upper *types.Datum, count, repeat int64) {
-	hg.updateLastBucket(upper, count, repeat)
+func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, needBucketNDV bool) {
 	l := hg.Len()
+	hg.Bounds.TruncateTo(2*l-1)
+	hg.Bounds.AppendDatum(0, upper)
 	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
-	if hg.Buckets[l-1].NDV > 0 {
+	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
 		hg.Buckets[l-1].NDV++
 	}
+	hg.Buckets[l-1].Count = count
+	hg.Buckets[l-1].Repeat = repeat
 }
 
 // DecodeTo decodes the histogram bucket values into `Tp`.
@@ -393,34 +388,14 @@ func (hg *Histogram) ToString(idxCols int) string {
 }
 
 // equalRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCount(value types.Datum) float64 {
+func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) float64 {
 	index, match := hg.Bounds.LowerBound(0, &value)
 	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
 	if index%2 == 1 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		return hg.notNullCount() / float64(hg.NDV)
-	}
-	if match {
-		cmp := chunk.GetCompareFunc(hg.Tp)
-		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
-			return float64(hg.Buckets[index/2].Repeat)
-		}
-		return hg.notNullCount() / float64(hg.NDV)
-	}
-	return 0
-}
-
-// equalRowCountV2 estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCountV2(value types.Datum) float64 {
-	index, match := hg.Bounds.LowerBound(0, &value)
-	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
-	if index%2 == 1 {
-		if match {
-			return float64(hg.Buckets[index/2].Repeat)
-		}
-		if hg.Buckets[index/2].NDV > 0 {
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 0 {
 			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
@@ -430,7 +405,7 @@ func (hg *Histogram) equalRowCountV2(value types.Datum) float64 {
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		if hg.Buckets[index/2].NDV > 0 {
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 0 {
 			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
@@ -439,8 +414,9 @@ func (hg *Histogram) equalRowCountV2(value types.Datum) float64 {
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
+// It's deprecated. Only used for test.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
+	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value, false)
 	return math.Max(0, gtCount)
 }
 
@@ -753,7 +729,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		if rh.Buckets[0].NDV > 0 {
 			lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV - 1
 		}
-		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat)
+		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat, false)
 		offset = rh.Buckets[0].Count
 		rh.popFirstBucket()
 	}
@@ -925,7 +901,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 		return float64(count), errors.Trace(err)
 	}
-	return c.Histogram.equalRowCount(val), nil
+	return c.Histogram.equalRowCount(val, false), nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -1082,9 +1058,9 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 		if found {
 			return float64(count)
 		}
-		return idx.Histogram.equalRowCountV2(val)
+		return idx.Histogram.equalRowCount(val, true)
 	}
-	return idx.Histogram.equalRowCount(val)
+	return idx.Histogram.equalRowCount(val, false)
 }
 
 // QueryBytes is used to query the count of specified bytes.

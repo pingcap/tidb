@@ -1240,7 +1240,7 @@ func writeMemoryQuotaQuery(s Session) {
 }
 
 func upgradeToVer57(s Session, ver int64) {
-	if ver >= version53 {
+	if ver >= version57 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
