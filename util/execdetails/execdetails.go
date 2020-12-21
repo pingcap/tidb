@@ -267,7 +267,7 @@ func (sd *ScanDetail) String() string {
 	return buf.String()
 }
 
-// MergeFromTimeDetail merges scan detail from pb into itself.
+// MergeFromScanDetailV2 merges scan detail from pb into itself.
 func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
 	if scanDetail != nil {
 		sd.TotalKeys += int64(scanDetail.TotalVersions)
