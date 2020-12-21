@@ -434,4 +434,3 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 
 	return &placement.Bundle{ID: placement.GroupID(ids[0])}
 }
-
