@@ -210,15 +210,13 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 				return agg
 			}
 		}
-
-		// Limit+Sort operators are sorted by value,but ENUM/SET field types are sorted by name.
+		// Limit+Sort operators are sorted by value, but ENUM/SET field types are sorted by name.
 		cols := agg.GetUsedCols()
 		for _, col := range cols {
 			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
 				return agg
 			}
 		}
-		
 		if len(agg.AggFuncs) == 1 {
 			// If there is only one aggFunc, we don't need to guarantee that the child of it is a data
 			// source, or whether the sort can be eliminated. This transformation won't be worse than previous.
