@@ -369,10 +369,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	// TxnID -> []Region, record resolved Regions.
 	// TODO: Maybe put it in LockResolver and share by all txns.
 	cleanTxns := make(map[uint64]map[RegionVerID]struct{})
-	var pushed []uint64
+	var pushed map[uint64]struct{}
 	// pushed is only used in the read operation.
 	if !forWrite {
-		pushed = make([]uint64, 0, len(locks))
+		pushed = make(map[uint64]struct{})
 	}
 
 	var resolve func(*Lock, bool) error
@@ -421,10 +421,12 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {
-					pushFail = true
-					return nil
+					if _, exists := pushed[l.TxnID]; !exists {
+						pushFail = true
+						return nil
+					}
 				}
-				pushed = append(pushed, l.TxnID)
+				pushed[l.TxnID] = struct{}{}
 			}
 		}
 		return nil
@@ -447,7 +449,14 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		// If len(pushed) > 0, the caller will not block on the locks, it push the minCommitTS instead.
 		tikvLockResolverCountWithWaitExpired.Inc()
 	}
-	return msBeforeTxnExpired.value(), pushed, nil
+	var retPushed []uint64
+	if len(pushed) > 0 {
+		retPushed = make([]uint64, 0, len(pushed))
+		for ts := range pushed {
+			retPushed = append(retPushed, ts)
+		}
+	}
+	return msBeforeTxnExpired.value(), retPushed, nil
 }
 
 func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
