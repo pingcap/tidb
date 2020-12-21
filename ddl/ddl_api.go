@@ -2431,7 +2431,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableAlterPartition:
 			if ctx.GetSessionVars().EnableAlterPlacement {
-				err = d.AlterTablePartition(ctx, ident, spec)
+				err = d.AlterTableAlterPartition(ctx, ident, spec)
 			} else {
 				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
 			}
@@ -5792,7 +5792,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 	return bundle, nil
 }
 
-func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -5808,14 +5808,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	pid := placement.GroupID(partitionID)
-
-	oldBundle, ok := d.infoHandle.Get().BundleByName(pid)
-	if !ok {
-		oldBundle = &placement.Bundle{ID: pid}
-	} else {
-		oldBundle = oldBundle.Clone()
-	}
+	oldBundle := infoschema.GetBundle(d.infoHandle.Get(), []int64{partitionID, meta.ID, schema.ID})
 
 	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
 	if err != nil {
