@@ -149,6 +149,8 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 		for _, opt := range node.Options {
 			opt.StrValue = strings.ToLower(opt.StrValue)
 		}
+	case *Join:
+		node.ExplicitParens = false
 	}
 	return in, false
 }
@@ -187,5 +189,25 @@ func RunNodeRestoreTestWithFlags(c *C, nodeTestCases []NodeRestoreTestCase, temp
 		CleanNodeText(stmt)
 		CleanNodeText(stmt2)
 		c.Assert(stmt2, DeepEquals, stmt, comment)
+	}
+}
+
+// RunNodeRestoreTestWithFlagsStmtChange likes RunNodeRestoreTestWithFlags but not check if the ASTs are same.
+// Sometimes the AST are different and it's expected.
+func RunNodeRestoreTestWithFlagsStmtChange(c *C, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node) {
+	par := parser.New()
+	par.EnableWindowFunc(true)
+	for _, testCase := range nodeTestCases {
+		sourceSQL := fmt.Sprintf(template, testCase.sourceSQL)
+		expectSQL := fmt.Sprintf(template, testCase.expectSQL)
+		stmt, err := par.ParseOneStmt(sourceSQL, "", "")
+		comment := Commentf("source %#v", testCase)
+		c.Assert(err, IsNil, comment)
+		var sb strings.Builder
+		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+		c.Assert(err, IsNil, comment)
+		restoreSql := fmt.Sprintf(template, sb.String())
+		comment = Commentf("source %#v; restore %v", testCase, restoreSql)
+		c.Assert(restoreSql, Equals, expectSQL, comment)
 	}
 }
