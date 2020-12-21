@@ -2017,5 +2017,19 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.CheckExecResult(1, 0)
 		tk.MustExec("commit")
 		tk.MustQuery("select * from t").Check(testkit.Rows("3 33 300", "5 11 100", "6 60 600", "9 99 900"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk2.MustExec("drop table if exists t1")
+		tk2.MustExec("create table t1(id int primary key, v int, index iv (v), v2 int)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 34 where v = 33")
+		tk2.MustExec("update t set v = 12 where v = 11")
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 33")
+		tk.CheckExecResult(0, 0)
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 12")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
 	}
 }
