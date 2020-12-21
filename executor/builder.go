@@ -3363,7 +3363,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()

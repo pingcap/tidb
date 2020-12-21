@@ -533,7 +533,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetStreaming(e.indexStreaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetMemTracker(tracker).
-		// FIXME: add unit test to cover this case
 		SetTxnScope(extractTxnScope(txn)).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()

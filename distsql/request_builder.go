@@ -15,6 +15,7 @@ package distsql
 
 import (
 	"fmt"
+	"github.com/pingcap/errors"
 	"math"
 
 	"github.com/pingcap/parser/mysql"
@@ -284,7 +285,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		if tableID > 0 {
 			visitTableID[tableID] = struct{}{}
 		} else {
-			return fmt.Errorf("requestBuilder can't decode tableID from keyRange")
+			return errors.New("requestBuilder can't decode tableID from keyRange")
 		}
 	}
 
