@@ -181,6 +181,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
 	var err error
+	// If copTasks is not empty, we should send request according to region distribution.
+	// Or else it's the task without region, which always happens in high layer task without table.
+	// In that case
 	if len(originalTask.copTasks) != 0 {
 		sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
 		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)

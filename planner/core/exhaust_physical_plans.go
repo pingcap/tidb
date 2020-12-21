@@ -1604,6 +1604,8 @@ func checkChildFitBC(p Plan) bool {
 	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
+// If we can use mpp broadcast join, that's our first choice.
+
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
@@ -1706,13 +1708,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
 	}
-
+	// It indicates which side is the build side.
 	preferredBuildIndex := 0
 	if p.JoinType == InnerJoin {
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
-	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin {
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		preferredBuildIndex = 1
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
