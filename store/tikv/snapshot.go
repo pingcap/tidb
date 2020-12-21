@@ -341,12 +341,15 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
 			if s.mu.stats != nil {
-				scanDetail := extractScanDetail(batchGetResp.ExecDetailsV2)
 				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
 				}
-				s.mu.stats.scanDetail.Merge(scanDetail)
+				if s.mu.stats.timeDetail == nil {
+					s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+				}
+				s.mu.stats.scanDetail.MergeFromScanDetailV2(batchGetResp.ExecDetailsV2.ScanDetailV2)
+				s.mu.stats.timeDetail.MergeFromTimeDetail(batchGetResp.ExecDetailsV2.TimeDetail)
 				s.mu.Unlock()
 			}
 		}
@@ -469,12 +472,15 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
 			if s.mu.stats != nil {
-				scanDetail := extractScanDetail(cmdGetResp.ExecDetailsV2)
 				s.mu.Lock()
 				if s.mu.stats.scanDetail == nil {
 					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
 				}
-				s.mu.stats.scanDetail.Merge(scanDetail)
+				if s.mu.stats.timeDetail == nil {
+					s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+				}
+				s.mu.stats.scanDetail.MergeFromScanDetailV2(cmdGetResp.ExecDetailsV2.ScanDetailV2)
+				s.mu.stats.timeDetail.MergeFromTimeDetail(cmdGetResp.ExecDetailsV2.TimeDetail)
 				s.mu.Unlock()
 			}
 		}
@@ -691,24 +697,6 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 	}
 }
 
-func extractScanDetail(execDetailsV2 *pb.ExecDetailsV2) *execdetails.ScanDetail {
-	scanDetail := &execdetails.ScanDetail{}
-	if execDetailsV2.TimeDetail != nil {
-		scanDetail.ProcessTime = time.Duration(execDetailsV2.TimeDetail.ProcessWallTimeMs) * time.Millisecond
-		scanDetail.WaitTime = time.Duration(execDetailsV2.TimeDetail.WaitWallTimeMs) * time.Millisecond
-	}
-	if execDetailsV2.ScanDetailV2 != nil {
-		scanDetail.TotalKeys = int64(execDetailsV2.ScanDetailV2.TotalVersions)
-		scanDetail.ProcessedKeys = int64(execDetailsV2.ScanDetailV2.ProcessedVersions)
-		scanDetail.RocksdbDeleteSkippedCount = execDetailsV2.ScanDetailV2.RocksdbDeleteSkippedCount
-		scanDetail.RocksdbKeySkippedCount = execDetailsV2.ScanDetailV2.RocksdbKeySkippedCount
-		scanDetail.RocksdbBlockCacheHitCount = execDetailsV2.ScanDetailV2.RocksdbBlockCacheHitCount
-		scanDetail.RocksdbBlockReadCount = execDetailsV2.ScanDetailV2.RocksdbBlockReadCount
-		scanDetail.RocksdbBlockReadByte = execDetailsV2.ScanDetailV2.RocksdbBlockReadByte
-	}
-	return scanDetail
-}
-
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	s.mu.RLock()
 	if s.mu.stats == nil || bo.totalSleep == 0 {
@@ -761,6 +749,7 @@ type SnapshotRuntimeStats struct {
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
 	scanDetail     *execdetails.ScanDetail
+	timeDetail     *execdetails.TimeDetail
 }
 
 // Tp implements the RuntimeStats interface.
@@ -828,6 +817,9 @@ func (rs *SnapshotRuntimeStats) String() string {
 		ms := rs.backoffSleepMS[k]
 		d := time.Duration(ms) * time.Millisecond
 		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
+	}
+	if rs.timeDetail != nil {
+		buf.WriteString(rs.timeDetail.String())
 	}
 	if rs.scanDetail != nil {
 		buf.WriteString(rs.scanDetail.String())

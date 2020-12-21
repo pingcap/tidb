@@ -65,8 +65,10 @@ func TestString(t *testing.T) {
 			RocksdbBlockCacheHitCount: 1,
 			RocksdbBlockReadCount:     1,
 			RocksdbBlockReadByte:      100,
-			ProcessTime:               2*time.Second + 5*time.Millisecond,
-			WaitTime:                  time.Second,
+		},
+		TimeDetail: &TimeDetail{
+			ProcessTime: 2*time.Second + 5*time.Millisecond,
+			WaitTime:    time.Second,
 		},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +

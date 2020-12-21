@@ -716,13 +716,16 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
 			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
-		ssElement.sumProcessTime += sei.ExecDetail.ScanDetail.ProcessTime
-		if sei.ExecDetail.ScanDetail.ProcessTime > ssElement.maxProcessTime {
-			ssElement.maxProcessTime = sei.ExecDetail.ScanDetail.ProcessTime
+	}
+
+	if sei.ExecDetail.TimeDetail != nil {
+		ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
+		if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
+			ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
 		}
-		ssElement.sumWaitTime += sei.ExecDetail.ScanDetail.WaitTime
-		if sei.ExecDetail.ScanDetail.WaitTime > ssElement.maxWaitTime {
-			ssElement.maxWaitTime = sei.ExecDetail.ScanDetail.WaitTime
+		ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
+		if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
+			ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
 		}
 	}
 

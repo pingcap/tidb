@@ -41,7 +41,7 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 			//WaitTime:      time.Millisecond * time.Duration(i+1),
 			BackoffSleep: make(map[string]time.Duration),
 			BackoffTimes: make(map[string]int),
-			ScanDetail: &execdetails.ScanDetail{
+			TimeDetail: &execdetails.TimeDetail{
 				ProcessTime: time.Second * time.Duration(i+1),
 				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},

@@ -1164,25 +1164,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	resp.respTime = costTime
 	sd := &execdetails.ScanDetail{}
+	td := &execdetails.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			sd.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.ProcessedKeys = int64(scanDetailV2.ProcessedVersions)
-			sd.TotalKeys = int64(scanDetailV2.TotalVersions)
-			sd.RocksdbDeleteSkippedCount = scanDetailV2.RocksdbDeleteSkippedCount
-			sd.RocksdbKeySkippedCount = scanDetailV2.RocksdbKeySkippedCount
-			sd.RocksdbBlockCacheHitCount = scanDetailV2.RocksdbBlockCacheHitCount
-			sd.RocksdbBlockReadCount = scanDetailV2.RocksdbBlockReadCount
-			sd.RocksdbBlockReadByte = scanDetailV2.RocksdbBlockReadByte
+			sd.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			sd.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			sd.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
@@ -1192,6 +1185,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		}
 	}
 	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -1204,7 +1198,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.ScanDetail.ProcessTime) {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 

@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -52,6 +53,7 @@ type ExecDetails struct {
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
 	ScanDetail       *ScanDetail
+	TimeDetail       *TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -167,6 +169,34 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+type TimeDetail struct {
+	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
+	// other kind of waitings in series.
+	ProcessTime time.Duration
+	// Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
+	// include `wait_wall_time`.
+	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
+	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
+	// this field is called wall time instead of CPU time.
+	WaitTime time.Duration
+}
+
+func (td *TimeDetail) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if td != nil {
+		buf.WriteString(ProcessTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(", " + WaitTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
+	}
+	return buf.String()
+}
+
+func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
+	if timeDetail != nil {
+		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+	}
+}
+
 // ScanDetail contains coprocessor detail information.
 type ScanDetail struct {
 	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
@@ -187,15 +217,6 @@ type ScanDetail struct {
 	RocksdbBlockReadCount uint64
 	// RocksdbBlockReadByte is the total number of bytes from block reads.
 	RocksdbBlockReadByte uint64
-	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
-	// other kind of waitings in series.
-	ProcessTime time.Duration
-	// Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
-	// include `wait_wall_time`.
-	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
-	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
-	// this field is called wall time instead of CPU time.
-	WaitTime time.Duration
 }
 
 // Merge merges lock keys execution details into self.
@@ -207,19 +228,15 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
 	sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
 	sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
-	sd.ProcessTime += scanDetail.ProcessTime
-	sd.WaitTime += scanDetail.WaitTime
 }
 
 func (sd *ScanDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if sd != nil {
-		buf.WriteString(ProcessTimeStr + ":" + strconv.FormatFloat(sd.ProcessTime.Seconds(), 'f', -1, 64))
-		buf.WriteString(", " + WaitTimeStr + ":" + strconv.FormatFloat(sd.ProcessTime.Seconds(), 'f', -1, 64))
-		buf.WriteString(", rocksdb{")
 		buf.WriteString(ProcessKeysStr + ": " + strconv.FormatInt(sd.ProcessedKeys, 10))
 		buf.WriteString(", " + TotalKeysStr + ": " + strconv.FormatInt(sd.TotalKeys, 10))
-		buf.WriteString(", " + RocksdbDeleteSkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
+		buf.WriteString(", rocksdb{")
+		buf.WriteString(RocksdbDeleteSkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
 		buf.WriteString(", " + RocksdbKeySkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
 		buf.WriteString(", " + RocksdbBlockCacheHitCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
 		buf.WriteString(", " + RocksdbBlockReadCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
@@ -227,6 +244,18 @@ func (sd *ScanDetail) String() string {
 		buf.WriteString("}")
 	}
 	return buf.String()
+}
+
+func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
+	if scanDetail != nil {
+		sd.TotalKeys += int64(scanDetail.TotalVersions)
+		sd.ProcessedKeys += int64(scanDetail.ProcessedVersions)
+		sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
+		sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
+		sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
+		sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
+		sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
+	}
 }
 
 const (
@@ -271,15 +300,15 @@ const (
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
 	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
-	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
+	RocksdbDeleteSkippedCountStr = "delete_skipped_count"
 	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
-	RocksdbKeySkippedCountStr = "Rocksdb_key_skipped_count"
+	RocksdbKeySkippedCountStr = "key_skipped_count"
 	// RocksdbBlockCacheHitCountStr means the count of rocksdb block cache hit.
-	RocksdbBlockCacheHitCountStr = "Rocksdb_block_cache_hit_count"
+	RocksdbBlockCacheHitCountStr = "block_cache_hit_count"
 	// RocksdbBlockReadCountStr means the count of rocksdb block read.
-	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
+	RocksdbBlockReadCountStr = "block_read_count"
 	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
-	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
+	RocksdbBlockReadByteStr = "block_read_byte"
 )
 
 // String implements the fmt.Stringer interface.
@@ -288,11 +317,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ScanDetail != nil && d.ScanDetail.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ScanDetail.ProcessTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail != nil && d.TimeDetail.ProcessTime > 0 {
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ScanDetail != nil && d.ScanDetail.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.ScanDetail.WaitTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail != nil && d.TimeDetail.WaitTime > 0 {
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
@@ -380,11 +409,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ScanDetail != nil && d.ScanDetail.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ScanDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail != nil && d.TimeDetail.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ScanDetail != nil && d.ScanDetail.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.ScanDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail != nil && d.TimeDetail.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))

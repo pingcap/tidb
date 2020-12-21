@@ -536,8 +536,6 @@ func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) 
 			RocksdbBlockCacheHitCount: scanDetail.RocksdbBlockCacheHitCount,
 			RocksdbBlockReadCount:     scanDetail.RocksdbBlockReadCount,
 			RocksdbBlockReadByte:      scanDetail.RocksdbBlockReadByte,
-			ProcessTime:               scanDetail.ProcessTime,
-			WaitTime:                  scanDetail.WaitTime,
 		}
 	} else {
 		sc.mu.execDetails.ScanDetail.Merge(scanDetail)
@@ -628,22 +626,22 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	if n == 0 {
 		return d
 	}
-	if sc.mu.execDetails.ScanDetail != nil {
-		d.AvgProcessTime = sc.mu.execDetails.ScanDetail.ProcessTime / time.Duration(n)
-		d.AvgWaitTime = sc.mu.execDetails.ScanDetail.WaitTime / time.Duration(n)
+	if sc.mu.execDetails.TimeDetail != nil {
+		d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
+		d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
 		sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-			return sc.mu.allExecDetails[i].ScanDetail.ProcessTime < sc.mu.allExecDetails[j].ScanDetail.ProcessTime
+			return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
 		})
-		d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].ScanDetail.ProcessTime
-		d.MaxProcessTime = sc.mu.allExecDetails[n-1].ScanDetail.ProcessTime
+		d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
+		d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 		d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 		sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-			return sc.mu.allExecDetails[i].ScanDetail.WaitTime < sc.mu.allExecDetails[j].ScanDetail.WaitTime
+			return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
 		})
-		d.P90WaitTime = sc.mu.allExecDetails[n*9/10].ScanDetail.WaitTime
-		d.MaxWaitTime = sc.mu.allExecDetails[n-1].ScanDetail.WaitTime
+		d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
+		d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
 		d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 	}
 

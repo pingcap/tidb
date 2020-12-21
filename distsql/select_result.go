@@ -350,10 +350,13 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.copRespTime = append(s.copRespTime, respTime)
 	if copStats.ScanDetail != nil {
 		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
-		s.totalProcessTime += copStats.ScanDetail.ProcessTime
-		s.totalWaitTime += copStats.ScanDetail.WaitTime
 	} else {
 		s.procKeys = append(s.procKeys, 0)
+	}
+
+	if copStats.TimeDetail != nil {
+		s.totalProcessTime += copStats.TimeDetail.ProcessTime
+		s.totalWaitTime += copStats.TimeDetail.WaitTime
 	}
 
 	for k, v := range copStats.BackoffSleep {

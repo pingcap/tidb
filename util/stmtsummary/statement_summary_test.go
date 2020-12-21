@@ -94,10 +94,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
 		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
 		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
-		sumProcessTime:       stmtExecInfo1.ExecDetail.ScanDetail.ProcessTime,
-		maxProcessTime:       stmtExecInfo1.ExecDetail.ScanDetail.ProcessTime,
-		sumWaitTime:          stmtExecInfo1.ExecDetail.ScanDetail.WaitTime,
-		maxWaitTime:          stmtExecInfo1.ExecDetail.ScanDetail.WaitTime,
+		sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+		maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+		sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+		maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
 		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
 		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
 		sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
@@ -203,8 +203,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
-				ProcessTime:               1500,
-				WaitTime:                  150,
+			},
+			TimeDetail: &execdetails.TimeDetail{
+				ProcessTime: 1500,
+				WaitTime:    150,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -230,10 +232,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.maxCopProcessAddress = stmtExecInfo2.CopTasks.MaxProcessAddress
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
-	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.ScanDetail.ProcessTime
-	expectedSummaryElement.maxProcessTime = stmtExecInfo2.ExecDetail.ScanDetail.ProcessTime
-	expectedSummaryElement.sumWaitTime += stmtExecInfo2.ExecDetail.ScanDetail.WaitTime
-	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.ScanDetail.WaitTime
+	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.maxProcessTime = stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.sumWaitTime += stmtExecInfo2.ExecDetail.TimeDetail.WaitTime
+	expectedSummaryElement.maxWaitTime = stmtExecInfo2.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo2.ExecDetail.BackoffTime
 	expectedSummaryElement.maxBackoffTime = stmtExecInfo2.ExecDetail.BackoffTime
 	expectedSummaryElement.sumTotalKeys += stmtExecInfo2.ExecDetail.ScanDetail.TotalKeys
@@ -328,8 +330,10 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
-				ProcessTime:               150,
-				WaitTime:                  15,
+			},
+			TimeDetail: &execdetails.TimeDetail{
+				ProcessTime: 150,
+				WaitTime:    15,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -349,8 +353,8 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
-	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.ScanDetail.ProcessTime
-	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.ScanDetail.WaitTime
+	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
+	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
 	expectedSummaryElement.sumTotalKeys += stmtExecInfo3.ExecDetail.ScanDetail.TotalKeys
 	expectedSummaryElement.sumProcessedKeys += stmtExecInfo3.ExecDetail.ScanDetail.ProcessedKeys
@@ -582,8 +586,10 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockCacheHitCount: 10,
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
-				ProcessTime:               500,
-				WaitTime:                  50,
+			},
+			TimeDetail: &execdetails.TimeDetail{
+				ProcessTime: 500,
+				WaitTime:    50,
 			},
 		},
 		StmtCtx: &stmtctx.StatementContext{
@@ -620,8 +626,8 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
 		int64(stmtExecInfo1.CompileLatency), stmtExecInfo1.CopTasks.NumCopTasks, int64(stmtExecInfo1.CopTasks.MaxProcessTime),
 		stmtExecInfo1.CopTasks.MaxProcessAddress, int64(stmtExecInfo1.CopTasks.MaxWaitTime),
-		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.ScanDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.ScanDetail.ProcessTime),
-		int64(stmtExecInfo1.ExecDetail.ScanDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.ScanDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
+		stmtExecInfo1.CopTasks.MaxWaitAddress, int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime),
+		int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.TimeDetail.WaitTime), int64(stmtExecInfo1.ExecDetail.BackoffTime),
 		int64(stmtExecInfo1.ExecDetail.BackoffTime), stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys, stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
 		stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys, stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
 		int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount), int64(stmtExecInfo1.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount),
