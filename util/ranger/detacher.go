@@ -496,7 +496,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i])
 		if points[i] == nil {
-			// There exists an interval whose length is larger than
+			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
 		} else if len(points[i]) == 0 {
 			// Early termination if false expression found
