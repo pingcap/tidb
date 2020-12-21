@@ -1023,6 +1023,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
+	// Make sure StmtType is filled even if succ is false.
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 
