@@ -730,16 +730,16 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
 
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(data decimal)")
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("create table t2(data decimal)")
 
-		tk.MustExec(`prepare s1 from 'insert t (data) values (?)'`)
+		tk.MustExec(`prepare stmt2 from 'insert t2 (data) values (?)'`)
 
 		tk.MustExec(`set @a = '1'`)
-		tk.MustExec(`execute stmt1 using @a;`)
+		tk.MustExec(`execute stmt2 using @a;`)
 
 		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
-		tk.MustExec(`execute stmt1 using @b;`)
+		tk.MustExec(`execute stmt2 using @b;`)
 
 		r = tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("1", "11111"))
