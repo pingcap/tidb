@@ -163,10 +163,10 @@ type TransactionContext struct {
 	CouldRetry     bool
 	IsPessimistic  bool
 	// IsStaleness indicates the whether the txn is read only staleness txn.
-	IsStaleness    bool
-	Isolation      string
-	LockExpire     uint32
-	ForUpdate      uint32
+	IsStaleness bool
+	Isolation   string
+	LockExpire  uint32
+	ForUpdate   uint32
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex

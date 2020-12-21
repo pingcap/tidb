@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -111,6 +112,15 @@ func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, re
 	}
 	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
 	return newTiKVTxn, nil
+}
+
+func newTiKVTxnWithStalenessTS(store *tikvStore, prevSec uint64) (*tikvTxn, error) {
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	startTS, err := store.getStalenessTimestamp(bo, prevSec)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newTiKVTxnWithStartTS(store, oracle.GlobalTxnScope, startTS, store.nextReplicaReadSeed())
 }
 
 type assertionPair struct {

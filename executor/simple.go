@@ -615,6 +615,16 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 			return err
 		}
 		startTS = oracle.ComposeTS(gt.Unix()*1000, 0)
+	case ast.TimestampBoundExactStaleness:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		d.Seconds()
 	default:
 	}
 	err := e.ctx.InitTxnWithStartTS(startTS)
