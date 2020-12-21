@@ -283,7 +283,7 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 	if len(conds) == 0 {
 		return nil, true, nil
 	}
-	hasFull := false
+	countFull := 0
 	intersect := tables.NewListPartitionLocationIntersect()
 	for _, cond := range conds {
 		cnfLoc, isFull, err := l.locatePartition(cond)
@@ -291,7 +291,7 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 			return nil, false, err
 		}
 		if isFull {
-			hasFull = true
+			countFull++
 			continue
 		}
 		if cnfLoc.IsEmpty() {
@@ -301,13 +301,11 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 		if !intersect.Intersect(cnfLoc) {
 			return nil, false, nil
 		}
-		hasFull = false
 	}
-	location := intersect.GetLocation()
-	if len(location) == 0 {
-		return nil, hasFull, nil
+	if countFull == len(conds) {
+		return nil, true, nil
 	}
-	return location, false, nil
+	return intersect.GetLocation(), false, nil
 }
 
 func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.Expression) (tables.ListPartitionLocation, bool, error) {
