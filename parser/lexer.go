@@ -70,6 +70,9 @@ type Scanner struct {
 
 	// hintPos records the start position of the previous optimizer hint.
 	lastHintPos Pos
+
+	// true if a dot follows an identifier
+	identifierDot bool
 }
 
 // Errors returns the errors and warns during a scan.
@@ -271,9 +274,8 @@ func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		return
 	}
-	s.r.incAsLongAs(isIdentChar)
-	tok, lit = identifier, s.r.data(&pos)
-	return
+	s.r.p = pos
+	return scanIdentifier(s)
 }
 
 func startWithNn(s *Scanner) (tok int, pos Pos, lit string) {
@@ -304,9 +306,8 @@ func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		return
 	}
-	s.r.incAsLongAs(isIdentChar)
-	tok, lit = identifier, s.r.data(&pos)
-	return
+	s.r.p = pos
+	return scanIdentifier(s)
 }
 
 func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
@@ -445,6 +446,7 @@ func startWithStar(s *Scanner) (tok int, pos Pos, lit string) {
 		return s.scan()
 	}
 	// otherwise it is just a normal star.
+	s.identifierDot = false
 	return '*', pos, "*"
 }
 
@@ -486,8 +488,8 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 
 func scanIdentifier(s *Scanner) (int, Pos, string) {
 	pos := s.r.pos()
-	s.r.inc()
 	s.r.incAsLongAs(isIdentChar)
+	s.identifierDot = s.r.peek() == '.'
 	return identifier, pos, s.r.data(&pos)
 }
 
@@ -638,6 +640,9 @@ func handleEscape(s *Scanner) rune {
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
+	if s.identifierDot {
+		return scanIdentifier(s)
+	}
 	pos = s.r.pos()
 	tok = intLit
 	ch0 := s.r.readByte()
@@ -696,14 +701,15 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 func startWithDot(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	save := s.r.pos()
+	if s.identifierDot {
+		return int('.'), pos, "."
+	}
 	if isDigit(s.r.peek()) {
-		tok, _, lit = s.scanFloat(&pos)
-		if s.r.eof() || !isIdentChar(s.r.peek()) {
-			return
+		tok, p, l := s.scanFloat(&pos)
+		if tok == identifier {
+			return invalid, p, l
 		}
-		// Fail to parse a float, reset to dot.
-		s.r.p = save
+		return tok, p, l
 	}
 	tok, lit = int('.'), "."
 	return
@@ -742,14 +748,17 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 	if ch0 == 'e' || ch0 == 'E' {
 		s.r.inc()
 		ch0 = s.r.peek()
-		if ch0 == '-' || ch0 == '+' || isDigit(ch0) {
+		if ch0 == '-' || ch0 == '+' {
 			s.r.inc()
+		}
+		if isDigit(s.r.peek()) {
 			s.scanDigits()
 			tok = floatLit
 		} else {
 			// D1 . D2 e XX when XX is not D3, parse the result to an identifier.
 			// 9e9e = 9e9(float) + e(identifier)
 			// 9est = 9est(identifier)
+			s.r.p = *beg
 			s.r.incAsLongAs(isIdentChar)
 			tok = identifier
 		}
