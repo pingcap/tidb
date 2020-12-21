@@ -1095,8 +1095,8 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
-	} else if types.IsTemporalWithDate(lft.Tp) && rft.Tp == mysql.TypeYear ||
-		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp) {
+	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.Tp) && rft.Tp == mysql.TypeYear ||
+		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp)) {
 		return types.ETDatetime
 	}
 	return types.ETReal
