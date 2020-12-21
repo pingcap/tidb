@@ -14,9 +14,7 @@
 package executor_test
 
 import (
-	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"strconv"
 	"strings"
@@ -1600,17 +1598,28 @@ func (s *testSuite10) TestAddDateColumnNotNull(c *C) {
 	tk.MustExec("alter table test.t add datetime_1 DATETIME(6) NULL DEFAULT '9999-12-31 23:59:59.000000';")
 	tk.MustGetErrCode("alter table test.t add datetime_a DATETIME NOT NULL;", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("alter table test.t add datetime_b DATETIME(6) NOT NULL;", errno.ErrTruncatedWrongValueForField)
-	rs, err := tk.Exec("select * from test.t;")
-	c.Assert(err, IsNil)
-	req := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(req)
-	ctx := context.Background()
-	for {
-		err1 := rs.Next(ctx, req)
-		c.Assert(err1, IsNil)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
-		}
-	}
+	result := tk.MustQuery("select * from test.t")
+	result.Check(testkit.Rows("1 1000-01-01 9999-12-31 00:00:59 -838:59:59.000000 838:59:59.000000 00:00:00.000000 00:00:00 00:00:00.000000 1000-01-01 00:00:00.000000 9999-12-31 23:59:59.000000"))
+
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t(a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("alter table test.t add timestamp_a TIMESTAMP NOT NULL;")
+	tk.MustExec("alter table test.t add timestamp_b TIMESTAMP(6) NOT NULL;")
+	result1 := tk.MustQuery("select * from test.t")
+	result1.Check(testkit.Rows("1 0000-00-00 00:00:00 0000-00-00 00:00:00.000000"))
+
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t(a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("alter table test.t add year_0 YEAR NULL DEFAULT '1901';")
+	tk.MustExec("alter table test.t add year_1 YEAR NULL DEFAULT '2155';")
+	tk.MustExec("alter table test.t add year_2 YEAR NULL DEFAULT '0000';")
+	tk.MustExec("alter table test.t add year_3 YEAR NULL DEFAULT '01';")
+	tk.MustExec("alter table test.t add year_4 YEAR NULL DEFAULT '70';")
+	tk.MustExec("alter table test.t add year_5 YEAR NULL DEFAULT '00';")
+	tk.MustExec("alter table test.t add year_a YEAR NOT NULL;")
+	result2 := tk.MustQuery("select * from test.t")
+	result2.Check(testkit.Rows("1 1901 2155 0000 2001 1970 2000 0000"))
 
 }
