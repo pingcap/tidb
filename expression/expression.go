@@ -48,9 +48,13 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // RewriteAstExpr rewrites ast expression directly.
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
