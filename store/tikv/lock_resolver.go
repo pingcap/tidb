@@ -421,10 +421,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				}
 			} else {
 				if status.action != kvrpcpb.Action_MinCommitTSPushed {
-					//if _, exists := pushed[l.TxnID]; !exists {
-					pushFail = true
-					return nil
-					//}
+					if _, exists := pushed[l.TxnID]; !exists {
+						pushFail = true
+						return nil
+					}
 				}
 				pushed[l.TxnID] = struct{}{}
 			}
