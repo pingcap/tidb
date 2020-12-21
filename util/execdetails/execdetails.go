@@ -190,7 +190,12 @@ type ScanDetail struct {
 	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
 	// other kind of waitings in series.
 	ProcessTime time.Duration
-	WaitTime    time.Duration
+	// Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
+	// include `wait_wall_time`.
+	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
+	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
+	// this field is called wall time instead of CPU time.
+	WaitTime time.Duration
 }
 
 // Merge merges lock keys execution details into self.
@@ -204,6 +209,24 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
 	sd.ProcessTime += scanDetail.ProcessTime
 	sd.WaitTime += scanDetail.WaitTime
+}
+
+func (sd *ScanDetail) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if sd != nil {
+		buf.WriteString(ProcessTimeStr + ":" + strconv.FormatFloat(sd.ProcessTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(", " + WaitTimeStr + ":" + strconv.FormatFloat(sd.ProcessTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(", rocksdb{")
+		buf.WriteString(ProcessKeysStr + ": " + strconv.FormatInt(sd.ProcessedKeys, 10))
+		buf.WriteString(", " + TotalKeysStr + ": " + strconv.FormatInt(sd.TotalKeys, 10))
+		buf.WriteString(", " + RocksdbDeleteSkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
+		buf.WriteString(", " + RocksdbKeySkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
+		buf.WriteString(", " + RocksdbBlockCacheHitCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
+		buf.WriteString(", " + RocksdbBlockReadCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
+		buf.WriteString(", " + RocksdbBlockReadByteStr + ": " + strconv.FormatUint(sd.RocksdbBlockReadByte, 10))
+		buf.WriteString("}")
+	}
+	return buf.String()
 }
 
 const (

@@ -830,16 +830,7 @@ func (rs *SnapshotRuntimeStats) String() string {
 		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
 	}
 	if rs.scanDetail != nil {
-		buf.WriteString(fmt.Sprintf(", rocksdb{%s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d, %s: %d}",
-			execdetails.ProcessKeysStr, rs.scanDetail.ProcessedKeys,
-			execdetails.TotalKeysStr, rs.scanDetail.TotalKeys,
-			execdetails.RocksdbDeleteSkippedCountStr, rs.scanDetail.RocksdbDeleteSkippedCount,
-			execdetails.RocksdbKeySkippedCountStr, rs.scanDetail.RocksdbKeySkippedCount,
-			execdetails.RocksdbBlockCacheHitCountStr, rs.scanDetail.RocksdbBlockCacheHitCount,
-			execdetails.RocksdbBlockReadCountStr, rs.scanDetail.RocksdbBlockReadCount,
-			execdetails.RocksdbBlockReadByteStr, rs.scanDetail.RocksdbBlockReadByte,
-			execdetails.ProcessTimeStr, rs.scanDetail.ProcessTime,
-			execdetails.WaitTimeStr, rs.scanDetail.WaitTime))
+		buf.WriteString(rs.scanDetail.String())
 	}
 	return buf.String()
 }
