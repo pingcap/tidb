@@ -337,11 +337,6 @@ func MergeFieldType(a byte, b byte) byte {
 	return fieldTypeMergeRules[ia][ib]
 }
 
-// ResultMergeType returns the EvalType type of a builtin mysql type
-func ResultMergeType(tp byte) EvalType {
-	return fieldTypesResultType[getFieldTypeIndex(tp)]
-}
-
 // mergeTypeFlag merges two MySQL type flag to a new one
 // currently only NotNullFlag and UnsignedFlag is checked
 // todo more flag need to be checked
@@ -1288,40 +1283,6 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
-}
-
-var fieldTypesResultType = [fieldTypeNum]EvalType{
-	// mysql.TypeDecimal      mysql.TypeTiny
-	ETDecimal, ETInt,
-	// mysql.TypeShort        mysql.TypeLong
-	ETInt, ETInt,
-	// mysql.TypeFloat        mysql.TypeDouble
-	ETReal, ETReal,
-	// mysql.TypeNull         mysql.TypeTimestamp
-	ETString, ETString,
-	// mysql.TypeLonglong     mysql.TypeInt24
-	ETInt, ETInt,
-	// mysql.TypeDate         mysql.TypeTime
-	ETString, ETString,
-	// mysql.TypeDateTime     mysql.TypeYear
-	ETString, ETInt,
-	// mysql.TypeNewDate      mysql.TypeVarchar
-	ETString, ETString,
-	// mysql.TypeBit
-	ETInt,
-	// Unused entries: <16>-<244>
-	// mysql.TypeJson
-	ETString,
-	// mysql.TypeNewDecimal   mysql.TypeEnum
-	ETDecimal, ETString,
-	// mysql.TypeSet          mysql.TypeTinyBlob
-	ETString, ETString,
-	// mysql.TypeMediumBlob  mysql.TypeLongBlob
-	ETString, ETString,
-	// mysql.TypeBlob         mysql.TypeVarString
-	ETString, ETString,
-	// mysql.TypeString       mysql.TypeGeometry
-	ETString, ETString,
 }
 
 // SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.

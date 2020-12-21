@@ -368,21 +368,6 @@ func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, i
 	return res, isNull, err
 }
 
-// temporalWithDateAsNumEvalType makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
-func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.EvalType, isStr bool, isTemporalWithDate bool) {
-	argEvalType = argTp.EvalType()
-	isStr, isTemporalWithDate = argEvalType.IsStringKind(), types.IsTemporalWithDate(argTp.Tp)
-	if !isTemporalWithDate {
-		return
-	}
-	if argTp.Decimal > 0 {
-		argEvalType = types.ETDecimal
-	} else {
-		argEvalType = types.ETInt
-	}
-	return
-}
-
 func aggregateType(args []Expression) *types.FieldType {
 	fieldTypes := make([]*types.FieldType, len(args))
 	for i := range fieldTypes {
@@ -419,8 +404,7 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
-	aggType.EvalType()
-	if types.ResultMergeType(aggType.Tp) == types.ETString {
+	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
 			if types.IsTemporalWithDate(item.Tp) {
