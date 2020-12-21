@@ -1973,5 +1973,7 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Collate: mysql.DefaultCollationName,
 		Flag:    mysql.BinaryFlag,
 	}
-	return BuildCastFunction(ctx, expr, tp)
+	res := BuildCastFunction(ctx, expr, tp)
+	res.(*ScalarFunction).Function.getRetTp().Flag ^= mysql.ParseToJSONFlag
+	return res
 }

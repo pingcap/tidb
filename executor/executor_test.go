@@ -7228,6 +7228,15 @@ func (s *testSuite) Test12178(c *C) {
 	tk.MustQuery("select * from ta").Check(testkit.Rows("1234567890123456789012345678901234567890123456789012345.00"))
 }
 
+func (s *testSuite) Test11883(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (f1 json)")
+	tk.MustExec("insert into t1(f1) values ('\"asd\"'),('\"asdf\"'),('\"asasas\"')")
+	tk.MustQuery("select f1 from t1 where json_extract(f1,\"$\") in (\"asd\",\"asasas\",\"asdf\")").Check(testkit.Rows("\"asd\"", "\"asdf\"", "\"asasas\""))
+}
+
 func (s *testSuite) Test15492(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
