@@ -292,6 +292,30 @@
     ]
   },
   {
+    "Name": "TestIndexMergeHint4CNF",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where b = 1 and (a = 1 or c = 1)",
+        "Plan": [
+          "IndexLookUp_11 0.02 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.02 cop[tikv]  or(eq(test.t.a, 1), eq(test.t.c, 1))",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)",
+        "Plan": [
+          "IndexMerge_9 0.02 root  ",
+          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 0.02 cop[tikv]  eq(test.t.b, 1)",
+          "  └─TableRowIDScan_7 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestSubqueryWithTopN",
     "Cases": [
       {

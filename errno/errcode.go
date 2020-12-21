@@ -823,7 +823,10 @@ const (
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
+	ErrAggregateOrderNonAggQuery                                    = 3029
 	ErrIncorrectType                                                = 3064
+	ErrFieldInOrderNotSelect                                        = 3065
+	ErrAggregateInOrderNotSelect                                    = 3066
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
 	ErrUnsupportedAlterInplaceOnVirtualColumn                       = 3103
@@ -986,6 +989,7 @@ const (
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
 	ErrInvalidTableSample                  = 8128
+	ErrJSONObjectKeyTooLong                = 8129
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
