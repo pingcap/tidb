@@ -395,7 +395,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	if valid {
 		return nil
 	}
-	return fmt.Errorf("table %v can not be read by %v txn_scope", tblID, txnScope)
+	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblID, txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

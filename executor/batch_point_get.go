@@ -19,6 +19,7 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -389,7 +390,7 @@ func (e *BatchPointGetExec) verifyTxnScope() error {
 	if valid {
 		return nil
 	}
-	return fmt.Errorf("table %v can not be read by %v txn_scope", tblID, txnScope)
+	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblID, txnScope))
 }
 
 // LockKeys locks the keys for pessimistic transaction.
