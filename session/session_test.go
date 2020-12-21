@@ -738,6 +738,24 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
+func (s *testSessionSuite) TestPushMultiLockInOneBatch(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table t (id int primary key, v int)")
+	tk1.MustExec("insert into t values (0, 0), (1, 10), (2, 20), (3, 30)")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 1 where id >= 0")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommit", "pause")
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommit")
+	go func() {
+		tk2.MustExec("commit") // block
+	}()
+	time.Sleep(1 * time.Second)
+	tk1.MustQuery("select id, v from t where id = 1 or id = 2 or id = 3 order by id").Check(testkit.Rows("1 10", "2 20", "3 30"))
+	tk2.Se.Close()
+}
+
 func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table history (a int)")
