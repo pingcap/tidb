@@ -8350,6 +8350,18 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	tk.MustQuery("select * from t where a='#';").Check(testkit.Rows("# C 10"))
 }
 
+// The actual results do not agree with the test results, It should be modified after the test suite is updated
+func (s *testIntegrationSuite) TestIssue17726(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c1 DATE, c2 TIME, c3 DATETIME, c4 TIMESTAMP)")
+	tk.MustExec("insert into t0 values ('1000-01-01', '-838:59:59', '1000-01-01 00:00:00', '1970-01-01 08:00:01')")
+	tk.MustExec("insert into t0 values ('9999-12-31', '838:59:59', '9999-12-31 23:59:59', '2038-01-19 11:14:07')")
+	result := tk.MustQuery("select avg(c1), avg(c2), avg(c3), avg(c4) from t0")
+	result.Check(testkit.Rows("54995666 0 54995666117979.5 20040110095704"))
+}
+
 func (s *testIntegrationSuite) TestIssue12205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
