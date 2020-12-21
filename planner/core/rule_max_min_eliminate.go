@@ -209,12 +209,12 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 			if aggFunc.Name != ast.AggFuncMax && aggFunc.Name != ast.AggFuncMin {
 				return agg
 			}
-			// As max/min function about col field type of Enum or Set need to compared by value,but now is TopNExec is compared by name
-			cols := agg.GetUsedCols()
-			for _, col := range cols {
-				if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
-					return agg
-				}
+		}
+		// As max/min function about col field type of Enum or Set need to compared by value,but now is TopNExec is compared by name
+		cols := agg.GetUsedCols()
+		for _, col := range cols {
+			if col.RetType.Tp == mysql.TypeEnum || col.RetType.Tp == mysql.TypeSet {
+				return agg
 			}
 		}
 		if len(agg.AggFuncs) == 1 {
