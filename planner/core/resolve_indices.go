@@ -353,6 +353,22 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i, col := range p.HashCols {
+		colExpr, err1 := col.ResolveIndices(p.children[0].Schema())
+		p.HashCols[i], _ = colExpr.(*expression.Column)
+		if err1 != nil {
+			return err1
+		}
+	}
+	return err
+}
+
+// ResolveIndices implements Plan interface.
 func (p *basePhysicalAgg) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {

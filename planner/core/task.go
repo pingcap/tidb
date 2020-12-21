@@ -1481,26 +1481,37 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				mpp.addCost(p.GetCost(inputRows, false))
 				return mpp
 			} else {
-				/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
-				// TODO: add collected partition agg
-				partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
-				if partialAgg == nil {
-					finalAgg.SetChildren(mpp.p)
-					mpp.p = finalAgg
+				if p.stats.RowCount/p.Stats().GroupNDVs[0].NDV < 3 {
+					/// 1-phase agg when its cardinality is large
+					/// only push down the original agg
+					p.self.SetChildren(mpp.p)
+					mpp.p = p.self
 					mpp.addCost(p.GetCost(inputRows, false))
 					return mpp
-				}
-				if _, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
-					// NOTE: new a mpp task and set partial and final agg
-					newMpp := mpp.oldMppTask.enforceExchangerImpl(mpp.oldProp)
-					partialAgg.SetChildren(newMpp.p.Children()[0].Children()[0])
-					newMpp.p.Children()[0].SetChildren(partialAgg)
-					finalAgg.SetChildren(newMpp.p)
-					newMpp.p = finalAgg
-					newMpp.addCost(p.GetCost(inputRows, false))
-					return newMpp
 				} else {
-					return nil
+					/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
+					// TODO: add collected partition agg
+					partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+					if partialAgg == nil {
+						finalAgg.SetChildren(mpp.p)
+						mpp.p = finalAgg
+						mpp.addCost(p.GetCost(inputRows, false))
+						return mpp
+					}
+					if _, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
+						// NOTE: new a mpp task and set partial and final agg
+						oldMpp := mpp.oldMppTask.copy().(*mppTask)
+						partialAgg.SetChildren(oldMpp.p)
+						oldMpp.p = partialAgg
+						newMpp := oldMpp.enforceExchangerImpl(mpp.oldProp)
+						finalAgg.SetChildren(newMpp.p)
+						newMpp.p = finalAgg
+						newMpp.addCost(p.GetCost(inputRows, false))
+						return newMpp
+					} else {
+						// must not occur unless bugs
+						return nil
+					}
 				}
 			}
 		} else {
