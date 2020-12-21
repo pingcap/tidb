@@ -137,6 +137,30 @@ func (s TxnStatus) TTL() uint64 { return s.ttl }
 // Action returns what the CheckTxnStatus request have done to the transaction.
 func (s TxnStatus) Action() kvrpcpb.Action { return s.action }
 
+// StatusCacheable checks whether the transaction status is certain.True will be
+// returned if its status is certain:
+//     If transaction is already committed, the result could be cached.
+//     Otherwise:
+//       If l.LockType is pessimistic lock type:
+//           - if its primary lock is pessimistic too, the check txn status result should not be cached.
+//           - if its primary lock is prewrite lock type, the check txn status could be cached.
+//       If l.lockType is prewrite lock type:
+//           - always cache the check txn status result.
+// For prewrite locks, their primary keys should ALWAYS be the correct one and will NOT change.
+func (s TxnStatus) StatusCacheable() bool {
+	if s.IsCommitted() {
+		return true
+	}
+	if s.ttl == 0 {
+		if s.action == kvrpcpb.Action_NoAction ||
+			s.action == kvrpcpb.Action_LockNotExistRollback ||
+			s.action == kvrpcpb.Action_TTLExpireRollback {
+			return true
+		}
+	}
+	return false
+}
+
 // By default, locks after 3000ms is considered unusual (the client created the
 // lock might be dead). Other client may cleanup this kind of lock.
 // For locks created recently, we will do backoff and retry.
@@ -233,7 +257,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		tikvLockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, false)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, false, l)
 		if err != nil {
 			return false, err
 		}
@@ -247,7 +271,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 				continue
 			}
 			if _, ok := errors.Cause(err).(*nonAsyncCommitLock); ok {
-				status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, true)
+				status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, true, l)
 				if err != nil {
 					return false, err
 				}
@@ -468,7 +492,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	if err != nil {
 		return status, err
 	}
-	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true, false)
+	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true, false, nil)
 }
 
 func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, forceSyncCommit bool) (TxnStatus, error) {
@@ -498,7 +522,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		time.Sleep(100 * time.Millisecond)
 	})
 	for {
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit)
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit, l)
 		if err == nil {
 			return status, nil
 		}
@@ -526,11 +550,12 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
 				failpoint.Inject("txnExpireRetTTL", func() {
-					failpoint.Return(TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction},
+					failpoint.Return(TxnStatus{action: kvrpcpb.Action_LockNotExistDoNothing},
 						errors.New("error txn not found and lock expired"))
 				})
-				return TxnStatus{}, nil
 			}
+			// For pessimistic lock resolving, if the primary lock dose not exist and rollbackIfNotExist is true,
+			// The Action_LockNotExistDoNothing will be returned as the status.
 			rollbackIfNotExist = true
 		} else {
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
@@ -551,7 +576,7 @@ func (e txnNotFoundErr) Error() string {
 // getTxnStatus sends the CheckTxnStatus request to the TiKV server.
 // When rollbackIfNotExist is false, the caller should be careful with the txnNotFoundErr error.
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte,
-	callerStartTS, currentTS uint64, rollbackIfNotExist bool, forceSyncCommit bool) (TxnStatus, error) {
+	callerStartTS, currentTS uint64, rollbackIfNotExist bool, forceSyncCommit bool, lockInfo *Lock) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -568,13 +593,15 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 	// 2.3 No lock -- pessimistic lock rollback, concurrence prewrite.
 
 	var status TxnStatus
+	resolvingPessimisticLock := lockInfo != nil && lockInfo.LockType == kvrpcpb.Op_PessimisticLock
 	req := tikvrpc.NewRequest(tikvrpc.CmdCheckTxnStatus, &kvrpcpb.CheckTxnStatusRequest{
-		PrimaryKey:         primary,
-		LockTs:             txnID,
-		CallerStartTs:      callerStartTS,
-		CurrentTs:          currentTS,
-		RollbackIfNotExist: rollbackIfNotExist,
-		ForceSyncCommit:    forceSyncCommit,
+		PrimaryKey:               primary,
+		LockTs:                   txnID,
+		CallerStartTs:            callerStartTS,
+		CurrentTs:                currentTS,
+		RollbackIfNotExist:       rollbackIfNotExist,
+		ForceSyncCommit:          forceSyncCommit,
+		ResolvingPessimisticLock: resolvingPessimisticLock,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
@@ -627,7 +654,9 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			}
 
 			status.commitTS = cmdResp.CommitVersion
-			lr.saveResolved(txnID, status)
+			if status.StatusCacheable() {
+				lr.saveResolved(txnID, status)
+			}
 		}
 
 		return status, nil
