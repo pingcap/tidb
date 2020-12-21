@@ -643,9 +643,23 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	err := tk.ExecToErr("create statistics s1(correlation) on t(b,c)")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	err = tk.ExecToErr("drop statistics s1")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	err = tk.ExecToErr("admin reload statistics")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+}
+
 func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	err := tk.ExecToErr("drop statistics s1")
 	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
 	tk.MustExec("use test")
@@ -703,6 +717,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
 	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
@@ -745,6 +760,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")

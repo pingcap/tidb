@@ -486,6 +486,30 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
 	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
+
+	tk.MustExec(`SET @@character_set_results = NULL;`)
+	tk.MustQuery(`select @@character_set_results;`).Check(testkit.Rows(""))
+
+	varList := []string{"character_set_server", "character_set_client", "character_set_filesystem", "character_set_database"}
+	for _, v := range varList {
+		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
+		// we do not support set character_set_xxx or collation_xxx to a collation id.
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
+	}
+
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
