@@ -15,9 +15,9 @@ package distsql
 
 import (
 	"fmt"
-	"github.com/pingcap/errors"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
