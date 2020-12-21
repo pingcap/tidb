@@ -511,6 +511,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 		sc.MergeScanDetail(details.ScanDetail)
+		sc.MergeTimeDetail(details.TimeDetail)
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {
@@ -539,6 +540,22 @@ func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) 
 		}
 	} else {
 		sc.mu.execDetails.ScanDetail.Merge(scanDetail)
+	}
+}
+
+// MergeTimeDetail merges time details into self.
+func (sc *StatementContext) MergeTimeDetail(timeDetail *execdetails.TimeDetail) {
+	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
+	if timeDetail == nil {
+		return
+	}
+	if sc.mu.execDetails.TimeDetail == nil {
+		sc.mu.execDetails.TimeDetail = &execdetails.TimeDetail{
+			ProcessTime: timeDetail.ProcessTime,
+			WaitTime:    timeDetail.WaitTime,
+		}
+	} else {
+		sc.mu.execDetails.TimeDetail.Merge(timeDetail)
 	}
 }
 

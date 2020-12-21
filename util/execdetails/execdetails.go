@@ -169,6 +169,7 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+// TimeDetail contains coprocessor time detail information.
 type TimeDetail struct {
 	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
 	// other kind of waitings in series.
@@ -181,6 +182,7 @@ type TimeDetail struct {
 	WaitTime time.Duration
 }
 
+// String implements the fmt.Stringer interface.
 func (td *TimeDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if td != nil {
@@ -190,6 +192,13 @@ func (td *TimeDetail) String() string {
 	return buf.String()
 }
 
+// Merge merges time detail into self.
+func (td *TimeDetail) Merge(timeDetail *TimeDetail) {
+	td.ProcessTime += timeDetail.ProcessTime
+	td.WaitTime += timeDetail.WaitTime
+}
+
+// MergeFromTimeDetail merges time detail from pb into itself.
 func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
@@ -197,7 +206,7 @@ func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	}
 }
 
-// ScanDetail contains coprocessor detail information.
+// ScanDetail contains coprocessor scan detail information.
 type ScanDetail struct {
 	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
 	// deleted versions, but does not include RocksDB tombstone keys.
@@ -219,7 +228,7 @@ type ScanDetail struct {
 	RocksdbBlockReadByte uint64
 }
 
-// Merge merges lock keys execution details into self.
+// Merge merges scan detail execution details into self.
 func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	sd.TotalKeys += scanDetail.TotalKeys
 	sd.ProcessedKeys += scanDetail.ProcessedKeys
@@ -230,6 +239,7 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 	sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
 }
 
+// String implements the fmt.Stringer interface.
 func (sd *ScanDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if sd != nil {
@@ -246,6 +256,7 @@ func (sd *ScanDetail) String() string {
 	return buf.String()
 }
 
+// MergeFromTimeDetail merges scan detail from pb into itself.
 func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
 	if scanDetail != nil {
 		sd.TotalKeys += int64(scanDetail.TotalVersions)
@@ -385,19 +396,19 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
 		if scanDetail.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
+			parts = append(parts, "Rocksdb_" + RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
 		if scanDetail.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
+			parts = append(parts, "Rocksdb_" + RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
 		}
 		if scanDetail.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
+			parts = append(parts, "Rocksdb_" + RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
 		}
 		if scanDetail.RocksdbBlockReadCount > 0 {
-			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
+			parts = append(parts, "Rocksdb_" + RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
 		}
 		if scanDetail.RocksdbBlockReadByte > 0 {
-			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
+			parts = append(parts, "Rocksdb_" + RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
