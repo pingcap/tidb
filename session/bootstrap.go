@@ -442,7 +442,7 @@ const (
 	version56 = 56
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
-	// version57 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
 )
 
