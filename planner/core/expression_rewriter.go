@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
@@ -1468,34 +1467,9 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
-	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
-		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
-		if err != nil {
-			er.err = err
-			return
-		}
-		if !isNull {
-			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
-			if stringutil.IsExactMatch(patTypes) && er.ctxStack[l-2].GetType().EvalType() == types.ETString {
-				op := ast.EQ
-				if v.Not {
-					op = ast.NE
-				}
-				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
-				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op)
-				isPatternExactMatch = true
-			}
-		}
-	}
-	if !isPatternExactMatch {
-		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
-		function = er.notToExpression(v.Not, ast.Like, &v.Type,
-			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
-	}
+	types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
+	function = er.notToExpression(v.Not, ast.Like, &v.Type,
+		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
 
 	er.ctxStackPop(2)
 	er.ctxStackAppend(function, types.EmptyName)
