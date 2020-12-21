@@ -269,7 +269,6 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
-		groupByCols:  gbyCols,
 		aggHints:     aggHints,
 	}.Init(ctx, blockOffset)
 	aggLen := len(aggFuncs) + len(gbyCols)
@@ -306,7 +305,6 @@ func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pu
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
 	agg.GroupByItems = final.GroupByItems
-	agg.collectGroupByColumns()
 
 	pushedAgg = LogicalAggregation{
 		AggFuncs:     partial.AggFuncs,
@@ -314,7 +312,6 @@ func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pu
 		aggHints:     agg.aggHints,
 	}.Init(agg.ctx, agg.blockOffset)
 	pushedAgg.SetSchema(partial.Schema)
-	pushedAgg.collectGroupByColumns()
 	return
 }
 
@@ -347,8 +344,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 		}
 		newAgg.AggFuncs = append(newAgg.AggFuncs, firstRow)
 	}
-	newAgg.collectGroupByColumns()
-	tmpSchema := expression.NewSchema(newAgg.groupByCols...)
+	tmpSchema := expression.NewSchema(newAgg.GetGroupByCols()...)
 	// e.g. Union distinct will add a aggregation like `select join_agg_0, join_agg_1, join_agg_2 from t group by a, b, c` above UnionAll.
 	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
 	// this will cause error during executor phase.
@@ -434,7 +430,6 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				for i, gbyItem := range agg.GroupByItems {
 					agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
 				}
-				agg.collectGroupByColumns()
 				for _, aggFunc := range agg.AggFuncs {
 					newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 					for _, arg := range aggFunc.Args {
@@ -444,7 +439,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				}
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
-			} else if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+				// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
+				// And then push the new 'Aggregation' below the 'Union All' .
+				// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
+				child = projChild
+			}
+			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				err := a.tryAggPushDownForUnion(union, agg)
 				if err != nil {
 					return nil, err

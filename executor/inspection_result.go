@@ -142,7 +142,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.instanceToStatusAddress = make(map[string]string)
 		e.statusToInstanceAddress = make(map[string]string)
 		sql := "select instance,status_address from information_schema.cluster_info;"
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
 		}
@@ -213,7 +213,7 @@ func (c configInspection) inspect(ctx context.Context, sctx sessionctx.Context, 
 	return results
 }
 
-func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
 	ignoreConfigKey := []string{
 		// TiDB
@@ -241,6 +241,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		// TiKV
 		"server.addr",
 		"server.advertise-addr",
+		"server.advertise-status-addr",
 		"server.status-addr",
 		"log-file",
 		"raftstore.raftdb-path",
@@ -249,14 +250,14 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	}
 	sql := fmt.Sprintf("select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in ('%s') group by type, `key` having c > 1",
 		strings.Join(ignoreConfigKey, "','"))
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
 	}
 
 	generateDetail := func(tp, item string) string {
 		query := fmt.Sprintf("select value, instance from information_schema.cluster_config where type='%s' and `key`='%s';", tp, item)
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(query)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, query)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
 			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
@@ -298,22 +299,34 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration in reason.
 	cases := []struct {
+		table  string
 		tp     string
 		key    string
-		value  string
+		expect string
+		cond   string
 		detail string
 	}{
 		{
-			tp:     "tidb",
+			table:  "cluster_config",
 			key:    "log.slow-threshold",
-			value:  "0",
+			expect: "> 0",
+			cond:   "type = 'tidb' and `key` = 'log.slow-threshold' and value = '0'",
 			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
 		},
 		{
-			tp:     "tikv",
+
+			table:  "cluster_config",
 			key:    "raftstore.sync-log",
-			value:  "false",
+			expect: "true",
+			cond:   "type = 'tikv' and `key` = 'raftstore.sync-log' and value = 'false'",
 			detail: "sync-log should be true to avoid recover region when the machine breaks down",
+		},
+		{
+			table:  "cluster_systeminfo",
+			key:    "transparent_hugepage_enabled",
+			expect: "always madvise [never]",
+			cond:   "system_name = 'kernel' and name = 'transparent_hugepage_enabled' and value not like '%[never]%'",
+			detail: "Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
 		},
 	}
 
@@ -322,20 +335,20 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		if !filter.enable(cas.key) {
 			continue
 		}
-		sql := fmt.Sprintf("select instance from information_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
-			cas.tp, cas.key, cas.value)
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		sql := fmt.Sprintf("select type,instance,value from information_schema.%s where %s",
+			cas.table, cas.cond)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 		}
 
 		for _, row := range rows {
 			results = append(results, inspectionResult{
-				tp:       cas.tp,
-				instance: row.GetString(0),
+				tp:       row.GetString(0),
+				instance: row.GetString(1),
 				item:     cas.key,
-				actual:   cas.value,
-				expected: "not " + cas.value,
+				actual:   row.GetString(2),
+				expected: cas.expect,
 				severity: "warning",
 				detail:   cas.detail,
 			})
@@ -437,10 +450,10 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	return uint64(size) * rate, nil
 }
 
-func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
 	sql := "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;"
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))
 	}

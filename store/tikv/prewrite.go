@@ -34,6 +34,7 @@ type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
+var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
@@ -44,19 +45,23 @@ func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
-	m := &batch.mutations
-	mutations := make([]*pb.Mutation, m.len())
-	for i := range m.keys {
+	m := batch.mutations
+	mutations := make([]*pb.Mutation, m.Len())
+	isPessimisticLock := make([]bool, m.Len())
+	for i := 0; i < m.Len(); i++ {
 		mutations[i] = &pb.Mutation{
-			Op:    m.ops[i],
-			Key:   m.keys[i],
-			Value: m.values[i],
+			Op:    m.GetOp(i),
+			Key:   m.GetKey(i),
+			Value: m.GetValue(i),
 		}
+		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
-	var minCommitTS uint64
-	if c.forUpdateTS > 0 {
+	c.mu.Lock()
+	minCommitTS := c.minCommitTS
+	c.mu.Unlock()
+	if c.forUpdateTS > 0 && c.forUpdateTS >= minCommitTS {
 		minCommitTS = c.forUpdateTS + 1
-	} else {
+	} else if c.startTS >= minCommitTS {
 		minCommitTS = c.startTS + 1
 	}
 
@@ -72,25 +77,40 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
 		LockTtl:           c.lockTTL,
-		IsPessimisticLock: m.isPessimisticLock,
+		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
+		MaxCommitTs:       c.maxCommitTS,
 	}
+
+	failpoint.Inject("invalidMaxCommitTS", func() {
+		if req.MaxCommitTs > 0 {
+			req.MaxCommitTs = minCommitTS - 1
+		}
+	})
 
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
-		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
-		req.MinCommitTs = 0
+	}
+
+	if c.isOnePC() {
+		req.TryOnePc = true
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
 func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	// WARNING: This function only tries to send a single request to a single region, so it don't
+	// need to unset the `useOnePC` flag when it fails. A special case is that when TiKV returns
+	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
+	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
+	// checked there.
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -105,7 +125,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if c.isAsyncCommit() && sender.rpcError != nil {
+		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+		// errors.
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
@@ -131,11 +153,38 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if batch.isPrimary {
-				// After writing the primary key, if the size of the transaction is large than 32M,
+				// After writing the primary key, if the size of the transaction is larger than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
-				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize {
+				// In this case 1PC is not expected to be used, but still check it for safety.
+				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize &&
+					prewriteResp.OnePcCommitTs == 0 {
 					c.run(c, nil)
 				}
+			}
+
+			if c.isOnePC() {
+				if prewriteResp.OnePcCommitTs == 0 {
+					if prewriteResp.MinCommitTs != 0 {
+						return errors.Trace(errors.New("MinCommitTs must be 0 when 1pc falls back to 2pc"))
+					}
+					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
+						zap.Uint64("startTS", c.startTS))
+					tikvOnePCTxnCounterFallback.Inc()
+					c.setOnePC(false)
+					c.setAsyncCommit(false)
+				} else {
+					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
+					// not to lock the mutex.
+					if c.onePCCommitTS != 0 {
+						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
+							zap.Uint64("startTS", c.startTS))
+					}
+					c.onePCCommitTS = prewriteResp.OnePcCommitTs
+				}
+				return nil
+			} else if prewriteResp.OnePcCommitTs != 0 {
+				logutil.Logger(bo.ctx).Fatal("tikv committed a non-1pc transaction with 1pc protocol",
+					zap.Uint64("startTS", c.startTS))
 			}
 			if c.isAsyncCommit() {
 				// 0 if the min_commit_ts is not ready or any other reason that async
@@ -198,5 +247,6 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
+	// `doActionOnMutations` will unset `useOnePC` if the mutations is splitted into multiple batches.
 	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
 }

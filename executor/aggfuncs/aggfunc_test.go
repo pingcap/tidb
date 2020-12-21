@@ -45,6 +45,11 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
+const (
+	// separator argument for group_concat() test cases
+	separator = " "
+)
+
 var _ = Suite(&testSuite{})
 
 func TestT(t *testing.T) {
@@ -264,9 +269,9 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 	return memDeltas, nil
 }
 
-type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType) (memDeltas []int64, err error)
+type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType, []*util.ByItems) (memDeltas []int64, err error)
 
-func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType) (memDeltas []int64, err error) {
+func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	m := make(map[string]bool)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -342,14 +347,16 @@ type multiArgsAggMemTest struct {
 	multiArgsAggTest            multiArgsAggTest
 	allocMemDelta               int64
 	multiArgsUpdateMemDeltaGens multiArgsUpdateMemDeltaGens
+	isDistinct                  bool
 }
 
-func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens multiArgsUpdateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
-	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows, results...)
+func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens multiArgsUpdateMemDeltaGens, isDistinct bool) multiArgsAggMemTest {
+	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows)
 	pt := multiArgsAggMemTest{
 		multiArgsAggTest:            multiArgsAggTest,
 		allocMemDelta:               allocMemDelta,
 		multiArgsUpdateMemDeltaGens: updateMemDeltaGens,
+		isDistinct:                  isDistinct,
 	}
 	return pt
 }
@@ -360,7 +367,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
@@ -589,7 +596,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	if p.funcName == ast.AggFuncApproxPercentile {
 		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
@@ -670,7 +677,7 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
 	if p.aggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
 	c.Assert(err, IsNil)
@@ -703,7 +710,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
@@ -785,10 +792,10 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
 	}
 	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
-	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, false)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, p.isDistinct)
 	c.Assert(err, IsNil)
 	if p.multiArgsAggTest.orderBy {
 		desc.OrderByItems = []*util.ByItems{
@@ -799,35 +806,10 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	c.Assert(memDelta, Equals, p.allocMemDelta)
 
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
-	updateMemDeltas, err := p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
+	updateMemDeltas, err := p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes, desc.OrderByItems)
 	c.Assert(err, IsNil)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(memDelta, Equals, updateMemDeltas[i])
-		i++
-	}
-
-	// test the agg func with distinct
-	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, true)
-	c.Assert(err, IsNil)
-	if p.multiArgsAggTest.orderBy {
-		desc.OrderByItems = []*util.ByItems{
-			{Expr: args[0], Desc: true},
-		}
-	}
-	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
-	finalPr, memDelta = finalFunc.AllocPartialResult()
-	c.Assert(memDelta, Equals, p.allocMemDelta)
-
-	resultChk.Reset()
-	srcChk = p.multiArgsAggTest.genSrcChk()
-	updateMemDeltas, err = p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
-	c.Assert(err, IsNil)
-	iter = chunk.NewIterator4Chunk(srcChk)
-	i = 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
@@ -845,7 +827,7 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	if err != nil {
@@ -898,7 +880,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)

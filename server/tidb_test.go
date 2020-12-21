@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -38,8 +39,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -86,6 +90,8 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -139,6 +145,18 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
+	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
+}
+
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
@@ -311,6 +329,7 @@ func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
+	ts.runFailedTestMultiStatements(c)
 	ts.runTestMultiStatements(c)
 }
 
@@ -352,7 +371,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"
@@ -929,4 +948,126 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
+	var err error
+	ts.store, err = mockstore.NewMockStore()
+	session.DisableStats4Test()
+	c.Assert(err, IsNil)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = true
+	cfg.Performance.TCPKeepAlive = true
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	c.Assert(server, NotNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	_, err = cli.fetchStatus("/status") // server is up
+	c.Assert(err, IsNil)
+
+	go server.Close()
+	time.Sleep(time.Millisecond * 500)
+
+	resp, _ := cli.fetchStatus("/status") // should return 5xx code
+	c.Assert(resp.StatusCode, Equals, 500)
+
+	time.Sleep(time.Second * 2)
+
+	_, err = cli.fetchStatus("/status") // status is gone
+	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	// 255 is the collation id of mysql client 8 default collation_connection
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	c.Assert(err, IsNil)
+	testCase := []struct {
+		variable string
+		except   string
+	}{
+		{"collation_connection", "utf8mb4_bin"},
+		{"character_set_connection", "utf8mb4"},
+		{"character_set_client", "utf8mb4"},
+	}
+
+	for _, t := range testCase {
+		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+		c.Assert(b, IsTrue)
+		c.Assert(sVars, Equals, t.except)
+	}
+}
+
+func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t1, t2")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t2 (id int)")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "insert into t1 select 1")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "begin pessimistic")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
+	c.Assert(err, IsNil)
+	c.Assert(rs, IsNil) // should be no delay
+}
+
+func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t1")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt+1)
+	c.Assert(err, IsNil)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }

@@ -11,63 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-PROJECT=tidb
-GOPATH ?= $(shell go env GOPATH)
-P=8
-
-# Ensure GOPATH is set before running build process.
-ifeq "$(GOPATH)" ""
-  $(error Please set the environment variable GOPATH before running `make`)
-endif
-FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
-
-CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
-export PATH := $(path_to_add):$(PATH)
-
-GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
-GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
-GOTEST          := $(GO) test -p $(P)
-OVERALLS        := GO111MODULE=on overalls
-STATICCHECK     := GO111MODULE=on staticcheck
-TIDB_EDITION    ?= Community
-
-# Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
-ifneq "$(TIDB_EDITION)" "Community"
-ifneq "$(TIDB_EDITION)" "Enterprise"
-  $(error Please set the correct environment variable TIDB_EDITION before running `make`)
-endif
-endif
-
-ARCH      := "`uname -s`"
-LINUX     := "Linux"
-MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd"
-PACKAGES  ?= $$($(PACKAGE_LIST))
-PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
-FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
-
-FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable)
-FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
-
-LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
-
-TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
-COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
-
-CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
-
-TARGET = ""
-
-# VB = Vector Benchmark
-VB_FILE =
-VB_FUNC =
-
+include Makefile.common
 
 .PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
@@ -88,7 +32,7 @@ dev: checklist check test
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck
+check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -127,6 +71,10 @@ gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
 
+errdoc:tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh
+
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
@@ -147,10 +95,8 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean:
+clean: failpoint-disable
 	$(GO) clean -i ./...
-	rm -rf *.out
-	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
@@ -180,7 +126,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES' \
+			-ignore='.git,vendor,cmd,docs,tests,LICENSES' \
 			-concurrency=4 \
 			-- -coverpkg=./... \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
@@ -204,17 +150,6 @@ leak: failpoint-enable
 tikv_integration_test: failpoint-enable
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-
-RACE_FLAG =
-ifeq ("$(WITH_RACE)", "1")
-	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(GOPATH) $(GO) build
-endif
-
-CHECK_FLAG =
-ifeq ("$(WITH_CHECK)", "1")
-	CHECK_FLAG = $(TEST_LDFLAGS)
-endif
 
 server:
 ifeq ($(TARGET), "")
@@ -300,6 +235,9 @@ tools/bin/unconvert: tools/check/go.mod
 
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+
+tools/bin/errdoc-gen: go.mod
+	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0

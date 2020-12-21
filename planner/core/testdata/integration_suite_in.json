@@ -20,6 +20,13 @@
     ]
   },
   {
+    "name": "TestIndexJoinInnerIndexNDV",
+    "cases": [
+      // t2 should use idx2 instead of idx1, since idx2 has larger NDV.
+      "explain select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c"
+    ]
+  },
+  {
     "name": "TestSimplifyOuterJoinWithCast",
     "cases": [
       // LeftOuterJoin should no be simplified to InnerJoin.
@@ -65,9 +72,18 @@
     ]
   },
   {
+    "name": "TestIndexMergeHint4CNF",
+    "cases": [
+      "explain select * from t where b = 1 and (a = 1 or c = 1)",
+      "explain select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)"
+    ]
+  },
+  {
     "name": "TestSubqueryWithTopN",
     "cases": [
-      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)",
+      "desc select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1",
+      "desc select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1"
     ]
   },
   {

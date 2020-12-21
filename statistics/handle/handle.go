@@ -88,6 +88,9 @@ type Handle struct {
 	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
+
+	// idxUsageListHead contains all the index usage collectors required by session.
+	idxUsageListHead *SessionIndexUsageCollector
 }
 
 // Clear the statsCache, only for test.
@@ -112,12 +115,13 @@ func (h *Handle) Clear() {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
+func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	handle := &Handle{
-		ddlEventCh: make(chan *util.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		globalMap:  make(tableDeltaMap),
-		feedback:   statistics.NewQueryFeedbackMap(),
+		ddlEventCh:       make(chan *util.Event, 100),
+		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		globalMap:        make(tableDeltaMap),
+		feedback:         statistics.NewQueryFeedbackMap(),
+		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
@@ -128,7 +132,11 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
-	return handle
+	err := handle.RefreshVars()
+	if err != nil {
+		return nil, err
+	}
+	return handle, nil
 }
 
 // Lease returns the stats lease.
@@ -195,7 +203,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.BgLogger().Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -244,18 +252,6 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 func (h *Handle) GetMemConsumed() (size int64) {
 	size = h.statsCache.memTracker.BytesConsumed()
 	return
-}
-
-// GetAllTableStatsMemUsage get all the mem usage with true table.
-// only used by test.
-func (h *Handle) GetAllTableStatsMemUsage() int64 {
-	data := h.statsCache.Value.Load().(statsCache)
-	cache := data.copy()
-	allUsage := int64(0)
-	for _, t := range cache.tables {
-		allUsage += t.MemoryUsage()
-	}
-	return allUsage
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
@@ -359,7 +355,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -368,6 +364,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Histogram:  *hg,
 			Info:       c.Info,
 			CMSketch:   cms,
+			TopN:       topN,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 		}
@@ -393,29 +390,29 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.BgLogger().Debug("[stats] handle ddl event fail", zap.Error(err))
+			logutil.BgLogger().Error("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.BgLogger().Debug("[stats] dump stats delta fail", zap.Error(err))
+		logutil.BgLogger().Error("[stats] dump stats delta fail", zap.Error(err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		logutil.BgLogger().Debug("[stats] dump stats feedback fail", zap.Error(err))
+		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
 }
 
-func (h *Handle) cmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, err error) {
+func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	rows, _, err := reader.read(selSQL)
 	if err != nil || len(rows) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	selSQL = fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	topNRows, _, err := reader.read(selSQL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0), topNRows)
+	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
 func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -441,11 +438,11 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -511,7 +508,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -520,6 +517,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Histogram:  *hg,
 				Info:       colInfo,
 				CMSketch:   cms,
+				TopN:       topN,
 				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
@@ -625,7 +623,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 			colIDs := row.GetString(4)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			table.ExtendedStats.Stats[key] = item
@@ -636,7 +634,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -667,15 +665,17 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	// Delete outdated data
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
-	for _, meta := range cms.TopN() {
-		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
+	if topN != nil {
+		for _, meta := range topN.TopN {
+			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Encoded, meta.Count))
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
 	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statsVersion, flag, hg.Correlation))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
@@ -833,7 +833,7 @@ func (sr *statsReader) isHistory() bool {
 	return sr.history != nil
 }
 
-func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsReader, error) {
+func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
@@ -843,7 +843,16 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsRe
 		return &statsReader{history: history}, nil
 	}
 	h.mu.Lock()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("getStatsReader panic %v", r)
+		}
+		if err != nil {
+			h.mu.Unlock()
+		}
+	}()
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
 	}

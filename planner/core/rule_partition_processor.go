@@ -224,17 +224,107 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
+func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression) ([]int, error) {
+	pi := tbl.Meta().Partition
+	partExpr, err := tbl.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	colIDToUniqueID := make(map[int64]int64)
+	for _, cond := range conds {
+		condCols := expression.ExtractColumns(cond)
+		for _, c := range condCols {
+			colIDToUniqueID[c.ID] = c.UniqueID
+		}
+	}
+
+	pruneList := partExpr.ForListPruning
+	cols := make([]*expression.Column, 0, len(pruneList.ExprCols))
+	colLen := make([]int, 0, len(pruneList.ExprCols))
+	for _, c := range pruneList.ExprCols {
+		c = c.Clone().(*expression.Column)
+		if uniqueID, ok := colIDToUniqueID[c.ID]; ok {
+			c.UniqueID = uniqueID
+		}
+		cols = append(cols, c)
+		colLen = append(colLen, types.UnspecifiedLength)
+	}
+
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
+	if err != nil {
+		return nil, err
+	}
+
+	ranges := detachedResult.Ranges
+	used := make(map[int]struct{}, len(ranges))
+	for _, r := range ranges {
+		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(cols) {
+					used[FullRange] = struct{}{}
+					break
+				}
+			}
+			found := int64(-1)
+			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
+			for j, expr := range pruneList.Exprs {
+				ret, _, err := expr.EvalInt(ctx, row)
+				if err != nil {
+					return nil, err
+				}
+				if ret > 0 {
+					found = int64(j)
+					break
+				}
+			}
+			if found == -1 {
+				continue
+			}
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
+				continue
+			}
+			used[int(found)] = struct{}{}
+		} else {
+			used[FullRange] = struct{}{}
+			break
+		}
+	}
+	if _, ok := used[FullRange]; ok {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil
+	}
+	ret := make([]int, 0, len(used))
+	for k := range used {
+		ret = append(ret, k)
+	}
+	sort.Ints(ret)
+	return ret, nil
+}
+
+func (s *partitionProcessor) pruneListPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression) ([]int, error) {
+	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds)
+	if err != nil {
+		return nil, err
+	}
+	return used, nil
+}
+
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
 	}
 	// Try to locate partition directly for hash partition.
-	if pi.Type == model.PartitionTypeHash {
-		return s.processHashPartition(ds, pi)
-	}
-	if pi.Type == model.PartitionTypeRange {
+	switch pi.Type {
+	case model.PartitionTypeRange:
 		return s.processRangePartition(ds, pi)
+	case model.PartitionTypeHash:
+		return s.processHashPartition(ds, pi)
+	case model.PartitionTypeList:
+		return s.processListPartition(ds, pi)
 	}
 
 	// We haven't implement partition by list and so on.
@@ -447,6 +537,19 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 		return nil, err
 	}
 	return s.makeUnionAllChildren(ds, pi, used)
+}
+
+func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds)
+	if err != nil {
+		return nil, err
+	}
+	if used != nil {
+		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
+	}
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual.schema = ds.Schema()
+	return tableDual, nil
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -939,6 +1042,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource := *ds
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 			newDataSource.schema = ds.schema.Clone()
+			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+			copy(newDataSource.Columns, ds.Columns)
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 
@@ -946,7 +1051,9 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
-			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+			if !ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+			}
 			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
 			partitionNameSet.Insert(pi.Definitions[i].Name.L)
 			if err != nil {
@@ -1048,11 +1155,11 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
-	start, end := p.pruneUseBinarySearch(sctx, opName, con)
+	start, end := p.pruneUseBinarySearch(sctx, opName, con, op)
 	return start, end, true
 }
 
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
 	var err error
 	var isNull bool
 	compare := func(ith int, op string, v *expression.Constant) bool {
@@ -1062,7 +1169,8 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 			}
 		}
 		var expr expression.Expression
-		expr, err = expression.NewFunction(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		expr.SetCharsetAndCollation(f.CharsetAndCollation(sctx))
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0

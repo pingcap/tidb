@@ -14,14 +14,18 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,11 +38,18 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	err error
+	// txnScope indicates the value of txn_scope
+	txnScope string
+	bundles  map[string]*placement.Bundle
+	err      error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	err := builder.verifyTxnScope()
+	if err != nil {
+		builder.err = err
+	}
 	return &builder.Request, builder.err
 }
 
@@ -48,17 +59,10 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 	return builder
 }
 
-// SetTableRangesForTables sets "KeyRanges" for "kv.Request" by converting multiples "tableRanges"
-// to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetTableRangesForTables(tids []int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges = TablesRangesToKVRanges(tids, tableRanges, fb)
-	}
-	return builder
-}
-
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
+// Note this function should be deleted or at least not exported, but currently
+// br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.KeyRanges = TableRangesToKVRanges(tid, tableRanges, fb)
@@ -84,20 +88,17 @@ func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementCont
 	return builder
 }
 
-// SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRanges sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
-	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, []int64{tid}, ranges)
-	}
-	return builder
+func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
+	return builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges, fb)
 }
 
-// SetCommonHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting common handle range
+// SetHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly for multiple tables.
-func (builder *RequestBuilder) SetCommonHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, tid, ranges)
+		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges, fb)
 	}
 	return builder
 }
@@ -235,6 +236,12 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	return builder
 }
 
+// SetTxnScope sets "TxnScope" flag for "kv.Request".
+func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
+	builder.txnScope = scope
+	return builder
+}
+
 // SetStreaming sets "Streaming" flag for "kv.Request".
 func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	builder.Request.Streaming = streaming
@@ -247,13 +254,74 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	return builder
 }
 
-// TableRangesToKVRanges converts table ranges to "KeyRange".
-func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
-	return TablesRangesToKVRanges([]int64{tid}, ranges, fb)
+// SetTiDBServerID sets "TiDBServerID" for "kv.Request"
+//   ServerID is a unique id of TiDB instance among the cluster.
+//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
+	builder.Request.TiDBServerID = serverID
+	return builder
 }
 
-// TablesRangesToKVRanges converts table ranges to "KeyRange".
-func TablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+// SetFromInfoSchema sets the following fields from infoSchema:
+// "bundles"
+func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
+	if is == nil {
+		return builder
+	}
+	builder.bundles = is.RuleBundles()
+	return builder
+}
+
+func (builder *RequestBuilder) verifyTxnScope() error {
+	if builder.txnScope == "" {
+		builder.txnScope = oracle.GlobalTxnScope
+	}
+	if builder.txnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
+		return nil
+	}
+	visitTableID := make(map[int64]struct{})
+	for _, keyRange := range builder.Request.KeyRanges {
+		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+		if tableID > 0 {
+			visitTableID[tableID] = struct{}{}
+		} else {
+			return errors.New("requestBuilder can't decode tableID from keyRange")
+		}
+	}
+
+	for tableID := range visitTableID {
+		bundle, ok := builder.bundles[placement.GroupID(tableID)]
+		if !ok {
+			continue
+		}
+		dc, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+		if !ok {
+			continue
+		}
+		if dc != builder.txnScope {
+			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
+		}
+	}
+	return nil
+}
+
+// TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
+func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	if !isCommonHandle {
+		return tablesRangesToKVRanges(tid, ranges, fb), nil
+	}
+	return CommonHandleRangesToKVRanges(sc, tid, ranges)
+}
+
+// TableRangesToKVRanges converts table ranges to "KeyRange".
+// Note this function should not be exported, but currently
+// br refers to it, so have to keep it.
+func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+	return tablesRangesToKVRanges([]int64{tid}, ranges, fb)
+}
+
+// tablesRangesToKVRanges converts table ranges to "KeyRange".
+func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist == nil {
 		return tableRangesToKVRangesWithoutSplit(tids, ranges)
 	}

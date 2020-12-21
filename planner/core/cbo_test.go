@@ -100,7 +100,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
-			c.Assert(strings.Contains(execInfo, "copr_cache_hit_ratio"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
 		}
 	}
 }
@@ -926,5 +926,37 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
+	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
+	// these 2 columns are strictly correlated in reverse order.
+	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

@@ -16,7 +16,7 @@ package cophandler
 import (
 	"container/heap"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	tipb "github.com/pingcap/tipb/go-tipb"

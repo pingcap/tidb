@@ -60,9 +60,13 @@ var DisableFoldFunctions = map[string]struct{}{
 // otherwise, the child functions do not fold constant.
 // Note: the function itself should fold constant.
 var TryFoldFunctions = map[string]struct{}{
-	ast.If:     {},
-	ast.Ifnull: {},
-	ast.Case:   {},
+	ast.If:       {},
+	ast.Ifnull:   {},
+	ast.Case:     {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.Coalesce: {},
+	ast.Interval: {},
 }
 
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
@@ -181,4 +185,30 @@ var mutableEffectsFunctions = map[string]struct{}{
 var noopFuncs = map[string]struct{}{
 	ast.GetLock:     {},
 	ast.ReleaseLock: {},
+}
+
+// booleanFunctions stores boolean functions
+var booleanFunctions = map[string]struct{}{
+	ast.UnaryNot:           {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.NullEQ:             {},
+	ast.LT:                 {},
+	ast.LE:                 {},
+	ast.GT:                 {},
+	ast.GE:                 {},
+	ast.In:                 {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.IsTruthWithNull:    {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.IsNull:             {},
+	ast.Like:               {},
+	ast.Regexp:             {},
+	ast.IsIPv4:             {},
+	ast.IsIPv4Compat:       {},
+	ast.IsIPv4Mapped:       {},
+	ast.IsIPv6:             {},
 }

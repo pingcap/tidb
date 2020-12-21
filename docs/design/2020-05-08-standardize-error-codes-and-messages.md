@@ -1,7 +1,7 @@
 # Proposal: Standardize error codes and messages
 
 - Author(s):     Joshua
-- Last updated:  July 22
+- Last updated:  September 29
 - Discussion at: https://docs.google.com/document/d/1beoa5xyuToboSx6e6J02tjLLX5SWzmqvqHuAPEk-I58/edit?usp=sharing
 
 ## Abstract
@@ -23,14 +23,14 @@ In order to let TiUP know the the errors every component may throw, the componen
 keep a metafile in the code repository. The metafile should be a toml file which looks like:
 
 ```toml
-[error.8005]
+[8005]
 error = '''Write Conflict, txnStartTS is stale'''
 description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
 Check whether `tidb_disable_txn_auto_retry` is set to `on`. If so, set it to `off`; if it is already `off`, increase the value of `tidb_retry_limit` until the error no longer occurs.
 '''
 
-[error.9005]
+[9005]
 error = '''Region is unavailable'''
 description = '''
 A certain Raft Group is not available, such as the number of replicas is not enough.
@@ -135,7 +135,7 @@ Check the status, monitoring data and log of the TiKV server.
 As the syntax above, the 9005 block is the message part of 8005 block, so we expect it's result is the same as this toml:
 
 ```toml
-[error.8005]
+[8005]
 error = '''Write Conflict, txnStartTS is stale'''
 description = '''Transactions in TiDB encounter write conflicts.'''
 workaround = '''
@@ -169,7 +169,7 @@ In the discussion above, an error has at least 4 parts:
 
 Besides, we can append a optional tags field to it:
 ```toml
-[error.9005]
+[9005]
 error = ""
 description = ""
 workaround = ""

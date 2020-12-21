@@ -113,10 +113,7 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			argCombines = append(argCombines, argTypes)
 		}
 	}
-
-	var tests []multiArgsAggMemTest
 	numRows := 5
-
 	for k := 0; k < len(argCombines); k++ {
 		entries := make(map[string]interface{})
 
@@ -143,12 +140,12 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			}
 		}
 
-		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, nil, json.CreateBinary(entries))
-
-		tests = append(tests, aggTest)
-	}
-
-	for _, test := range tests {
-		s.testMultiArgsAggMemFunc(c, test)
+		tests := []multiArgsAggMemTest{
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, true),
+			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, false),
+		}
+		for _, test := range tests {
+			s.testMultiArgsAggMemFunc(c, test)
+		}
 	}
 }

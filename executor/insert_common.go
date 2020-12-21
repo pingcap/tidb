@@ -27,18 +27,19 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 // InsertValues is the data to insert.
@@ -291,10 +292,19 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
+		valStr, err1 := val.ToString()
+		if err1 != nil {
+			// do nothing
+		}
+		err = dbterror.ClassTable.NewStdErr(
+			errno.ErrTruncatedWrongValue,
+			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
+		).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
+			// do nothing
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	}
@@ -466,6 +476,11 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.
@@ -581,7 +596,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.handleErr(gCol, &val, 0, err) != nil {
+		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
@@ -619,41 +634,20 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 	return false
 }
 
-func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
-	colIdx := -1
-	for i, c := range e.Table.Cols() {
+func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int, found bool) {
+	for i, c := range t.Cols() {
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			colIdx = i
-			break
+			return c, i, true
 		}
 	}
-	return colIdx, colIdx != -1
+	return nil, -1, false
 }
 
-func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, rows [][]types.Datum, colIdx int) ([][]types.Datum, error) {
-	// Get the autoIncrement column.
-	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are the same.
-	length := len(rows)
-	for i := 0; i < length; i++ {
-		autoDatum := rows[i][colIdx]
-
-		// autoID can be found in RetryInfo.
-		retryInfo := e.ctx.GetSessionVars().RetryInfo
-		if retryInfo.Retrying {
-			id, err := retryInfo.GetCurrAutoIncrementID()
-			if err != nil {
-				return nil, err
-			}
-			autoDatum.SetAutoID(id, col.Flag)
-
-			if err = col.HandleBadNull(&autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
-			}
-			rows[i][colIdx] = autoDatum
-		}
-	}
-	return rows, nil
+func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
+	d.SetAutoID(id, col.Flag)
+	var err error
+	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
+	return err
 }
 
 // lazyAdjustAutoIncrementDatum is quite similar to adjustAutoIncrementDatum
@@ -663,22 +657,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	if !e.lazyFillAutoID {
 		return rows, nil
 	}
-	// No autoIncrement column means no need to fill.
-	colIdx, ok := e.hasAutoIncrementColumn()
-	if !ok {
+	col, idx, found := findAutoIncrementColumn(e.Table)
+	if !found {
 		return rows, nil
 	}
-	// autoID can be found in RetryInfo.
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
-	if retryInfo.Retrying {
-		return e.lazyAdjustAutoIncrementDatumInRetry(ctx, rows, colIdx)
-	}
-	// Get the autoIncrement column.
-	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are the same.
-	length := len(rows)
-	for i := 0; i < length; i++ {
-		autoDatum := rows[i][colIdx]
+	rowCount := len(rows)
+	for processedIdx := 0; processedIdx < rowCount; processedIdx++ {
+		autoDatum := rows[processedIdx][idx]
 
 		var err error
 		var recordID int64
@@ -696,18 +682,32 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 			retryInfo.AddAutoIncrementID(recordID)
-			rows[i][colIdx] = autoDatum
 			continue
 		}
 
 		// Change NULL to auto id.
 		// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+			// Consume the auto IDs in RetryInfo first.
+			for retryInfo.Retrying && processedIdx < rowCount {
+				nextID, ok := retryInfo.GetCurrAutoIncrementID()
+				if !ok {
+					break
+				}
+				err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], nextID, col)
+				if err != nil {
+					return nil, err
+				}
+				processedIdx++
+				if processedIdx == rowCount {
+					return rows, nil
+				}
+			}
 			// Find consecutive num.
-			start := i
+			start := processedIdx
 			cnt := 1
-			for i+1 < length && e.isAutoNull(ctx, rows[i+1][colIdx], col) {
-				i++
+			for processedIdx+1 < rowCount && e.isAutoNull(ctx, rows[processedIdx+1][idx], col) {
+				processedIdx++
 				cnt++
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
@@ -724,31 +724,21 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
-				d := rows[offset][colIdx]
-
 				id := int64(uint64(min) + uint64(j)*uint64(increment))
-				d.SetAutoID(id, col.Flag)
-				retryInfo.AddAutoIncrementID(id)
-
-				// The value of d is adjusted by auto ID, so we need to cast it again.
-				d, err := table.CastValue(e.ctx, d, col.ToInfo(), false, false)
+				err = setDatumAutoIDAndCast(e.ctx, &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
 				}
-				rows[offset][colIdx] = d
+				retryInfo.AddAutoIncrementID(id)
 			}
 			continue
 		}
 
-		autoDatum.SetAutoID(recordID, col.Flag)
-		retryInfo.AddAutoIncrementID(recordID)
-
-		// the value of d is adjusted by auto ID, so we need to cast it again.
-		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo(), false, false)
+		err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], recordID, col)
 		if err != nil {
 			return nil, err
 		}
-		rows[i][colIdx] = autoDatum
+		retryInfo.AddAutoIncrementID(recordID)
 	}
 	return rows, nil
 }
@@ -756,12 +746,11 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
-		id, err := retryInfo.GetCurrAutoIncrementID()
-		if err != nil {
-			return types.Datum{}, err
+		id, ok := retryInfo.GetCurrAutoIncrementID()
+		if ok {
+			d.SetAutoID(id, c.Flag)
+			return d, nil
 		}
-		d.SetAutoID(id, c.Flag)
-		return d, nil
 	}
 
 	var err error
@@ -800,20 +789,16 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 	}
 
-	d.SetAutoID(recordID, c.Flag)
-	retryInfo.AddAutoIncrementID(recordID)
-
-	// the value of d is adjusted by auto ID, so we need to cast it again.
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return casted, nil
+	retryInfo.AddAutoIncrementID(recordID)
+	return d, nil
 }
 
 func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
-
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
@@ -834,12 +819,11 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
-		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
-		if err != nil {
-			return types.Datum{}, err
+		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
+		if ok {
+			d.SetAutoID(autoRandomID, c.Flag)
+			return d, nil
 		}
-		d.SetAutoID(autoRandomID, c.Flag)
-		return d, nil
 	}
 
 	var err error
@@ -875,7 +859,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		recordID, err = e.allocAutoRandomID(&c.FieldType)
+		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -886,23 +870,21 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 	}
 
-	d.SetAutoID(recordID, c.Flag)
-	retryInfo.AddAutoRandomID(recordID)
-
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return casted, nil
+	retryInfo.AddAutoRandomID(recordID)
+	return d, nil
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
-func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
+func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -1065,20 +1047,25 @@ func (e *InsertRuntimeStat) String() string {
 	if e.CheckInsertTime == 0 {
 		// For replace statement.
 		if e.Prefetch > 0 && e.SnapshotRuntimeStats != nil {
-			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.Prefetch, e.SnapshotRuntimeStats.String())
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", execdetails.FormatDuration(e.Prefetch), e.SnapshotRuntimeStats.String())
 		}
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	buf.WriteString(fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime))
+	buf.WriteString(fmt.Sprintf("prepare:%v, ", execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime)))
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.CheckInsertTime, e.CheckInsertTime-e.Prefetch, e.Prefetch))
+		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+			execdetails.FormatDuration(e.CheckInsertTime),
+			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
+			execdetails.FormatDuration(e.Prefetch)))
 		if e.SnapshotRuntimeStats != nil {
-			buf.WriteString(fmt.Sprintf(", rpc:{%s}", e.SnapshotRuntimeStats.String()))
+			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
+				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
+			}
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", e.CheckInsertTime))
+		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
 	}
 	return buf.String()
 }

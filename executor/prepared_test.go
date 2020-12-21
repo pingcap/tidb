@@ -69,6 +69,12 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
@@ -132,7 +138,11 @@ func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
 	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
+func (sm *mockSessionManager2) KillAllConnections()             {}
 func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+func (sm *mockSessionManager2) ServerID() uint64 {
+	return 1
+}
 
 var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
 
@@ -186,16 +196,16 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 
 	// For table scan
 	tk.MustExec(`prepare stmt1 from "select * from t1 where t1.a = ? and t1.b > ?"`)
-	tk.MustExec("set @v1 = 1")
-	tk.MustExec("set @v2 = 0")
+	tk.MustExec("set @v1 = '1'")
+	tk.MustExec("set @v2 = '0'")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("1 1 111"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec("set @v1 = 2")
-	tk.MustExec("set @v2 = 1")
+	tk.MustExec("set @v1 = '2'")
+	tk.MustExec("set @v2 = '1'")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("2 2 222"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set @v1 = 3")
-	tk.MustExec("set @v2 = 2")
+	tk.MustExec("set @v1 = '3'")
+	tk.MustExec("set @v2 = '2'")
 	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
@@ -205,16 +215,16 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 
 	// For point get
 	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
-	tk.MustExec("set @v1 = 1")
-	tk.MustExec("set @v2 = 1")
+	tk.MustExec("set @v1 = '1'")
+	tk.MustExec("set @v2 = '1'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("1 1 111"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec("set @v1 = 2")
-	tk.MustExec("set @v2 = 2")
+	tk.MustExec("set @v1 = '2'")
+	tk.MustExec("set @v2 = '2'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("2 2 222"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set @v1 = 3")
-	tk.MustExec("set @v2 = 3")
+	tk.MustExec("set @v1 = '3'")
+	tk.MustExec("set @v2 = '3'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
@@ -286,4 +296,92 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`set @v1=2, @v2=2, @v3=3, @v4=3`)
 	tk.MustQuery(`execute stmt2 using @v1,@v2,@v3,@v4`).Check(testkit.Rows("2 2 222", "3 3 333"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("create table t1(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t1 values('1',1,1.1),('2',2,222),('3',3,333)")
+	tk.MustExec("create table t2(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t2 values('3',3,3.3),('2',2,222),('3',3,333)")
+
+	var input []struct {
+		PrepareStmt string
+		Executes    []struct {
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			ExecuteSQL string
+		}
+	}
+	var output []struct {
+		PrepareStmt string
+		Executes    []struct {
+			SQL  string
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			Plan             []string
+			LastPlanUseCache string
+			Result           []string
+		}
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		tk.MustExec(tt.PrepareStmt)
+		s.testData.OnRecord(func() {
+			output[i].PrepareStmt = tt.PrepareStmt
+			output[i].Executes = make([]struct {
+				SQL  string
+				Vars []struct {
+					Name  string
+					Value string
+				}
+				Plan             []string
+				LastPlanUseCache string
+				Result           []string
+			}, len(tt.Executes))
+		})
+		c.Assert(output[i].PrepareStmt, Equals, tt.PrepareStmt)
+		for j, exec := range tt.Executes {
+			for _, v := range exec.Vars {
+				tk.MustExec(fmt.Sprintf(`set @%s = %s`, v.Name, v.Value))
+			}
+			res := tk.MustQuery(exec.ExecuteSQL)
+			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
+			tk.MustQuery(exec.ExecuteSQL)
+			tkProcess := tk.Se.ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+			s.testData.OnRecord(func() {
+				output[i].Executes[j].SQL = exec.ExecuteSQL
+				output[i].Executes[j].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+				output[i].Executes[j].Vars = exec.Vars
+				output[i].Executes[j].LastPlanUseCache = lastPlanUseCache.(string)
+				output[i].Executes[j].Result = s.testData.ConvertRowsToStrings(res.Rows())
+			})
+			c.Assert(output[i].Executes[j].SQL, Equals, exec.ExecuteSQL)
+			plan.Check(testkit.Rows(output[i].Executes[j].Plan...))
+			c.Assert(output[i].Executes[j].Vars, DeepEquals, exec.Vars)
+			c.Assert(output[i].Executes[j].LastPlanUseCache, Equals, lastPlanUseCache.(string))
+			res.Check(testkit.Rows(output[i].Executes[j].Result...))
+		}
+	}
 }

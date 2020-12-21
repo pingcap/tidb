@@ -31,7 +31,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {
@@ -64,7 +64,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {
@@ -119,7 +119,7 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
 					return err
 				}
@@ -156,6 +156,78 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowStatsTopN() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	dbs := do.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
+					return err
+				}
+			} else {
+				for _, def := range pi.Definitions {
+					if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string, statsTbl *statistics.Table) error {
+	if statsTbl.Pseudo {
+		return nil
+	}
+	colNameToType := make(map[string]byte, len(statsTbl.Columns))
+	for _, col := range statsTbl.Columns {
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.Tp})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+	}
+	for _, idx := range statsTbl.Indices {
+		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
+		for i := 0; i < len(idx.Info.Columns); i++ {
+			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
+		}
+		err := e.topNToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), 1, idx.TopN, idxColumnTypes)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, numOfCols int, isIndex int, topN *statistics.TopN, columnTypes []byte) error {
+	if topN == nil {
+		return nil
+	}
+	var tmpDatum types.Datum
+	for i := 0; i < len(topN.TopN); i++ {
+		tmpDatum.SetBytes(topN.TopN[i].Encoded)
+		valStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{
+			dbName,
+			tblName,
+			partitionName,
+			colName,
+			isIndex,
+			valStr,
+			topN.TopN[i].Count,
+		})
 	}
 	return nil
 }
@@ -199,7 +271,7 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {

@@ -28,6 +28,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -112,6 +113,7 @@ const (
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
+	memory.BaseOOMAction
 	mutex sync.Mutex // For synchronization.
 }
 
@@ -142,8 +144,10 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	panic(msg)
 }
 
-// SetFallback sets a fallback action.
-func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+// GetPriority get the priority of the Action
+func (a *globalPanicOnExceed) GetPriority() int64 {
+	return memory.DefPanicPriority
+}
 
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
@@ -201,6 +205,12 @@ func retTypes(e Executor) []*types.FieldType {
 // Next fills multiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
+}
+
+func (e *baseExecutor) updateDeltaForTableID(id int64) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
+	txnCtx.UpdateDeltaForTable(id, id, 0, 0, map[int64]int64{}, udpp)
 }
 
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
@@ -943,6 +953,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
+	if len(e.tblID2Handle) > 0 {
+		for id := range e.tblID2Handle {
+			e.updateDeltaForTableID(id)
+		}
+	}
+	if len(e.partitionedTable) > 0 {
+		for _, p := range e.partitionedTable {
+			pid := p.Meta().ID
+			e.updateDeltaForTableID(pid)
+		}
+	}
+
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
@@ -995,6 +1017,9 @@ type LimitExec struct {
 	meetFirstBatch bool
 
 	childResult *chunk.Chunk
+
+	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	columnIdxsUsedByChild []int
 }
 
 // Next implements the Executor Next interface.
@@ -1025,26 +1050,42 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if begin == end {
 				break
 			}
-			req.Append(e.childResult, int(begin), int(end))
+			if e.columnIdxsUsedByChild != nil {
+				req.Append(e.childResult.Prune(e.columnIdxsUsedByChild), int(begin), int(end))
+			} else {
+				req.Append(e.childResult, int(begin), int(end))
+			}
 			return nil
 		}
 		e.cursor += batchSize
 	}
-	e.adjustRequiredRows(req)
-	err := Next(ctx, e.children[0], req)
+	e.childResult.Reset()
+	e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
+	e.adjustRequiredRows(e.childResult)
+	err := Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
 	}
-	batchSize := uint64(req.NumRows())
+	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
-		req.TruncateTo(int(e.end - e.cursor))
+		e.childResult.TruncateTo(int(e.end - e.cursor))
 		batchSize = e.end - e.cursor
 	}
 	e.cursor += batchSize
+
+	if e.columnIdxsUsedByChild != nil {
+		for i, childIdx := range e.columnIdxsUsedByChild {
+			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
+				return err
+			}
+		}
+	} else {
+		req.SwapColumns(e.childResult)
+	}
 	return nil
 }
 
@@ -1399,6 +1440,12 @@ type UnionExec struct {
 	results     []*chunk.Chunk
 	wg          sync.WaitGroup
 	initialized bool
+	mu          struct {
+		*sync.Mutex
+		maxOpenedChildID int
+	}
+
+	childInFlightForTest int32
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1418,12 +1465,11 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
+	e.mu.Mutex = &sync.Mutex{}
+	e.mu.maxOpenedChildID = -1
 	return nil
 }
 
@@ -1469,6 +1515,19 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
+		e.mu.Lock()
+		if childID > e.mu.maxOpenedChildID {
+			e.mu.maxOpenedChildID = childID
+		}
+		e.mu.Unlock()
+		if err := e.children[childID].Open(ctx); err != nil {
+			result.err = err
+			e.stopFetchData.Store(true)
+			e.resultPool <- result
+		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, 1)
+		})
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1483,12 +1542,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
+			failpoint.Inject("issue21441", func() {
+				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
+					panic("the count of child in flight is larger than e.concurrency unexpectedly")
+				}
+			})
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, -1)
+		})
 	}
 }
 
@@ -1527,7 +1594,15 @@ func (e *UnionExec) Close() error {
 		for range e.childIDChan {
 		}
 	}
-	return e.baseExecutor.Close()
+	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
+	// promised to exit when reaching here (e.childIDChan been closed).
+	var firstErr error
+	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
+		if err := e.children[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
@@ -1586,7 +1661,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
@@ -1598,10 +1673,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
+		sc.InCreateOrAlterStmt = true
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
@@ -1673,6 +1749,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
+	vars.ClearStmtVars()
+	vars.PrevFoundInBinding = vars.FoundInBinding
+	vars.FoundInBinding = false
 	return
 }
 
@@ -1684,7 +1763,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-	sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 }
 

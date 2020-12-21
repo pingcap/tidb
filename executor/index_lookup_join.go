@@ -87,6 +87,7 @@ type IndexLookUpJoin struct {
 type outerCtx struct {
 	rowTypes []*types.FieldType
 	keyCols  []int
+	hashCols []int
 	filter   expression.CNFExprs
 }
 
@@ -94,6 +95,7 @@ type innerCtx struct {
 	readerBuilder *dataReaderBuilder
 	rowTypes      []*types.FieldType
 	keyCols       []int
+	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool
 }
@@ -148,29 +150,7 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	// Be careful, very dirty hack in this line!!!
-	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
-	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
-	// result is drained.
-	// Lazy evaluation means the saved session context may change during executor's
-	// building and its running.
-	// A specific sequence for example:
-	//
-	// e := buildExecutor()   // txn at build time
-	// recordSet := runStmt(e)
-	// session.CommitTxn()    // txn closed
-	// recordSet.Next()
-	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
-	//
-	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
-	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached snapshot ts to construct DAG.
-	_, err := e.innerCtx.readerBuilder.getSnapshotTS()
-	if err != nil {
-		return err
-	}
-
-	err = e.children[0].Open(ctx)
+	err := e.children[0].Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -533,17 +513,17 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-			dLookUpKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
+			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				return nil, err
 			}
-			if dLookUpKey == nil {
+			if dHashKey == nil {
 				// Append null to make looUpKeys the same length as outer Result.
 				task.encodedLookUpKeys[chkIdx].AppendNull(0)
 				continue
 			}
 			keyBuf = keyBuf[:0]
-			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
+			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
 			if err != nil {
 				return nil, err
 			}
@@ -570,45 +550,49 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
-		return nil, nil
+		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
-	for i, keyCol := range iw.outerCtx.keyCols {
-		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
+	dHashKey := make([]types.Datum, 0, len(iw.hashCols))
+	for i, hashCol := range iw.outerCtx.hashCols {
+		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.rowTypes[hashCol])
 		// Join-on-condition can be promised to be equal-condition in
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			return nil, nil
+			return nil, nil, nil
 		}
-		innerColType := iw.rowTypes[iw.keyCols[i]]
+		innerColType := iw.rowTypes[iw.hashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) {
-				return nil, nil
+				return nil, nil, nil
 			}
 			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
-				return nil, nil
+				return nil, nil, nil
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if cmp != 0 {
 			// If the converted outerValue is not equal to the origin outerValue, we don't need to lookup it.
-			return nil, nil
+			return nil, nil, nil
 		}
-		dLookupKey = append(dLookupKey, innerValue)
+		if i < keyLen {
+			dLookupKey = append(dLookupKey, innerValue)
+		}
+		dHashKey = append(dHashKey, innerValue)
 	}
-	return dLookupKey, nil
+	return dLookupKey, dHashKey, nil
 }
 
 func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {
@@ -655,10 +639,13 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		}()
 	}
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	if innerExec != nil {
+		defer terror.Call(innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(innerExec.Close)
+
 	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
@@ -700,7 +687,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 			}
 
 			keyBuf = keyBuf[:0]
-			for _, keyCol := range iw.keyCols {
+			for _, keyCol := range iw.hashCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
 				var err error
 				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, d)
@@ -717,7 +704,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-	for _, ordinal := range iw.keyCols {
+	for _, ordinal := range iw.hashCols {
 		if row.IsNull(ordinal) {
 			return true
 		}
@@ -755,7 +742,7 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if e.innerWorker.totalTime > 0 {
 		buf.WriteString("inner:{total:")
-		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.totalTime)))
 		buf.WriteString(", concurrency:")
 		if e.concurrency > 0 {
 			buf.WriteString(strconv.Itoa(e.concurrency))
@@ -765,20 +752,20 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(", task:")
 		buf.WriteString(strconv.FormatInt(e.innerWorker.task, 10))
 		buf.WriteString(", construct:")
-		buf.WriteString(time.Duration(e.innerWorker.construct).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.construct)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.fetch)))
 		buf.WriteString(", build:")
-		buf.WriteString(time.Duration(e.innerWorker.build).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.build)))
 		if e.innerWorker.join > 0 {
 			buf.WriteString(", join:")
-			buf.WriteString(time.Duration(e.innerWorker.join).String())
+			buf.WriteString(execdetails.FormatDuration(time.Duration(e.innerWorker.join)))
 		}
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
 		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
 	}
 	return buf.String()
 }

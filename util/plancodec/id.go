@@ -54,6 +54,10 @@ const (
 	TypeHashJoin = "HashJoin"
 	// TypeBroadcastJoin is the type of broad cast join.
 	TypeBroadcastJoin = "BroadcastJoin"
+	// TypeExchangeSender is the type of mpp exchanger sender.
+	TypeExchangeSender = "ExchangeSender"
+	// TypeExchangeReceiver is the type of mpp exchanger receiver.
+	TypeExchangeReceiver = "ExchangeReceiver"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
@@ -88,8 +92,8 @@ const (
 	TypeWindow = "Window"
 	// TypeShuffle is the type of Shuffle.
 	TypeShuffle = "Shuffle"
-	// TypeShuffleDataSourceStub is the type of Shuffle.
-	TypeShuffleDataSourceStub = "ShuffleDataSourceStub"
+	// TypeShuffleReceiver is the type of Shuffle.
+	TypeShuffleReceiver = "ShuffleReceiver"
 	// TypeTiKVSingleGather is the type of TiKVSingleGather.
 	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader
@@ -104,6 +108,10 @@ const (
 	TypeClusterMemTableReader = "ClusterMemTableReader"
 	// TypeDataSource is the type of DataSource.
 	TypeDataSource = "DataSource"
+	// TypeLoadData is the type of LoadData.
+	TypeLoadData = "LoadData"
+	// TypeTableSample is the type of TableSample.
+	TypeTableSample = "TableSample"
 )
 
 // plan id.
@@ -149,6 +157,8 @@ const (
 	typeBatchPointGet         int = 38
 	typeClusterMemTableReader int = 39
 	typeDataSourceID          int = 40
+	typeLoadDataID            int = 41
+	typeTableSampleID         int = 42
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -234,6 +244,10 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeClusterMemTableReader
 	case TypeDataSource:
 		return typeDataSourceID
+	case TypeLoadData:
+		return typeLoadDataID
+	case TypeTableSample:
+		return typeTableSampleID
 	}
 	// Should never reach here.
 	return 0
@@ -320,6 +334,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeBatchPointGet
 	case typeClusterMemTableReader:
 		return TypeClusterMemTableReader
+	case typeLoadDataID:
+		return TypeLoadData
 	}
 
 	// Should never reach here.

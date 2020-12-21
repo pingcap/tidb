@@ -134,3 +134,27 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 		c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
 	}
 }
+
+func (s *testSuite9) TestIssue20400(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table s(a int, index(a))")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select /*+ hash_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
+	tk.MustQuery("select /*+ inl_merge_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
+}
+
+func (s *testSuite9) TestIssue20549(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE `t1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `t2id` bigint(20) DEFAULT NULL, PRIMARY KEY (`id`), KEY `t2id` (`t2id`));")
+	tk.MustExec("INSERT INTO `t1` VALUES (1,NULL);")
+	tk.MustExec("CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`));")
+	tk.MustQuery("SELECT /*+ INL_MERGE_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;").Check(
+		testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;\n").Check(
+		testkit.Rows("1"))
+}

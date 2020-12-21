@@ -126,7 +126,10 @@
       "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
       "select * from (select *, NULL as xxx from t) t order by xxx",
       "select * from t use index(f) where f = 1 and a = 1",
-      "select * from t2 use index(b) where b = 1 and a = 1"
+      "select * from t2 use index(b) where b = 1 and a = 1",
+      // Test inline project for Limit
+      "select f from t where a > 1",
+      "select f from t where a > 1 limit 10"
     ]
   },
   {
@@ -247,8 +250,8 @@
       // Test join hint for delete and update
       "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
       "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
-      "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
-      "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.a=1, t2.a=1 where t1.a=t2.a",
+      "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+      "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
       // Test complex delete.
       "delete from t where b < 1 order by d limit 1",
       // Test simple delete.
@@ -558,7 +561,9 @@
       "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
 
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
     ]
   },
   {
@@ -581,7 +586,8 @@
     "name": "TestPushdownDistinctEnableAggPushDownDisable",
     "cases": [
       "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
     ]
   },
   {
@@ -650,6 +656,14 @@
       "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
       "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
       "select * from test.tt where a=1 and b=1"
+    ]
+  },
+  {
+    "name": "TestEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+      "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
     ]
   }
 ]

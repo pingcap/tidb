@@ -53,7 +53,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TIDBMemQuotaTopn, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
-		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
@@ -136,12 +136,14 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		ProcessTime:   time.Second * time.Duration(2),
-		WaitTime:      time.Minute,
-		BackoffTime:   time.Millisecond,
-		RequestCount:  2,
-		TotalKeys:     10000,
-		ProcessedKeys: 20001,
+		ProcessTime:  time.Second * time.Duration(2),
+		WaitTime:     time.Minute,
+		BackoffTime:  time.Millisecond,
+		RequestCount: 2,
+		CopDetail: &execdetails.CopDetails{
+			ProcessedKeys: 20001,
+			TotalKeys:     10000,
+		},
 	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
@@ -185,7 +187,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Optimize_time: 0.00000001
 # Wait_TS: 0.000000003
-# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
+# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
@@ -201,6 +203,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
+# Plan_from_binding: true
 # Has_more_results: true
 # KV_total: 10
 # PD_total: 11
@@ -226,6 +229,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		DiskMax:           diskMax,
 		Prepared:          true,
 		PlanFromCache:     true,
+		PlanFromBinding:   true,
 		HasMoreResults:    true,
 		KVTotal:           10 * time.Second,
 		PDTotal:           11 * time.Second,

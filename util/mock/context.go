@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -54,6 +55,14 @@ type wrapTxn struct {
 
 func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
+}
+
+// GetUnionStore implements GetUnionStore
+func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
@@ -112,6 +121,14 @@ func (c *Context) GetClient() kv.Client {
 		return nil
 	}
 	return c.Store.GetClient()
+}
+
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
+func (c *Context) GetMPPClient() kv.MPPClient {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetMPPClient()
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
@@ -174,7 +191,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(startTS)
+		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -211,6 +228,9 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
+// StoreIndexUsage strores the index usage information.
+func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
 
@@ -221,10 +241,6 @@ func (c *Context) StmtRollback() {
 // StmtGetMutation implements the sessionctx.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.

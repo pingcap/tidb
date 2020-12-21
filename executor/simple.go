@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -40,9 +40,12 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -60,8 +63,12 @@ type SimpleExec struct {
 	baseExecutor
 
 	Statement ast.StmtNode
-	done      bool
-	is        infoschema.InfoSchema
+	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
+	//   and executing in coprocessor.
+	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
+	IsFromRemote bool
+	done         bool
+	is           infoschema.InfoSchema
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -127,7 +134,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(x)
 	case *ast.KillStmt:
-		err = e.executeKillStmt(x)
+		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -1073,19 +1080,101 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	return err
 }
 
-func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
-	conf := config.GetGlobalConfig()
-	if s.TiDBExtension || conf.CompatibleKillQuery {
-		sm := e.ctx.GetSessionManager()
-		if sm == nil {
-			return nil
+func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	if !config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		conf := config.GetGlobalConfig()
+		if s.TiDBExtension || conf.CompatibleKillQuery {
+			sm := e.ctx.GetSessionManager()
+			if sm == nil {
+				return nil
+			}
+			sm.Kill(s.ConnectionID, s.Query)
+		} else {
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		sm.Kill(s.ConnectionID, s.Query)
-	} else {
-		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
 	}
+
+	sm := e.ctx.GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+	if e.IsFromRemote {
+		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
+			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
+		sm.Kill(s.ConnectionID, s.Query)
+		return nil
+	}
+
+	connID, isTruncated, err := util.ParseGlobalConnID(s.ConnectionID)
+	if err != nil {
+		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+		return nil
+	}
+	if isTruncated {
+		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
+		logutil.BgLogger().Warn(message, zap.Uint64("connID", s.ConnectionID))
+		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
+		//   as the KILL is sent by a new connection.
+		err := errors.New(message)
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil
+	}
+
+	if connID.ServerID != sm.ServerID() {
+		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
+			err1 := errors.New("KILL remote connection failed: " + err.Error())
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+		}
+	} else {
+		sm.Kill(s.ConnectionID, s.Query)
+	}
+
 	return nil
+}
+
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
+	if connID.ServerID == 0 {
+		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
+	}
+
+	killExec := &tipb.Executor{
+		Tp:   tipb.ExecType_TypeKill,
+		Kill: &tipb.Kill{ConnID: connID.ID(), Query: query},
+	}
+
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{killExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetSessionVars()).
+		SetStoreType(kv.TiDB).
+		SetTiDBServerID(connID.ServerID).
+		Build()
+	if err != nil {
+		return err
+	}
+
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false)
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
+		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
+	return err
 }
 
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
@@ -1187,9 +1276,12 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 }
 
 func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
 	// Not support Cardinality and Dependency statistics type for now.
 	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Cardinality and Dependency statistics types are not supported")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Cardinality and Dependency statistics types are not supported")
 	}
 	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
@@ -1204,7 +1296,7 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 	for _, colName := range s.Columns {
 		col := table.FindCol(t.VisibleCols(), colName.Name.L)
 		if col == nil {
-			return terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits]).GenWithStack("column does not exist: %s", colName.Name.L)
+			return dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits).GenWithStack("column does not exist: %s", colName.Name.L)
 		}
 		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			warn := errors.New("No need to create correlation statistics on the integer primary key column")
@@ -1214,10 +1306,10 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
 	}
 	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
 	}
 	// TODO: check whether covering index exists for cardinality / dependency types.
 
@@ -1227,6 +1319,9 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 }
 
 func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
 	db := e.ctx.GetSessionVars().CurrentDB
 	if db == "" {
 		return core.ErrNoDB
@@ -1238,7 +1333,10 @@ func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+	}
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

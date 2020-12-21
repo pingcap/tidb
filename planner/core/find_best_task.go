@@ -98,38 +98,38 @@ var invalidTask = &rootTask{cst: math.MaxFloat64}
 // GetPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
 func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
-	propItems := make([]property.Item, 0, len(items))
+	propItems := make([]property.SortItem, 0, len(items))
 	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
 		}
-		propItems = append(propItems, property.Item{Col: col, Desc: item.Desc})
+		propItems = append(propItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
-	return &property.PhysicalProperty{Items: propItems}, true
+	return &property.PhysicalProperty{SortItems: propItems}, true
 }
 
 // GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
 // problem, we only consider the case that all expression are columns or some special scalar functions.
 func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.PhysicalProperty, bool, bool) {
-	propItems := make([]property.Item, 0, len(items))
+	propItems := make([]property.SortItem, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
 		switch expr := item.Expr.(type) {
 		case *expression.Column:
-			propItems = append(propItems, property.Item{Col: expr, Desc: item.Desc})
+			propItems = append(propItems, property.SortItem{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
 			col, desc := expr.GetSingleColumn(item.Desc)
 			if col == nil {
 				return nil, false, false
 			}
-			propItems = append(propItems, property.Item{Col: col, Desc: desc})
+			propItems = append(propItems, property.SortItem{Col: col, Desc: desc})
 			onlyColumn = false
 		default:
 			return nil, false, false
 		}
 	}
-	return &property.PhysicalProperty{Items: propItems}, true, onlyColumn
+	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
@@ -243,7 +243,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if prop.IsFlashOnlyProp() {
+		if prop.IsFlashProp() {
 			if _, ok := curTask.(*copTask); !ok {
 				continue
 			}
@@ -257,7 +257,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
-			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
 		}
 
 		cntPlan += curCntPlan
@@ -318,7 +318,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	if newProp.Enforced {
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with an enforced sort.
-		newProp.Items = []property.Item{}
+		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
@@ -333,7 +333,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 			// work anyway, we give up `plansNeedEnforce` for efficiency,
 			plansNeedEnforce = nil
 		}
-		newProp.Items = prop.Items
+		newProp.SortItems = prop.SortItems
 		newProp.ExpectedCnt = prop.ExpectedCnt
 	}
 
@@ -468,10 +468,10 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 	candidate := &candidatePath{path: path}
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
-		if len(prop.Items) == 1 && pkCol != nil {
-			candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+		if len(prop.SortItems) == 1 && pkCol != nil {
+			candidate.isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
 			if path.StoreType == kv.TiFlash {
-				candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+				candidate.isMatchProp = candidate.isMatchProp && !prop.SortItems[0].Desc
 			}
 		}
 	} else {
@@ -480,8 +480,8 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 		// it needs not to keep order for index scan.
 		if !prop.IsEmpty() && all {
 			for i, col := range path.IdxCols {
-				if col.Equal(nil, prop.Items[0].Col) {
-					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+				if col.Equal(nil, prop.SortItems[0].Col) {
+					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 					break
 				} else if i >= path.EqCondCount {
 					break
@@ -501,8 +501,8 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
 		for i, col := range path.IdxCols {
-			if col.Equal(nil, prop.Items[0].Col) {
-				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+			if col.Equal(nil, prop.SortItems[0].Col) {
+				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
 			} else if i >= path.EqCondCount {
 				break
@@ -545,7 +545,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			} else {
-				if !path.IsTiFlashGlobalRead && !prop.IsFlashOnlyProp() {
+				if !path.IsTiFlashGlobalRead && !prop.IsFlashProp() {
 					currentCandidate = ds.getTableCandidate(path, prop)
 				}
 			}
@@ -583,6 +583,19 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			candidates = append(candidates, currentCandidate)
 		}
 	}
+
+	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
+		// remove the table/index full scan path
+		for i, c := range candidates {
+			for _, ran := range c.path.Ranges {
+				if ran.IsFullRange() {
+					candidates = append(candidates[:i], candidates[i+1:]...)
+					return candidates
+				}
+			}
+		}
+	}
+
 	return candidates
 }
 
@@ -605,7 +618,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	var cnt int64
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldPropCols := prop.Items
+	oldPropCols := prop.SortItems
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -620,17 +633,23 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return
 		}
 		// Next, get the bestTask with enforced prop
-		prop.Items = []property.Item{}
+		prop.SortItems = []property.SortItem{}
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
 		if prop.Enforced {
-			prop.Items = oldPropCols
+			prop.SortItems = oldPropCols
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
+		if ds.SampleInfo != nil && !t.invalid() {
+			if _, ok := t.plan().(*PhysicalTableSample); !ok {
+				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			}
+		}
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -723,7 +742,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			if ds.preferStoreType&preferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
-			tblTask, err := ds.convertToTableScan(prop, candidate)
+			var tblTask task
+			if ds.SampleInfo != nil {
+				tblTask, err = ds.convertToSampleTable(prop, candidate)
+			} else {
+				tblTask, err = ds.convertToTableScan(prop, candidate)
+			}
 			if err != nil {
 				return nil, 0, err
 			}
@@ -1157,7 +1181,7 @@ func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression
 	return conds, filterConds
 }
 
-func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.Item) bool {
+func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
 	if len(idxCols) < len(propItems) {
 		return false
 	}
@@ -1182,9 +1206,9 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	return indexConditions, tableConditions
 }
 
-// getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
+// getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
-func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
@@ -1202,13 +1226,13 @@ func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics
 		if !ok {
 			continue
 		}
-		curCorr := math.Abs(hist.Correlation)
-		if corrCol == nil || corr < curCorr {
+		curCorr := hist.Correlation
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && corr >= threshold {
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -1273,28 +1297,31 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 	return convertedRanges, count, false
 }
 
-// crossEstimateRowCount estimates row count of table scan using histogram of another column which is in TableFilters
+// crossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
 // and has high order correlation with handle column. For example, if the query is like:
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func (ds *DataSource) crossEstimateTableRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if ds.statisticTable.Pseudo || len(path.TableFilters) == 0 {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrColFromExprs(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
-	// If table scan is not full range scan, we cannot use histogram of other columns for estimation, because
+	col, corr := getMostCorrCol4Handle(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	return ds.crossEstimateRowCount(path, path.TableFilters, col, corr, expectedCnt, desc)
+}
+
+// crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
+func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expression.Expression, col *expression.Column, corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colInfoID := col.ID
-	colID := col.UniqueID
-	colHist := ds.statisticTable.Columns[colInfoID]
-	if colHist.Correlation < 0 {
+	colInfoID, colID := col.ID, col.UniqueID
+	if corr < 0 {
 		desc = !desc
 	}
-	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, path.TableFilters, col)
+	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, conds, col)
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
@@ -1330,6 +1357,62 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
+}
+
+// crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
+// and has high order correlation with the first index column. For example, if the query is like:
+// `select * from tbl where a = 1 order by b limit 1`
+// if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
+// `1 + row_count(a < 1 or a is null)`
+func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
+	if ds.statisticTable.Pseudo || filtersLen == 0 {
+		return 0, false, 0
+	}
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	filters := make([]expression.Expression, 0, filtersLen)
+	filters = append(filters, path.TableFilters...)
+	filters = append(filters, path.IndexFilters...)
+	return ds.crossEstimateRowCount(path, filters, col, corr, expectedCnt, desc)
+}
+
+// getMostCorrCol4Index checks if column in the condition is correlated enough with the first index column. If the condition
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
+func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
+		return nil, 0
+	}
+	var cols []*expression.Column
+	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
+	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	if len(cols) == 0 {
+		return nil, 0
+	}
+	colSet := set.NewInt64Set()
+	var corr float64
+	var corrCol *expression.Column
+	for _, col := range cols {
+		if colSet.Exist(col.UniqueID) {
+			continue
+		}
+		colSet.Insert(col.UniqueID)
+		curCorr := float64(0)
+		for _, item := range histColl.ExtendedStats.Stats {
+			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
+				(col.ID == item.ColIDs[1] && path.FullIdxCols[0].ID == item.ColIDs[0]) {
+				curCorr = item.ScalarVals
+				break
+			}
+		}
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
+			corrCol = col
+			corr = curCorr
+		}
+	}
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
@@ -1401,6 +1484,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
+	ts.PartitionInfo = copTask.partitionInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -1410,7 +1494,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
-	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
+	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
@@ -1419,6 +1503,24 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if prop.TaskTp == property.CopDoubleReadTaskType {
+		return invalidTask, nil
+	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	p := PhysicalTableSample{
+		TableSampleInfo: ds.SampleInfo,
+		TableInfo:       ds.table,
+		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
+	}.Init(ds.ctx, ds.SelectBlockOffset())
+	p.schema = ds.schema
+	return &rootTask{
+		p: p,
+	}, nil
 }
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
@@ -1517,7 +1619,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
-		batchPointGetPlan.Desc = prop.Items[0].Desc
+		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
@@ -1545,7 +1647,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		}
 		if !prop.IsEmpty() {
 			batchPointGetPlan.KeepOrder = true
-			batchPointGetPlan.Desc = prop.Items[0].Desc
+			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
 		if candidate.isSingleScan {
 			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
@@ -1608,7 +1710,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.stats.RowCount {
-		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+		count, ok, corr := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1618,8 +1720,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
 			// we do not add this check temporarily.
 			rowCount = count
-		} else if corr < 1 {
-			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
 			selectivity := ds.stats.RowCount / rowCount
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
 		}
@@ -1644,7 +1746,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		cost += rowCount * sessVars.NetworkFactor * rowSize
 	}
 	if isMatchProp {
-		if prop.Items[0].Desc {
+		if prop.SortItems[0].Desc {
 			ts.Desc = true
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
@@ -1681,19 +1783,22 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.CountAfterAccess
-		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+		if ok {
+			rowCount = count
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+			selectivity := ds.stats.RowCount / rowCount
+			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds, true)
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
-		if prop.Items[0].Desc {
+		if prop.SortItems[0].Desc {
 			is.Desc = true
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}

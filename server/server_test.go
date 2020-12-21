@@ -14,6 +14,7 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -293,8 +295,7 @@ func (cli *testServerClient) runTestPrepareResultFieldType(t *C) {
 		if err != nil {
 			dbt.Fatal(err)
 		}
-		switch {
-		case result != param:
+		if result != param {
 			dbt.Fatal("Unexpected result value")
 		}
 	})
@@ -437,6 +438,298 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *
 		}
 	})
 }
+func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
+	path := "/tmp/load_data_test.csv"
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	_, err = fp.WriteString(
+		"1	1\n" +
+			"2	2\n" +
+			"3	3\n" +
+			"4	4\n" +
+			"5	5\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_slow_query", func(dbt *DBTest) {
+		dbt.mustExec("create table t_slow (a int key, b int)")
+		defer func() {
+			dbt.mustExec("set tidb_slow_log_threshold=300;")
+			dbt.mustExec("set @@global.tidb_enable_stmt_summary=0")
+		}()
+		dbt.mustExec("set tidb_slow_log_threshold=0;")
+		dbt.mustExec("set @@global.tidb_enable_stmt_summary=1")
+		query := fmt.Sprintf("load data local infile %q into table t_slow", path)
+		dbt.mustExec(query)
+		dbt.mustExec("insert ignore into t_slow values (1,1);")
+
+		checkPlan := func(rows *sql.Rows, expectPlan string) {
+			dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+			var plan sql.NullString
+			err = rows.Scan(&plan)
+			dbt.Check(err, IsNil)
+			planStr := strings.ReplaceAll(plan.String, "\t", " ")
+			planStr = strings.ReplaceAll(planStr, "\n", " ")
+			c.Assert(planStr, Matches, expectPlan)
+		}
+
+		// Test for record slow log for load data statement.
+		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
+		checkPlan(rows, expectedPlan)
+		// Test for record statements_summary for load data statement.
+		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		checkPlan(rows, expectedPlan)
+		// Test log normal statement after executing load date.
+		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1"))
+		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
+		checkPlan(rows, expectedPlan)
+	})
+}
+
+func (cli *testServerClient) prepareLoadDataFile(c *C, path string, rows ...string) {
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+	}()
+	for _, row := range rows {
+		fields := strings.Split(row, " ")
+		_, err = fp.WriteString(strings.Join(fields, "\t"))
+		_, err = fp.WriteString("\n")
+	}
+	c.Assert(err, IsNil)
+}
+
+func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
+	path := "/tmp/load_data_list_partition.csv"
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec(`create table t (id int, name varchar(10),
+		unique index idx (id)) partition by list (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+		// Test load data into 1 partition.
+		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.mustQuery("select * from t partition(p1) order by id")
+		cli.checkRows(c, rows, "1 a", "2 b")
+		// Test load data into multi-partitions.
+		dbt.mustExec("delete from t")
+		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		// Test load data meet duplicate error.
+		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows,
+			"Warning 1062 Duplicate entry '1' for key 'idx'",
+			"Warning 1062 Duplicate entry '2' for key 'idx'")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		// Test load data meet no partition error.
+		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
+	path := "/tmp/load_data_list_partition.csv"
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
+		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+		// Test load data into 1 partition.
+		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows := dbt.mustQuery("select id,name from t partition(p1) order by id")
+		cli.checkRows(c, rows, "1 a", "2 b")
+		// Test load data into multi-partitions.
+		dbt.mustExec("delete from t")
+		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows = dbt.mustQuery("select id,name from t order by id")
+		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		// Test load data meet duplicate error.
+		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows,
+			"Warning 1062 Duplicate entry '1-2' for key 'idx'",
+			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
+		rows = dbt.mustQuery("select id,name from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		// Test load data meet no partition error.
+		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		rows = dbt.mustQuery("select id,name from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
+	path := "/tmp/load_data_list_partition.csv"
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec(`create table t (id int, name varchar(10),
+		unique index idx (id)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+		// Test load data into 1 partition.
+		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.mustQuery("select * from t partition(p1) order by id")
+		cli.checkRows(c, rows, "1 a", "2 b")
+		// Test load data into multi-partitions.
+		dbt.mustExec("delete from t")
+		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		// Test load data meet duplicate error.
+		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows,
+			"Warning 1062 Duplicate entry '1' for key 'idx'",
+			"Warning 1062 Duplicate entry '2' for key 'idx'")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		// Test load data meet no partition error.
+		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
+	path := "/tmp/load_data_list_partition.csv"
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
+    	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
+    	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
+    	partition p_north values in (('n', 9),('n',10),('n',11),('n',12)),
+    	partition p_south values in (('s',13),('s',14),('s',15),('s',16))
+	);`)
+		// Test load data into 1 partition.
+		cli.prepareLoadDataFile(c, path, "w 1 1", "w 2 2")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.mustQuery("select * from t partition(p_west) order by id")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2")
+		// Test load data into multi-partitions.
+		dbt.mustExec("delete from t")
+		cli.prepareLoadDataFile(c, path, "w 1 1", "e 5 5", "n 9 9")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "w 1 1", "e 5 5", "n 9 9")
+		// Test load data meet duplicate error.
+		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		// Test load data meet no partition error.
+		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
+		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		rows = dbt.mustQuery("select * from t order by id")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+	})
+}
+
+func (cli *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...string) {
+	buf := bytes.NewBuffer(nil)
+	result := make([]string, 0, 2)
+	for rows.Next() {
+		cols, err := rows.Columns()
+		c.Assert(err, IsNil)
+		rawResult := make([][]byte, len(cols))
+		dest := make([]interface{}, len(cols))
+		for i := range rawResult {
+			dest[i] = &rawResult[i]
+		}
+
+		err = rows.Scan(dest...)
+		c.Assert(err, IsNil)
+		buf.Reset()
+		for i, raw := range rawResult {
+			if i > 0 {
+				buf.WriteString(" ")
+			}
+			if raw == nil {
+				buf.WriteString("<nil>")
+			} else {
+				buf.WriteString(string(raw))
+			}
+		}
+		result = append(result, buf.String())
+	}
+	c.Assert(strings.Join(result, "\n"), Equals, strings.Join(expectedRows, "\n"))
+}
 
 func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	// create a file and write data.
@@ -470,6 +763,17 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.mustExec("create view v1 as select 1")
+		dbt.mustExec("create sequence s1")
+
+		// can't insert into views (in TiDB) or sequences. issue #20880
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
 		lastID, err1 := rs.LastInsertId()
@@ -1000,6 +1304,28 @@ func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	})
 }
 
+func (cli *testServerClient) runTestExplainForConn(c *C) {
+	cli.runTestsOnNewDB(c, nil, "explain_for_conn", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists t")
+		dbt.mustExec("create table t (a int key, b int)")
+		dbt.mustExec("insert t values (1, 1)")
+		rows := dbt.mustQuery("select connection_id();")
+		c.Assert(rows.Next(), IsTrue)
+		var connID int64
+		err := rows.Scan(&connID)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		dbt.mustQuery("select * from t where a=1")
+		rows = dbt.mustQuery("explain for connection " + strconv.Itoa(int(connID)))
+		c.Assert(rows.Next(), IsTrue)
+		row := make([]string, 9)
+		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7], &row[8])
+		c.Assert(err, IsNil)
+		c.Assert(strings.Join(row, ","), Matches, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*")
+		c.Assert(rows.Close(), IsNil)
+	})
+}
+
 func (cli *testServerClient) runTestErrorCode(c *C) {
 	cli.runTestsOnNewDB(c, nil, "ErrorCode", func(dbt *DBTest) {
 		dbt.mustExec("create table test (c int PRIMARY KEY);")
@@ -1212,8 +1538,22 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
+// The golang sql driver (and most drivers) should have multi-statement
+// disabled by default for security reasons. Lets ensure that the behavior
+// is correct.
+
+func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
+	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+	})
+}
+
 func (cli *testServerClient) runTestMultiStatements(c *C) {
-	cli.runTestsOnNewDB(c, nil, "MultiStatements", func(dbt *DBTest) {
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Params = map[string]string{"multiStatements": "true"}
+	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 
@@ -1337,7 +1677,7 @@ func (cli *testServerClient) getMetrics(t *C) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r, _ := regexp.Compile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r := regexp.MustCompile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
