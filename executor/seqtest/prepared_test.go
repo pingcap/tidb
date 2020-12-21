@@ -736,7 +736,7 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
 		tk.MustExec(`execute stmt2 using @b;`)
 
-		r = tk.MustQuery(`select * from t`)
+		r = tk.MustQuery(`select * from t2`)
 		r.Check(testkit.Rows("1", "11111"))
 
 		tk.MustExec("drop table if exists t3")
