@@ -312,10 +312,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
-	for i := 1; i < len(ds.possibleAccessPaths); i++ {
-		if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-			needConsiderIndexMerge = false
-			break
+	if len(ds.indexMergeHints) == 0 {
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+				needConsiderIndexMerge = false
+				break
+			}
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {

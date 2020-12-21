@@ -396,6 +396,9 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = snap.(InfoSchema)
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
+		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
+			return nil
+		}
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
