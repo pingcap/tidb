@@ -1338,10 +1338,10 @@ import (
 %precedence remove
 %precedence lowerThenOrder
 %precedence order
-%left join straightJoin inner cross left right full natural
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
+%left join straightJoin inner cross left right full natural
 %precedence lowerThanOn
 %precedence on using
 %right assignmentEq
@@ -8028,6 +8028,8 @@ TableFactor:
 	}
 |	'(' TableRefs ')'
 	{
+		j := $2.(*ast.Join)
+		j.ExplicitParens = true
 		$$ = $2
 	}
 
@@ -8140,7 +8142,7 @@ JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
 	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
+		$$ = ast.NewCrossJoin($1.(ast.ResultSetNode), $3.(ast.ResultSetNode))
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
