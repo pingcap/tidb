@@ -1003,11 +1003,11 @@
       },
       {
         "SQL": "select a from t where c_str not like 'abc'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([not(like(test.t.c_str, abc, 92))]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,\"abc\") (\"abc\",+inf]])->Projection"
       },
       {
         "SQL": "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,\"abc\") (\"abc\",\"abd\") (\"abd\",+inf]])->Projection"
       },
       {
         "SQL": "select a from t where c_str like '_abc'",
