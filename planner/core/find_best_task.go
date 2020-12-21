@@ -257,7 +257,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
-			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
 		}
 
 		cntPlan += curCntPlan
@@ -644,6 +644,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
+		if ds.SampleInfo != nil && !t.invalid() {
+			if _, ok := t.plan().(*PhysicalTableSample); !ok {
+				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			}
+		}
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -736,7 +742,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			if ds.preferStoreType&preferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
-			tblTask, err := ds.convertToTableScan(prop, candidate)
+			var tblTask task
+			if ds.SampleInfo != nil {
+				tblTask, err = ds.convertToSampleTable(prop, candidate)
+			} else {
+				tblTask, err = ds.convertToTableScan(prop, candidate)
+			}
 			if err != nil {
 				return nil, 0, err
 			}
@@ -1235,7 +1246,7 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(sc, false) {
+			if idxHist == nil || idxHist.IsInvalid(false) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})
@@ -1492,6 +1503,24 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	if prop.TaskTp == property.CopDoubleReadTaskType {
+		return invalidTask, nil
+	}
+	if !prop.IsEmpty() && !candidate.isMatchProp {
+		return invalidTask, nil
+	}
+	p := PhysicalTableSample{
+		TableSampleInfo: ds.SampleInfo,
+		TableInfo:       ds.table,
+		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
+	}.Init(ds.ctx, ds.SelectBlockOffset())
+	p.schema = ds.schema
+	return &rootTask{
+		p: p,
+	}, nil
 }
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {

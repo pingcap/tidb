@@ -857,6 +857,28 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestIndexMergeHint4CNF(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1266,19 +1288,20 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, unique key(a), unique key(b))")
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
-		"Projection_4 1.80 root  test.t.a, test.t.b",
+		"Projection_4 8000.00 root  test.t.a, test.t.b",
 		"└─IndexMerge_9 2.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.80 cop[tikv]  gt(plus(test.t.b, 2), 1)",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  1",
 		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection_4 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge_9 2.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(test.t.b)), 1)",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1286,9 +1309,9 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection_4 1.60 root  test.t.a, test.t.b",
 		"└─IndexMerge_10 2.00 root  ",
-		"  ├─Selection_6(Build) 0.80 cop[tikv]  eq(length(cast(test.t.a)), 1)",
+		"  ├─Selection_6(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_8(Build) 0.80 cop[tikv]  eq(length(cast(test.t.b)), 1)",
+		"  ├─Selection_8(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_7 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_9(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1834,7 +1857,33 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"2890 LE1300_r5",
 			"3150 LE1323_r5",
 			"3290 LE1327_r5"))
+}
 
+func (s *testIntegrationSuite) TestIssue20139(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7))")
+	tk.MustExec("insert into t values(3, 3), (5, 5)")
+	plan := tk.MustQuery("explain select * from t where c = 1 and id = c")
+	plan.Check(testkit.Rows(
+		"TableReader_7 0.01 root partition:p0 data:Selection_6",
+		"└─Selection_6 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) TestIssue14481(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
+	plan := tk.MustQuery("explain select * from t where a = 1 and a = 2")
+	plan.Check(testkit.Rows("TableDual_5 8000.00 root  rows:0"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
@@ -1862,6 +1911,17 @@ func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestQueryBlockTableAliasInHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	c.Assert(tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"), IsTrue)
+	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
+		"1 2",
+	))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+}
+
 func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1872,7 +1932,7 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
+func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1903,37 +1963,214 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustExec(`UPDATE t m, t n SET m.b = m.b + 10, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 12"))
 
-	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
-	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.a = m.a + 1, n.b = n.b + 10, q.b = q.b - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.b = m.b + 1, n.a = n.a + 10, q.b = q.b - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+	tk.MustGetErrMsg(`UPDATE t m, t n, t q SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'q'.`)
+	tk.MustGetErrMsg(`UPDATE t q, t n, t m SET m.b = m.b + 1, n.b = n.b + 10, q.a = q.a - 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'q' and 'n'.`)
+
+	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 12"))
 }
 
-func (s *testIntegrationSuite) TestPreferRangeScan(c *C) {
+func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test;")
-	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
-	tk.MustExec("insert into test(age) values(5);")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
-	tk.MustExec("analyze table test;")
-	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"TableReader_7 2048.00 root  data:Selection_6",
-		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
+		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
+		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+}
 
-	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
-	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
-		"IndexLookUp_7 2048.00 root  ",
-		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
+func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
+	// #20598
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
+	tk.MustExec("insert into tt(x) values (1)")
+	tk.MustExec("update tt set x=2, z = default")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
+
+	tk.MustGetErrMsg("update tt set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set x = 3, z = 13",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as s1, tt as s2 set s1.z = default, s2.z = 456",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+}
+
+func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// #12442
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+
+	tk.MustGetErrMsg("select distinct v1 from ttest order by v2",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v2' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by v1",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by 1+v1",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct v1+1 from ttest order by v1+2",
+		"[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.ttest.v1' which is not in SELECT list; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct count(v1) from ttest group by v2 order by sum(v1)",
+		"[planner:3066]Expression #1 of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with DISTINCT")
+	tk.MustGetErrMsg("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)",
+		"[planner:3066]Expression #1 of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with DISTINCT")
+
+	// Expressions in ORDER BY whole match some fields in DISTINCT.
+	tk.MustQuery("select distinct v1+1 from ttest order by v1+1").Check(testkit.Rows("2", "5"))
+	tk.MustQuery("select distinct count(v1) from ttest order by count(v1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest group by v2 order by count(v1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select distinct sum(v1) from ttest group by v2 order by sum(v1)").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by 1, 2").Check(testkit.Rows("1 2", "1 7", "4 6"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by 2, 1").Check(testkit.Rows("1 2", "4 6", "1 7"))
+
+	// Referenced columns of expressions in ORDER BY whole match some fields in DISTINCT,
+	// both original expression and alias can be referenced.
+	tk.MustQuery("select distinct v1 from ttest order by v1+1").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct v1, v2 from ttest order by v1+1, v2").Check(testkit.Rows("1 2", "1 7", "4 6"))
+	tk.MustQuery("select distinct v1+1 as z, v2 from ttest order by v1+1, z+v2").Check(testkit.Rows("2 2", "2 7", "5 6"))
+	tk.MustQuery("select distinct sum(v1) as z from ttest group by v2 order by z+1").Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1").Check(testkit.Rows("2", "5"))
+	tk.MustQuery("select distinct v1 as z from ttest order by v1+z").Check(testkit.Rows("1", "4"))
+}
+
+func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// #18350
+	tk.MustExec("DROP TABLE IF EXISTS tab, tab2")
+	tk.MustExec("CREATE TABLE tab(i INT)")
+	tk.MustExec("CREATE TABLE tab2(j INT)")
+	tk.MustExec("insert into tab values(1),(2),(3)")
+	tk.MustExec("insert into tab2 values(1),(2),(3),(15)")
+	tk.MustQuery(`SELECT m.i,
+       (SELECT COUNT(n.j)
+           FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n GROUP BY 1 order by m.i`).Check(testkit.Rows("1 4", "2 4", "3 4"))
+	tk.MustQuery(`SELECT
+         (SELECT COUNT(n.j)
+             FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n order by m.i`).Check(testkit.Rows("12"))
+
+	// #17748
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (m int, n int)")
+	tk.MustExec("insert into t1 values (2,2), (2,2), (3,3), (3,3), (3,3), (4,4)")
+	tk.MustExec("insert into t2 values (1,11), (2,22), (3,32), (4,44), (4,44)")
+	tk.MustExec("set @@sql_mode='TRADITIONAL'")
+
+	tk.MustQuery(`select count(*) c, a,
+		( select group_concat(count(a)) from t2 where m = a )
+		from t1 group by a order by a`).
+		Check(testkit.Rows("2 2 2", "3 3 3", "1 4 1,1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,1),(2,1),(2,2),(3,1),(3,2),(3,3)")
+
+	// Sub-queries in SELECT fields
+	// from SELECT fields
+	tk.MustQuery("select (select count(a)) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select (select (select count(a)))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select (select count(n.a)) from t m order by count(m.b)) from t n").Check(testkit.Rows("6"))
+	// from WHERE
+	tk.MustQuery("select (select count(n.a) from t where count(n.a)=3) from t n").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (select count(a) from t where count(distinct n.a)=3) from t n").Check(testkit.Rows("6"))
+	// from HAVING
+	tk.MustQuery("select (select count(n.a) from t having count(n.a)=6 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(n.a) from t having count(distinct n.b)=3 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(distinct n.a) from t having count(distinct n.b)=3 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(distinct n.a) from t having count(distinct n.b)=6 limit 1) from t n").Check(testkit.Rows("<nil>"))
+	// from ORDER BY
+	tk.MustQuery("select (select count(n.a) from t order by count(n.b) limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(distinct n.b) from t order by count(n.b) limit 1) from t n").Check(testkit.Rows("3"))
+	// from TableRefsClause
+	tk.MustQuery("select (select cnt from (select count(a) cnt) s) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(cnt) from (select count(a) cnt) s) from t").Check(testkit.Rows("1"))
+	// from sub-query inside aggregate
+	tk.MustQuery("select (select sum((select count(a)))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum((select count(a))+sum(a))) from t").Check(testkit.Rows("20"))
+	// from GROUP BY
+	tk.MustQuery("select (select count(a) from t group by count(n.a)) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(distinct a) from t group by count(n.a)) from t n").Check(testkit.Rows("3"))
+
+	// Sub-queries in HAVING
+	tk.MustQuery("select sum(a) from t having (select count(a)) = 0").Check(testkit.Rows())
+	tk.MustQuery("select sum(a) from t having (select count(a)) > 0").Check(testkit.Rows("14"))
+
+	// Sub-queries in ORDER BY
+	tk.MustQuery("select count(a) from t group by b order by (select count(a))").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select count(a) from t group by b order by (select -count(a))").Check(testkit.Rows("3", "2", "1"))
+
+	// Nested aggregate (correlated aggregate inside aggregate)
+	tk.MustQuery("select (select sum(count(a))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(sum(a))) from t").Check(testkit.Rows("14"))
+
+	// Combining aggregates
+	tk.MustQuery("select count(a), (select count(a)) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select sum(distinct b), count(a), (select count(a)), (select cnt from (select sum(distinct b) as cnt) n) from t").
+		Check(testkit.Rows("6 6 6 6"))
+}
+
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
+}
+
+// Test for issue https://github.com/pingcap/tidb/issues/21607.
+func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int as (a + 1), c int as (b + 1));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (a) values (1);")
+	tk.MustQuery("select count(*) from t where b = 1 and b in (3);").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
+		Check(testkit.Rows("0"))
+}
+
+// Test for issue https://github.com/pingcap/tidb/issues/18320
+func (s *testIntegrationSuite) TestNonaggregateColumnWithSingleValueInOnlyFullGroupByMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 2, 3), (4, 5, 6), (7, 8, 9)")
+	tk.MustQuery("select a, count(b) from t where a = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a, count(b) from t where a = 10").Check(testkit.Rows("<nil> 0"))
+	tk.MustQuery("select a, c, sum(b) from t where a = 1 group by c").Check(testkit.Rows("1 3 2"))
+	tk.MustGetErrMsg("select a from t where a = 1 order by count(b)", "[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustQuery("select a from t where a = 1 having count(b) > 0").Check(testkit.Rows("1"))
 }

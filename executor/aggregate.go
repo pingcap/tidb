@@ -251,7 +251,9 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 
 	if e.isUnparallelExec {
 		e.initForUnparallelExec()
@@ -1015,7 +1017,9 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
 	e.memTracker = memory.NewTracker(e.id, -1)
-	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage {
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	}
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	return nil
 }

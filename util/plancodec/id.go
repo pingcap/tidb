@@ -110,6 +110,8 @@ const (
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
 	TypeLoadData = "LoadData"
+	// TypeTableSample is the type of TableSample.
+	TypeTableSample = "TableSample"
 )
 
 // plan id.
@@ -156,6 +158,7 @@ const (
 	typeClusterMemTableReader int = 39
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
+	typeTableSampleID         int = 42
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -243,6 +246,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDataSourceID
 	case TypeLoadData:
 		return typeLoadDataID
+	case TypeTableSample:
+		return typeTableSampleID
 	}
 	// Should never reach here.
 	return 0
