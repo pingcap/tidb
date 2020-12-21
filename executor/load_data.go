@@ -453,7 +453,7 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
-func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
+func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
 	startingLen := len(e.LinesInfo.Starting)
 	prevData, curData = e.getValidData(prevData, curData)
 	if prevData == nil && len(curData) < startingLen {
@@ -468,7 +468,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		endIdx = e.indexOfTerminator(curData[curStartIdx:])
+		if ignore {
+			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
+		} else {
+			endIdx = e.indexOfTerminator(curData[curStartIdx:])
+		}
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -478,7 +482,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = e.indexOfTerminator(curData[startingLen:])
+		if ignore {
+			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
+		} else {
+			endIdx = e.indexOfTerminator(curData[startingLen:])
+		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -495,7 +503,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = e.indexOfTerminator(prevData[startingLen:])
+	if ignore {
+		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
+	} else {
+		endIdx = e.indexOfTerminator(prevData[startingLen:])
+	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -520,7 +532,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		prevData, curData = curData, prevData
 	}
 	for len(curData) > 0 {
-		line, curData, hasStarting = e.getLine(prevData, curData)
+		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
 		prevData = nil
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
