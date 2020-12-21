@@ -66,6 +66,8 @@ const (
 	GuaranteeExternalConsistency
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	IsStalenessReadOnly
 )
 
 // Priority value for transaction priority.

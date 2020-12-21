@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -37,7 +38,10 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -557,15 +561,21 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
+	if s.ReadOnly && s.Bound != nil {
+		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
+	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
+	// create a new Txn instead of reusing it.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.History != nil {
+	if txnCtx.History != nil || txnCtx.IsStaleness {
 		err := e.ctx.NewTxn(ctx)
 		if err != nil {
 			return err
 		}
 	}
+	e.ctx.GetSessionVars().TxnCtx.IsStaleness = false
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
@@ -585,6 +595,42 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		txn.SetOption(kv.Pessimistic, true)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
+	startTS := uint64(math.MaxUint64)
+	switch s.Bound.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid timestamp")
+		}
+		t, err := types.ParseDatetime(e.ctx.GetSessionVars().StmtCtx, v.GetString())
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS = oracle.ComposeTS(gt.Unix()*1000, 0)
+	default:
+	}
+	err := e.ctx.InitTxnWithStartTS(startTS)
+	if err != nil {
+		return err
+	}
+	e.ctx.GetSessionVars().TxnCtx.IsStaleness = true
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	txn.SetOption(kv.IsStalenessReadOnly, true)
 	return nil
 }
 

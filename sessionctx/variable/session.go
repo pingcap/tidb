@@ -162,6 +162,8 @@ type TransactionContext struct {
 	StatementCount int
 	CouldRetry     bool
 	IsPessimistic  bool
+	// IsStaleness indicates the whether the txn is read only staleness txn.
+	IsStaleness    bool
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
