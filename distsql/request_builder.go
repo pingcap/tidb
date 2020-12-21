@@ -515,12 +515,12 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 	return krs, nil
 }
 
-// VerifyTxnScope verify whether the txnScope and visited table break the leader rule's dcLocation.
-func VerifyTxnScope(txnScope string, tableID int64, bundles map[string]*placement.Bundle) bool {
+// VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
+func VerifyTxnScope(txnScope string, physicalTableID int64, bundles map[string]*placement.Bundle) bool {
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := bundles[placement.GroupID(tableID)]
+	bundle, ok := bundles[placement.GroupID(physicalTableID)]
 	if !ok {
 		return true
 	}
