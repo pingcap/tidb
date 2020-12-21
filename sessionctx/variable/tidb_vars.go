@@ -358,6 +358,9 @@ const (
 	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
+	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -499,6 +502,9 @@ const (
 	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
+	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
+	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
+
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
@@ -575,6 +581,7 @@ const (
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
 	DefTiDBPointGetCache                = false
+	DefTiDBEnableAlterPlacement         = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
@@ -620,6 +627,7 @@ const (
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
+	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
 )
 
@@ -647,3 +655,16 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
+
+// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
+var FeatureSwitchVariables = []string{TiDBEnableChangeColumnType, TiDBEnablePointGetCache, TiDBEnableAlterPlacement, TiDBEnableChangeMultiSchema}
+
+// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
+func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
+	for _, one := range FeatureSwitchVariables {
+		if one == sysVar.Name {
+			return true
+		}
+	}
+	return false
+}
