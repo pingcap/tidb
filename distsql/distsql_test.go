@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -46,7 +47,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -179,6 +180,17 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
+
+	s1.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
+		Count:   1,
+		Consume: int64(time.Second),
+	}
+	stmtStats.RegisterStats(2, s1)
+	stats = stmtStats.GetRootStats(2)
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(stats.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(stats.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
@@ -191,7 +203,7 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -461,7 +473,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,

@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -23,7 +22,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -57,27 +55,6 @@ const (
 	// between condition selects 1/40 of total rows.
 	PseudoRowCount = 10000
 )
-
-// CMSketchSizeLimit indicates the max width and depth of CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
-
-// AnalyzeOptionLimit indicates the upper bound of some attribute.
-var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
-	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    100000,
-}
-
-// AnalyzeOptionDefault indicates the default values of some attributes.
-var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       20,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    10000,
-}
 
 // Table represents statistics for a table.
 type Table struct {
@@ -182,48 +159,6 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
-// CopyWithoutBucketsAndCMS copies the current table only with metadata.
-func (t *Table) CopyWithoutBucketsAndCMS() *Table {
-	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		Count:          t.Count,
-		Columns:        make(map[int64]*Column, len(t.Columns)),
-		Indices:        make(map[int64]*Index, len(t.Indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-	}
-	for id, col := range t.Columns {
-		oldHg := &col.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Columns[id] = &Column{
-			Histogram:  *newHg,
-			PhysicalID: col.PhysicalID,
-			Info:       col.Info,
-			Count:      col.Count,
-			IsHandle:   col.IsHandle,
-			Flag:       col.Flag,
-		}
-	}
-	for id, idx := range t.Indices {
-		oldHg := &idx.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Indices[id] = &Index{
-			Histogram:  *newHg,
-			PhysicalID: idx.PhysicalID,
-			Info:       idx.Info,
-			StatsVer:   idx.StatsVer,
-			Flag:       idx.Flag,
-		}
-	}
-	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
-	}
-	return nt
-}
-
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
@@ -297,40 +232,6 @@ func (n *neededColumnMap) insert(col tableColumnID) {
 func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
-	n.m.Unlock()
-}
-
-type tableIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type neededIndexMap struct {
-	m    sync.Mutex
-	idxs map[tableIndexID]struct{}
-}
-
-// AllIdxs returns all the idx with an array
-func (n *neededIndexMap) AllIdxs() []tableIndexID {
-	n.m.Lock()
-	keys := make([]tableIndexID, 0, len(n.idxs))
-	for key := range n.idxs {
-		keys = append(keys, key)
-	}
-	n.m.Unlock()
-	return keys
-}
-
-func (n *neededIndexMap) insert(idx tableIndexID) {
-	n.m.Lock()
-	n.idxs[idx] = struct{}{}
-	n.m.Unlock()
-}
-
-// Delete delete a idx from idxs
-func (n *neededIndexMap) Delete(idx tableIndexID) {
-	n.m.Lock()
-	delete(n.idxs, idx)
 	n.m.Unlock()
 }
 
@@ -419,7 +320,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(sc, coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -428,7 +329,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer == Version1 {
+	if idx.CMSketch != nil && idx.StatsVer != Version0 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)

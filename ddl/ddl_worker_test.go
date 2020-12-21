@@ -160,7 +160,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Schema ID is wrong, so creating table is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 	// Table exists, so creating table is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
 }
@@ -189,7 +189,7 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	// Schema ID is wrong and orReplace is false, so creating view is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 	// View exists and orReplace is false, so creating view is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 
 }
@@ -456,7 +456,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 18}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 19)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
 
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 21)}, cancelState: model.StatePublic},
@@ -773,7 +773,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// modify none-state column
 	col.DefaultValue = "1"
 	updateTest(&tests[15])
-	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
+	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -782,15 +782,16 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// modify delete-only-state column,
 	col.FieldType.Tp = mysql.TypeTiny
-	col.FieldType.Flen = col.FieldType.Flen - 1
+	col.FieldType.Flen--
 	updateTest(&tests[16])
-	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
-	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs)
+	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
+	cancelState = model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	changedCol = model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
-	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeTiny)
-	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen)
+	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen+1)
 	col.FieldType.Flen++
 
 	// Test add foreign key failed cause by canceled.

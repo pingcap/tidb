@@ -300,7 +300,7 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 		},
 	}
 	for _, t := range tests {
-		out := placement.BuildPlacementTruncateBundle(bundle, t.input)
+		out := placement.BuildPlacementCopyBundle(bundle, t.input)
 		c.Assert(t.output, DeepEquals, out)
 		c.Assert(bundle.ID, Equals, placement.GroupID(-1))
 		c.Assert(bundle.Rules, HasLen, 1)

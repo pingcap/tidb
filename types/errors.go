@@ -21,8 +21,10 @@ import (
 
 // const strings for ErrWrongValue
 const (
-	DateTimeStr = "datetime"
-	TimeStr     = "time"
+	DateTimeStr  = "datetime"
+	DateStr      = "date"
+	TimeStr      = "time"
+	TimestampStr = "timestamp"
 )
 
 var (
@@ -73,8 +75,12 @@ var (
 	ErrTruncatedWrongVal = dbterror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
 	ErrInvalidWeekModeFormat = dbterror.ClassTypes.NewStd(mysql.ErrInvalidWeekModeFormat)
+	// ErrWrongFieldSpec is returned when the column specifier incorrect.
+	ErrWrongFieldSpec = dbterror.ClassTypes.NewStd(mysql.ErrWrongFieldSpec)
+	// ErrSyntax is returned when the syntax is not allowed.
+	ErrSyntax = dbterror.ClassTypes.NewStdErr(mysql.ErrParse, mysql.MySQLErrName[mysql.ErrSyntax])
 	// ErrWrongValue is returned when the input value is in wrong format.
-	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
+	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
 	// ErrWrongValueForType is returned when the input value is in wrong format for function.
-	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType], "", "")
+	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType])
 )

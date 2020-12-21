@@ -1688,7 +1688,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{1025, "2001"},
 		{"8a8", "10"},
 		{"abc", "0"},
-		//overflow uint64
+		// overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
 		{types.NewBinaryLiteralFromUint(255, -1), "377"}, // b'11111111'
@@ -1770,13 +1770,13 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{-12332.123456, -4, "zh_CN", nil}
+	}{-12332.123456, -4, "zh_CN", "-12,332"}
 	formatTests3 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{"-12332.123456", "4", "de_GE", nil}
+	}{"-12332.123456", "4", "de_GE", "-12,332.1235"}
 	formatTests4 := struct {
 		number    interface{}
 		precision interface{}
@@ -1835,8 +1835,10 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r4, testutil.DatumEquals, types.NewDatum(formatTests4.ret))
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 1)
-	c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[0].Err), IsTrue)
+	c.Assert(len(warnings), Equals, 3)
+	for i := 0; i < 3; i++ {
+		c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[i].Err), IsTrue)
+	}
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
 

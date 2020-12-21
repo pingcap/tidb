@@ -50,9 +50,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return tblIDs, nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
-	case model.ActionAlterTableAlterPartition:
-		// there is no need to udpate table schema
-		return nil, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -72,6 +69,20 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
+	}
+	// handle placement rule cache
+	switch diff.Type {
+	case model.ActionDropTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+	case model.ActionTruncateTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionRecoverTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
@@ -126,6 +137,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			switch diff.Type {
+			case model.ActionAlterTableAlterPartition:
+				partitionID := opt.TableID
+				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
+				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
 				tblIDs = append(tblIDs, opt.OldTableID)
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
@@ -134,8 +149,21 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 					return nil, errors.Trace(err)
 				}
 				continue
-			case model.ActionDropTablePartition:
+			case model.ActionDropTable, model.ActionDropTablePartition:
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				continue
+			case model.ActionTruncateTable:
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			case model.ActionRecoverTable:
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				continue
 			}
 			var err error
@@ -152,6 +180,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, errors.Trace(err)
 			}
 			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	} else {
+		switch diff.Type {
+		case model.ActionAlterTableAlterPartition:
+			// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
+			return []int64{}, nil
 		}
 	}
 	return tblIDs, nil

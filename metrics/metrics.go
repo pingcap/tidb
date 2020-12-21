@@ -73,7 +73,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(BackfillTotalCounter)
-	prometheus.MustRegister(AddIndexProgress)
+	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
@@ -170,6 +170,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
+	prometheus.MustRegister(TiKVOnePCTxnCounter)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
+	prometheus.MustRegister(ConnIdleDurationHistogram)
 }

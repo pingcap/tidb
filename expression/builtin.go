@@ -241,6 +241,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	}
+	if _, ok := booleanFunctions[funcName]; ok {
+		fieldType.Flag |= mysql.IsBooleanFlag
+	}
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalSliceBuffer(len(args)),
 		childrenVectorizedOnce: new(sync.Once),
@@ -808,7 +811,6 @@ var funcs = map[string]functionClass{
 	ast.Case:               &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
 	ast.RowFunc:            &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
 	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
-	ast.GetVar:             &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
 	ast.BitCount:           &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
 	ast.GetParam:           &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
 

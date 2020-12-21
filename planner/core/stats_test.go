@@ -34,7 +34,7 @@ type testStatsSuite struct {
 
 func (s *testStatsSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "stats_suite")
@@ -76,7 +76,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		core.Preprocess(tk.Se, stmt, is)
-		builder := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
+		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil, comment)
 		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))

@@ -199,19 +199,31 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		if t.IsZero() {
+			// All zero.
 			data = append(data, 0)
-		} else {
+		} else if t.Microsecond() != 0 {
+			// Has micro seconds.
 			data = append(data, 11)
 			data = dumpUint16(data, uint16(year))
 			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
 			data = dumpUint32(data, uint32(t.Microsecond()))
+		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
+			// Has HH:MM:SS
+			data = append(data, 7)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+		} else {
+			// Only YY:MM:DD
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day))
 		}
 	case mysql.TypeDate:
 		if t.IsZero() {
 			data = append(data, 0)
 		} else {
 			data = append(data, 4)
-			data = dumpUint16(data, uint16(year)) //year
+			data = dumpUint16(data, uint16(year)) // year
 			data = append(data, byte(mon), byte(day))
 		}
 	}
@@ -354,11 +366,14 @@ const (
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
 	isEFormat := false
 	if bitSize == 32 {
-		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
 	} else {
-		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
 	}
 	var out []byte
 	if isEFormat {

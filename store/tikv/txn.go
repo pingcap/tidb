@@ -87,20 +87,20 @@ type tikvTxn struct {
 	commitCallback func(info kv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
+func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	startTS, err := store.getTimestampWithRetry(bo)
+	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTikvTxnWithStartTS(store, startTS, store.nextReplicaReadSeed())
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
 }
 
-// newTikvTxnWithStartTS creates a txn with startTS.
-func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+// newTiKVTxnWithStartTS creates a txn with startTS.
+func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
-	return &tikvTxn{
+	newTiKVTxn := &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
@@ -108,7 +108,9 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uin
 		startTime: time.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
-	}, nil
+	}
+	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
+	return newTiKVTxn, nil
 }
 
 type assertionPair struct {
@@ -352,7 +354,7 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 
 func (txn *tikvTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}
+		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}

@@ -143,11 +143,11 @@
       {
         "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "Plan": [
-          "IndexMergeJoin_17 4.00 root  inner join, inner:IndexReader_15, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b",
-          "├─TableReader_34(Build) 4.00 root  data:TableFullScan_33",
-          "│ └─TableFullScan_33 4.00 cop[tikv] table:t1 keep order:false",
-          "└─IndexReader_15(Probe) 1.00 root  index:IndexRangeScan_14",
-          "  └─IndexRangeScan_14 1.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, test.t1.b)], keep order:true"
+          "MergeJoin_8 4.00 root  inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "├─IndexReader_32(Build) 9.00 root  index:IndexFullScan_31",
+          "│ └─IndexFullScan_31 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
+          "└─IndexReader_30(Probe) 4.00 root  index:IndexFullScan_29",
+          "  └─IndexFullScan_29 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
       },
       {
@@ -275,7 +275,7 @@
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
           "HashAgg_11 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#5)->Column#6",
-          "└─Window_12 4.00 root  sum(cast(test.t1.a, decimal(65,0) BINARY))->Column#5 over()",
+          "└─Window_12 4.00 root  sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#5 over()",
           "  └─TableReader_14 4.00 root  data:TableFullScan_13",
           "    └─TableFullScan_13 4.00 cop[tikv] table:t1 keep order:false"
         ]

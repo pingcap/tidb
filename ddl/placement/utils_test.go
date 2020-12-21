@@ -119,3 +119,160 @@ func (t *testUtilsSuite) TestObjectIDFromGroupID(c *C) {
 		}
 	}
 }
+
+func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
+	testcases := []struct {
+		name       string
+		bundle     *Bundle
+		expectedDC string
+	}{
+		{
+			name: "only leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "bj",
+		},
+		{
+			name: "no leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Voter,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "voter and leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "12",
+						Role: Voter,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "sh",
+		},
+		{
+			name: "wrong label key",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "fake",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "wrong operator",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     NotIn,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "leader have multi values",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     In,
+								Values: []string{"sh", "bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		result, ok := GetLeaderDCByBundle(testcase.bundle, "zone")
+		if len(testcase.expectedDC) > 0 {
+			c.Assert(ok, Equals, true)
+		} else {
+			c.Assert(ok, Equals, false)
+		}
+		c.Assert(result, Equals, testcase.expectedDC)
+	}
+}

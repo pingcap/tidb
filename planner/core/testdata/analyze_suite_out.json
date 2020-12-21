@@ -47,13 +47,13 @@
         ],
         "Plan": [
           "Limit_17 1.00 root  offset:0, count:1",
-          "└─IndexMergeJoin_72 1.00 root  left outer semi join, inner:IndexReader_70, outer key:test.t.a, inner key:test.t.b",
+          "└─IndexJoin_66 1.00 root  left outer semi join, inner:IndexReader_65, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
           "  ├─TopN_29(Build) 1.00 root  test.t.a, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root  index:TopN_36",
           "  │   └─TopN_36 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
-          "  └─IndexReader_70(Probe) 1.04 root  index:IndexRangeScan_69",
-          "    └─IndexRangeScan_69 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:true"
+          "  └─IndexReader_65(Probe) 1.04 root  index:IndexRangeScan_64",
+          "    └─IndexRangeScan_64 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
         ]
       },
       {
@@ -142,10 +142,10 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
         ],
         "Plan": [
-          "IndexJoin_9 12475.01 root  inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-          "├─TableReader_19(Build) 9980.01 root  data:Selection_18",
-          "│ └─Selection_18 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "│   └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "IndexJoin_9 12475.01 root  inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.c, test.t2.c), other cond:gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+          "├─TableReader_18(Build) 9980.01 root  data:Selection_17",
+          "│ └─Selection_17 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexReader_8(Probe) 1.25 root  index:Selection_7",
           "  └─Selection_7 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
           "    └─IndexRangeScan_6 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
