@@ -385,17 +385,27 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return nil
 	}
 	var tblID int64
+	var tblName string
+	var partName string
+	is := infoschema.GetInfoSchema(e.ctx)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
+		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+		partName = partInfo.Name.String()
 	} else {
 		tblID = e.tblInfo.ID
+		tblInfo, _ := is.TableByID(tblID)
+		tblName = tblInfo.Meta().Name.String()
 	}
-	is := infoschema.GetInfoSchema(e.ctx)
 	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
 	if valid {
 		return nil
 	}
-	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblID, txnScope))
+	if len(partName) > 0 {
+		return errors.New(fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+	}
+	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
