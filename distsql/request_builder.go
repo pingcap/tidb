@@ -290,7 +290,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for tableID := range visitTableID {
-		valid := placement.VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
+		valid := VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
 		if !valid {
 			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
 		}
@@ -513,6 +513,25 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 		}
 	}
 	return krs, nil
+}
+
+// VerifyTxnScope verify whether the txnScope and visited table break the leader rule's dcLocation.
+func VerifyTxnScope(txnScope string, tableID int64, bundles map[string]*placement.Bundle) bool {
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return true
+	}
+	bundle, ok := bundles[placement.GroupID(tableID)]
+	if !ok {
+		return true
+	}
+	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	if !ok {
+		return true
+	}
+	if leaderDC != txnScope {
+		return false
+	}
+	return true
 }
 
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {

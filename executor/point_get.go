@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -391,7 +391,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblID = e.tblInfo.ID
 	}
 	is := infoschema.GetInfoSchema(e.ctx)
-	valid := placement.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
 	if valid {
 		return nil
 	}
