@@ -509,9 +509,9 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 		sc.MergeScanDetail(details.ScanDetail)
 		sc.MergeTimeDetail(details.TimeDetail)
+		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	if commitDetails != nil {
 		if sc.mu.execDetails.CommitDetail == nil {

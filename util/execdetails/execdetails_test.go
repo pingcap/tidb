@@ -111,7 +111,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopDetail(tableScanID, scanDetail)
+	stats.RecordScanDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
@@ -169,7 +169,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopDetail(tableScanID, scanDetail)
+	stats.RecordScanDetail(tableScanID, scanDetail)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}

@@ -243,15 +243,26 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 func (sd *ScanDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if sd != nil {
-		buf.WriteString(ProcessKeysStr + ": " + strconv.FormatInt(sd.ProcessedKeys, 10))
-		buf.WriteString(", " + TotalKeysStr + ": " + strconv.FormatInt(sd.TotalKeys, 10))
-		buf.WriteString(", rocksdb{")
-		buf.WriteString(RocksdbDeleteSkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
-		buf.WriteString(", " + RocksdbKeySkippedCountStr + ": " + strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
-		buf.WriteString(", " + RocksdbBlockCacheHitCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
-		buf.WriteString(", " + RocksdbBlockReadCountStr + ": " + strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
-		buf.WriteString(", " + RocksdbBlockReadByteStr + ": " + strconv.FormatUint(sd.RocksdbBlockReadByte, 10))
-		buf.WriteString("}")
+		buf := bytes.NewBuffer(make([]byte, 0, 16))
+		buf.WriteString("scan_detail: {")
+		buf.WriteString("total_process_keys: ")
+		buf.WriteString(strconv.FormatInt(sd.ProcessedKeys, 10))
+		buf.WriteString(", total_keys: ")
+		buf.WriteString(strconv.FormatInt(sd.TotalKeys, 10))
+		buf.WriteString(", rocksdb: {")
+		buf.WriteString("delete_skipped_count: ")
+		buf.WriteString(strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
+		buf.WriteString(", key_skipped_count: ")
+		buf.WriteString(strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
+		buf.WriteString(", block: {")
+		buf.WriteString("cache_hit_count: ")
+		buf.WriteString(strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
+		buf.WriteString(", read_count: ")
+		buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
+		buf.WriteString(", read_byte: ")
+		buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
+		buf.WriteString("}}}")
+		return buf.String()
 	}
 	return buf.String()
 }
@@ -311,15 +322,15 @@ const (
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
 	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
-	RocksdbDeleteSkippedCountStr = "delete_skipped_count"
+	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
 	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
-	RocksdbKeySkippedCountStr = "key_skipped_count"
+	RocksdbKeySkippedCountStr = "Rocksdb_key_skipped_count"
 	// RocksdbBlockCacheHitCountStr means the count of rocksdb block cache hit.
-	RocksdbBlockCacheHitCountStr = "block_cache_hit_count"
+	RocksdbBlockCacheHitCountStr = "Rocksdb_block_cache_hit_count"
 	// RocksdbBlockReadCountStr means the count of rocksdb block read.
-	RocksdbBlockReadCountStr = "block_read_count"
+	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
 	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
-	RocksdbBlockReadByteStr = "block_read_byte"
+	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 )
 
 // String implements the fmt.Stringer interface.
@@ -396,19 +407,19 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
 		if scanDetail.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, "Rocksdb_" + RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
 		if scanDetail.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, "Rocksdb_" + RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
 		}
 		if scanDetail.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, "Rocksdb_" + RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
 		}
 		if scanDetail.RocksdbBlockReadCount > 0 {
-			parts = append(parts, "Rocksdb_" + RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
 		}
 		if scanDetail.RocksdbBlockReadByte > 0 {
-			parts = append(parts, "Rocksdb_" + RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -809,8 +820,8 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	copStats.RecordOneCopTask(address, summary)
 }
 
-// RecordCopDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *ScanDetail) {
+// RecordScanDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, detail *ScanDetail) {
 	copStats := e.GetCopStats(planID)
 	if copStats.scanDetail == nil {
 		copStats.scanDetail = &ScanDetail{}
