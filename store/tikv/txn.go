@@ -114,7 +114,7 @@ func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, re
 	return newTiKVTxn, nil
 }
 
-func newTiKVTxnWithStalenessTS(store *tikvStore, prevSec uint64) (*tikvTxn, error) {
+func newTiKVTxnWithExactStaleness(store *tikvStore, prevSec uint64) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getStalenessTimestamp(bo, prevSec)
 	if err != nil {

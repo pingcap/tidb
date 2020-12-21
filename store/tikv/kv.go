@@ -345,8 +345,8 @@ func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transa
 	return txn, nil
 }
 
-func (s *tikvStore) BeginWithStalenessTS(prevSec uint64) (kv.Transaction, error) {
-	txn, err := newTiKVTxnWithStalenessTS(s, prevSec)
+func (s *tikvStore) BeginWithExactStaleness(prevSec uint64) (kv.Transaction, error) {
+	txn, err := newTiKVTxnWithExactStaleness(s, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
