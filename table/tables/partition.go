@@ -558,7 +558,6 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 	for _, col := range cols {
 		if findIdxByColUniqueID(deDupCols, col) < 0 {
 			c := col.Clone().(*expression.Column)
-			//c.Index = len(deDupCols)
 			deDupCols = append(deDupCols, c)
 		}
 	}
@@ -569,17 +568,15 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	pi := tblInfo.GetPartitionInfo()
-	schema := expression.NewSchema(columns...)
 	exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
-	p := parser.New()
 	listPrune := &ForListPruning{}
 	if len(pi.Columns) == 0 {
-		err = listPrune.buildListPruner(ctx, tblInfo, exprCols, schema, names, p)
+		err = listPrune.buildListPruner(ctx, tblInfo, exprCols, columns, names)
 	} else {
-		err = listPrune.buildListColumnsPruner(ctx, tblInfo, schema, columns, names, p)
+		err = listPrune.buildListColumnsPruner(ctx, tblInfo, columns, names)
 	}
 	if err != nil {
 		return nil, err
@@ -592,8 +589,10 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 }
 
 func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model.TableInfo, exprCols []*expression.Column,
-	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
+	columns []*expression.Column, names types.NameSlice) error {
 	pi := tblInfo.GetPartitionInfo()
+	schema := expression.NewSchema(columns...)
+	p := parser.New()
 	expr, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
@@ -608,7 +607,7 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 	for _, c := range cols {
 		idx := findIdxByColUniqueID(exprCols, c)
 		if idx < 0 {
-			panic("should never happen")
+			return table.ErrUnknownColumn.GenWithStackByArgs(c.OrigName)
 		}
 		c.Index = idx
 	}
@@ -620,20 +619,19 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 }
 
 func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo *model.TableInfo,
-	schema *expression.Schema, columns []*expression.Column, names types.NameSlice, p *parser.Parser) error {
+	columns []*expression.Column, names types.NameSlice) error {
 	pi := tblInfo.GetPartitionInfo()
-	if len(pi.Columns) == 0 {
-		return nil
-	}
+	schema := expression.NewSchema(columns...)
+	p := parser.New()
 	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
 	for colIdx := range pi.Columns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
 		if colInfo == nil {
-			panic("should never happen")
+			return table.ErrUnknownColumn.GenWithStackByArgs(pi.Columns[colIdx].L)
 		}
 		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[colIdx].L)
 		if idx < 0 {
-			panic("should never happen")
+			return table.ErrUnknownColumn.GenWithStackByArgs(pi.Columns[colIdx].L)
 		}
 		colPrune := &ForListColumnPruning{
 			ExprCol:  columns[idx],
@@ -679,30 +677,30 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tbl
 }
 
 // LocatePartition locates partition by the column value
-func (lp *ForListPruning) LocatePartition(value int64, isNull bool) (int, error) {
+func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 	if isNull {
-		return lp.nullPartitionIdx, nil
+		return lp.nullPartitionIdx
 	}
 	partitionIdx, ok := lp.valueMap[value]
 	if !ok {
-		return -1, nil
+		return -1
 	}
-	return partitionIdx, nil
-}
-
-func (lp *ForListPruning) locatePartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
-	if len(lp.ColPrunes) == 0 {
-		return lp.locateListPartitionByRow(ctx, r)
-	}
-	return lp.locateListColumnsPartitionByRow(ctx, r)
+	return partitionIdx
 }
 
 func (lp *ForListPruning) locateListPartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
 	value, isNull, err := lp.LocateExpr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 	if err != nil {
-		return 0, errors.Trace(err)
+		return -1, errors.Trace(err)
 	}
-	return lp.LocatePartition(value, isNull)
+	idx := lp.LocatePartition(value, isNull)
+	if idx >= 0 {
+		return idx, nil
+	}
+	if isNull {
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("NULL")
+	}
+	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(strconv.FormatInt(value, 10))
 }
 
 func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
@@ -711,7 +709,7 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	for _, colPrune := range lp.ColPrunes {
 		location, err := colPrune.LocatePartition(sc, r[colPrune.ExprCol.Index])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return -1, errors.Trace(err)
 		}
 		if !intersect.Intersect(location) {
 			break
@@ -719,7 +717,7 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	}
 	location := intersect.GetLocation()
 	if location.IsEmpty() {
-		return -1, nil
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
 	return location[0].PartIdx, nil
 }
@@ -903,29 +901,11 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 }
 
 func (t *partitionedTable) locateListPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	partitionIdx, err := t.partitionExpr.ForListPruning.locatePartitionByRow(ctx, r)
-	if err != nil {
-		return 0, errors.Trace(err)
+	lp := t.partitionExpr.ForListPruning
+	if len(lp.ColPrunes) == 0 {
+		return lp.locateListPartitionByRow(ctx, r)
 	}
-	if partitionIdx > -1 {
-		return partitionIdx, nil
-	}
-	// The data does not belong to any of the partition returns `table has no partition for value %s`.
-	var valueMsg string
-	if pi.Expr != "" {
-		val, isNull, err := t.partitionExpr.ForListPruning.LocateExpr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		if err == nil {
-			if isNull {
-				valueMsg = fmt.Sprintf("NULL")
-			} else {
-				valueMsg = fmt.Sprintf("%d", val)
-			}
-		}
-	} else {
-		// When the table is partitioned by list columns.
-		valueMsg = "from column_list"
-	}
-	return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
+	return lp.locateListColumnsPartitionByRow(ctx, r)
 }
 
 func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {

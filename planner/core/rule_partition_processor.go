@@ -437,10 +437,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			if err != nil {
 				return nil, err
 			}
-			found, err := l.listPrune.LocatePartition(value, isNull)
-			if err != nil {
-				return nil, err
-			}
+			found := l.listPrune.LocatePartition(value, isNull)
 			if found == -1 {
 				continue
 			}
