@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -236,15 +237,15 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql	TEXT NOT NULL  ,
-      	bind_sql 		TEXT NOT NULL ,
-      	default_db 		TEXT NOT NULL,
-		status 			TEXT NOT NULL,
-		create_time 	TIMESTAMP(3) NOT NULL,
-		update_time 	TIMESTAMP(3) NOT NULL,
-		charset 		TEXT NOT NULL,
-		collation 		TEXT NOT NULL,
-		source 			VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		original_sql TEXT NOT NULL,
+		bind_sql TEXT NOT NULL,
+		default_db TEXT NOT NULL,
+		status TEXT NOT NULL,
+		create_time TIMESTAMP(3) NOT NULL,
+		update_time TIMESTAMP(3) NOT NULL,
+		charset TEXT NOT NULL,
+		collation TEXT NOT NULL,
+		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -439,8 +440,10 @@ const (
 	version55 = 55
 	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
 	version56 = 56
-	// version57 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
+	// version57 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
 )
 
 var (
@@ -502,6 +505,7 @@ var (
 		upgradeToVer55,
 		upgradeToVer56,
 		upgradeToVer57,
+		upgradeToVer58,
 	}
 )
 
@@ -1237,6 +1241,24 @@ func upgradeToVer57(s Session, ver int64) {
 	if ver >= version57 {
 		return
 	}
+	insertBuiltinBindInfoRow(s)
+}
+
+func initBindInfoTable(s Session) {
+	mustExecute(s, CreateBindInfoTable)
+	insertBuiltinBindInfoRow(s)
+}
+
+func insertBuiltinBindInfoRow(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES ("%s", "%s", "mysql", "%s", "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", "%s")`,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
@@ -1305,7 +1327,7 @@ func doDDLWorks(s Session) {
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
-	mustExecute(s, CreateBindInfoTable)
+	initBindInfoTable(s)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
