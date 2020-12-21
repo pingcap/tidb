@@ -19,12 +19,9 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -380,17 +377,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
-}
-
-func (e *BatchPointGetExec) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
-	tblID := e.tblInfo.ID
-	is := infoschema.GetInfoSchema(e.ctx)
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
-	if valid {
-		return nil
-	}
-	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblID, txnScope))
 }
 
 // LockKeys locks the keys for pessimistic transaction.
