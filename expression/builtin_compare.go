@@ -440,7 +440,7 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
 	for _, arg := range args {
 		tp := arg.GetType().Tp
-		if types.ResultMergeType(tp) == types.ETString && tp == mysql.TypeJSON {
+		if tp == mysql.TypeJSON {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedJSONComparison)
 			break
 		}
