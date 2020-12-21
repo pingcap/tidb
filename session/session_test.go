@@ -3302,49 +3302,31 @@ PARTITION BY RANGE (c) (
 	is.MockBundles(bundles)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-	for _, def := range partDefs {
-		if def.Name.String() == "p0" {
-			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"dc-1"},
-							},
+	setBundle := func(parName, dc string) {
+		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
+		c.Assert(err, IsNil)
+		groupID := placement.GroupID(pid)
+		oldBundle := &placement.Bundle{
+			ID: groupID,
+			Rules: []*placement.Rule{
+				{
+					GroupID: groupID,
+					Role:    placement.Leader,
+					Count:   1,
+					LabelConstraints: []placement.LabelConstraint{
+						{
+							Key:    placement.DCLabelKey,
+							Op:     placement.In,
+							Values: []string{dc},
 						},
 					},
 				},
-			}
-		} else if def.Name.String() == "p1" {
-			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"dc-2"},
-							},
-						},
-					},
-				},
-			}
-
+			},
 		}
+		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
 	}
+	setBundle("p0", "dc-1")
+	setBundle("p1", "dc-2")
 
 	// set txn_scope to global
 	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", oracle.GlobalTxnScope))
@@ -3376,41 +3358,35 @@ PARTITION BY RANGE (c) (
 	result.Check(testkit.Rows("dc-1"))
 	// test local txn
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 4)
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 3)
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 4)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 4)
 
 	// test wrong scope local txn
 	_, err = tk.Exec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 4)
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 6)
 	c.Assert(txn.Valid(), IsTrue)
 	_, err = tk.Exec("commit")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
