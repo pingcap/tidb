@@ -203,7 +203,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	typeInferForNull(funcArgs)
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.Nullif:
+		// Do nothing. Because it will call InferType4ControlFuncs.
+	default:
+		typeInferForNull(funcArgs)
+	}
+
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err

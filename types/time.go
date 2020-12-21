@@ -1950,6 +1950,17 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
 }
 
+// ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
+// Note: the invoker must promise the `year` is in the range [MinYear, MaxYear].
+func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
+	if year == 0 {
+		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
+	}
+
+	dt := FromDate(int(year), 0, 0, 0, 0, 0, 0)
+	return NewTime(dt, mysql.TypeDatetime, DefaultFsp), nil
+}
+
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
@@ -2175,6 +2186,14 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
 	case "HOUR_MINUTE":
 		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_MICROSECOND":
+		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "DAY_SECOND":
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+	case "DAY_MINUTE":
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_HOUR":
+		return int64(d.Hour()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}

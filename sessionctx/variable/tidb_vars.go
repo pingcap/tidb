@@ -73,6 +73,9 @@ const (
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
 
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -96,9 +99,8 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
-	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
-	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
+	TIDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
+	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -106,7 +108,6 @@ const (
 	TIDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
 	TIDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
 	TIDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
-	TIDBMemQuotaNestedLoopApply   = "tidb_mem_quota_nestedloopapply"   // Bytes.
 
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
@@ -354,6 +355,12 @@ const (
 	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
 	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
+	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
+	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
+
+	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -434,6 +441,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
+
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
 	// Now, only support TiKV and TiFlash.
 	TiDBIsolationReadEngines = "tidb_isolation_read_engines"
@@ -491,6 +501,12 @@ const (
 
 	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
+
+	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
+	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
+
+	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
+	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
 
 // Default TiDB system variable values.
@@ -537,13 +553,13 @@ const (
 	DefDMLBatchSize                     = 0
 	DefMaxPreparedStmtCount             = -1
 	DefWaitTimeout                      = 0
+	DefTiDBMemQuotaApplyCache           = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin             = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin            = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort                 = 32 << 30 // 32GB.
 	DefTiDBMemQuotaTopn                 = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupReader    = 32 << 30 // 32GB.
 	DefTiDBMemQuotaIndexLookupJoin      = 32 << 30 // 32GB.
-	DefTiDBMemQuotaNestedLoopApply      = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL              = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                   = false
 	DefTiDBPProfSQLCPU                  = 0
@@ -564,6 +580,8 @@ const (
 	DefTiDBMaxDeltaSchemaCount          = 1024
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
+	DefTiDBPointGetCache                = false
+	DefTiDBEnableAlterPlacement         = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
@@ -602,13 +620,15 @@ const (
 	DefTiDBShardAllocateStep            = math.MaxInt64
 	DefTiDBEnableTelemetry              = true
 	DefTiDBEnableParallelApply          = false
-	DefTiDBEnableAmendPessimisticTxn    = true
+	DefTiDBEnableAmendPessimisticTxn    = false
 	DefTiDBPartitionPruneMode           = "static-only"
 	DefTiDBEnableRateLimitAction        = true
 	DefTiDBEnableAsyncCommit            = false
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
+	DefTiDBEnableIndexMergeJoin         = false
+	DefTiDBTrackAggregateMemoryUsage    = false
 )
 
 // Process global variables.
@@ -635,3 +655,16 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
+
+// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
+var FeatureSwitchVariables = []string{TiDBEnableChangeColumnType, TiDBEnablePointGetCache, TiDBEnableAlterPlacement, TiDBEnableChangeMultiSchema}
+
+// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
+func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
+	for _, one := range FeatureSwitchVariables {
+		if one == sysVar.Name {
+			return true
+		}
+	}
+	return false
+}
