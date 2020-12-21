@@ -7235,6 +7235,9 @@ func (s *testSuite) Test11883(c *C) {
 	tk.MustExec("create table t1 (f1 json)")
 	tk.MustExec("insert into t1(f1) values ('\"asd\"'),('\"asdf\"'),('\"asasas\"')")
 	tk.MustQuery("select f1 from t1 where json_extract(f1,\"$\") in (\"asd\",\"asasas\",\"asdf\")").Check(testkit.Rows("\"asd\"", "\"asdf\"", "\"asasas\""))
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values ('{\"a\": 1}')")
+	tk.MustQuery("select f1 from t1 where f1 in ('{\"a\": 1}', 'asdf', 'asdf')").Check(testkit.Rows())
 }
 
 func (s *testSuite) Test15492(c *C) {

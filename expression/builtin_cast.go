@@ -1974,6 +1974,7 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Flag:    mysql.BinaryFlag,
 	}
 	res := BuildCastFunction(ctx, expr, tp)
+	// if we need to implicitly cast string to JSON, we only make it a string literal in JSON, instead of parsing it.
 	res.(*ScalarFunction).Function.getRetTp().Flag ^= mysql.ParseToJSONFlag
 	return res
 }
