@@ -1281,6 +1281,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 }
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
+// Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
@@ -1297,8 +1298,6 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
-	resultTp.Charset = a.Charset
-	resultTp.Collate = a.Collate
 	expression.SetBinFlagOrBinStr(b, resultTp)
 	return resultTp
 }
@@ -1309,11 +1308,15 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 
 	// Infer union result types by its children's schema.
 	for i, col := range u.children[0].Schema().Columns {
+		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
+		tmpExprs = append(tmpExprs, col)
 		resultTp := col.RetType
 		for j := 1; j < len(u.children); j++ {
+			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
 			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
+		resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
