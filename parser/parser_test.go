@@ -646,6 +646,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select * from t1 natural left outer join t2", true, "SELECT * FROM `t1` NATURAL LEFT JOIN `t2`"},
 		{"select * from t1 natural inner join t2", false, ""},
 		{"select * from t1 natural cross join t2", false, ""},
+		{"select * from t3 join t1 join t2 on t1.a=t2.a on t3.b=t2.b", true, "SELECT * FROM `t3` JOIN (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) ON `t3`.`b`=`t2`.`b`"},
 
 		// for straight_join
 		{"select * from t1 straight_join t2 on t1.id = t2.id", true, "SELECT * FROM `t1` STRAIGHT_JOIN `t2` ON `t1`.`id`=`t2`.`id`"},
@@ -5510,6 +5511,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			}
 		}
 		node.Specs = specs
+	case *ast.Join:
+		node.ExplicitParens = false
 	}
 	return in, false
 }
