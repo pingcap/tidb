@@ -724,7 +724,7 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		tk.MustExec(`execute stmt1 using @a;`)
 		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
 		tk.MustExec(`execute stmt1 using @b;`)
-		
+
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
 
