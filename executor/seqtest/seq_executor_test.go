@@ -777,7 +777,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
 	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
-	rss, err = tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	rss, err = tk.Se.Execute(ctx, "select distinct a from t limit 1;")
 	c.Assert(err, IsNil)
 	rs = rss[0]
 	req = rs.NewChunk()
