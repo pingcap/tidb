@@ -290,15 +290,8 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for tableID := range visitTableID {
-		bundle, ok := builder.bundles[placement.GroupID(tableID)]
-		if !ok {
-			continue
-		}
-		dc, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
-		if !ok {
-			continue
-		}
-		if dc != builder.txnScope {
+		valid := placement.VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
+		if !valid {
 			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
 		}
 	}
