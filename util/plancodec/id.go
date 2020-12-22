@@ -120,7 +120,7 @@ const (
 	TypeTableRowIDScan = "TableRowIDScan"
 	// TypeIndexFullScan is the type of IndexFullScan.
 	TypeIndexFullScan = "IndexFullScan"
-	// IndexRangeScan is the type of IndexRangeScan.
+	// TypeIndexRangeScan is the type of IndexRangeScan.
 	TypeIndexRangeScan = "IndexRangeScan"
 )
 
