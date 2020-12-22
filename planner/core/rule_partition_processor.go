@@ -284,7 +284,7 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 		return nil, true, nil
 	}
 	countFull := 0
-	intersect := tables.NewListPartitionLocationIntersect()
+	helper := tables.NewListPartitionLocationHelper()
 	for _, cond := range conds {
 		cnfLoc, isFull, err := l.locatePartition(cond)
 		if err != nil {
@@ -298,29 +298,29 @@ func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.E
 			// No partition for intersection, just return 0 partition.
 			return nil, false, nil
 		}
-		if !intersect.Intersect(cnfLoc) {
+		if !helper.Intersect(cnfLoc) {
 			return nil, false, nil
 		}
 	}
 	if countFull == len(conds) {
 		return nil, true, nil
 	}
-	return intersect.GetLocation(), false, nil
+	return helper.GetLocation(), false, nil
 }
 
 func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.Expression) (tables.ListPartitionLocation, bool, error) {
 	if len(conds) == 0 {
 		return nil, true, nil
 	}
-	merger := tables.NewListPartitionLocationUnion()
+	helper := tables.NewListPartitionLocationHelper()
 	for _, cond := range conds {
 		dnfLoc, isFull, err := l.locatePartition(cond)
 		if err != nil || isFull {
 			return nil, isFull, err
 		}
-		merger.Merge(dnfLoc)
+		helper.Union(dnfLoc)
 	}
-	return merger.GetLocation(), false, nil
+	return helper.GetLocation(), false, nil
 }
 
 // locatePartitionByColumn uses to locate partition by the one of the list columns value.
@@ -350,7 +350,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	}
 
 	sc := l.ctx.GetSessionVars().StmtCtx
-	merger := tables.NewListPartitionLocationUnion()
+	helper := tables.NewListPartitionLocationHelper()
 	for _, r := range ranges {
 		if r.IsPointNullable(sc) {
 			if len(r.HighVal) != 1 {
@@ -363,17 +363,17 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			if len(l.partitionNames) > 0 {
 				for _, pg := range location {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
-						merger.MergePartitionGroup(pg)
+						helper.UnionPartitionGroup(pg)
 					}
 				}
 			} else {
-				merger.Merge(location)
+				helper.Union(location)
 			}
 		} else {
 			return nil, true, nil
 		}
 	}
-	return merger.GetLocation(), false, nil
+	return helper.GetLocation(), false, nil
 }
 
 func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Expression, exprCols ...*expression.Column) ([]*ranger.Range, error) {

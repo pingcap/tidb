@@ -274,22 +274,23 @@ func (ps ListPartitionLocation) findByPartitionIdx(partIdx int) int {
 	return -1
 }
 
-type listPartitionLocationUnion struct {
-	location ListPartitionLocation
+type listPartitionLocationHelper struct {
+	initialized bool
+	location    ListPartitionLocation
 }
 
-// NewListPartitionLocationUnion returns a new listPartitionLocationUnion.
-func NewListPartitionLocationUnion() *listPartitionLocationUnion {
-	return &listPartitionLocationUnion{}
+// NewListPartitionLocationHelper returns a new listPartitionLocationHelper.
+func NewListPartitionLocationHelper() *listPartitionLocationHelper {
+	return &listPartitionLocationHelper{}
 }
 
 // GetLocation gets the list partition location.
-func (p *listPartitionLocationUnion) GetLocation() ListPartitionLocation {
+func (p *listPartitionLocationHelper) GetLocation() ListPartitionLocation {
 	return p.location
 }
 
-// MergePartitionGroup merges with the ListPartitionGroup.
-func (p *listPartitionLocationUnion) MergePartitionGroup(pg ListPartitionGroup) {
+// UnionPartitionGroup unions with the list-partition-value-group.
+func (p *listPartitionLocationHelper) UnionPartitionGroup(pg ListPartitionGroup) {
 	idx := p.location.findByPartitionIdx(pg.PartIdx)
 	if idx < 0 {
 		// copy the group idx.
@@ -301,33 +302,18 @@ func (p *listPartitionLocationUnion) MergePartitionGroup(pg ListPartitionGroup) 
 		})
 		return
 	}
-	p.location[idx].GroupIdxs = append(p.location[idx].GroupIdxs, pg.GroupIdxs...)
+	p.location[idx].union(pg)
 }
 
-// Merge merges with the ListPartitionLocation.
-func (p *listPartitionLocationUnion) Merge(location ListPartitionLocation) {
+// Union unions with the other location.
+func (p *listPartitionLocationHelper) Union(location ListPartitionLocation) {
 	for _, pg := range location {
-		p.MergePartitionGroup(pg)
+		p.UnionPartitionGroup(pg)
 	}
 }
 
-type listPartitionLocationIntersect struct {
-	initialized bool
-	location    ListPartitionLocation
-}
-
-// NewListPartitionLocationIntersect returns new listPartitionLocationIntersect
-func NewListPartitionLocationIntersect() *listPartitionLocationIntersect {
-	return &listPartitionLocationIntersect{}
-}
-
-// GetLocation gets the list partition location of the result of intersection.
-func (p *listPartitionLocationIntersect) GetLocation() ListPartitionLocation {
-	return p.location
-}
-
-// Intersect intersect with input location.
-func (p *listPartitionLocationIntersect) Intersect(location ListPartitionLocation) bool {
+// Intersect intersect with other location.
+func (p *listPartitionLocationHelper) Intersect(location ListPartitionLocation) bool {
 	if !p.initialized {
 		p.initialized = true
 		p.location = make([]ListPartitionGroup, 0, len(location))
@@ -341,7 +327,7 @@ func (p *listPartitionLocationIntersect) Intersect(location ListPartitionLocatio
 		if idx < 0 {
 			continue
 		}
-		if !currPgs[idx].Intersect(pg) {
+		if !currPgs[idx].intersect(pg) {
 			continue
 		}
 		remainPgs = append(remainPgs, currPgs[idx])
@@ -350,8 +336,7 @@ func (p *listPartitionLocationIntersect) Intersect(location ListPartitionLocatio
 	return len(remainPgs) > 0
 }
 
-// Intersect intersects with other ListPartitionGroup.
-func (pg *ListPartitionGroup) Intersect(otherPg ListPartitionGroup) bool {
+func (pg *ListPartitionGroup) intersect(otherPg ListPartitionGroup) bool {
 	if pg.PartIdx != otherPg.PartIdx {
 		return false
 	}
@@ -363,6 +348,13 @@ func (pg *ListPartitionGroup) Intersect(otherPg ListPartitionGroup) bool {
 	}
 	pg.GroupIdxs = groupIdxs
 	return len(groupIdxs) > 0
+}
+
+func (pg *ListPartitionGroup) union(otherPg ListPartitionGroup) {
+	if pg.PartIdx != otherPg.PartIdx {
+		return
+	}
+	pg.GroupIdxs = append(pg.GroupIdxs, otherPg.GroupIdxs...)
 }
 
 func (pg *ListPartitionGroup) findGroupIdx(groupIdx int) bool {
@@ -704,18 +696,18 @@ func (lp *ForListPruning) locateListPartitionByRow(ctx sessionctx.Context, r []t
 }
 
 func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context, r []types.Datum) (int, error) {
-	intersect := NewListPartitionLocationIntersect()
+	helper := NewListPartitionLocationHelper()
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, colPrune := range lp.ColPrunes {
 		location, err := colPrune.LocatePartition(sc, r[colPrune.ExprCol.Index])
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
-		if !intersect.Intersect(location) {
+		if !helper.Intersect(location) {
 			break
 		}
 	}
-	location := intersect.GetLocation()
+	location := helper.GetLocation()
 	if location.IsEmpty() {
 		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
 	}
