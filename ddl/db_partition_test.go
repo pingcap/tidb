@@ -334,7 +334,15 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
 	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+<<<<<<< HEAD
 	tk.MustGetErrCode("create table t_hash(a int) partition by hash (a) partitions 3 (partition p1, partition p2, partition p2);", tmysql.ErrSameNamePartition)
+=======
+
+	// Fix create partition table using extract() function as partition key.
+	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
+	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
+	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
+>>>>>>> 01a39ae67... expression: fix wrong type inferring for ceiling function. (#21920)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
