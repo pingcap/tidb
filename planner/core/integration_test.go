@@ -2174,3 +2174,41 @@ func (s *testIntegrationSuite) TestNonaggregateColumnWithSingleValueInOnlyFullGr
 	tk.MustGetErrMsg("select a from t where a = 1 order by count(b)", "[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
 	tk.MustQuery("select a from t where a = 1 having count(b) > 0").Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (a int, b int, index(a, b))")
+	tk.MustExec("insert into t0 values (1, 1)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (2, 2)")
+	tk.MustExec("insert into t0 values (3, 3)")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, index(a, b, c))")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a float, b float, index(a, b))")
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a char(10), b char(10), c char(10), index(a, b, c))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
