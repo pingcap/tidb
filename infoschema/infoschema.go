@@ -427,7 +427,7 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 		}
 	}
 
-	b, ok := h.BundleByName("default")
+	b, ok := h.BundleByName("pd")
 	if ok {
 		return b.Clone()
 	}
