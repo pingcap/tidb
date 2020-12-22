@@ -418,6 +418,7 @@ func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
 }
 
 // GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
 // If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
 func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 	for _, id := range ids {
@@ -429,7 +430,15 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 
 	b, ok := h.BundleByName("pd")
 	if ok {
-		return b.Clone()
+		b = b.Clone()
+		newRules := b.Rules[:0]
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule)
+			}
+		}
+		b.Rules = newRules
+		return b
 	}
 
 	return &placement.Bundle{ID: placement.GroupID(ids[0])}
