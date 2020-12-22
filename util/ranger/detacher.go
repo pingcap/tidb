@@ -313,7 +313,11 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					if len(tailRes.AccessConds) > 0 {
 						res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
 						res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
-						newConditions = append(newConditions[:i], newConditions[i+1:]...)
+						if i == len(newConditions)-1 {
+							newConditions = newConditions[:i]
+						} else {
+							newConditions = append(newConditions[:i], newConditions[i+1:]...)
+						}
 					}
 					for _, resRange := range res.Ranges {
 						if eqOrInCount < len(resRange.LowVal) {
