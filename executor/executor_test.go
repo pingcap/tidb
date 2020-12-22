@@ -7320,7 +7320,6 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		txn, err = tk.Se.Txn(true)
 		c.Assert(err, IsNil)
 		currentTS = txn.StartTS()
-		fmt.Println(tk.Se.GetSessionVars().TxnCtx.IsStaleness)
 		if testcase.IsNewTxn {
 			c.Assert(preTS, Not(Equals), currentTS)
 		} else {
