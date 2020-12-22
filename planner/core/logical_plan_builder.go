@@ -3290,12 +3290,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		projExprs                     []expression.Expression
 	)
 
-	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
-	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
-	// existing ResultSetNode from the cache.
-	p, err = b.buildTableRefsWithCache(ctx, sel.From)
-	if err != nil {
-		return nil, err
+	// set for update read to true before building result set node
+	if isForUpdateReadSelectLock(sel.LockInfo.LockType) {
+		b.isForUpdateRead = true
+	}
+
+	if sel.From != nil {
+		// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
+		// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
+		// existing ResultSetNode from the cache.
+		p, err = b.buildTableRefsWithCache(ctx, sel.From)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		p = b.buildTableDual()
 	}
 
 	originalFields := sel.Fields.Fields
@@ -3599,7 +3608,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -3696,6 +3705,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		partitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 		preferPartitions:    make(map[int][]model.CIStr),
+		is:                  b.is,
+		isForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -4221,6 +4232,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 
 	b.inUpdateStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
@@ -4561,6 +4573,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}()
 
 	b.inDeleteStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
