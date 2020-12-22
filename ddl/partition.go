@@ -1718,6 +1718,11 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
 			return nil
 		}
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
+		*ast.SetCollationExpr:
+		// do nothing, it will return error
+	default:
+		return nil
 	}
 	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 }
