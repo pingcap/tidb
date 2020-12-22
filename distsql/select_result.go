@@ -419,6 +419,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
+<<<<<<< HEAD
 			if s.totalProcessTime > 0 {
 				buf.WriteString(", tot_proc: ")
 				buf.WriteString(s.totalProcessTime.String())
@@ -426,6 +427,15 @@ func (s *selectResultRuntimeStats) String() string {
 					buf.WriteString(", tot_wait: ")
 					buf.WriteString(s.totalWaitTime.String())
 				}
+=======
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
+>>>>>>> 392043ae1... fix cop stats string display when there is only 1 rpc (#21901)
 			}
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
