@@ -165,11 +165,11 @@ var AllowedPartitionFuncMap = map[string]struct{}{
 // AllowedPartition4BinaryOpMap store the operator for Binary Expr
 // See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html for more details
 var AllowedPartition4BinaryOpMap = map[opcode.Op]struct{}{
-	opcode.Plus:  {},
-	opcode.Minus: {},
-	opcode.Mul:   {},
-	opcode.Div:   {},
-	opcode.Mod:   {},
+	opcode.Plus:   {},
+	opcode.Minus:  {},
+	opcode.Mul:    {},
+	opcode.IntDiv: {},
+	opcode.Mod:    {},
 }
 
 // AllowedPartition4UnaryOpMap store the operator for Unary Expr
