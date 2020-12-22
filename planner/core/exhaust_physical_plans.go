@@ -2197,6 +2197,16 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	return streamAggs
 }
 
+// TODO: support more later
+func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
+	for _, agg := range la.AggFuncs {
+		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow {
+			return false
+		}
+	}
+	return true
+}
+
 func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -2223,7 +2233,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
 	for _, taskTp := range taskTypes {
-		if taskTp == property.MppTaskType {
+		if taskTp == property.MppTaskType && la.checkCanPushDownToMPP() {
 			groupByCols := la.GetGroupByCols()
 			if len(groupByCols) == 0 {
 				// TODO: push down scalar agg later after introducing collected exchange
