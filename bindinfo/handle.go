@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -623,34 +622,22 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs t
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
-	schemas, sqls := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
-	for i := range sqls {
-		stmt, err := parser4Capture.ParseOneStmt(sqls[i], "", "")
+	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
+	for _, bindableStmt := range bindableStmts {
+		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
 		}
-		normalizedSQL, digest := parser.NormalizeDigest(sqls[i])
-		dbName := utilparser.GetDefaultDB(stmt, schemas[i])
+		normalizedSQL, digest := parser.NormalizeDigest(bindableStmt.Query)
+		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
-		h.sctx.Lock()
-		h.sctx.GetSessionVars().CurrentDB = schemas[i]
-		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
-		// TODO: support all engines plan hint in capture baselines.
-		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
-		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
-		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
-		h.sctx.Unlock()
-		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] generate hints failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
-			continue
-		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true)
 		if bindSQL == "" {
 			continue
 		}
@@ -665,7 +652,7 @@ func (h *BindHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
@@ -690,17 +677,19 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
 	}
-	paramChecker := &paramMarkerChecker{}
-	stmtNode.Accept(paramChecker)
-	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
-	// so just ignore them now.
-	if paramChecker.hasParamMarker {
-		return ""
+	if !captured {
+		paramChecker := &paramMarkerChecker{}
+		stmtNode.Accept(paramChecker)
+		// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+		// so just ignore them now.
+		if paramChecker.hasParamMarker {
+			return ""
+		}
 	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
