@@ -574,7 +574,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 			return err
 		}
 	}
-	e.ctx.GetSessionVars().TxnCtx.IsStaleness = false
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
