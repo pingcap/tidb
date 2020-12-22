@@ -271,14 +271,19 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 
 // constants for stats version. These const can be used for solving compatibility issue.
 const (
-	CurStatsVersion = Version2
-	Version0        = 0
+	Version0 = 0
 	// In Version1
-	// Column stats: CM Sketch is built in TiKV. Histogram is built from samples. TopN is extracted from CM Sketch.
-	//   TopN + CM Sketch represent all data. Histogram also represents all data.
+	// Column stats: CM Sketch is built in TiKV using full data. Histogram is built from samples. TopN is extracted from CM Sketch.
+	//    TopN + CM Sketch represent all data. Histogram also represents all data.
+	// Index stats: CM Sketch and Histogram is built in TiKV using full data. TopN is extracted from histogram. Then values covered by TopN is removed from CM Sketch.
+	//    TopN + CM Sketch represent all data. Histogram also represents all data.
+	// Int PK column stats is always Version1 because it only has histogram built from full data.
+	// Fast analyze is always Version1 currently.
 	Version1 = 1
 	// In Version2
 	// Column stats: CM Sketch is not used. TopN and Histogram are built from samples. TopN + Histogram represent all data.
+	// Index stats: CM SKetch is not used. TopN and Histograms are built in TiKV using full data. NDV is also collected for each bucket in histogram.
+	//    Then values covered by TopN is removed from Histogram. TopN + Histogram represent all data.
 	Version2 = 2
 )
 
