@@ -274,22 +274,22 @@ func (ps ListPartitionLocation) findByPartitionIdx(partIdx int) int {
 	return -1
 }
 
-type listPartitionLocationMerger struct {
+type listPartitionLocationUnion struct {
 	location ListPartitionLocation
 }
 
-// NewListPartitionLocationMerger returns a new listPartitionLocationMerger.
-func NewListPartitionLocationMerger() *listPartitionLocationMerger {
-	return &listPartitionLocationMerger{}
+// NewListPartitionLocationUnion returns a new listPartitionLocationUnion.
+func NewListPartitionLocationUnion() *listPartitionLocationUnion {
+	return &listPartitionLocationUnion{}
 }
 
 // GetLocation gets the list partition location.
-func (p *listPartitionLocationMerger) GetLocation() ListPartitionLocation {
+func (p *listPartitionLocationUnion) GetLocation() ListPartitionLocation {
 	return p.location
 }
 
 // MergePartitionGroup merges with the ListPartitionGroup.
-func (p *listPartitionLocationMerger) MergePartitionGroup(pg ListPartitionGroup) {
+func (p *listPartitionLocationUnion) MergePartitionGroup(pg ListPartitionGroup) {
 	idx := p.location.findByPartitionIdx(pg.PartIdx)
 	if idx < 0 {
 		// copy the group idx.
@@ -305,7 +305,7 @@ func (p *listPartitionLocationMerger) MergePartitionGroup(pg ListPartitionGroup)
 }
 
 // Merge merges with the ListPartitionLocation.
-func (p *listPartitionLocationMerger) Merge(location ListPartitionLocation) {
+func (p *listPartitionLocationUnion) Merge(location ListPartitionLocation) {
 	for _, pg := range location {
 		p.MergePartitionGroup(pg)
 	}
@@ -730,10 +730,11 @@ func (lp *ForListColumnPruning) buildPartitionValueMap(ctx sessionctx.Context, t
 	sc := ctx.GetSessionVars().StmtCtx
 	for partitionIdx, def := range pi.Definitions {
 		for groupIdx, vs := range def.InValues {
-			key, err := lp.genConstExprKey(ctx, sc, vs[colIdx], schema, names, p)
+			keyBytes, err := lp.genConstExprKey(ctx, sc, vs[colIdx], schema, names, p)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			key := string(keyBytes)
 			location, ok := lp.valueMap[key]
 			if ok {
 				idx := location.findByPartitionIdx(partitionIdx)
@@ -753,20 +754,20 @@ func (lp *ForListColumnPruning) buildPartitionValueMap(ctx sessionctx.Context, t
 }
 
 func (lp *ForListColumnPruning) genConstExprKey(ctx sessionctx.Context, sc *stmtctx.StatementContext, exprStr string,
-	schema *expression.Schema, names types.NameSlice, p *parser.Parser) (string, error) {
+	schema *expression.Schema, names types.NameSlice, p *parser.Parser) ([]byte, error) {
 	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names)
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	v, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	key, err := lp.genKey(sc, v)
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return string(key), nil
+	return key, nil
 }
 
 func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Datum) ([]byte, error) {

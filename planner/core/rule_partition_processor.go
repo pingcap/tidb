@@ -312,7 +312,7 @@ func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.E
 	if len(conds) == 0 {
 		return nil, true, nil
 	}
-	merger := tables.NewListPartitionLocationMerger()
+	merger := tables.NewListPartitionLocationUnion()
 	for _, cond := range conds {
 		dnfLoc, isFull, err := l.locatePartition(cond)
 		if err != nil || isFull {
@@ -350,7 +350,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	}
 
 	sc := l.ctx.GetSessionVars().StmtCtx
-	merger := tables.NewListPartitionLocationMerger()
+	merger := tables.NewListPartitionLocationUnion()
 	for _, r := range ranges {
 		if r.IsPointNullable(sc) {
 			if len(r.HighVal) != 1 {
