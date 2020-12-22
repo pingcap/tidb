@@ -850,6 +850,13 @@ func (c *Column) TotalRowCount() float64 {
 	return c.Histogram.TotalRowCount()
 }
 
+func (c *Column) notNullCount() float64 {
+	if c.StatsVer == Version2 {
+		return c.Histogram.notNullCount() + float64(c.TopN.TotalCount())
+	}
+	return c.Histogram.notNullCount()
+}
+
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
 func (c *Column) GetIncreaseFactor(totalCount int64) float64 {
 	columnCount := c.TotalRowCount()
@@ -880,16 +887,11 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	// If stats ver < 2, histogram represents all data in this column, so empty histogram implies unloaded stats.
-	// In stats ver 2, histogram + TopN represents all data in a column, so both of them being empty implies unloaded stats.
-	if c.NDV > 0 && sc != nil &&
-		((c.Len() == 0 && c.StatsVer < Version2) || (c.Len() == 0 && c.TopN.TotalCount() == 0 && c.StatsVer == Version2)) {
+	if c.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
-	return c.TotalRowCount() == 0 ||
-		(c.NDV > 0 &&
-			((c.Len() == 0 && c.StatsVer < Version2) || (c.Len() == 0 && c.TopN.TotalCount() == 0 && c.StatsVer == Version2)))
+	return c.TotalRowCount() == 0 || (c.NDV > 0 && c.notNullCount() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
