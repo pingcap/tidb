@@ -5242,9 +5242,9 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
 	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
-		"TableReader_43 10.00 root  data:Selection_42",
-		"└─Selection_42 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan_41 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_40 10.00 root  data:Selection_39",
+		"└─Selection_39 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableFullScan_38 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
@@ -8481,6 +8481,19 @@ PARTITION BY RANGE (c) (
 		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
 		//	expectErr: fmt.Errorf(".*can not be read by.*"),
 		//},
+		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
+		//{
+		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
+		//	txnScope:  "bj",
+		//	sql:       "select * from t1 where c in (1,2,3,4);",
+		//	expectErr: fmt.Errorf(".*can not be read by.*"),
+		//},
+		{
+			name:      "cross dc read to sh by holding bj, PointGet",
+			txnScope:  "bj",
+			sql:       "select * from t1 where c = 1",
+			expectErr: fmt.Errorf(".*can not be read by.*"),
+		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexLookUp",
 			txnScope:  "bj",
