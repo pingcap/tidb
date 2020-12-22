@@ -223,7 +223,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}

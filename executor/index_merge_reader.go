@@ -198,7 +198,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}

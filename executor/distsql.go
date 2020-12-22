@@ -325,7 +325,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -520,7 +520,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}

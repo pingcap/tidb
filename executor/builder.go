@@ -3352,7 +3352,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
