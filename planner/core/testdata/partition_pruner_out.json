@@ -1832,6 +1832,38 @@
           "    └─Selection_14 0.64 cop[tikv]  in(test_partition_1.t1.b, 100, 9, 6, 1), not(isnull(test_partition_1.t1.b))",
           "      └─IndexRangeScan_13 160.00 cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.b, test_partition_1.t2.b) in(test_partition_1.t1.a, 1, 6)], keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3) union select * from t1 where b in (6,7,8) order by a",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8"
+        ],
+        "Plan": [
+          "Sort_12 48.00 root  Column#10",
+          "└─HashAgg_16 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "  └─Union_17 60.00 root  ",
+          "    ├─TableReader_21 30.00 root partition:p0 data:Selection_20",
+          "    │ └─Selection_20 30.00 cop[tikv]  in(test_partition.t1.a, 1, 2, 3)",
+          "    │   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader_25 30.00 root partition:p1 data:Selection_24",
+          "      └─Selection_24 30.00 cop[tikv]  in(test_partition.t1.b, 6, 7, 8)",
+          "        └─TableFullScan_23 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Sort_12 48.00 root  Column#10",
+          "└─HashAgg_16 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "  └─Union_17 60.00 root  ",
+          "    ├─IndexReader_20 30.00 root partition:p0 index:IndexRangeScan_19",
+          "    │ └─IndexRangeScan_19 30.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "    └─IndexReader_27 30.00 root partition:p1 index:Selection_26",
+          "      └─Selection_26 30.00 cop[tikv]  in(test_partition_1.t1.b, 6, 7, 8)",
+          "        └─IndexFullScan_25 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

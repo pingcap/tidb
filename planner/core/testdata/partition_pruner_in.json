@@ -626,6 +626,19 @@
             "Partitions": "p0"
           }
         ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3) union select * from t1 where b in (6,7,8) order by a",
+        "Pruner": [
+          {
+            "Table": "t1",
+            "Partitions": "p0"
+          },
+          {
+            "Table": "t1",
+            "Partitions": "p1"
+          }
+        ]
       }
     ]
   }
