@@ -1708,26 +1708,19 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
 	case *ast.FuncCallExpr:
-		if _, ok := expression.AllowedFuncMap[v.FnName.L]; !ok {
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartitionFuncMap[v.FnName.L]; ok {
+			return nil
 		}
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
-		*ast.SetCollationExpr:
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.BinaryOperationExpr:
-		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
-		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
-		switch v.Op {
-		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4BinaryOpMap[v.Op]; ok {
+			return nil
 		}
 	case *ast.UnaryOperationExpr:
-		switch v.Op {
-		case opcode.BitNeg, opcode.Not, opcode.Not2:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
+			return nil
 		}
 	}
-	return nil
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 }
 
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
