@@ -192,6 +192,11 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// NewTxnWithStalenessOption implements the sessionctx.Context interface.
+func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	return c.NewTxn(ctx)
+}
+
 // GetStore gets the store of session.
 func (c *Context) GetStore() kv.Storage {
 	return c.Store

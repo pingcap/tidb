@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -599,7 +598,8 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 }
 
 func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
-	startTS := uint64(math.MaxUint64)
+	opt := sessionctx.StalenessTxnOption{}
+	opt.Mode = s.Bound.Mode
 	switch s.Bound.Mode {
 	case ast.TimestampBoundReadTimestamp:
 		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
@@ -614,7 +614,8 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		startTS = oracle.ComposeTS(gt.Unix()*1000, 0)
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
 	case ast.TimestampBoundExactStaleness:
 		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
 		if !ok {
@@ -624,23 +625,16 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if err != nil {
 			return err
 		}
-		d.Seconds()
-	default:
+		opt.PrevSec = uint64(d.Seconds())
 	}
-	err := e.ctx.InitTxnWithStartTS(startTS)
+	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
 	if err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().TxnCtx.IsStaleness = true
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	txn.SetOption(kv.IsStalenessReadOnly, true)
 	return nil
 }
 

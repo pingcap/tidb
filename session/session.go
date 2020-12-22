@@ -2435,6 +2435,53 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// NewTxnWithStalenessOption create a transaction with Staleness option
+func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	if s.txn.Valid() {
+		txnID := s.txn.StartTS()
+		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		err := s.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Info("InitTxnWithExactStaleness() inside a transaction auto commit",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", txnID),
+			zap.String("txnScope", txnScope))
+	}
+	var txn kv.Transaction
+	var err error
+	switch option.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		txn, err = s.store.BeginWithStartTS(oracle.GlobalTxnScope, option.StartTS)
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundExactStaleness:
+		txn, err = s.store.BeginWithExactStaleness(option.PrevSec)
+		if err != nil {
+			return err
+		}
+	default:
+		// For unsupported staleness txn cases, fallback to NewTxn
+		return s.NewTxn(ctx)
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	s.txn.changeInvalidToValid(txn)
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+		StartTS:       txn.StartTS(),
+		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		IsStaleness:   true,
+	}
+	return nil
+}
+
 // GetStore gets the store of session.
 func (s *session) GetStore() kv.Storage {
 	return s.store
