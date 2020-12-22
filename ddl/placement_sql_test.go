@@ -550,6 +550,8 @@ add placement policy
 func (s *testDBSuite1) TestGlobalTxnState(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
 
 	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	defer func() {
