@@ -7275,55 +7275,32 @@ func (s *testSuite) TestIssue15563(c *C) {
 
 func (s *testSuite) TestStalenessTransaction(c *C) {
 	testcases := []struct {
-		name     string
-		prevSql  string
-		nextSql  string
-		IsNewTxn bool
+		name        string
+		sql         string
+		IsStaleness bool
 	}{
-		//{
-		//	name:     "begin and staleness txn",
-		//	prevSql:  "begin",
-		//	nextSql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '2019-11-04 00:00:00';`,
-		//	IsNewTxn: true,
-		//},
-		//{
-		//	name:     "staleness txn and begin",
-		//	prevSql:  "START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';",
-		//	nextSql:  `begin`,
-		//	IsNewTxn: true,
-		//},
-		//{
-		//	name:     "staleness txn and staleness txn",
-		//	prevSql:  "START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';",
-		//	nextSql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
-		//	IsNewTxn: true,
-		//},
 		{
-			name:     "begin and begin",
-			prevSql:  "begin",
-			nextSql:  "begin",
-			IsNewTxn: false,
+			name:        "TimestampBoundReadTimestamp",
+			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			IsStaleness: true,
+		},
+		{
+			name:        "TimestampBoundExactStaleness",
+			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
+			IsStaleness: true,
+		},
+		{
+			name:        "begin",
+			sql:         "begin",
+			IsStaleness: false,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		var preTS uint64
-		var currentTS uint64
-		tk.MustExec(testcase.prevSql)
-		txn, err := tk.Se.Txn(true)
-		c.Assert(err, IsNil)
-		fmt.Println(tk.Se.GetSessionVars().TxnCtx.IsStaleness)
-		preTS = txn.StartTS()
-		tk.MustExec(testcase.nextSql)
-		txn, err = tk.Se.Txn(true)
-		c.Assert(err, IsNil)
-		currentTS = txn.StartTS()
-		if testcase.IsNewTxn {
-			c.Assert(preTS, Not(Equals), currentTS)
-		} else {
-			c.Assert(preTS, Equals, currentTS)
-		}
+		tk.MustExec(testcase.sql)
+		tk.MustExec("commit")
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 	}
 }
