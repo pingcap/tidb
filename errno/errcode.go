@@ -1078,19 +1078,6 @@ const (
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
 
-<<<<<<< HEAD
-	// TiKV/PD errors.
-	ErrPDServerTimeout        = 9001
-	ErrTiKVServerTimeout      = 9002
-	ErrTiKVServerBusy         = 9003
-	ErrResolveLockTimeout     = 9004
-	ErrRegionUnavailable      = 9005
-	ErrGCTooEarly             = 9006
-	ErrWriteConflict          = 9007
-	ErrTiKVStoreLimit         = 9008
-	ErrPrometheusAddrIsNotSet = 9009
-	ErrTiKVStaleCommand       = 9010
-=======
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
@@ -1102,8 +1089,7 @@ const (
 	ErrTiKVStoreLimit            = 9008
 	ErrPrometheusAddrIsNotSet    = 9009
 	ErrTiKVStaleCommand          = 9010
-	ErrTiKVMaxTimestampNotSynced = 9011
+
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
->>>>>>> 78ad1447c... tikv: distinguish server timeout and server busy error for TiKV and TiFlash (#21109)
 )

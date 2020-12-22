@@ -1246,13 +1246,6 @@ error = '''
 TiKV server reports stale command
 '''
 
-<<<<<<< HEAD
-=======
-["tikv:9011"]
-error = '''
-TiKV max timestamp is not synced
-'''
-
 ["tikv:9012"]
 error = '''
 TiFlash server timeout
@@ -1263,17 +1256,6 @@ error = '''
 TiFlash server is busy
 '''
 
-["types:1063"]
-error = '''
-Incorrect column specifier for column '%-.192s'
-'''
-
-["types:1064"]
-error = '''
-You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
-'''
-
->>>>>>> 78ad1447c... tikv: distinguish server timeout and server busy error for TiKV and TiFlash (#21109)
 ["types:1074"]
 error = '''
 Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead
