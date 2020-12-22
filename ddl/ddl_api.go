@@ -5810,6 +5810,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 
 	oldBundle := infoschema.GetBundle(d.infoHandle.Get(), []int64{partitionID, meta.ID, schema.ID})
 
+	oldBundle.ID = placement.GroupID(partitionID)
+
 	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
