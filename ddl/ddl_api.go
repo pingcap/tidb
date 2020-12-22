@@ -5837,15 +5837,16 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		if cnt <= 0 {
 			continue
 		}
-		bundle.Rules = append(newRules, &placement.Rule{
+		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
-			ID:          "default",
+			ID:          string(role),
 			Role:        role,
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
 		})
 	}
+	bundle.Rules = newRules
 	if len(bundle.Rules) == 0 {
 		bundle.Index = 0
 		bundle.Override = false
