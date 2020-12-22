@@ -11710,15 +11710,15 @@ PrivType:
 	}
 |	"REPLICATION" "SLAVE"
 	{
-		$$ = mysql.PrivilegeType(0)
+		$$ = mysql.ReplicationSlavePriv
 	}
 |	"REPLICATION" "CLIENT"
 	{
-		$$ = mysql.PrivilegeType(0)
+		$$ = mysql.ReplicationClientPriv
 	}
 |	"USAGE"
 	{
-		$$ = mysql.PrivilegeType(0)
+		$$ = mysql.UsagePriv
 	}
 |	"RELOAD"
 	{
