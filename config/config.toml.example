@@ -34,13 +34,6 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# The maximum memory limitation for statistics. Default: 32GB
-# This value must not be less than 32GB.
-mem-quota-statistics = 34359738368
-
-# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
-nested-loop-join-cache-capacity = 20971520
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
@@ -64,6 +57,10 @@ enable-batch-dml = false
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behind a proxy.
+compatible-kill-query = false
+
 # Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
@@ -76,6 +73,9 @@ treat-old-version-utf8-as-utf8mb4 = true
 
 # max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
 max-index-length = 3072
+
+# index-limit is used to deal with compatibility issues. It can only be in [64, 64*8].
+index-limit = 64
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
@@ -297,7 +297,7 @@ max-txn-ttl = 3600000
 mem-profile-interval = "1m"
 
 # Index usage sync lease duration, which influences the time of dump index usage information to KV.
-# Here we set to 0 to not dump index usage information to KV, 
+# Here we set to 0 to not dump index usage information to KV,
 # because we have not completed GC and other functions.
 index-usage-sync-lease = "0s"
 
@@ -388,13 +388,6 @@ grpc-compression-type = "none"
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-enable-one-pc = false
-
-# Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
-# TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
-external-consistency = false
-
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -424,8 +417,6 @@ store-liveness-timeout = "5s"
 ttl-refreshed-txn-size = 33554432
 
 [tikv-client.async-commit]
-# Whether to enable the async commit feature. This feature reduces the latency of the two-phase commit.
-enable = false
 # The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
 # will be committed with normal 2PC way.
 keys-limit = 256
@@ -441,6 +432,8 @@ enable = true
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
@@ -491,6 +484,10 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
+# enable global kill.
+enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

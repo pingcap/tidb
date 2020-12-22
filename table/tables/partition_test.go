@@ -518,3 +518,14 @@ func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
 	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
 	result.Check(testkit.Rows("\x01 1"))
 }
+
+func (ts *testSuite) TestIssue21574(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));")
+	tk.MustExec("drop table t_21574")
+	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
+}

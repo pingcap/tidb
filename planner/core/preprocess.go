@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -181,6 +182,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.DropSequenceStmt:
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCastExpr:
+		p.checkFuncCastExpr(node)
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
@@ -194,8 +197,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
+	case *ast.GroupByClause:
+		p.checkGroupBy(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -697,6 +709,16 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
+func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	for _, item := range stmt.Items {
+		if !item.NullOrder && !enableNoopFuncs {
+			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 	var statsName string
 	switch stmt := node.(type) {
@@ -817,13 +839,41 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	var err error = nil
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			return ddl.ErrTableOptionUnionUnsupported
+			err = ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			return ddl.ErrTableOptionInsertMethodUnsupported
+			err = ddl.ErrTableOptionInsertMethodUnsupported
+		case ast.TableOptionEngine:
+			err = checkTableEngine(option.StrValue)
 		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var mysqlValidTableEngineNames = map[string]struct{}{
+	"archive":    {},
+	"blackhole":  {},
+	"csv":        {},
+	"example":    {},
+	"federated":  {},
+	"innodb":     {},
+	"memory":     {},
+	"merge":      {},
+	"mgr_myisam": {},
+	"myisam":     {},
+	"ndb":        {},
+	"heap":       {},
+}
+
+func checkTableEngine(engineName string) error {
+	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
+		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
@@ -1101,5 +1151,33 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
+	}
+}
+
+func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.EvalType() == types.ETDecimal {
+		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+			// valid
+			return
+		}
+
+		var buf strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+		if err := node.Expr.Restore(restoreCtx); err != nil {
+			p.err = err
+			return
+		}
+		if node.Tp.Flen < node.Tp.Decimal {
+			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
+			return
+		}
+		if node.Tp.Flen > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+			return
+		}
+		if node.Tp.Decimal > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+			return
+		}
 	}
 }

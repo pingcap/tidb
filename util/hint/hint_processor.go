@@ -84,7 +84,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 	case *ast.DeleteStmt:
 		return x.TableHints
 	case *ast.InsertStmt:
-		//check duplicated hints
+		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
 	case *ast.ExplainStmt:
@@ -189,10 +189,10 @@ func (hs *HintsSet) Restore() (string, error) {
 type hintProcessor struct {
 	*HintsSet
 	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
-	bindHint2Ast  bool
-	tableCounter  int
-	indexCounter  int
-	selectCounter int
+	bindHint2Ast bool
+	tableCounter int
+	indexCounter int
+	blockCounter int
 }
 
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
@@ -208,11 +208,10 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 		} else {
 			hp.tableHints = append(hp.tableHints, ExtractTableHintsFromStmtNode(in, nil))
 		}
-		if _, ok := in.(*ast.SelectStmt); ok {
-			hp.selectCounter++
-		}
+		hp.blockCounter++
 	case *ast.TableName:
-		if hp.selectCounter == 0 {
+		// Insert cases.
+		if hp.blockCounter == 0 {
 			return in, false
 		}
 		if hp.bindHint2Ast {
@@ -230,8 +229,9 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (hp *hintProcessor) Leave(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*ast.SelectStmt); ok {
-		hp.selectCounter--
+	switch in.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		hp.blockCounter--
 	}
 	return in, true
 }
@@ -251,13 +251,13 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 }
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
-func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, []error, error) {
+func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
 	stmtNodes, warns, err := p.Parse(sql, charset, collation)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(stmtNodes) != 1 {
-		return nil, nil, errors.New(fmt.Sprintf("bind_sql must be a single statement: %s", sql))
+		return nil, nil, nil, errors.New(fmt.Sprintf("bind_sql must be a single statement: %s", sql))
 	}
 	hs := CollectHint(stmtNodes[0])
 	processor := &BlockHintProcessor{}
@@ -272,7 +272,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			offset := processor.GetHintOffset(tblHint.QBName, hintNodeType, i+1)
 			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, hintNodeType) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
-				return nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
+				return nil, nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
 			}
 			tblHint.QBName = GenerateQBName(hintNodeType, offset)
 			for i, tbl := range tblHint.Tables {
@@ -284,7 +284,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		}
 		hs.tableHints[i] = newHints
 	}
-	return hs, extractHintWarns(warns), nil
+	return hs, stmtNodes[0], extractHintWarns(warns), nil
 }
 
 func extractHintWarns(warns []error) []error {
