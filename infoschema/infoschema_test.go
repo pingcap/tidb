@@ -355,19 +355,18 @@ func (*testSuite) TestGetBundle(c *C) {
 	bundles := make(map[string]*placement.Bundle)
 	is.MockBundles(bundles)
 
-	pdID := "pd"
 	bundle := &placement.Bundle{
-		ID: pdID,
+		ID: placement.PDBundleID,
 		Rules: []*placement.Rule{
 			{
-				GroupID: pdID,
+				GroupID: placement.PDBundleID,
 				ID:      "default",
 				Role:    "voter",
 				Count:   3,
 			},
 		},
 	}
-	bundles[pdID] = bundle
+	bundles[placement.PDBundleID] = bundle
 
 	b := infoschema.GetBundle(is, []int64{})
 	c.Assert(b, DeepEquals, bundle)

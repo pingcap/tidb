@@ -428,7 +428,7 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 		}
 	}
 
-	b, ok := h.BundleByName("pd")
+	b, ok := h.BundleByName(placement.PDBundleID)
 	if ok {
 		b = b.Clone()
 		newRules := b.Rules[:0]
