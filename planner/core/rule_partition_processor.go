@@ -435,14 +435,14 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			if err != nil {
 				return nil, err
 			}
-			found := l.listPrune.LocatePartition(value, isNull)
-			if found == -1 {
+			partitionIdx := l.listPrune.LocatePartition(value, isNull)
+			if partitionIdx == -1 {
 				continue
 			}
-			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[found].Name.L) {
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
 				continue
 			}
-			used[found] = struct{}{}
+			used[partitionIdx] = struct{}{}
 		} else {
 			return l.fullRange, nil
 		}
@@ -458,13 +458,12 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 		return nil, err
 	}
 
-	pruneList := partExpr.ForListPruning
-	lc := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, pruneList)
+	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning)
 	var used map[int]struct{}
-	if pruneList.ColPrunes == nil {
-		used, err = lc.findUsedListPartitions(conds)
+	if partExpr.ForListPruning.ColPrunes == nil {
+		used, err = listPruner.findUsedListPartitions(conds)
 	} else {
-		used, err = lc.findUsedListColumnsPartitions(conds)
+		used, err = listPruner.findUsedListColumnsPartitions(conds)
 	}
 	if err != nil {
 		return nil, err
