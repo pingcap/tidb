@@ -37,11 +37,9 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
 			CalleeAddress: fmt.Sprintf("%v", i+1),
-			//ProcessTime:   time.Second * time.Duration(i+1),
-			//WaitTime:      time.Millisecond * time.Duration(i+1),
 			BackoffSleep: make(map[string]time.Duration),
 			BackoffTimes: make(map[string]int),
-			TimeDetail: &execdetails.TimeDetail{
+			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: time.Second * time.Duration(i+1),
 				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},

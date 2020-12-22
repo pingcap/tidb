@@ -53,7 +53,7 @@ type ExecDetails struct {
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
 	ScanDetail       *ScanDetail
-	TimeDetail       *TimeDetail
+	TimeDetail       TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -183,23 +183,21 @@ type TimeDetail struct {
 }
 
 // String implements the fmt.Stringer interface.
-func (td *TimeDetail) String() string {
+func (td TimeDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	if td != nil {
-		buf.WriteString(ProcessTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
-		buf.WriteString(", " + WaitTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
-	}
+	buf.WriteString(ProcessTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
+	buf.WriteString(", " + WaitTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
 	return buf.String()
 }
 
 // Merge merges time detail into self.
-func (td *TimeDetail) Merge(timeDetail *TimeDetail) {
+func (td TimeDetail) Merge(timeDetail TimeDetail) {
 	td.ProcessTime += timeDetail.ProcessTime
 	td.WaitTime += timeDetail.WaitTime
 }
 
 // MergeFromTimeDetail merges time detail from pb into itself.
-func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
+func (td TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
@@ -241,6 +239,9 @@ func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
 
 // String implements the fmt.Stringer interface.
 func (sd *ScanDetail) String() string {
+	if sd == nil {
+		return ""
+	}
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if sd != nil {
 		buf := bytes.NewBuffer(make([]byte, 0, 16))
@@ -339,10 +340,10 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.TimeDetail != nil && d.TimeDetail.ProcessTime > 0 {
+	if d.TimeDetail.ProcessTime > 0 {
 		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.TimeDetail != nil && d.TimeDetail.WaitTime > 0 {
+	if d.TimeDetail.WaitTime > 0 {
 		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
@@ -431,10 +432,10 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.TimeDetail != nil && d.TimeDetail.ProcessTime > 0 {
+	if d.TimeDetail.ProcessTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.TimeDetail != nil && d.TimeDetail.WaitTime > 0 {
+	if d.TimeDetail.WaitTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {

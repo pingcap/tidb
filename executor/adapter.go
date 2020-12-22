@@ -944,10 +944,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		if execDetail.TimeDetail != nil {
-			metrics.TotalCopProcHistogram.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			metrics.TotalCopWaitHistogram.Observe(execDetail.TimeDetail.WaitTime.Seconds())
-		}
+		metrics.TotalCopProcHistogram.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+		metrics.TotalCopWaitHistogram.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()

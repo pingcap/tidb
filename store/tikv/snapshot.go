@@ -340,18 +340,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			}
 		}
 		if batchGetResp.ExecDetailsV2 != nil {
-			if s.mu.stats != nil {
-				s.mu.Lock()
-				if s.mu.stats.scanDetail == nil {
-					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
-				}
-				if s.mu.stats.timeDetail == nil {
-					s.mu.stats.timeDetail = &execdetails.TimeDetail{}
-				}
-				s.mu.stats.scanDetail.MergeFromScanDetailV2(batchGetResp.ExecDetailsV2.ScanDetailV2)
-				s.mu.stats.timeDetail.MergeFromTimeDetail(batchGetResp.ExecDetailsV2.TimeDetail)
-				s.mu.Unlock()
-			}
+			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
@@ -471,18 +460,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
 		if cmdGetResp.ExecDetailsV2 != nil {
-			if s.mu.stats != nil {
-				s.mu.Lock()
-				if s.mu.stats.scanDetail == nil {
-					s.mu.stats.scanDetail = &execdetails.ScanDetail{}
-				}
-				if s.mu.stats.timeDetail == nil {
-					s.mu.stats.timeDetail = &execdetails.TimeDetail{}
-				}
-				s.mu.stats.scanDetail.MergeFromScanDetailV2(cmdGetResp.ExecDetailsV2.ScanDetailV2)
-				s.mu.stats.timeDetail.MergeFromTimeDetail(cmdGetResp.ExecDetailsV2.TimeDetail)
-				s.mu.Unlock()
-			}
+			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
@@ -504,6 +482,22 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		return val, nil
 	}
+}
+
+func (s *tikvSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if detail == nil || s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.scanDetail == nil {
+		s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+	}
+	if s.mu.stats.timeDetail == nil {
+		s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+	}
+	s.mu.stats.scanDetail.MergeFromScanDetailV2(detail.ScanDetailV2)
+	s.mu.stats.timeDetail.MergeFromTimeDetail(detail.TimeDetail)
 }
 
 // Iter return a list of key-value pair after `k`.

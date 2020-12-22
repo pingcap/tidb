@@ -529,34 +529,15 @@ func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) 
 		return
 	}
 	if sc.mu.execDetails.ScanDetail == nil {
-		sc.mu.execDetails.ScanDetail = &execdetails.ScanDetail{
-			TotalKeys:                 scanDetail.TotalKeys,
-			ProcessedKeys:             scanDetail.ProcessedKeys,
-			RocksdbDeleteSkippedCount: scanDetail.RocksdbDeleteSkippedCount,
-			RocksdbKeySkippedCount:    scanDetail.RocksdbKeySkippedCount,
-			RocksdbBlockCacheHitCount: scanDetail.RocksdbBlockCacheHitCount,
-			RocksdbBlockReadCount:     scanDetail.RocksdbBlockReadCount,
-			RocksdbBlockReadByte:      scanDetail.RocksdbBlockReadByte,
-		}
-	} else {
-		sc.mu.execDetails.ScanDetail.Merge(scanDetail)
+		sc.mu.execDetails.ScanDetail = &execdetails.ScanDetail{}
 	}
+	sc.mu.execDetails.ScanDetail.Merge(scanDetail)
 }
 
 // MergeTimeDetail merges time details into self.
-func (sc *StatementContext) MergeTimeDetail(timeDetail *execdetails.TimeDetail) {
+func (sc *StatementContext) MergeTimeDetail(timeDetail execdetails.TimeDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
-	if timeDetail == nil {
-		return
-	}
-	if sc.mu.execDetails.TimeDetail == nil {
-		sc.mu.execDetails.TimeDetail = &execdetails.TimeDetail{
-			ProcessTime: timeDetail.ProcessTime,
-			WaitTime:    timeDetail.WaitTime,
-		}
-	} else {
-		sc.mu.execDetails.TimeDetail.Merge(timeDetail)
-	}
+	sc.mu.execDetails.TimeDetail.Merge(timeDetail)
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.
@@ -643,24 +624,22 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	if n == 0 {
 		return d
 	}
-	if sc.mu.execDetails.TimeDetail != nil {
-		d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
-		d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
+	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-		sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-			return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
-		})
-		d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
-		d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
-		d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
+	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
+		return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
+	})
+	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
+	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
+	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
-		sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-			return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
-		})
-		d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
-		d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
-		d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
-	}
+	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
+		return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
+	})
+	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
+	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
+	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 	// calculate backoff details
 	type backoffItem struct {

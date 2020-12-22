@@ -354,14 +354,11 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 		s.procKeys = append(s.procKeys, 0)
 	}
 
-	if copStats.TimeDetail != nil {
-		s.totalProcessTime += copStats.TimeDetail.ProcessTime
-		s.totalWaitTime += copStats.TimeDetail.WaitTime
-	}
-
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
+	s.totalProcessTime += copStats.TimeDetail.ProcessTime
+	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++

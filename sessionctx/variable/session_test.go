@@ -142,7 +142,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
 		},
-		TimeDetail: &execdetails.TimeDetail{
+		TimeDetail: execdetails.TimeDetail{
 			ProcessTime: time.Second * time.Duration(2),
 			WaitTime:    time.Minute,
 		},

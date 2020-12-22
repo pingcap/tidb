@@ -682,6 +682,14 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// TiKV
+	ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
+	if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
+		ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
+	}
+	ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
+	if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
+		ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
+	}
 	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
@@ -715,17 +723,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
 			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
-		}
-	}
-
-	if sei.ExecDetail.TimeDetail != nil {
-		ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
-		if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
-			ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
-		}
-		ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
-		if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
-			ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
 		}
 	}
 

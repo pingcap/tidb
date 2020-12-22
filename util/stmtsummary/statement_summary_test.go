@@ -204,7 +204,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: &execdetails.TimeDetail{
+			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 1500,
 				WaitTime:    150,
 			},
@@ -331,7 +331,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: &execdetails.TimeDetail{
+			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 150,
 				WaitTime:    15,
 			},
@@ -587,7 +587,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				RocksdbBlockReadCount:     10,
 				RocksdbBlockReadByte:      1000,
 			},
-			TimeDetail: &execdetails.TimeDetail{
+			TimeDetail: execdetails.TimeDetail{
 				ProcessTime: 500,
 				WaitTime:    50,
 			},

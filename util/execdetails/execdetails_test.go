@@ -66,7 +66,7 @@ func TestString(t *testing.T) {
 			RocksdbBlockReadCount:     1,
 			RocksdbBlockReadByte:      100,
 		},
-		TimeDetail: &TimeDetail{
+		TimeDetail: TimeDetail{
 			ProcessTime: 2*time.Second + 5*time.Millisecond,
 			WaitTime:    time.Second,
 		},
