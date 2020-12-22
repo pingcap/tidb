@@ -318,12 +318,6 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					for _, resRange := range res.Ranges {
 						if eqOrInCount < len(resRange.LowVal) {
 							eqOrInCount = len(resRange.LowVal)
-							if eqOrInCount < len(d.cols) {
-								newCols = d.cols[eqOrInCount:]
-								newLengths = d.lengths[eqOrInCount:]
-							} else if eqOrInCount == len(d.cols) {
-								res.RemainedConds = append(res.RemainedConds, newConditions...)
-							}
 						}
 					}
 					if res.EqOrInCount > 0 {
@@ -331,6 +325,13 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 							res.EqCondCount = res.EqCondCount + tailRes.EqCondCount
 						}
 						res.EqOrInCount = res.EqOrInCount + tailRes.EqOrInCount
+					}
+					if eqOrInCount < len(d.cols) {
+						newCols = d.cols[eqOrInCount:]
+						newLengths = d.lengths[eqOrInCount:]
+					} else if eqOrInCount == len(d.cols) {
+						res.RemainedConds = append(res.RemainedConds, newConditions...)
+						return res, nil
 					}
 				}
 			}
