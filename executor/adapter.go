@@ -606,7 +606,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	if newForUpdateTS == 0 {
 		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-		version, err := seCtx.GetStore().CurrentVersion(txn.GetUnionStore().GetOption(kv.TxnScope).(string))
+		version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
 		if err != nil {
 			return err
 		}
