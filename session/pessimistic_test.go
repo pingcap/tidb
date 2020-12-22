@@ -23,8 +23,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -548,7 +550,7 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return(100)"), IsNil)
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
@@ -1815,7 +1817,8 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 		err := tk2.ExecToErr("alter table t add unique index uk(c);")
 		finishCh <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// This sleep should not be too short to avoid schema version change after amend.
+	time.Sleep(350 * time.Millisecond)
 	tk.MustExec("commit")
 	err = <-finishCh
 	c.Assert(err, IsNil)
@@ -1831,4 +1834,72 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
+}
+
+func (s *testPessimisticSuite) TestResolveStalePessimisticPrimaryLock(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries", "return(\"skip\")"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return(20000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+	}()
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	tk3.MustExec("drop table if exists t1")
+	tk3.MustExec("create table t1(c1 int key, c2 int, c3 int, unique key uk(c2), key k1(c3), key k2(c2, c3));")
+	tk3.MustExec("insert into t1 values(1, 1, 1);")
+	tk3.MustExec("insert into t1 values(2, 2, 2);")
+	tk3.MustExec("insert into t1 values(3, 3, 3);")
+	tk3.MustExec("insert into t1 values(101, 101, 101);")
+	tk3.MustExec("insert into t1 values(201, 201, 201);")
+	tk3.MustExec("insert into t1 values(301, 301, 301);")
+	tk3.MustExec("insert into t1 values(401, 401, 401);")
+	tk3.MustExec("insert into t1 values(402, 402, 402);")
+	tk3.MustExec("insert into t1 values(501, 501, 501);")
+	tbl, err := domain.GetDomain(tk3.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	ukIdxID := tbl.Indices()[0].Meta().ID
+	k1IdxID := tbl.Indices()[1].Meta().ID
+	k2IdxID := tbl.Indices()[2].Meta().ID
+	s.cluster.SplitTable(s.mvccStore, tblID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, ukIdxID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, k1IdxID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, k2IdxID, 8)
+
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	tk.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from t1 where c1 = 501 for update nowait").Check(testkit.Rows("501 501 501"))
+	err = tk.ExecToErr("update t1 set c1 = c1 + 10, c2 = c2 + 10;")
+	c.Assert(err, NotNil)
+	tk3.MustExec("rollback")
+
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t1 where c1 = 1")
+	tk2.MustExec("commit")
+
+	// tk will get abort error.
+	err = tk.ExecToErr("update t1 set c1 = c1 + 10, c2 = c2 + 10 where c1 in(1)")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("update t1 set c1 = c1 + 10, c2 = c2 + 10 where c1 > 1;")
+	tk.MustExec("commit")
+
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set c3 = c3 + 7 where c1 in (3, 101, 201, 301, 401, 402, 501)")
+	tk2.MustExec("commit")
+
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+	tk3.MustExec("rollback")
+
+	c.Assert(tk2.ExecToErr("admin check table t1"), IsNil)
 }
