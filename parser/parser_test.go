@@ -1322,6 +1322,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{"select {ts123 '1989-09-10 11:11:11'}", true, "SELECT _UTF8MB4'1989-09-10 11:11:11'"},
 		{"select {ts123 123}", true, "SELECT 123"},
 		{"select {ts123 1 xor 1}", true, "SELECT 1 XOR 1"},
+		{"select .t.a from t", false, ""},
 	}
 	s.RunTest(c, table)
 }

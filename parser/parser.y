@@ -6120,13 +6120,6 @@ SimpleIdent:
 			Name:  model.NewCIStr($3),
 		}}
 	}
-|	'.' Identifier '.' Identifier
-	{
-		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
-			Table: model.NewCIStr($2),
-			Name:  model.NewCIStr($4),
-		}}
-	}
 |	Identifier '.' Identifier '.' Identifier
 	{
 		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
