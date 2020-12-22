@@ -1079,17 +1079,17 @@ const (
 	ErrAddColumnWithSequenceAsDefault = 8230
 
 	// TiKV/PD/TiFlash errors.
-	ErrPDServerTimeout           = 9001
-	ErrTiKVServerTimeout         = 9002
-	ErrTiKVServerBusy            = 9003
-	ErrResolveLockTimeout        = 9004
-	ErrRegionUnavailable         = 9005
-	ErrGCTooEarly                = 9006
-	ErrWriteConflict             = 9007
-	ErrTiKVStoreLimit            = 9008
-	ErrPrometheusAddrIsNotSet    = 9009
-	ErrTiKVStaleCommand          = 9010
+	ErrPDServerTimeout        = 9001
+	ErrTiKVServerTimeout      = 9002
+	ErrTiKVServerBusy         = 9003
+	ErrResolveLockTimeout     = 9004
+	ErrRegionUnavailable      = 9005
+	ErrGCTooEarly             = 9006
+	ErrWriteConflict          = 9007
+	ErrTiKVStoreLimit         = 9008
+	ErrPrometheusAddrIsNotSet = 9009
+	ErrTiKVStaleCommand       = 9010
 
-	ErrTiFlashServerTimeout      = 9012
-	ErrTiFlashServerBusy         = 9013
+	ErrTiFlashServerTimeout = 9012
+	ErrTiFlashServerBusy    = 9013
 )
