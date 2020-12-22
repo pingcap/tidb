@@ -93,6 +93,9 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
+	for i := 1; i < len(args); i++ {
+		DisableParseJSONFlag4Expr(args[i])
+	}
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
@@ -145,17 +148,6 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_InDuration)
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
-		for i := range bf.args {
-			arg := bf.args[i]
-			// if we need to implicitly cast string to JSON, we only make it a string literal in JSON, instead of parsing it.
-			switch arg.(type) {
-			case *ScalarFunction:
-				f := arg.(*ScalarFunction).Function
-				if f.PbCode() == tipb.ScalarFuncSig_CastStringAsJson && mysql.HasParseToJSONFlag(f.getRetTp().Flag) {
-					f.getRetTp().Flag ^= mysql.ParseToJSONFlag
-				}
-			}
-		}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil

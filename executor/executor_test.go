@@ -7242,7 +7242,7 @@ func (s *testSuite) Test11883(c *C) {
 	tk.MustExec("insert into t1 values ('{\"a\": 1}')")
 	// the first value in the tuple should be interpreted as string instead of JSON, so no row will be returned
 	tk.MustQuery("select f1 from t1 where f1 in ('{\"a\": 1}', 'asdf', 'asdf')").Check(testkit.Rows())
-	// and if we explictly cast it into a JSON value, the check will pass
+	// and if we explicitly cast it into a JSON value, the check will pass
 	tk.MustQuery("select f1 from t1 where f1 in (cast('{\"a\": 1}' as JSON), 'asdf', 'asdf')").Check(testkit.Rows("{\"a\": 1}"))
 	tk.MustQuery("select json_extract('\"asd\"', '$') = 'asd'").Check(testkit.Rows("1"))
 	tk.MustQuery("select json_extract('\"asd\"', '$') <=> 'asd'").Check(testkit.Rows("1"))
