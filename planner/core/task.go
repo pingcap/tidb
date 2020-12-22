@@ -1471,7 +1471,6 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		// TODO : && t.count() > float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
 		if mpp.partTp == property.HashType {
 			if receiver, ok := mpp.p.(*PhysicalExchangeReceiver); !ok {
 				/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
@@ -1481,7 +1480,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 				mpp.addCost(p.GetCost(inputRows, false))
 				return mpp
 			} else {
-				if p.stats.RowCount/p.Stats().GroupNDVs[0].NDV < 3 {
+				if p.statsInfo().RowCount < 30 {
+					/// TODO: how to evaluate this?
 					/// 1-phase agg when its cardinality is large
 					/// only push down the original agg
 					p.self.SetChildren(mpp.p)
