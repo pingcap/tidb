@@ -530,6 +530,7 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 			if s.r.peek() != '`' {
 				// don't return identifier in case that it's interpreted as keyword token later.
 				tok, lit = quotedIdentifier, s.buf.String()
+				s.identifierDot = false
 				return
 			}
 			s.r.inc()

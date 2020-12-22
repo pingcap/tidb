@@ -296,6 +296,16 @@ func (s *testParserSuite) TestSimple(c *C) {
 	tName := sel.From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
 	c.Assert(tName.Schema.O, Equals, "test")
 	c.Assert(tName.Name.O, Equals, "t")
+
+	src = "select t. `a` > 10 from t;"
+	st, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	bExpr, ok = st.(*ast.SelectStmt).Fields.Fields[0].Expr.(*ast.BinaryOperationExpr)
+	c.Assert(ok, IsTrue)
+	c.Assert(bExpr.Op, Equals, opcode.GT)
+	c.Assert(bExpr.L.(*ast.ColumnNameExpr).Name.Name.O, Equals, "a")
+	c.Assert(bExpr.L.(*ast.ColumnNameExpr).Name.Table.O, Equals, "t")
+	c.Assert(bExpr.R.(ast.ValueExpr).GetValue().(int64), Equals, int64(10))
 }
 
 func (s *testParserSuite) TestSpecialComments(c *C) {
