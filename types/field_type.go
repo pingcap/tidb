@@ -98,6 +98,10 @@ func AggFieldType(tps []*FieldType) *FieldType {
 		}
 	}
 
+	if mysql.HasUnsignedFlag(currType.Flag) && !isMixedSign {
+		currType.Flag |= mysql.UnsignedFlag
+	}
+
 	return &currType
 }
 
