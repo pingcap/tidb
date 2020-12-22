@@ -1432,7 +1432,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
-		return ErrReadOnly
+		return ErrReadOnly.GenWithStackByArgs(name, name, name)
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TiDBInitChunkSize:
