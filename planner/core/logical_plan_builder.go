@@ -1204,9 +1204,6 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, name)
 			continue
 		}
-		// proj{a as d}, p = p1
-		// proj{a as d, f}, p = Apply(proj{a as d, p...}->p, subquery}
-		// proj{a as d, f, subquery},
 		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, nil, 0, err
