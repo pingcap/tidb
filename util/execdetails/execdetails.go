@@ -190,12 +190,6 @@ func (td TimeDetail) String() string {
 	return buf.String()
 }
 
-// Merge merges time detail into self.
-func (td TimeDetail) Merge(timeDetail TimeDetail) {
-	td.ProcessTime += timeDetail.ProcessTime
-	td.WaitTime += timeDetail.WaitTime
-}
-
 // MergeFromTimeDetail merges time detail from pb into itself.
 func (td TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {

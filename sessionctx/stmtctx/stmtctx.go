@@ -536,8 +536,8 @@ func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) 
 
 // MergeTimeDetail merges time details into self.
 func (sc *StatementContext) MergeTimeDetail(timeDetail execdetails.TimeDetail) {
-	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
-	sc.mu.execDetails.TimeDetail.Merge(timeDetail)
+	sc.mu.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
+	sc.mu.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.
