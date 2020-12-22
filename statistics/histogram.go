@@ -928,7 +928,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 			return float64(c.Histogram.Buckets[index/2].Repeat), nil
 		}
 	}
-	// 3. use evenly distribution assumption for the rest
+	// 3. use uniform distribution assumption for the rest
 	cnt := c.Histogram.notNullCount()
 	for _, bkt := range c.Histogram.Buckets {
 		if cnt <= float64(bkt.Repeat) {

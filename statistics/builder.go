@@ -189,8 +189,10 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 }
 
 // BuildColumnHistAndTopN build a histogram and TopN for a column from samples.
-func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id int64, collector *SampleCollector, tp *types.FieldType,
-	count int64, ndv int64, nullCount int64) (*Histogram, *TopN, error) {
+func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, *TopN, error) {
+	count := collector.Count
+	ndv := collector.FMSketch.NDV()
+	nullCount := collector.NullCount
 	if ndv > count {
 		ndv = count
 	}
