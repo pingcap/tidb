@@ -7272,3 +7272,45 @@ func (s *testSuite) TestIssue15563(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
 }
+
+func (s *testSuite) TestStalenessTransaction(c *C) {
+	testcases := []struct {
+		name     string
+		prevSql  string
+		nextSql  string
+		IsNewTxn bool
+	}{
+		{
+			name: "begin and staleness txn",
+		},
+		{
+			name: "staleness txn and begin",
+		},
+		{
+			name: "staleness txn and staleness txn",
+		},
+		{
+			name: "begin and begin",
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		var preTS uint64
+		var currentTS uint64
+		tk.MustExec(testcase.prevSql)
+		txn, err := tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+		preTS = txn.StartTS()
+		tk.MustExec(testcase.nextSql)
+		txn, err = tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+		currentTS = txn.StartTS()
+		if testcase.IsNewTxn {
+			c.Assert(preTS, Not(Equals), currentTS)
+		} else {
+			c.Assert(preTS, Equals, currentTS)
+		}
+	}
+}
