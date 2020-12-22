@@ -191,7 +191,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 
 	var input []struct {
 		SQL    string
-		Pruner []testTablePartitionInfo
+		Pruner string
 	}
 	var output []struct {
 		SQL       string
@@ -239,26 +239,14 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	c.Assert(valid, IsTrue)
 }
 
+func (s *testPartitionPruneSuit) checkPrunePartitionInfo(c *C, query string, infos1 string, plan []string) {
+	infos2 := s.getPartitionInfoFromPlan(plan)
+	c.Assert(infos1, Equals, infos2, Commentf("the query is: %v, the plan is:\n%v", query, strings.Join(plan, "\n")))
+}
+
 type testTablePartitionInfo struct {
 	Table      string
 	Partitions string
-}
-
-func (s *testPartitionPruneSuit) checkPrunePartitionInfo(c *C, query string, infos1 []testTablePartitionInfo, plan []string) {
-	infos2 := s.getPartitionInfoFromPlan(plan)
-	comment := Commentf("%v != %v, the query is: %v, the plan is:\n%v", infos1, infos2, query, strings.Join(plan, "\n"))
-	c.Assert(len(infos1), Equals, len(infos2), comment)
-	for i, info1 := range infos1 {
-		info2 := infos2[i]
-		c.Assert(info1.Table, Equals, info2.Table, comment)
-		c.Assert(info1.Partitions, Equals, info2.Partitions, comment)
-	}
-}
-
-func (s *testPartitionPruneSuit) getQueryPartitionInfo(tk *testkit.TestKit, query string) []testTablePartitionInfo {
-	rows := tk.MustQuery("explain " + query).Rows()
-	rs := s.testData.ConvertRowsToStrings(rows)
-	return s.getPartitionInfoFromPlan(rs)
 }
 
 // getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
@@ -272,7 +260,7 @@ func (s *testPartitionPruneSuit) getQueryPartitionInfo(tk *testkit.TestKit, quer
 //          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
 //
 // The return table partition info is: t1: p0; t2: p1
-func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) []testTablePartitionInfo {
+func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) string {
 	infos := make([]testTablePartitionInfo, 0, 2)
 	info := testTablePartitionInfo{}
 	for _, row := range plan {
@@ -293,7 +281,14 @@ func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) []testT
 		}
 		return infos[i].Partitions < infos[j].Partitions
 	})
-	return infos
+	buf := bytes.NewBuffer(nil)
+	for i, info := range infos {
+		if i > 0 {
+			buf.WriteString("; ")
+		}
+		buf.WriteString(fmt.Sprintf("%v: %v", info.Table, info.Partitions))
+	}
+	return buf.String()
 }
 
 func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {

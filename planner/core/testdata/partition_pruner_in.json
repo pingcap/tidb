@@ -88,557 +88,227 @@
     "cases": [
       {
         "SQL": "select * from t1 order by id,a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          }
-        ]
+        "Pruner": "t1: all"
       },
       {
         "SQL": "select count(1) from t1 order by id,a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          }
-        ]
+        "Pruner": "t1: all"
       },
       {
         "SQL": "select * from t1 where a = 1 or b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select count(1) from t1 where a = 1 or b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 and b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select count(1) from t1 where a = 1 and b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a = 1 and b = 1",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) or b in (4,5,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) and b in (4,5,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) and b in (3,4,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) and b in (1,2,3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) or b in (1,2,3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where ( a=1 and b=1) or (a=6 and b=6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a = 100 and b = 100",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id=7",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select * from t1 left join t2 on true where (t1.a=1 or t1.a = 3 and t1.b in (3,5)) and t2.a in (6,7,8) and t2.b=7 and t2.id = 7 order by t1.id,t1.a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select * from t1 where a = 1",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where b = 1",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where b is null",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p1"
       },
       {
         "SQL": "select * from t1 where a is null",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a = 1 or b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 or (a = 2 and b = 2) or ((a,b) in ((4,4),(5,5)))",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 or (a is null and b = 10)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 or (a = 10 and b is null)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a = 8 or (a = 10 and b is null)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p1"
       },
       {
         "SQL": "select * from t1 where a = 1 and false",
-        "Pruner": []
+        "Pruner": ""
       },
       {
         "SQL": "select * from t1 where a = 1 and true",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 or false",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 1 or true order by id,a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          }
-        ]
+        "Pruner": "t1: all"
       },
       {
         "SQL": "select * from t1 where a = 1 or b in (100,200)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 100 or b in (1,2)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 where a = 100 or b in (1,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a = 100 or b in (100,200)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a in (1,6) or b in (1,2) or (a=3 and b =3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a in (1,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a in (1,6) or (a=3 and b =3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0,p1"
       },
       {
         "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
-        "Pruner": []
+        "Pruner": ""
       },
       {
         "SQL": "select * from t1 where a = 1 and (b=6 or a=6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a = 100 and (b=200 or a=200)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 where a = 1 or (a+b=3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          }
-        ]
+        "Pruner": "t1: all"
       },
       {
         "SQL": "select * from t1 where id = 1 or id=2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          }
-        ]
+        "Pruner": "t1: all"
       },
       {
         "SQL": "select * from t1 where id = 1 and a=1",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0"
       },
       {
         "SQL": "select * from t1 partition(p1) where a = 1 or b = 2",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: dual"
       },
       {
         "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and (t2.a = 6 and t2.b = 6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select * from t1 join t1 as t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and (t2.a = 6 and t2.b = 6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t2 where a in (1,2)) order by a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: all; t2: p0"
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t1 where a in (1,2)) order by a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "all"
-          },
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: all; t1: p0"
       },
       {
         "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and t2.a in (6,7,8)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select * from t1 right join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and t2.a in (1,2,3)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p0"
       },
       {
         "SQL": "select * from t1 join t2 on true where t1.a=5 and t2.a in (6,7,8) and t2.b = 6",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p1"
       },
       {
         "SQL": "select count(*) from t1 join t2 on t1.b = t2.b where t1.a in (1,2) and t2.a in (1,6) and t1.b in (1,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0,p1"
-          }
-        ]
+        "Pruner": "t1: p0; t2: p0,p1"
       },
       {
         "SQL": "select /*+ INL_JOIN(t2,t1) */      count(*) from t2 join t1 on t2.b = t1.b where t2.a in (1,2) and t1.a in (1,6) and t1.b in (1,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0,p1; t2: p0"
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1,t2) */ count(*) from t2 join t1 on t2.b = t1.b where t2.a in (1,2) and t1.a in (1,6) and t1.b in (6,1)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0,p1; t2: p0"
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1,t2) */ count(*) from t2 join t1 on t2.b = t1.b where t2.a in (1,2) and t1.a in (1,6) and t1.b in (100,9,6)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p1"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "dual"
-          }
-        ]
+        "Pruner": "t1: p1; t2: dual"
       },
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1,t2) */ count(*) from t2 join t1 on t2.b = t1.b where t2.a in (1,2) and t1.a in (1,6) and t1.b in (100,9,6,1)",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0,p1"
-          },
-          {
-            "Table": "t2",
-            "Partitions": "p0"
-          }
-        ]
+        "Pruner": "t1: p0,p1; t2: p0"
       },
       {
         "SQL": "select * from t1 where a in (1,2,3) union select * from t1 where b in (6,7,8) order by a",
-        "Pruner": [
-          {
-            "Table": "t1",
-            "Partitions": "p0"
-          },
-          {
-            "Table": "t1",
-            "Partitions": "p1"
-          }
-        ]
+        "Pruner": "t1: p0; t1: p1"
       }
     ]
   }
