@@ -268,7 +268,6 @@ func (tc *TransactionContext) Cleanup() {
 	tc.TableDeltaMap = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
-	tc.IsStaleness = false
 }
 
 // ClearDelta clears the delta map.

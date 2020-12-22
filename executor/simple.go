@@ -573,6 +573,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		if err != nil {
 			return err
 		}
+		txnCtx.IsStaleness = false
 	}
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then

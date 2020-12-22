@@ -7280,17 +7280,29 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		nextSql  string
 		IsNewTxn bool
 	}{
+		//{
+		//	name:     "begin and staleness txn",
+		//	prevSql:  "begin",
+		//	nextSql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND MIN READ TIMESTAMP '2019-11-04 00:00:00';`,
+		//	IsNewTxn: true,
+		//},
+		//{
+		//	name:     "staleness txn and begin",
+		//	prevSql:  "START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';",
+		//	nextSql:  `begin`,
+		//	IsNewTxn: true,
+		//},
+		//{
+		//	name:     "staleness txn and staleness txn",
+		//	prevSql:  "START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';",
+		//	nextSql:  `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
+		//	IsNewTxn: true,
+		//},
 		{
-			name: "begin and staleness txn",
-		},
-		{
-			name: "staleness txn and begin",
-		},
-		{
-			name: "staleness txn and staleness txn",
-		},
-		{
-			name: "begin and begin",
+			name:     "begin and begin",
+			prevSql:  "begin",
+			nextSql:  "begin",
+			IsNewTxn: false,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
@@ -7302,11 +7314,13 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		tk.MustExec(testcase.prevSql)
 		txn, err := tk.Se.Txn(true)
 		c.Assert(err, IsNil)
+		fmt.Println(tk.Se.GetSessionVars().TxnCtx.IsStaleness)
 		preTS = txn.StartTS()
 		tk.MustExec(testcase.nextSql)
 		txn, err = tk.Se.Txn(true)
 		c.Assert(err, IsNil)
 		currentTS = txn.StartTS()
+		fmt.Println(tk.Se.GetSessionVars().TxnCtx.IsStaleness)
 		if testcase.IsNewTxn {
 			c.Assert(preTS, Not(Equals), currentTS)
 		} else {
