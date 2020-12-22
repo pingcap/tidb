@@ -2174,3 +2174,10 @@ func (s *testIntegrationSuite) TestNonaggregateColumnWithSingleValueInOnlyFullGr
 	tk.MustGetErrMsg("select a from t where a = 1 order by count(b)", "[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
 	tk.MustQuery("select a from t where a = 1 having count(b) > 0").Check(testkit.Rows("1"))
 }
+
+func (s *testIntegrationSuite) TestIssue21642(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("select tidb_version()")
+	_, err := tk.Exec("SELECT exec_count, schema_name, query_sample_text, plan  FROM information_schema.statements_summary;")
+	c.Assert(err, IsNil)
+}

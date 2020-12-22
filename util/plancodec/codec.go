@@ -280,7 +280,7 @@ func decodePlanInfo(str string) (*planInfo, error) {
 		case 0:
 			depth, err := strconv.Atoi(v)
 			if err != nil {
-				return nil, errors.Errorf("decode plan: %v, depth: %v, error: %v", str, v, err)
+				continue
 			}
 			p.depth = depth
 		// plan ID
