@@ -8389,6 +8389,8 @@ func (s *testIntegrationSuite) TestIssue21677(c *C) {
 	tk.MustQuery("select 99e+r10 from t;").Check(testkit.Rows("11", "4"))
 	tk.MustQuery("select .78$123;").Check(testkit.Rows("0.78"))
 	tk.MustGetErrCode("select .78$421+1;", mysql.ErrParse)
+	tk.MustQuery("select t. `r10` > 3 from t;").Check(testkit.Rows("1", "0"))
+	tk.MustQuery("select * from t where t. `r10` > 3;").Check(testkit.Rows("1 10"))
 }
 
 func (s *testIntegrationSuite) TestIssue11333(c *C) {
