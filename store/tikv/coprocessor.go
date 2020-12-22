@@ -872,8 +872,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		RecordTimeStat: true,
+		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
 	})
 	req.StoreTp = task.storeType
@@ -1013,9 +1013,9 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		}
 	}
 
-	if detail != nil && detail.HandleTime != nil {
-		processMs := detail.HandleTime.ProcessMs
-		waitMs := detail.HandleTime.WaitMs
+	if detail != nil && detail.TimeDetail != nil {
+		processMs := detail.TimeDetail.ProcessWallTimeMs
+		waitMs := detail.TimeDetail.WaitWallTimeMs
 		if processMs > minLogKVProcessTime {
 			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
 			if detail.ScanDetail != nil {
@@ -1146,9 +1146,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	resp.respTime = costTime
 	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if handleTime := pbDetails.HandleTime; handleTime != nil {
-			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
