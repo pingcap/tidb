@@ -1338,6 +1338,8 @@ import (
 %precedence remove
 %precedence lowerThenOrder
 %precedence order
+%precedence lowerThanFunction
+%precedence function
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -11774,12 +11776,21 @@ PrivType:
 	}
 
 ObjectType:
+	%prec lowerThanFunction
 	{
 		$$ = ast.ObjectTypeNone
 	}
 |	"TABLE"
 	{
 		$$ = ast.ObjectTypeTable
+	}
+|	"FUNCTION"
+	{
+		$$ = ast.ObjectTypeFunction
+	}
+|	"PROCEDURE"
+	{
+		$$ = ast.ObjectTypeProcedure
 	}
 
 PrivLevel:
