@@ -50,7 +50,8 @@ func (s *testConstSuite) TestPrivAllConsistency(c *C) {
 		c.Assert(ok, IsTrue)
 	}
 
-	c.Assert(len(Priv2Str), Equals, len(Priv2UserCol))
+	// USAGE privilege doesn't have a column, so +1
+	c.Assert(len(Priv2Str), Equals, len(Priv2UserCol)+1)
 }
 
 func (s *testConstSuite) TestSQLMode(c *C) {
