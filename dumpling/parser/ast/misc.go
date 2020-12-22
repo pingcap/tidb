@@ -1991,9 +1991,7 @@ type PrivElem struct {
 
 // Restore implements Node interface.
 func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
-	if n.Priv == 0 {
-		ctx.WritePlain("/* UNSUPPORTED TYPE */")
-	} else if n.Priv == mysql.AllPriv {
+	if n.Priv == mysql.AllPriv {
 		ctx.WriteKeyWord("ALL")
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
