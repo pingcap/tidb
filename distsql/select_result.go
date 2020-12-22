@@ -394,7 +394,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
@@ -419,13 +419,13 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
-			if s.totalProcessTime > 0 {
-				buf.WriteString(", tot_proc: ")
-				buf.WriteString(s.totalProcessTime.String())
-				if s.totalWaitTime > 0 {
-					buf.WriteString(", tot_wait: ")
-					buf.WriteString(s.totalWaitTime.String())
-				}
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(s.totalProcessTime.String())
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(s.totalWaitTime.String())
 			}
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
