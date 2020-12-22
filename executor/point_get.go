@@ -407,7 +407,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
 	}
-	return errors.New(fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
+	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
