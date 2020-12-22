@@ -57,6 +57,16 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("do @a := (select * from t where i = 1)")
+	tk2.MustExec("insert into t values (2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite3) TestSetRoleAllCorner(c *C) {

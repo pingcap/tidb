@@ -1712,25 +1712,38 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 }
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
-	stkLen := len(er.ctxStack)
-	name := er.ctxNameStk[stkLen-1]
-	switch er.ctxStack[stkLen-1].(type) {
-	case *expression.Column:
-	case *expression.CorrelatedColumn:
-	default:
+	var name *types.FieldName
+	// Here we will find the corresponding column for default function. At the same time, we need to consider the issue
+	// of subquery and name space.
+	// For example, we have two tables t1(a int default 1, b int) and t2(a int default -1, c int). Consider the following SQL:
+	// 		select a from t1 where a > (select default(a) from t2)
+	// Refer to the behavior of MySQL, we need to find column a in table t2. If table t2 does not have column a, then find it
+	// in table t1. If there are none, return an error message.
+	// Based on the above description, we need to look in er.b.allNames from back to front.
+	for i := len(er.b.allNames) - 1; i >= 0; i-- {
+		idx, err := expression.FindFieldName(er.b.allNames[i], v.Name)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if idx >= 0 {
+			name = er.b.allNames[i][idx]
+			break
+		}
+	}
+	if name == nil {
 		idx, err := expression.FindFieldName(er.names, v.Name)
 		if err != nil {
 			er.err = err
 			return
 		}
-		if er.err != nil {
-			return
-		}
 		if idx < 0 {
-			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field list")
 			return
 		}
+		name = er.names[idx]
 	}
+
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
@@ -1778,7 +1791,6 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	if er.err != nil {
 		return
 	}
-	er.ctxStackPop(1)
 	er.ctxStackAppend(val, types.EmptyName)
 }
 
