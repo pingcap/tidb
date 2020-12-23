@@ -803,7 +803,10 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 		return "", isNull, err
 	}
 	planTree, err := plancodec.DecodePlan(planString)
-	return planTree, false, err
+	if err != nil {
+		return planString, false, nil
+	}
+	return planTree, false, nil
 }
 
 type nextValFunctionClass struct {
@@ -986,7 +989,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
 }
@@ -1023,7 +1026,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil
 }
