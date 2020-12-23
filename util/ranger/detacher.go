@@ -314,11 +314,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					if len(tailRes.AccessConds) > 0 {
 						res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
 						res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
-						if i == len(newConditions)-1 {
-							newConditions = newConditions[:i]
-						} else {
-							newConditions = append(newConditions[:i], newConditions[i+1:]...)
-						}
+						newConditions = append(newConditions[:i], newConditions[i+1:]...)
 					}
 					for _, resRange := range res.Ranges {
 						if eqOrInCount < len(resRange.LowVal) {
@@ -334,7 +330,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 					if eqOrInCount < len(d.cols) {
 						newCols = d.cols[eqOrInCount:]
 						newLengths = d.lengths[eqOrInCount:]
-					} else if eqOrInCount == len(d.cols) {
+					} else if eqOrInCount == len(d.cols) || len(newConditions) == 0 {
 						res.RemainedConds = append(res.RemainedConds, newConditions...)
 						return res, nil
 					}
@@ -352,7 +348,6 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				for _, resRange := range res.Ranges {
 					var saveRange []*Range
 					saveRange = append(saveRange, resRange)
-
 					if len(resRange.LowVal) == eqOrInCount {
 						saveRange = appendRanges2PointRanges(saveRange, tailRes.Ranges)
 						resRanges = append(resRanges, saveRange...)
