@@ -509,6 +509,7 @@ var (
 		upgradeToVer56,
 		upgradeToVer57,
 		upgradeToVer58,
+		upgradeToVer59,
 	}
 )
 

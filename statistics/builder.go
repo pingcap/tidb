@@ -29,7 +29,6 @@ type SortedBuilder struct {
 	bucketIdx       int64
 	Count           int64
 	hist            *Histogram
-	statsVer        int
 	needBucketNDV   bool
 }
 
@@ -40,7 +39,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
-		needBucketNDV:        statsVer == Version2,
+		needBucketNDV:   statsVer == Version2,
 	}
 }
 

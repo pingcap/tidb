@@ -225,7 +225,7 @@ func (hg *Histogram) AppendBucketWithNDV(lower *types.Datum, upper *types.Datum,
 
 func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, needBucketNDV bool) {
 	l := hg.Len()
-	hg.Bounds.TruncateTo(2*l-1)
+	hg.Bounds.TruncateTo(2*l - 1)
 	hg.Bounds.AppendDatum(0, upper)
 	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
 	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
@@ -392,8 +392,8 @@ func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) float64
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 0 {
-			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
@@ -402,8 +402,8 @@ func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) float64
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 0 {
-			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
