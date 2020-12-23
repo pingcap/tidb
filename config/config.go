@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
-
 	"go.uber.org/zap"
 	"google.golang.org/grpc/encoding/gzip"
 )
@@ -52,8 +51,10 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
-	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistics = 32 << 30
+	// DefIndexLimit is the limitation of index on a single table. This value is consistent with MySQL.
+	DefIndexLimit = 64
+	// DefMaxOfIndexLimit is the maximum limitation of index on a single table for TiDB.
+	DefMaxOfIndexLimit = 64 * 8
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -64,8 +65,14 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// Def TableColumnCountLimit is limit of the number of columns in a table
+	DefTableColumnCountLimit = 1017
+	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	DefMaxOfTableColumnCountLimit = 4096
 	// DefTxnScope is the default value for TxnScope
 	DefTxnScope = "global"
+	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
+	DefStoresRefreshInterval = 60
 )
 
 // Valid config maps
@@ -85,23 +92,21 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host                        string `toml:"host" json:"host"`
-	AdvertiseAddress            string `toml:"advertise-address" json:"advertise-address"`
-	Port                        uint   `toml:"port" json:"port"`
-	Cors                        string `toml:"cors" json:"cors"`
-	Store                       string `toml:"store" json:"store"`
-	Path                        string `toml:"path" json:"path"`
-	Socket                      string `toml:"socket" json:"socket"`
-	Lease                       string `toml:"lease" json:"lease"`
-	RunDDL                      bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable                  bool   `toml:"split-table" json:"split-table"`
-	TokenLimit                  uint   `toml:"token-limit" json:"token-limit"`
-	OOMUseTmpStorage            bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
-	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
-	OOMAction                   string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
-	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
+	Host             string `toml:"host" json:"host"`
+	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
+	Port             uint   `toml:"port" json:"port"`
+	Cors             string `toml:"cors" json:"cors"`
+	Store            string `toml:"store" json:"store"`
+	Path             string `toml:"path" json:"path"`
+	Socket           string `toml:"socket" json:"socket"`
+	Lease            string `toml:"lease" json:"lease"`
+	RunDDL           bool   `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool   `toml:"split-table" json:"split-table"`
+	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
+	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	OOMAction        string `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -121,10 +126,13 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                 int               `toml:"index-limit" json:"index-limit"`
+	TableColumnCountLimit      uint32            `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
@@ -172,6 +180,11 @@ type Config struct {
 	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
+	// StoresRefreshInterval indicates the interval of refreshing stores info, the unit is second.
+	StoresRefreshInterval uint64 `toml:"stores-refresh-interval" json:"stores-refresh-interval"`
+	// EnableTCP4Only enables net.Listen("tcp4",...)
+	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
+	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -510,8 +523,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
-	// Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-	EnableOnePC bool `toml:"enable-one-pc" json:"enable-one-pc"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -533,15 +544,10 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
-	// Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
-	// TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
-	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
 }
 
-// AsyncCommit is the config for the async commit feature.
+// AsyncCommit is the config for the async commit feature. The switch to enable it is a system variable.
 type AsyncCommit struct {
-	// Whether to enable the async commit feature.
-	Enable bool `toml:"enable" json:"enable"`
 	// Use async commit only if the number of keys does not exceed KeysLimit.
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
@@ -564,6 +570,8 @@ type CoprocessorCache struct {
 	Enable bool `toml:"enable" json:"enable"`
 	// The capacity in MB of the cache.
 	CapacityMB float64 `toml:"capacity-mb" json:"capacity-mb"`
+	// Only cache requests that containing small number of ranges. May to be changed in future.
+	AdmissionMaxRanges uint64 `toml:"admission-max-ranges" json:"admission-max-ranges"`
 	// Only cache requests whose result set is small.
 	AdmissionMaxResultMB float64 `toml:"admission-max-result-mb" json:"admission-max-result-mb"`
 	// Only cache requests takes notable time to process.
@@ -620,6 +628,10 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
+	// Whether enable global kill.
+	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
 }
 
 var defaultConf = Config{
@@ -638,12 +650,12 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistics:           32 << 30,
-	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          true,
 	MaxIndexLength:               3072,
+	IndexLimit:                   64,
+	TableColumnCountLimit:        1017,
 	AlterPrimaryKey:              false,
 	TreatOldVersionUTF8AsUTF8MB4: true,
 	EnableTableLock:              false,
@@ -729,15 +741,12 @@ var defaultConf = Config{
 		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
-			Enable: false,
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
 			SafeWindow:        2 * time.Second,
 			AllowedClockDrift: 500 * time.Millisecond,
 		},
-		EnableOnePC:         false,
-		ExternalConsistency: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -755,6 +764,7 @@ var defaultConf = Config{
 		CoprCache: CoprocessorCache{
 			Enable:                true,
 			CapacityMB:            1000,
+			AdmissionMaxRanges:    500,
 			AdmissionMaxResultMB:  10,
 			AdmissionMinProcessMs: 5,
 		},
@@ -777,7 +787,10 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental:               Experimental{},
+	Experimental: Experimental{
+		AllowsExpressionIndex: false,
+		EnableGlobalKill:      false,
+	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
@@ -788,6 +801,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
+	StoresRefreshInterval:        DefStoresRefreshInterval,
 }
 
 var (
@@ -834,6 +848,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
+
+// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
+// is set by the user.
+var IsMemoryQuotaQuerySetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -890,6 +908,9 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
+	if metaData.IsDefined("mem-quota-query") {
+		IsMemoryQuotaQuerySetByUser = true
+	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
 	}
@@ -937,12 +958,18 @@ func (c *Config) Valid() error {
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {
 		return fmt.Errorf("max-index-length should be [%d, %d]", DefMaxIndexLength, DefMaxOfMaxIndexLength)
 	}
+	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
+		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
 	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
 		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
+	}
+	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
+		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
 
 	// lower_case_table_names is allowed to be 0, 1, 2
@@ -985,9 +1012,6 @@ func (c *Config) Valid() error {
 	}
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
-	}
-	if c.MemQuotaStatistics < DefMinQuotaStatistics {
-		return fmt.Errorf("memory-quota-statistics should be greater than %dB", DefMinQuotaStatistics)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
