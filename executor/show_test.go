@@ -754,39 +754,6 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
-<<<<<<< HEAD
-=======
-
-	// TiDB defaults (and only supports) foreign_key_checks=0
-	// This means that the child table can be created before the parent table.
-	// This behavior is required for mysqldump restores.
-	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
-	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
-	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
-	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
-		""+
-			"child CREATE TABLE `child` (\n"+
-			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
-			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Test Foreign keys + ON DELETE / ON UPDATE
-	tk.MustExec(`DROP TABLE child`)
-	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET NULL ON UPDATE CASCADE)`)
-	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
-		""+
-			"child CREATE TABLE `child` (\n"+
-			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
-			"  KEY `par_ind` (`parent_id`),\n"+
-			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
 
 	// Test issue #20327
 	tk.MustExec("drop table if exists t;")
@@ -797,62 +764,6 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
 	result = tk.MustQuery("show create table t;").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
-
-	// Test show list partition table
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
-    	partition p0 values in (3,5,6,9,17),
-    	partition p1 values in (1,2,10,11,19,20),
-    	partition p2 values in (4,12,13,14,18),
-    	partition p3 values in (7,8,15,16,null)
-	);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST (`id`) (\n"+
-			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
-			")"))
-	// Test show list column partition table
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
-    	partition p0 values in (3,5,6,9,17),
-    	partition p1 values in (1,2,10,11,19,20),
-    	partition p2 values in (4,12,13,14,18),
-    	partition p3 values in (7,8,15,16,null)
-	);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(id) (\n"+
-			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
-			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
-			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
-			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
-			")"))
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
-    	partition p0 values in ((3, '1'), (5, '5')),
-    	partition p1 values in ((1, '1')));`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `id` int(11) DEFAULT NULL,\n"+
-			"  `name` varchar(10) DEFAULT NULL,\n"+
-			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"PARTITION BY LIST COLUMNS(id,name) (\n"+
-			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
-			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
-			")"))
->>>>>>> c9d7089d8... ddl: add charset info in show create table if column is generated (#20347)
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
