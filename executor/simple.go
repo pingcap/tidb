@@ -560,13 +560,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
+	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
+	// always create a new Txn instead of reusing it.
 	if s.ReadOnly && s.Bound != nil {
 		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
 	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
-	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
-	// always create a new Txn instead of reusing it.
+	// If the last txn's staleness is true, we should always create a new txn instead of reusing it.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if txnCtx.History != nil || txnCtx.IsStaleness {
 		err := e.ctx.NewTxn(ctx)
