@@ -760,7 +760,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 
 func checkHintedSQL(sql, charset, collation, db string) error {
 	p := parser.New()
-	hintsSet, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
 	if err != nil {
 		return err
 	}

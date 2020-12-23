@@ -637,19 +637,7 @@ func (h *BindHandle) CaptureBaselines() {
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
-		h.sctx.Lock()
-		h.sctx.GetSessionVars().CurrentDB = schemas[i]
-		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
-		// TODO: support all engines plan hint in capture baselines.
-		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
-		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
-		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
-		h.sctx.Unlock()
-		if err != nil {
-			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
-			continue
-		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints, true, dbName)
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
 		if bindSQL == "" {
 			continue
 		}
