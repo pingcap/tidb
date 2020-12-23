@@ -520,6 +520,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		d.mu.hook.OnJobUpdated(job)
 		d.mu.RUnlock()
 
+		// d.mu.hook is initialed from domain, which will force the owner host update schema diff synchronously.
+		d.mu.RLock()
+		d.mu.hook.OnSchemaStateChanged()
+		d.mu.RUnlock()
+
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}

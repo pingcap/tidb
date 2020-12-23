@@ -653,6 +653,7 @@ type ddlCallback struct {
 	do *Domain
 }
 
+// OnChanged implements overrides ddl Callback interface.
 func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
@@ -665,6 +666,14 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 
 	return nil
+}
+
+// OnSchemaStateChange overrides the ddl Callback interface.
+func (c *ddlCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+	}
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
