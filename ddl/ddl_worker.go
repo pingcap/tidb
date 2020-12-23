@@ -677,6 +677,17 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
+<<<<<<< HEAD
+=======
+	case model.ActionAlterIndexVisibility:
+		ver, err = onAlterIndexVisibility(t, job)
+	case model.ActionAlterTableAlterPartition:
+		ver, err = onAlterTableAlterPartition(t, job)
+	case model.ActionAlterSequence:
+		ver, err = onAlterSequence(t, job)
+	case model.ActionRenameTables:
+		ver, err = onRenameTables(d, t, job)
+>>>>>>> 8f81ec150... ddl: inherit placement rules from the parent (#21910)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -336,4 +337,71 @@ func genGlobalID(store kv.Storage) (int64, error) {
 		return errors.Trace(err)
 	})
 	return globalID, errors.Trace(err)
+}
+
+func (*testSuite) TestGetBundle(c *C) {
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	handle := infoschema.NewHandle(store)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
+	c.Assert(err, IsNil)
+	builder.Build()
+
+	is := handle.Get()
+
+	bundles := make(map[string]*placement.Bundle)
+	is.MockBundles(bundles)
+
+	bundle := &placement.Bundle{
+		ID: placement.PDBundleID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: placement.PDBundleID,
+				ID:      "default",
+				Role:    "voter",
+				Count:   3,
+			},
+		},
+	}
+	bundles[placement.PDBundleID] = bundle
+
+	b := infoschema.GetBundle(is, []int64{})
+	c.Assert(b, DeepEquals, bundle)
+
+	ptID := placement.GroupID(3)
+	bundle = &placement.Bundle{
+		ID: ptID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: ptID,
+				ID:      "default",
+				Role:    "voter",
+				Count:   4,
+			},
+		},
+	}
+	bundles[ptID] = bundle
+
+	b = infoschema.GetBundle(is, []int64{2, 3})
+	c.Assert(b, DeepEquals, bundle)
+
+	ptID = placement.GroupID(1)
+	bundle = &placement.Bundle{
+		ID: ptID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: ptID,
+				ID:      "default",
+				Role:    "voter",
+				Count:   4,
+			},
+		},
+	}
+	bundles[ptID] = bundle
+
+	b = infoschema.GetBundle(is, []int64{1, 2, 3})
+	c.Assert(b, DeepEquals, bundle)
 }

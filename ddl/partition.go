@@ -1177,3 +1177,219 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	tblInfo.Partition.Definitions = newDefs
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	var partitionID int64
+	bundle := &placement.Bundle{}
+	err = job.DecodeArgs(&partitionID, bundle)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	ptInfo := tblInfo.GetPartitionInfo()
+	if ptInfo.GetNameByID(partitionID) == "" {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+	}
+
+	pstate := ptInfo.GetStateByID(partitionID)
+	switch pstate {
+	case model.StatePublic:
+		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateGlobalTxnOnly
+	case model.StateGlobalTxnOnly:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		ptInfo.SetStateByID(partitionID, model.StatePublic)
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	}
+	return ver, nil
+}
+
+type partitionExprProcessor func(sessionctx.Context, *model.TableInfo, ast.ExprNode) error
+
+type partitionExprChecker struct {
+	processors []partitionExprProcessor
+	ctx        sessionctx.Context
+	tbInfo     *model.TableInfo
+	expr       ast.ExprNode
+	err        error
+
+	columns []*model.ColumnInfo
+}
+
+func newPartitionExprChecker(ctx sessionctx.Context, tbInfo *model.TableInfo, processor ...partitionExprProcessor) *partitionExprChecker {
+	p := &partitionExprChecker{processors: processor, ctx: ctx, tbInfo: tbInfo}
+	p.processors = append(p.processors, p.extractColumns)
+	return p
+}
+
+func (p *partitionExprChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+	expr, ok := n.(ast.ExprNode)
+	if !ok {
+		return n, true
+	}
+	for _, processor := range p.processors {
+		if err := processor(p.ctx, p.tbInfo, expr); err != nil {
+			p.err = err
+			return n, true
+		}
+	}
+
+	return n, false
+}
+
+func (p *partitionExprChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
+	return n, p.err == nil
+}
+
+func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.TableInfo, expr ast.ExprNode) error {
+	columnNameExpr, ok := expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return nil
+	}
+	colInfo := findColumnByName(columnNameExpr.Name.Name.L, p.tbInfo)
+	if colInfo == nil {
+		return errors.Trace(ErrBadField.GenWithStackByArgs(columnNameExpr.Name.Name.L, "partition function"))
+	}
+
+	p.columns = append(p.columns, colInfo)
+	return nil
+}
+
+func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
+	switch v := e.(type) {
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
+		*ast.SetCollationExpr:
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+	case *ast.BinaryOperationExpr:
+		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
+		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
+		switch v.Op {
+		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		}
+	case *ast.UnaryOperationExpr:
+		if v.Op == opcode.BitNeg {
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		}
+	}
+	return nil
+}
+
+func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
+	expr, ok := e.(*ast.FuncCallExpr)
+	if !ok {
+		return nil
+	}
+	allowedFuncMap := map[string]struct{}{
+		ast.ToDays: {}, ast.ToSeconds: {}, ast.DayOfMonth: {}, ast.Month: {}, ast.DayOfYear: {},
+		ast.Quarter: {}, ast.YearWeek: {}, ast.Year: {}, ast.Weekday: {}, ast.DayOfWeek: {}, ast.Day: {},
+		ast.Hour: {}, ast.Minute: {}, ast.Second: {}, ast.TimeToSec: {}, ast.MicroSecond: {},
+		ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {},
+		ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
+	}
+	if _, ok := allowedFuncMap[expr.FnName.L]; ok {
+		return nil
+	}
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+}
+
+func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
+	expr, ok := e.(*ast.FuncCallExpr)
+	if !ok {
+		return nil
+	}
+	switch expr.FnName.L {
+	case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
+		ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
+		return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+	case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
+		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+	case ast.UnixTimestamp:
+		return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
+	case ast.FromDays:
+		if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+	case ast.Extract:
+		switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
+		case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
+			return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+		case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
+			return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
+		case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
+			ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
+			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		default:
+			return errors.Trace(ErrWrongExprInPartitionFunc)
+		}
+	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
+		has, err := hasTimestampArgs(tblInfo, expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if has {
+			return errors.Trace(ErrWrongExprInPartitionFunc)
+		}
+	}
+	return nil
+}
+
+func hasDateArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
+	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDate, mysql.TypeDatetime)
+}
+
+func hasTimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
+	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDuration, mysql.TypeDatetime)
+}
+
+func hasTimestampArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
+	return hasSpecifyArgs(tblInfo, expr, mysql.TypeTimestamp)
+}
+
+func hasDatetimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
+	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDatetime)
+}
+
+func hasSpecifyArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr, ts ...byte) (bool, error) {
+	for _, arg := range expr.Args {
+		col, ok := arg.(*ast.ColumnNameExpr)
+		if !ok {
+			continue
+		}
+		columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
+		if columnInfo == nil {
+			return false, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
+		}
+		for _, t := range ts {
+			if columnInfo.Tp == t {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+>>>>>>> 8f81ec150... ddl: inherit placement rules from the parent (#21910)

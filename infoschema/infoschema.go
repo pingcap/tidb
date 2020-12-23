@@ -390,3 +390,45 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 	}
 	return is
 }
+<<<<<<< HEAD
+=======
+
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	t, r := is.ruleBundleMap[name]
+	return t, r
+}
+
+func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
+	return is.ruleBundleMap
+}
+
+func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
+	is.ruleBundleMap = ruleBundleMap
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		newRules := b.Rules[:0]
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+		b.Rules = newRules
+		return b
+	}
+
+	return &placement.Bundle{ID: placement.GroupID(ids[0])}
+}
+>>>>>>> 8f81ec150... ddl: inherit placement rules from the parent (#21910)
