@@ -60,6 +60,6 @@ func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 func SetEmptyPDOracleLastArrivalTs(oc oracle.Oracle, ts uint64) {
 	switch o := oc.(type) {
 	case *pdOracle:
-		o.setLastArrivalTS(ts)
+		o.setLastArrivalTS(ts, oracle.GlobalTxnScope)
 	}
 }
