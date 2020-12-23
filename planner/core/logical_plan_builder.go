@@ -2661,6 +2661,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		gbyCols                       []expression.Expression
 	)
 
+	// set for update read to true before building result set node
+	if isForUpdateReadSelectLock(sel.LockTp) {
+		b.isForUpdateRead = true
+	}
+
 	if sel.From != nil {
 		p, err = b.buildResultSetNode(ctx, sel.From.TableRefs)
 		if err != nil {
@@ -2707,6 +2712,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
+
+	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
+	// corresponding column name, but does not need the value in the column.
+	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
+	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
+	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
+	// above example.
+	b.allNames = append(b.allNames, p.OutputNames())
+	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
@@ -2919,7 +2933,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -3015,6 +3029,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		partitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 		preferPartitions:    make(map[int][]model.CIStr),
+		is:                  b.is,
+		isForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 
 	var handleCol *expression.Column
@@ -3528,6 +3544,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 
 	b.inUpdateStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
@@ -3836,6 +3853,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}()
 
 	b.inDeleteStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {

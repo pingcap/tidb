@@ -65,6 +65,7 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 // since the types of the args are already the expected.
 func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
 	for i := range aggFuncs {
+		aggFuncs[i].WrapCastAsDecimalForAggArgs(sctx)
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			aggFuncs[i].WrapCastForAggArgs(sctx)
 		}

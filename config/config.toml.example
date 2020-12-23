@@ -386,6 +386,8 @@ enable = false
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
