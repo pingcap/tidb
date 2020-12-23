@@ -52,9 +52,11 @@ const (
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
 	// tidb_broadcast_join_threshold_size is used to limit the size of small table for mpp broadcast join.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
 
 	// tidb_broadcast_join_threshold_count is used to limit the count of small table for mpp broadcast join.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
 
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.

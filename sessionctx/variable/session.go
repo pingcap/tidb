@@ -488,9 +488,11 @@ type SessionVars struct {
 	AllowAutoRandExplicitInsert bool
 
 	// BroadcastJoinThresholdSize is used to limit the size of smaller table.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	BroadcastJoinThresholdSize int64
 
 	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
