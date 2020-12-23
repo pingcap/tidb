@@ -558,10 +558,10 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
 	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
-			"IndexLookUp_8 7.00 root  ",
-			"├─IndexRangeScan_5(Build) 8.75 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
-			"└─Selection_7(Probe) 7.00 cop[tikv]  eq(test.t.c, 5)",
-			"  └─TableRowIDScan_6 8.75 cop[tikv] table:t keep order:false",
+			"IndexLookUp_8 10.00 root  ",
+			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+			"└─Selection_7(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
+			"  └─TableRowIDScan_6 12.50 cop[tikv] table:t keep order:false",
 		))
 }
 

@@ -769,25 +769,25 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5 order by a desc",
 			hist: "column:1 ndv:4 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 1\n" +
-				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 2\n" +
-				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 1",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
+				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
-			hist: "index:1 ndv:3\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 2\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 1",
+			hist: "index:1 ndv:2\n" +
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
-			hist: "index:1 ndv:3\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 2\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 1",
+			hist: "index:1 ndv:2\n" +
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -889,22 +889,22 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 1\n" +
-				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 1",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 1",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 1",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -1025,8 +1025,8 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	tbl := h.GetTableStats(tblInfo)
 
-	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:1 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 1\n"+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
 		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
 		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -1036,8 +1036,8 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 1\n"+
-		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 1")
+		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0")
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
@@ -1081,8 +1081,8 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	pid := tblInfo.Partition.Definitions[0].ID
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
-	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:1 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 1\n"+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
 		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
 		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 }
@@ -1157,21 +1157,21 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 8, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 8}" +
-				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 8}",
+			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 8, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 8}" +
-				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 8, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1 ndv: 4}",
+			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
-			result: "[stats-feedback] test.t, index=idx_ba, rangeStr=range: [1 -inf,1 6), actual: 1, expected: 0, histogram: {num: 8 lower_bound: (0, 0) upper_bound: (7, 7) repeats: 1 ndv: 8}",
+			result: "[stats-feedback] test.t, index=idx_ba, actual=1, equality=1, expected equality=1, range=range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
-			result: "[stats-feedback] test.t, index=idx_bc, rangeStr=range: [1 -inf,1 6), actual: 1, expected: 0, histogram: {num: 8 lower_bound: (0, 0) upper_bound: (7, 7) repeats: 1 ndv: 8}",
+			result: "[stats-feedback] test.t, index=idx_bc, actual=1, equality=1, expected equality=1, range=[-inf,6], pseudo count=7",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
@@ -1523,9 +1523,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `a = 1` is 0.
 			sql: "select * from t where a = 1 and b < 21",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1534,9 +1534,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `b > 10` is 0.
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1594,25 +1594,25 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50 or (a > 130 and a < 140)",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 8\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 8\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 14",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t where a >= 10",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 8\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 8\n" +
-				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0 ndv: 14",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t use index(idx) where a = 1 and (b <= 50 or (b > 130 and b < 140))",
 			hist: "column:2 ndv:20 totColSize:30\n" +
-				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0 ndv: 8\n" +
-				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 8\n" +
-				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0 ndv: 7",
+				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0 ndv: 0",
 			colID: 2,
 		},
 	}
@@ -1674,9 +1674,9 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 8\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 8\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 14",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t",
 		},
 		{
@@ -1690,9 +1690,9 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		{
 			sql: "select * from t1 where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 8\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 8\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 14",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t1",
 		},
 		{

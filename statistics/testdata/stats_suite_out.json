@@ -60,8 +60,8 @@
     "Name": "TestDiscreteDistribution",
     "Cases": [
       [
-        "IndexReader_6 1.02 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.02 cop[tikv] table:t, index:idx(a, b) range:[\"tw\" -inf,\"tw\" 0), keep order:false"
+        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:idx(a, b) range:[\"tw\" -inf,\"tw\" 0), keep order:false"
       ]
     ]
   },
@@ -92,8 +92,8 @@
     "Name": "TestCollationColumnEstimate",
     "Cases": [
       [
-        "test t  a 0 0 2 2 \u0000A\u0000A\u0000A \u0000A\u0000A\u0000A 1",
-        "test t  a 0 1 4 2 \u0000B\u0000B\u0000B \u0000B\u0000B\u0000B 1"
+        "test t  a 0 0 2 2 \u0000A\u0000A\u0000A \u0000A\u0000A\u0000A 0",
+        "test t  a 0 1 4 2 \u0000B\u0000B\u0000B \u0000B\u0000B\u0000B 0"
       ],
       [
         "TableReader_7 2.00 root  data:Selection_6",

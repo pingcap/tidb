@@ -1032,7 +1032,7 @@ func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 	if idx.NDV > 0 && idx.outOfRange(val) {
 		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 	}
-	if idx.CMSketch != nil && idx.StatsVer == Version1 {
+	if idx.CMSketch != nil && idx.StatsVer < Version2 {
 		return float64(idx.QueryBytes(b))
 	}
 	// If it's version2, query the top-n first.

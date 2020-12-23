@@ -926,8 +926,8 @@
       {
         "SQL": "select * from t1 where t1.a = 1 and t1.b < \"333\"",
         "Plan": [
-          "TableReader_6 1.00 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 1.00 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
+          "TableReader_6 0.67 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
         ],
         "Res": [
           "1 111 1.1000000000 11"

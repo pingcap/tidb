@@ -38,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // MPPCtx is the mpp execution context
@@ -146,6 +148,9 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			}
 		}
 		return nil
+	}
+	if dagReq.CollectRangeCounts != nil && *dagReq.CollectRangeCounts == true {
+		logutil.BgLogger().Warn("unistore exec", zap.Int("ndv len", len(closureExec.ndvs)))
 	}
 	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }

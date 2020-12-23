@@ -518,7 +518,6 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 		countInNewBkt := originBucketCount * ratio
 		ndvInNewBkt := int64(float64(originalNdv) * ratio)
 		countInNewBkt, ndvInNewBkt = b.refineBucketCount(sc, newBkt, countInNewBkt, ndvInNewBkt)
-		log.Warn("split bucket", zap.Float64("count", countInNewBkt), zap.Int64("ndv", ndvInNewBkt))
 		// do not split if the count of result bucket is too small.
 		if countInNewBkt < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
@@ -744,18 +743,20 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
-	ndvs := make([]int64, len(buckets))
-	for i := range buckets {
-		ndvs[i] = buckets[i].Ndv
+	if statsVer < Version2 {
+		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
+		for i := range feedback.Feedback {
+			feedback.Feedback[i].Ndv = 0
+		}
 	}
-	log.Warn("update hist", zap.Int64s("ndvs", ndvs))
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
 	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
-	} else if feedback.Tp == IndexType {
+		// If we maintained the NDV of bucket. We can also update the total ndv.
+	} else if feedback.Tp == IndexType && statsVer == 2 {
 		totNdv := int64(0)
 		for _, bkt := range buckets {
 			totNdv += bkt.Ndv
