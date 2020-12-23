@@ -233,12 +233,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	} else {
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
-	return builder
-}
-
-// SetTxnScope sets "TxnScope" flag for "kv.Request".
-func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
-	builder.txnScope = scope
+	builder.txnScope = sv.TxnCtx.TxnScope
 	return builder
 }
 
