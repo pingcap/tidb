@@ -123,29 +123,13 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	if err != nil {
 		return nil, err
 	}
-	// Compute column order correlation with handle.
-	if len(samples) == 1 {
-		hg.Correlation = 1
-		return hg, nil
-	}
-	// X means the ordinal of the item in original sequence, Y means the ordinal of the item in the
-	// sorted sequence, we know that X and Y value sets are both:
-	// 0, 1, ..., sampleNum-1
-	// we can simply compute sum(X) = sum(Y) =
-	//    (sampleNum-1)*sampleNum / 2
-	// and sum(X^2) = sum(Y^2) =
-	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
-	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
-	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
-	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
-	itemsCount := float64(len(samples))
-	corrXSum := (itemsCount - 1) * itemsCount / 2.0
-	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
-	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
+	hg.Correlation = calcCorrelation(int64(len(samples)), corrXYSum)
 	return hg, nil
 }
 
-func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64) (float64, error) {
+// buildHist builds histogram from samples and other information.
+// It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
+func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -160,7 +144,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 
 	bucketIdx := 0
 	var lastCount int64
-	var corrXYSum float64
+	corrXYSum = float64(0)
 	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
@@ -190,6 +174,27 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 		}
 	}
 	return corrXYSum, nil
+}
+
+// calcCorrelation computes column order correlation with the handle.
+func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
+	if sampleNum == 1 {
+		return 1
+	}
+	// X means the ordinal of the item in original sequence, Y means the ordinal of the item in the
+	// sorted sequence, we know that X and Y value sets are both:
+	// 0, 1, ..., sampleNum-1
+	// we can simply compute sum(X) = sum(Y) =
+	//    (sampleNum-1)*sampleNum / 2
+	// and sum(X^2) = sum(Y^2) =
+	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
+	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
+	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
+	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
+	itemsCount := float64(sampleNum)
+	corrXSum := (itemsCount - 1) * itemsCount / 2.0
+	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
+	return (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
 }
 
 // BuildColumn builds histogram from samples for column.
@@ -327,24 +332,6 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		}
 	}
 
-	// Compute column order correlation with handle.
-	if sampleNum == 1 {
-		hg.Correlation = 1
-		return hg, topn, nil
-	}
-	// X means the ordinal of the item in original sequence, Y means the ordinal of the item in the
-	// sorted sequence, we know that X and Y value sets are both:
-	// 0, 1, ..., sampleNum-1
-	// we can simply compute sum(X) = sum(Y) =
-	//    (sampleNum-1)*sampleNum / 2
-	// and sum(X^2) = sum(Y^2) =
-	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
-	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
-	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
-	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
-	itemsCount := float64(sampleNum)
-	corrXSum := (itemsCount - 1) * itemsCount / 2.0
-	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
-	hg.Correlation = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
+	hg.Correlation = calcCorrelation(int64(len(samples)), corrXYSum)
 	return hg, topn, nil
 }
