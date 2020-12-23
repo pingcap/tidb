@@ -1093,6 +1093,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
+	case 2:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
