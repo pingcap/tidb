@@ -189,7 +189,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 func hasVariantFieldLength(tp *FieldType) bool {
 	switch tp.Tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
-		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
 		return true
 	}
 	return false
