@@ -635,18 +635,6 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("update t t1 join t t2 using(a,b) set t1.c=t2.d;")
-<<<<<<< HEAD
-=======
-
-	// For issue 20467
-	tk.MustExec(`DROP TABLE if exists t1,t2,t3,t4,t5`)
-	tk.MustExec(`CREATE TABLE t1 (a INT, b INT)`)
-	tk.MustExec(`CREATE TABLE t2 (a INT, b INT)`)
-	tk.MustExec(`CREATE TABLE t3 (a INT, b INT)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1,1)`)
-	tk.MustExec(`INSERT INTO t2 VALUES (1,1)`)
-	tk.MustExec(`INSERT INTO t3 VALUES (1,1)`)
-	tk.MustGetErrMsg(`SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)`, "[planner:1052]Column 'a' in from clause is ambiguous")
 
 	// For issue 6712
 	tk.MustExec("drop table if exists t1,t2")
@@ -656,7 +644,6 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("insert into t2 select 22, 1")
 	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) group by t1.t0").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
->>>>>>> c3576fa0f... planner: fix unknown columns in join using below agg (#21922)
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
