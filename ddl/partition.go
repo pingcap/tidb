@@ -1607,7 +1607,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	bundle := &placement.Bundle{}
 	err = job.DecodeArgs(&partitionID, bundle)
