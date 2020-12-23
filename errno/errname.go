@@ -898,6 +898,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrJSONValueOutOfRangeForFuncIndex:                       mysql.Message("Out of range JSON value for CAST for expression index '%s'", nil),
 	ErrFunctionalIndexDataIsTooLong:                          mysql.Message("Data too long for expression index '%s'", nil),
 	ErrFunctionalIndexNotApplicable:                          mysql.Message("Cannot use expression index '%s' due to type or collation conversion", nil),
+	ErrMisplacedIntoOutfile:                                  mysql.Message("Misplaced INTO clause, INTO is not allowed inside subqueries, and must be placed at end of UNION clauses", nil),
 	ErrUnsupportedConstraintCheck:                            mysql.Message("%s is not supported", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),

@@ -89,5 +89,6 @@ var (
 	ErrNotHintUpdatable                = dbterror.ClassOptimizer.NewStd(mysql.ErrNotHintUpdatable)
 	ErrWarnConflictingHint             = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnConflictingHint)
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
-	ErrAccessDenied = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrAccessDenied         = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrMisplacedIntoOutfile = dbterror.ClassOptimizer.NewStd(mysql.ErrMisplacedIntoOutfile)
 )
