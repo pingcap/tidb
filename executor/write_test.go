@@ -1080,6 +1080,14 @@ func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk.MustExec(`insert into t (k) values (1), (2)`)
 	tk.MustExec(`replace into t (k) values (1), (2)`)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	// For issue 14340
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(f1 json, f2 real as (cast(f1 as decimal(2,1))))`)
+	tk.MustGetErrMsg(`INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))`, "[types:1690]DECIMAL value is out of range in '(2, 1)'")
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1000 9.9"))
 }
 
 func (s *testSuite4) TestPartitionedTableReplace(c *C) {

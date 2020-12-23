@@ -14,14 +14,18 @@
 package distsql
 
 import (
+	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,11 +38,18 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	err error
+	// txnScope indicates the value of txn_scope
+	txnScope string
+	bundles  map[string]*placement.Bundle
+	err      error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	err := builder.verifyTxnScope()
+	if err != nil {
+		builder.err = err
+	}
 	return &builder.Request, builder.err
 }
 
@@ -225,6 +236,12 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	return builder
 }
 
+// SetTxnScope sets "TxnScope" flag for "kv.Request".
+func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
+	builder.txnScope = scope
+	return builder
+}
+
 // SetStreaming sets "Streaming" flag for "kv.Request".
 func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	builder.Request.Streaming = streaming
@@ -243,6 +260,42 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
 	builder.Request.TiDBServerID = serverID
 	return builder
+}
+
+// SetFromInfoSchema sets the following fields from infoSchema:
+// "bundles"
+func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
+	if is == nil {
+		return builder
+	}
+	builder.bundles = is.RuleBundles()
+	return builder
+}
+
+func (builder *RequestBuilder) verifyTxnScope() error {
+	if builder.txnScope == "" {
+		builder.txnScope = oracle.GlobalTxnScope
+	}
+	if builder.txnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
+		return nil
+	}
+	visitTableID := make(map[int64]struct{})
+	for _, keyRange := range builder.Request.KeyRanges {
+		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
+		if tableID > 0 {
+			visitTableID[tableID] = struct{}{}
+		} else {
+			return errors.New("requestBuilder can't decode tableID from keyRange")
+		}
+	}
+
+	for tableID := range visitTableID {
+		valid := VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
+		if !valid {
+			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
+		}
+	}
+	return nil
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
@@ -460,6 +513,25 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 		}
 	}
 	return krs, nil
+}
+
+// VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
+func VerifyTxnScope(txnScope string, physicalTableID int64, bundles map[string]*placement.Bundle) bool {
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return true
+	}
+	bundle, ok := bundles[placement.GroupID(physicalTableID)]
+	if !ok {
+		return true
+	}
+	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	if !ok {
+		return true
+	}
+	if leaderDC != txnScope {
+		return false
+	}
+	return true
 }
 
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
