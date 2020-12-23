@@ -70,4 +70,11 @@ func (s *testPlanIDSuite) TestPlanIDChanged(c *C) {
 	c.Assert(typeBatchPointGet, Equals, 38)
 	c.Assert(typeClusterMemTableReader, Equals, 39)
 	c.Assert(typeDataSourceID, Equals, 40)
+	c.Assert(typeLoadDataID, Equals, 41)
+	c.Assert(typeTableSampleID, Equals, 42)
+	c.Assert(typeTableFullScan, Equals, 43)
+	c.Assert(typeTableRangeScan, Equals, 44)
+	c.Assert(typeTableRowIDScan, Equals, 45)
+	c.Assert(typeIndexFullScan, Equals, 46)
+	c.Assert(typeIndexRangeScan, Equals, 47)
 }

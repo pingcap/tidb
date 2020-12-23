@@ -1623,7 +1623,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		txnScope := s.GetSessionVars().TxnCtx.TxnScope
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1651,6 +1651,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.sessionVars.CheckAndGetTxnScope(),
 	}
 	return nil
 }
@@ -2380,6 +2381,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().CheckAndGetTxnScope(),
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2422,7 +2424,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+	txn, err := s.store.BeginWithStartTS(s.GetSessionVars().CheckAndGetTxnScope(), startTS)
 	if err != nil {
 		return err
 	}
@@ -2519,7 +2521,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}

@@ -355,6 +355,8 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
+	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
+	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
