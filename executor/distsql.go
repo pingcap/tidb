@@ -694,7 +694,8 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			e.stats = &IndexLookUpRunTimeStats{
-				Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
+				indexScanBasicStats: &execdetails.BasicRuntimeStats{},
+				Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -760,7 +761,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
-			w.idxLookup.stats.indexScanBasicStats = &execdetails.BasicRuntimeStats{}
 			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, w.idxLookup.stats.indexScanBasicStats)
 		}
 	}
@@ -831,7 +831,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if err != nil {
 			return handles, nil, scannedKeys, err
 		}
-		if w.idxLookup.stats.indexScanBasicStats != nil {
+		if w.idxLookup.stats != nil {
 			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
