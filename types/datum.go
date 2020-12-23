@@ -1295,6 +1295,8 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 	}
 	if err != nil {
+		// We still need to set the value for MyDecimal because the 'Overflow' error may be treated as warning
+		// and the value should be use.
 		ret.SetMysqlDecimal(dec)
 		return ret, err
 	}

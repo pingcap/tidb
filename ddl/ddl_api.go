@@ -953,9 +953,6 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
-			if types.ErrMBiggerThanD.Equal(err) {
-				return types.ErrMBiggerThanD.GenWithStackByArgs(c.Name)
-			}
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
