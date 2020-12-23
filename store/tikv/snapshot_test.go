@@ -317,18 +317,18 @@ func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
 	snapshot.recordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2s},txnLockFast_backoff:{num:2, total_time:60ms}"
 	c.Assert(snapshot.mu.stats.String(), Equals, expect)
-	detail := &pb.ExecDetailsV2 {
+	detail := &pb.ExecDetailsV2{
 		TimeDetail: &pb.TimeDetail{
-			WaitWallTimeMs: 100,
+			WaitWallTimeMs:    100,
 			ProcessWallTimeMs: 100,
 		},
 		ScanDetailV2: &pb.ScanDetailV2{
-			ProcessedVersions: 10,
-			TotalVersions: 15,
-			RocksdbBlockReadCount: 20,
-			RocksdbBlockReadByte: 15,
+			ProcessedVersions:         10,
+			TotalVersions:             15,
+			RocksdbBlockReadCount:     20,
+			RocksdbBlockReadByte:      15,
 			RocksdbDeleteSkippedCount: 5,
-			RocksdbKeySkippedCount: 1,
+			RocksdbKeySkippedCount:    1,
 			RocksdbBlockCacheHitCount: 10,
 		},
 	}
