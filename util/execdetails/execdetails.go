@@ -796,7 +796,10 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		copStats = &CopRuntimeStats{
+			stats:      make(map[string][]*BasicRuntimeStats),
+			scanDetail: &ScanDetail{},
+		}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -826,9 +829,6 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 // RecordScanDetail records a specific cop tasks's cop detail.
 func (e *RuntimeStatsColl) RecordScanDetail(planID int, detail *ScanDetail) {
 	copStats := e.GetCopStats(planID)
-	if copStats.scanDetail == nil {
-		copStats.scanDetail = &ScanDetail{}
-	}
 	copStats.scanDetail.Merge(detail)
 }
 
