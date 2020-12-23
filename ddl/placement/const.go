@@ -13,11 +13,12 @@
 
 package placement
 
-// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
-const BundleIDPrefix = "TiDB_DDL_"
-
-// PDBundleID is the bundle name of pd, the default bundle for all regions.
-const PDBundleID = "pd"
+const (
+	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
+	BundleIDPrefix = "TiDB_DDL_"
+	// PDBundleID is the bundle name of pd, the default bundle for all regions.
+	PDBundleID = "pd"
+)
 
 const (
 	// RuleIndexDefault is the default index for a rule, check Rule.Index.
