@@ -6456,27 +6456,6 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
 }
 
-func (s *testSuite) TestTxnRetry(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-<<<<<<< HEAD
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk2.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int);")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-	tk.MustExec("set autocommit=0;")
-	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
-	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
-=======
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ta")
-	tk.MustExec("create table ta(id decimal(60,2))")
-	tk.MustExec("insert into ta values (JSON_EXTRACT('{\"c\": \"1234567890123456789012345678901234567890123456789012345\"}', '$.c'))")
-	tk.MustQuery("select * from ta").Check(testkit.Rows("1234567890123456789012345678901234567890123456789012345.00"))
-}
-
 func (s *testSuite) Test11883(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6502,74 +6481,18 @@ func (s *testSuite) Test11883(c *C) {
 	tk.MustQuery("select json_extract('{\"n\": 1}', '$') <> '{\"n\": 1}'").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) Test15492(c *C) {
+func (s *testSuite) TestTxnRetry(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("insert into t values (2, 20), (1, 10), (3, 30)")
-	tk.MustQuery("select a + 1 as field1, a as field2 from t order by field1, field2 limit 2").Check(testkit.Rows("2 1", "3 2"))
-}
-
-func (s testSuite) TestTrackAggMemoryUsage(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-
-	tk.MustExec("set tidb_track_aggregate_memory_usage = off;")
-	rows := tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	c.Assert(rows[0][7], Equals, "N/A")
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	c.Assert(rows[0][7], Equals, "N/A")
-	tk.MustExec("set tidb_track_aggregate_memory_usage = on;")
-	rows = tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	c.Assert(rows[0][7], Not(Equals), "N/A")
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	c.Assert(rows[0][7], Not(Equals), "N/A")
-}
-
-func (s *testSuite) Test12201(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists e")
-	tk.MustExec("create table e (e enum('a', 'b'))")
-	tk.MustExec("insert into e values ('a'), ('b')")
-	tk.MustQuery("select * from e where case 1 when 0 then e end").Check(testkit.Rows())
-	tk.MustQuery("select * from e where case 1 when 1 then e end").Check(testkit.Rows("a", "b"))
-	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
-	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
-}
-
-func (s *testSuite) TestIssue21451(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (en enum('c', 'b', 'a'));")
-	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
-	tk.MustQuery("select max(en) from t;").Check(testkit.Rows("c"))
-	tk.MustQuery("select min(en) from t;").Check(testkit.Rows("a"))
-	tk.MustQuery("select * from t order by en;").Check(testkit.Rows("c", "b", "a"))
-
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(s set('c', 'b', 'a'));")
-	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
-	tk.MustQuery("select max(s) from t;").Check(testkit.Rows("c"))
-	tk.MustQuery("select min(s) from t;").Check(testkit.Rows("a"))
-
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(id int, en enum('c', 'b', 'a'))")
-	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
-	tk.MustQuery("select id, max(en) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
-	tk.MustQuery("select id, min(en) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
-	tk.MustExec("drop table t")
-
-	tk.MustExec("create table t(id int, s set('c', 'b', 'a'));")
-	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
-	tk.MustQuery("select id, max(s) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
-	tk.MustQuery("select id, min(s) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
->>>>>>> e172656e3... expression: fix comparing json with string (#21903)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
 
 	tk2.MustExec("update t set a=2")
 
