@@ -1337,20 +1337,45 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 	c.doingAmend = true
 	defer func() { c.doingAmend = false }()
 	if keysNeedToLock.Len() > 0 {
-		pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 		lCtx := &kv.LockCtx{
-			ForUpdateTS:  c.forUpdateTS,
-			LockWaitTime: kv.LockNoWait,
+			Killed:        c.lockCtx.Killed,
+			ForUpdateTS:   c.forUpdateTS,
+			LockWaitTime:  c.lockCtx.LockWaitTime,
+			WaitStartTime: time.Now(),
 		}
-		err := c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+		tryTimes := uint(0)
+		retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+		var err error
+		for tryTimes < retryLimit {
+			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+			if err != nil {
+				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+				if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+					newForUpdateTSVer, err := c.store.CurrentVersion(oracle.GlobalTxnScope)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+					c.forUpdateTS = newForUpdateTSVer.Ver
+					logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+						zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+						zap.Uint64("newForUpdateTS", c.forUpdateTS))
+					tryTimes++
+					continue
+				}
+				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return err
+			}
+			logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.Len()))
+			break
+		}
 		if err != nil {
-			logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+			logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+				zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
 			return err
 		}
-		logutil.Logger(ctx).Info("amendPessimisticLock finished",
-			zap.Uint64("startTs", c.startTS),
-			zap.Uint64("forUpdateTS", c.forUpdateTS),
-			zap.Int("keys", keysNeedToLock.Len()))
 	}
 	return nil
 }

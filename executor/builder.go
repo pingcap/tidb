@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -1712,7 +1713,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
-			useCache:     true,
+			useCache:     v.CanUseCache,
 		}
 	}
 	return serialExec
@@ -1805,8 +1806,12 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
+		if _, ok := tblID2table[info.TblID]; ok {
+			multiUpdateOnSameTable[info.TblID] = true
+		}
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
@@ -1834,6 +1839,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
+		multiUpdateOnSameTable:    multiUpdateOnSameTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}
@@ -1932,9 +1939,15 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
+	topNSize := new(int32)
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	statsVersion := new(int32)
+	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		TopNSize:   topNSize,
+		Version:    statsVersion,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -3325,22 +3338,21 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		if meta != nil && meta.IsCommonHandle {
-			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, kvRange...)
-		} else {
-			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
-			ret = append(ret, kvRange...)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, kvRange...)
 	}
 	return ret, nil
 }
 
 func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
 	startTS, err := builder.getSnapshotTS()
+	if err != nil {
+		return nil, err
+	}
+	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
@@ -3351,6 +3363,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetTxnScope(extractTxnScope(txn)).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err
@@ -3954,4 +3968,11 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 	return e
+}
+
+func extractTxnScope(txn kv.Transaction) string {
+	if txn == nil || txn.GetUnionStore() == nil {
+		return oracle.GlobalTxnScope
+	}
+	return txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 }
