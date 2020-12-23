@@ -1173,6 +1173,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
 		// When ScopeSession only. `show global variables` must return empty.
 		if v.Scope == variable.ScopeSession {
 			showSQL = "show variables like '" + v.Name + "'"
@@ -1189,6 +1192,13 @@ func (s *testSuite5) TestShowVar(c *C) {
 			res = tk.MustQuery(showSQL)
 			c.Check(res.Rows(), HasLen, 1)
 		}
+	}
+	// Test for switch variable which shouldn't seen by users.
+	for _, one := range variable.FeatureSwitchVariables {
+		res := tk.MustQuery("show variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+		res = tk.MustQuery("show global variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
 	}
 }
 

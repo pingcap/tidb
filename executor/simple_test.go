@@ -518,10 +518,18 @@ func (s *testSuite3) TestKillStmt(c *C) {
 		serverID: 0,
 	}
 	tk.Se.SetSessionManager(sm)
+	tk.MustExec("kill 1")
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
 
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
-	result := tk.MustQuery("show warnings")
+	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// truncated
@@ -541,6 +549,7 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	config.StoreGlobalConfig(originCfg)
 	// remote kill is tested in `tests/globalkilltest`
 }
 
@@ -600,7 +609,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -763,6 +772,8 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
