@@ -185,13 +185,30 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+		if isLHSUnsigned || isRHSUnsigned {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		sig := &builtinArithmeticPlusIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
-		return sig, nil
+		switch {
+		case isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticPlusIntUnsignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_PlusIntUnsignedUnsigned)
+			return sig, nil
+		case isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticPlusIntUnsignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_PlusIntUnsignedSigned)
+			return sig, nil
+		case !isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticPlusIntSignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_PlusIntSignedUnsigned)
+			return sig, nil
+		default:
+			sig := &builtinArithmeticPlusIntSignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_PlusIntSignedSigned)
+			return sig, nil
+		}
 	}
 }
 
@@ -248,7 +265,7 @@ func (s *builtinArithmeticPlusIntUnsignedSignedSig) evalInt(row chunk.Row) (val 
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if uint64(a) > math.MaxUint64-uint64(b) {
+	if b > 0 && uint64(a) > math.MaxUint64 - uint64(b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
@@ -309,7 +326,7 @@ func (s *builtinArithmeticPlusIntSignedUnsignedSig) evalInt(row chunk.Row) (val 
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if uint64(b) > math.MaxUint64-uint64(a) {
+	if a > 0 && uint64(b) > math.MaxUint64-uint64(a) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
