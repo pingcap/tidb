@@ -484,7 +484,11 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
 		}
-		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: blockOffset}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &hintTableInfo{dbName: dbName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
