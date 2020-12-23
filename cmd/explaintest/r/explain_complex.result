@@ -117,16 +117,16 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_13	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
 └─Limit_16	1.00	root		offset:0, count:2500
-  └─HashAgg_19	1.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─HashJoin_33	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
-      ├─IndexLookUp_51(Build)	0.00	root		
-      │ ├─IndexRangeScan_48(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-      │ └─Selection_50(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
-      │   └─TableRowIDScan_49	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
-      └─IndexLookUp_40(Probe)	3.33	root		
-        ├─IndexRangeScan_37(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_39(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
-          └─TableRowIDScan_38	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
+  └─HashAgg_17	1.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
+    └─HashJoin_31	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
+      ├─IndexLookUp_49(Build)	0.00	root		
+      │ ├─IndexRangeScan_46(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+      │ └─Selection_48(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
+      │   └─TableRowIDScan_47	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
+      └─IndexLookUp_38(Probe)	3.33	root		
+        ├─IndexRangeScan_35(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+        └─Selection_37(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
+          └─TableRowIDScan_36	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
@@ -180,27 +180,27 @@ CREATE TABLE `tbl_008` (`a` int, `b` int);
 CREATE TABLE `tbl_009` (`a` int, `b` int);
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	estRows	task	access object	operator info
-HashAgg_34	72000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
-└─Projection_63	90000.00	root		cast(Column#28, decimal(32,0) BINARY)->Column#31, Column#29
-  └─Union_35	90000.00	root		
-    ├─TableReader_38	10000.00	root		data:TableFullScan_37
-    │ └─TableFullScan_37	10000.00	cop[tikv]	table:tbl_001	keep order:false, stats:pseudo
-    ├─TableReader_41	10000.00	root		data:TableFullScan_40
-    │ └─TableFullScan_40	10000.00	cop[tikv]	table:tbl_002	keep order:false, stats:pseudo
-    ├─TableReader_44	10000.00	root		data:TableFullScan_43
-    │ └─TableFullScan_43	10000.00	cop[tikv]	table:tbl_003	keep order:false, stats:pseudo
-    ├─TableReader_47	10000.00	root		data:TableFullScan_46
-    │ └─TableFullScan_46	10000.00	cop[tikv]	table:tbl_004	keep order:false, stats:pseudo
-    ├─TableReader_50	10000.00	root		data:TableFullScan_49
-    │ └─TableFullScan_49	10000.00	cop[tikv]	table:tbl_005	keep order:false, stats:pseudo
-    ├─TableReader_53	10000.00	root		data:TableFullScan_52
-    │ └─TableFullScan_52	10000.00	cop[tikv]	table:tbl_006	keep order:false, stats:pseudo
-    ├─TableReader_56	10000.00	root		data:TableFullScan_55
-    │ └─TableFullScan_55	10000.00	cop[tikv]	table:tbl_007	keep order:false, stats:pseudo
-    ├─TableReader_59	10000.00	root		data:TableFullScan_58
-    │ └─TableFullScan_58	10000.00	cop[tikv]	table:tbl_008	keep order:false, stats:pseudo
-    └─TableReader_62	10000.00	root		data:TableFullScan_61
-      └─TableFullScan_61	10000.00	cop[tikv]	table:tbl_009	keep order:false, stats:pseudo
+HashAgg_32	72000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
+└─Projection_61	90000.00	root		cast(Column#28, decimal(32,0) BINARY)->Column#31, Column#29
+  └─Union_33	90000.00	root		
+    ├─TableReader_36	10000.00	root		data:TableFullScan_35
+    │ └─TableFullScan_35	10000.00	cop[tikv]	table:tbl_001	keep order:false, stats:pseudo
+    ├─TableReader_39	10000.00	root		data:TableFullScan_38
+    │ └─TableFullScan_38	10000.00	cop[tikv]	table:tbl_002	keep order:false, stats:pseudo
+    ├─TableReader_42	10000.00	root		data:TableFullScan_41
+    │ └─TableFullScan_41	10000.00	cop[tikv]	table:tbl_003	keep order:false, stats:pseudo
+    ├─TableReader_45	10000.00	root		data:TableFullScan_44
+    │ └─TableFullScan_44	10000.00	cop[tikv]	table:tbl_004	keep order:false, stats:pseudo
+    ├─TableReader_48	10000.00	root		data:TableFullScan_47
+    │ └─TableFullScan_47	10000.00	cop[tikv]	table:tbl_005	keep order:false, stats:pseudo
+    ├─TableReader_51	10000.00	root		data:TableFullScan_50
+    │ └─TableFullScan_50	10000.00	cop[tikv]	table:tbl_006	keep order:false, stats:pseudo
+    ├─TableReader_54	10000.00	root		data:TableFullScan_53
+    │ └─TableFullScan_53	10000.00	cop[tikv]	table:tbl_007	keep order:false, stats:pseudo
+    ├─TableReader_57	10000.00	root		data:TableFullScan_56
+    │ └─TableFullScan_56	10000.00	cop[tikv]	table:tbl_008	keep order:false, stats:pseudo
+    └─TableReader_60	10000.00	root		data:TableFullScan_59
+      └─TableFullScan_59	10000.00	cop[tikv]	table:tbl_009	keep order:false, stats:pseudo
 CREATE TABLE org_department (
 id int(11) NOT NULL AUTO_INCREMENT,
 ctx int(11) DEFAULT '0' COMMENT 'organization id',
@@ -244,19 +244,19 @@ UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
 explain SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
 id	estRows	task	access object	operator info
 Sort_10	1.00	root		test.org_department.left_value
-└─HashAgg_15	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
-  └─Selection_22	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
-    └─HashJoin_24	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
-      ├─IndexJoin_33(Build)	0.01	root		left outer join, inner:IndexLookUp_32, outer key:test.org_department.id, inner key:test.org_position.department_id, equal cond:eq(test.org_department.id, test.org_position.department_id)
-      │ ├─IndexLookUp_62(Build)	0.01	root		
-      │ │ ├─IndexRangeScan_59(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_61(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
-      │ │   └─TableRowIDScan_60	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp_32(Probe)	1.25	root		
-      │   ├─Selection_30(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
-      │   │ └─IndexRangeScan_28	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:false, stats:pseudo
-      │   └─Selection_31(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
-      │     └─TableRowIDScan_29	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
-      └─TableReader_72(Probe)	9.99	root		data:Selection_71
-        └─Selection_71	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
-          └─TableFullScan_70	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+└─HashAgg_13	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
+  └─Selection_17	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
+    └─HashJoin_19	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
+      ├─IndexJoin_28(Build)	0.01	root		left outer join, inner:IndexLookUp_27, outer key:test.org_department.id, inner key:test.org_position.department_id, equal cond:eq(test.org_department.id, test.org_position.department_id)
+      │ ├─IndexLookUp_57(Build)	0.01	root		
+      │ │ ├─IndexRangeScan_54(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_56(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
+      │ │   └─TableRowIDScan_55	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+      │ └─IndexLookUp_27(Probe)	1.25	root		
+      │   ├─Selection_25(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
+      │   │ └─IndexRangeScan_23	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:false, stats:pseudo
+      │   └─Selection_26(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
+      │     └─TableRowIDScan_24	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      └─TableReader_67(Probe)	9.99	root		data:Selection_66
+        └─Selection_66	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
+          └─TableFullScan_65	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
