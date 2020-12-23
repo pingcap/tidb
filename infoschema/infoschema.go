@@ -430,11 +430,10 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 
 	b, ok := h.BundleByName(placement.PDBundleID)
 	if ok {
-		b = b.Clone()
 		newRules := b.Rules[:0]
 		for _, rule := range b.Rules {
 			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
-				newRules = append(newRules, rule)
+				newRules = append(newRules, rule.Clone())
 			}
 		}
 		b.Rules = newRules
