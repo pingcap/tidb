@@ -2172,9 +2172,9 @@ IndexLookUp_10	250.00	root	partition:all
 └─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 7;
 id	estRows	task	access object	operator info
-IndexLookUp_10	250.00	root	partition:all	
-├─IndexRangeScan_8(Build)	250.00	cop[tikv]	table:t2, index:b(b)	range:(5,7), keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_10	312.50	root	partition:all	
+├─IndexRangeScan_8(Build)	312.50	cop[tikv]	table:t2, index:b(b)	range:[6,6], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	312.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t2 where b > 0 and b < 5;
 id	estRows	task	access object	operator info
 IndexLookUp_10	250.00	root	partition:all	
