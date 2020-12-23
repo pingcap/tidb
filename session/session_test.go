@@ -3804,3 +3804,12 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
 }
+
+func (s *testSessionSerialSuite) TestIssue21943(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk.Exec("set @@last_plan_from_binding='123';")
+	c.Assert(err.Error(), Equals, "Variable 'last_plan_from_binding' is a read only variable")
+
+	_, err = tk.Exec("set @@last_plan_from_cache='123';")
+	c.Assert(err.Error(), Equals, "Variable 'last_plan_from_cache' is a read only variable")
+}
