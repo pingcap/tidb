@@ -606,7 +606,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 		if !ok {
 			return errors.New("Invalid timestamp")
 		}
-		t, err := types.ParseDatetime(e.ctx.GetSessionVars().StmtCtx, v.GetString())
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
 		if err != nil {
 			return err
 		}
