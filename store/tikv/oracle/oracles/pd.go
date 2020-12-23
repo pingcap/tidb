@@ -35,7 +35,8 @@ const slowDist = 30 * time.Millisecond
 type pdOracle struct {
 	c pd.Client
 	// txn_scope (string) -> lastTSPointer (*uint64)
-	lastTSMap        sync.Map
+	lastTSMap sync.Map
+	// txn_scope (string) -> lastArrivalTSPointer (*uint64)
 	lastArrivalTSMap sync.Map
 	quit             chan struct{}
 }
