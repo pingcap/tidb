@@ -2079,7 +2079,6 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				forceReloadDomain(tk.Se)
 				n := rand.Intn(num)
 				tk.MustExec("begin")
 				tk.MustExec("delete from t2 where c1 = ?", n)
@@ -4718,7 +4717,6 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(tk, c, "drop table t_mcc;")
 
-	forceReloadDomain(tk.Se)
 	result := tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
