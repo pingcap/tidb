@@ -8295,8 +8295,6 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 
 // for issue 20128
 func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
