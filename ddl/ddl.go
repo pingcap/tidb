@@ -395,15 +395,17 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
+	// There is a possible dead lock caused by:
 	// goroutine A:
-	// domain reload ------------------- lock domain
+	// domain reload loop -------------- lock domain
 	// reload GetLease  ---------------- lock ddl m
 	// ----------------------------------------------------
 	// goroutine B:
 	// ddl close ----------------------- lock ddl m
-	// wg workers ---------------------- owner reload lock domain (RunInGoTest)
+	// wg workers ---------------------- wait owner reload lock domain again (RunInGoTest)
 	//
 	// Since d.lease only be written in newDDL(), so it won't be any conflicts in then latter read usage.
+	// We release the lock usage here.
 	lease := d.lease
 	return lease
 }
