@@ -377,14 +377,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[eq(test.t.a, abc)]",
+			accessConds: "[like(test.t.a, abc, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[eq(test.t.a, ab_c)]",
+			accessConds: "[like(test.t.a, ab\\_c, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -398,14 +398,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[eq(test.t.a, %a)]",
+			accessConds: "[like(test.t.a, \\%a, 92)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[eq(test.t.a, \\)]",
+			accessConds: "[like(test.t.a, \\, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
