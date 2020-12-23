@@ -14,7 +14,10 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"math/rand"
+	"sort"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -166,6 +169,16 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
+	// tk1 use to test partition table with index.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec("create database test_partition_1")
+	tk1.MustExec("use test_partition_1")
+	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+	tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+	tk1.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("drop database if exists test_partition_2;")
@@ -176,28 +189,257 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
-	var input []string
-	var output []struct {
+	var input []struct {
 		SQL    string
-		Result []string
-		Plan   []string
+		Pruner string
+	}
+	var output []struct {
+		SQL       string
+		Result    []string
+		Plan      []string
+		IndexPlan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	valid := false
 	for i, tt := range input {
+		// Test for table without index.
+		plan := tk.MustQuery("explain " + tt.SQL)
+		planTree := s.testData.ConvertRowsToStrings(plan.Rows())
+		// Test for table with index.
+		indexPlan := tk1.MustQuery("explain " + tt.SQL)
+		indexPlanTree := s.testData.ConvertRowsToStrings(indexPlan.Rows())
 		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].SQL = tt.SQL
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Rows())
+			// Test for table without index.
+			output[i].Plan = planTree
+			// Test for table with index.
+			output[i].IndexPlan = indexPlanTree
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		result := tk.MustQuery(tt)
+		// compare the plan.
+		plan.Check(testkit.Rows(output[i].Plan...))
+		indexPlan.Check(testkit.Rows(output[i].IndexPlan...))
+
+		// compare the pruner information.
+		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, planTree)
+		s.checkPrunePartitionInfo(c, tt.SQL, tt.Pruner, indexPlanTree)
+
+		// compare the result.
+		result := tk.MustQuery(tt.SQL)
+		idxResult := tk1.MustQuery(tt.SQL)
+		result.Check(idxResult.Rows())
 		result.Check(testkit.Rows(output[i].Result...))
+
 		// If the query doesn't specified the partition, compare the result with normal table
-		if !strings.Contains(tt, "partition(") {
-			result.Check(tk2.MustQuery(tt).Rows())
+		if !strings.Contains(tt.SQL, "partition(") {
+			result.Check(tk2.MustQuery(tt.SQL).Rows())
 			valid = true
 		}
 	}
 	c.Assert(valid, IsTrue)
+}
+
+func (s *testPartitionPruneSuit) checkPrunePartitionInfo(c *C, query string, infos1 string, plan []string) {
+	infos2 := s.getPartitionInfoFromPlan(plan)
+	c.Assert(infos1, Equals, infos2, Commentf("the query is: %v, the plan is:\n%v", query, strings.Join(plan, "\n")))
+}
+
+type testTablePartitionInfo struct {
+	Table      string
+	Partitions string
+}
+
+// getPartitionInfoFromPlan uses to extract table partition information from the plan tree string. Here is an example, the plan is like below:
+//          "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+//          "└─HashJoin_9 80.00 root  CARTESIAN inner join",
+//          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
+//          "  │ └─Selection_11 8.00 cop[tikv]  1, eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
+//          "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+//          "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
+//          "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+//          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+//
+// The return table partition info is: t1: p0; t2: p1
+func (s *testPartitionPruneSuit) getPartitionInfoFromPlan(plan []string) string {
+	infos := make([]testTablePartitionInfo, 0, 2)
+	info := testTablePartitionInfo{}
+	for _, row := range plan {
+		partitions := s.getFieldValue("partition:", row)
+		if partitions != "" {
+			info.Partitions = partitions
+			continue
+		}
+		tbl := s.getFieldValue("table:", row)
+		if tbl != "" {
+			info.Table = tbl
+			infos = append(infos, info)
+		}
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		if infos[i].Table != infos[j].Table {
+			return infos[i].Table < infos[j].Table
+		}
+		return infos[i].Partitions < infos[j].Partitions
+	})
+	buf := bytes.NewBuffer(nil)
+	for i, info := range infos {
+		if i > 0 {
+			buf.WriteString("; ")
+		}
+		buf.WriteString(fmt.Sprintf("%v: %v", info.Table, info.Partitions))
+	}
+	return buf.String()
+}
+
+func (s *testPartitionPruneSuit) getFieldValue(prefix, row string) string {
+	if idx := strings.Index(row, prefix); idx > 0 {
+		start := idx + len(prefix)
+		end := strings.Index(row[start:], " ")
+		if end > 0 {
+			value := row[start : start+end]
+			value = strings.Trim(value, ",")
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	for count := 0; count < 5; count++ {
+		partitionNum := rand.Intn(10) + 1
+		valueNum := rand.Intn(10) + 1
+		condNum := 20
+
+		partitionDefs := make([][]string, partitionNum)
+		for id := 0; id < valueNum; id++ {
+			for a := 0; a < valueNum; a++ {
+				for b := 0; b < valueNum; b++ {
+					idx := rand.Intn(partitionNum)
+					partitionDefs[idx] = append(partitionDefs[idx], fmt.Sprintf("(%v,%v,%v)", b, id, a))
+				}
+			}
+		}
+		validIdx := 0
+		for _, def := range partitionDefs {
+			if len(def) > 0 {
+				partitionDefs[validIdx] = def
+				validIdx++
+			}
+		}
+		partitionDefs = partitionDefs[:validIdx]
+		createSQL := bytes.NewBuffer(make([]byte, 0, 1024*1024))
+		// Generate table definition.
+		colNames := []string{"id", "a", "b"}
+		createSQL.WriteString("create table t1 (id int, a int, b int")
+		// Generate Index definition.
+		if rand.Int()%2 == 0 {
+			createSQL.WriteString(", index (")
+			n := rand.Intn(len(colNames)) + 1
+			cols := map[string]struct{}{}
+			for i := 0; i < n; i++ {
+				col := colNames[rand.Intn(len(colNames))]
+				cols[col] = struct{}{}
+			}
+			cnt := 0
+			for col := range cols {
+				if cnt > 0 {
+					createSQL.WriteString(",")
+				}
+				createSQL.WriteString(col)
+				cnt++
+			}
+			createSQL.WriteString(")")
+		}
+		createSQL.WriteString(" ) partition by list columns (b, id, a) (")
+
+		for i := range partitionDefs {
+			if i > 0 {
+				createSQL.WriteString(",")
+			}
+			createSQL.WriteString(fmt.Sprintf("partition p%v values in (", i))
+			for idx, v := range partitionDefs[i] {
+				if idx > 0 {
+					createSQL.WriteString(",")
+				}
+				createSQL.WriteString(v)
+			}
+			createSQL.WriteString(")")
+		}
+		createSQL.WriteString(")")
+
+		// Create table.
+		tk.MustExec("drop database if exists test_partition;")
+		tk.MustExec("create database test_partition")
+		tk.MustExec("use test_partition")
+		tk.MustExec(createSQL.String())
+
+		tk1 := testkit.NewTestKit(c, s.store)
+		tk1.MustExec("drop database if exists test_partition_1;")
+		tk1.MustExec("create database test_partition_1")
+		tk1.MustExec("use test_partition_1")
+		tk1.MustExec("create table t1 (id int, a int, b int)")
+
+		// prepare data.
+		for _, def := range partitionDefs {
+			insert := fmt.Sprintf("insert into t1 (b,id,a) values %v", strings.Join(def, ","))
+			tk.MustExec(insert)
+			tk1.MustExec(insert)
+
+			// Test query without condition
+			query := fmt.Sprintf("select * from t1 order by id,a,b")
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		}
+
+		// Test for single column condition.
+		for i := 0; i < valueNum+1; i++ {
+			query := fmt.Sprintf("select * from t1 where id = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+			query = fmt.Sprintf("select * from t1 where a = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+			query = fmt.Sprintf("select * from t1 where b = %v order by id,a,b", i)
+			tk.MustQuery(query).Check(tk1.MustQuery(query).Rows())
+		}
+		// Test for multi-columns condition.
+		genCond := func() string {
+			col := colNames[rand.Intn(len(colNames))]
+			value := rand.Intn(valueNum + 2)
+			switch rand.Int() % 3 {
+			case 0:
+				return fmt.Sprintf(" %v = %v ", col, value)
+			case 1:
+				return fmt.Sprintf(" %v = %v ", value, col)
+			default:
+				buf := bytes.NewBuffer(nil)
+				buf.WriteString(fmt.Sprintf(" %v in (", col))
+				n := rand.Intn(valueNum+5) + 1
+				for i := 0; i < n; i++ {
+					if i > 0 {
+						buf.WriteString(",")
+					}
+					value := rand.Intn(valueNum + 2)
+					buf.WriteString(fmt.Sprintf("%v", value))
+				}
+				buf.WriteString(")")
+				return buf.String()
+			}
+		}
+		for i := 0; i < 500; i++ {
+			condCnt := rand.Intn(condNum) + 1
+			query := bytes.NewBuffer(nil)
+			query.WriteString("select * from t1 where ")
+			for j := 0; j < condCnt; j++ {
+				if j > 0 {
+					if rand.Int()%2 == 0 {
+						query.WriteString(" and ")
+					} else {
+						query.WriteString(" or ")
+					}
+				}
+				query.WriteString(genCond())
+			}
+			query.WriteString(" order by id,a,b")
+			tk.MustQuery(query.String()).Check(tk1.MustQuery(query.String()).Rows())
+		}
+	}
 }
