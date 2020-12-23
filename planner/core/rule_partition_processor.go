@@ -224,6 +224,232 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
+// listPartitionPruner uses to prune partition for list partition.
+type listPartitionPruner struct {
+	*partitionProcessor
+	ctx             sessionctx.Context
+	pi              *model.PartitionInfo
+	partitionNames  []model.CIStr
+	colIDToUniqueID map[int64]int64
+	fullRange       map[int]struct{}
+	listPrune       *tables.ForListPruning
+}
+
+func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	s *partitionProcessor, conds []expression.Expression, pruneList *tables.ForListPruning) *listPartitionPruner {
+	colIDToUniqueID := make(map[int64]int64)
+	for _, cond := range conds {
+		condCols := expression.ExtractColumns(cond)
+		for _, c := range condCols {
+			colIDToUniqueID[c.ID] = c.UniqueID
+		}
+	}
+	fullRange := make(map[int]struct{})
+	fullRange[FullRange] = struct{}{}
+	return &listPartitionPruner{
+		partitionProcessor: s,
+		ctx:                ctx,
+		pi:                 tbl.Meta().Partition,
+		partitionNames:     partitionNames,
+		colIDToUniqueID:    colIDToUniqueID,
+		fullRange:          fullRange,
+		listPrune:          pruneList,
+	}
+}
+
+func (l *listPartitionPruner) locatePartition(cond expression.Expression) (tables.ListPartitionLocation, bool, error) {
+	switch sf := cond.(type) {
+	case *expression.Constant:
+		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx)
+		if err == nil && b == 0 {
+			// A constant false expression.
+			return nil, false, nil
+		}
+	case *expression.ScalarFunction:
+		switch sf.FuncName.L {
+		case ast.LogicOr:
+			dnfItems := expression.FlattenDNFConditions(sf)
+			return l.locatePartitionByDNFCondition(dnfItems)
+		case ast.LogicAnd:
+			cnfItems := expression.FlattenCNFConditions(sf)
+			return l.locatePartitionByCNFCondition(cnfItems)
+		}
+		return l.locatePartitionByColumn(sf)
+	}
+	return nil, true, nil
+}
+
+func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.Expression) (tables.ListPartitionLocation, bool, error) {
+	if len(conds) == 0 {
+		return nil, true, nil
+	}
+	countFull := 0
+	helper := tables.NewListPartitionLocationHelper()
+	for _, cond := range conds {
+		cnfLoc, isFull, err := l.locatePartition(cond)
+		if err != nil {
+			return nil, false, err
+		}
+		if isFull {
+			countFull++
+			continue
+		}
+		if cnfLoc.IsEmpty() {
+			// No partition for intersection, just return 0 partition.
+			return nil, false, nil
+		}
+		if !helper.Intersect(cnfLoc) {
+			return nil, false, nil
+		}
+	}
+	if countFull == len(conds) {
+		return nil, true, nil
+	}
+	return helper.GetLocation(), false, nil
+}
+
+func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.Expression) (tables.ListPartitionLocation, bool, error) {
+	if len(conds) == 0 {
+		return nil, true, nil
+	}
+	helper := tables.NewListPartitionLocationHelper()
+	for _, cond := range conds {
+		dnfLoc, isFull, err := l.locatePartition(cond)
+		if err != nil || isFull {
+			return nil, isFull, err
+		}
+		helper.Union(dnfLoc)
+	}
+	return helper.GetLocation(), false, nil
+}
+
+// locatePartitionByColumn uses to locate partition by the one of the list columns value.
+// Such as: partition by list columns(a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((6,6),(7,7)));
+// and if the condition is `a=1`, then we can use `a=1` and the expression `(a in (1,2))` to locate partition `p0`.
+func (l *listPartitionPruner) locatePartitionByColumn(cond *expression.ScalarFunction) (tables.ListPartitionLocation, bool, error) {
+	condCols := expression.ExtractColumns(cond)
+	if len(condCols) != 1 {
+		return nil, true, nil
+	}
+	var colPrune *tables.ForListColumnPruning
+	for _, cp := range l.listPrune.ColPrunes {
+		if cp.ExprCol.ID == condCols[0].ID {
+			colPrune = cp
+		}
+	}
+	if colPrune == nil {
+		return nil, true, nil
+	}
+	return l.locateColumnPartitionsByCondition(cond, colPrune)
+}
+
+func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.Expression, colPrune *tables.ForListColumnPruning) (tables.ListPartitionLocation, bool, error) {
+	ranges, err := l.detachCondAndBuildRange([]expression.Expression{cond}, colPrune.ExprCol)
+	if err != nil {
+		return nil, false, err
+	}
+
+	sc := l.ctx.GetSessionVars().StmtCtx
+	helper := tables.NewListPartitionLocationHelper()
+	for _, r := range ranges {
+		if r.IsPointNullable(sc) {
+			if len(r.HighVal) != 1 {
+				return nil, true, nil
+			}
+			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if err != nil {
+				return nil, false, err
+			}
+			if len(l.partitionNames) > 0 {
+				for _, pg := range location {
+					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
+						helper.UnionPartitionGroup(pg)
+					}
+				}
+			} else {
+				helper.Union(location)
+			}
+		} else {
+			return nil, true, nil
+		}
+	}
+	return helper.GetLocation(), false, nil
+}
+
+func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Expression, exprCols ...*expression.Column) ([]*ranger.Range, error) {
+	cols := make([]*expression.Column, 0, len(exprCols))
+	colLen := make([]int, 0, len(exprCols))
+	for _, c := range exprCols {
+		c = c.Clone().(*expression.Column)
+		if uniqueID, ok := l.colIDToUniqueID[c.ID]; ok {
+			c.UniqueID = uniqueID
+		}
+		cols = append(cols, c)
+		colLen = append(colLen, types.UnspecifiedLength)
+	}
+
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen)
+	if err != nil {
+		return nil, err
+	}
+	return detachedResult.Ranges, nil
+}
+
+func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
+	location, isFull, err := l.locatePartitionByCNFCondition(conds)
+	if err != nil {
+		return nil, err
+	}
+	if isFull {
+		return l.fullRange, nil
+	}
+	used := make(map[int]struct{}, len(location))
+	for _, pg := range location {
+		used[pg.PartIdx] = struct{}{}
+	}
+	return used, nil
+}
+
+func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	if len(conds) == 0 {
+		return l.fullRange, nil
+	}
+	exprCols := l.listPrune.PruneExprCols
+	pruneExpr := l.listPrune.PruneExpr
+	ranges, err := l.detachCondAndBuildRange(conds, exprCols...)
+	if err != nil {
+		return nil, err
+	}
+	used := make(map[int]struct{}, len(ranges))
+	for _, r := range ranges {
+		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
+			if len(r.HighVal) != len(exprCols) && !r.HighVal[0].IsNull() {
+				// For the list partition, if the first argument is null,
+				// then the list partition expression should also be null.
+				return l.fullRange, nil
+			}
+			value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+			if err != nil {
+				return nil, err
+			}
+			partitionIdx := l.listPrune.LocatePartition(value, isNull)
+			if partitionIdx == -1 {
+				continue
+			}
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[partitionIdx].Name.L) {
+				continue
+			}
+			used[partitionIdx] = struct{}{}
+		} else {
+			return l.fullRange, nil
+		}
+	}
+	return used, nil
+}
+
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression) ([]int, error) {
 	pi := tbl.Meta().Partition
@@ -232,64 +458,15 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 		return nil, err
 	}
 
-	colIDToUniqueID := make(map[int64]int64)
-	for _, cond := range conds {
-		condCols := expression.ExtractColumns(cond)
-		for _, c := range condCols {
-			colIDToUniqueID[c.ID] = c.UniqueID
-		}
+	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, conds, partExpr.ForListPruning)
+	var used map[int]struct{}
+	if partExpr.ForListPruning.ColPrunes == nil {
+		used, err = listPruner.findUsedListPartitions(conds)
+	} else {
+		used, err = listPruner.findUsedListColumnsPartitions(conds)
 	}
-
-	pruneList := partExpr.ForListPruning
-	cols := make([]*expression.Column, 0, len(pruneList.ExprCols))
-	colLen := make([]int, 0, len(pruneList.ExprCols))
-	for _, c := range pruneList.ExprCols {
-		c = c.Clone().(*expression.Column)
-		if uniqueID, ok := colIDToUniqueID[c.ID]; ok {
-			c.UniqueID = uniqueID
-		}
-		cols = append(cols, c)
-		colLen = append(colLen, types.UnspecifiedLength)
-	}
-
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
 	if err != nil {
 		return nil, err
-	}
-
-	ranges := detachedResult.Ranges
-	used := make(map[int]struct{}, len(ranges))
-	for _, r := range ranges {
-		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
-			if !r.HighVal[0].IsNull() {
-				if len(r.HighVal) != len(cols) {
-					used[FullRange] = struct{}{}
-					break
-				}
-			}
-			found := int64(-1)
-			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
-			for j, expr := range pruneList.Exprs {
-				ret, _, err := expr.EvalInt(ctx, row)
-				if err != nil {
-					return nil, err
-				}
-				if ret > 0 {
-					found = int64(j)
-					break
-				}
-			}
-			if found == -1 {
-				continue
-			}
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
-				continue
-			}
-			used[int(found)] = struct{}{}
-		} else {
-			used[FullRange] = struct{}{}
-			break
-		}
 	}
 	if _, ok := used[FullRange]; ok {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
