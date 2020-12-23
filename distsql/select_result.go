@@ -435,13 +435,13 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
-			if s.totalProcessTime > 0 {
-				buf.WriteString(", tot_proc: ")
-				buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
-				if s.totalWaitTime > 0 {
-					buf.WriteString(", tot_wait: ")
-					buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
-				}
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
