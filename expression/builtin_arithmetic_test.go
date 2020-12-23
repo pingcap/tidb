@@ -115,17 +115,62 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
-	// case: 1
-	args := []interface{}{int64(12), int64(1)}
+	// case: 1.1
+	args := []interface{}{uint64(12), uint64(1)}
 
-	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	bf1, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
-	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(bf1, NotNil)
+	uintUIntSig, ok := bf1.(*builtinArithmeticPlusIntUnsignedUnsignedSig)
 	c.Assert(ok, IsTrue)
-	c.Assert(intSig, NotNil)
+	c.Assert(uintUIntSig, NotNil)
 
-	intResult, isNull, err := intSig.evalInt(chunk.Row{})
+	intResult, isNull, err := uintUIntSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(13))
+
+	// case: 1.2
+	args = []interface{}{uint64(12), int64(1)}
+
+	bf2, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf2, NotNil)
+	uintIntSig, ok := bf2.(*builtinArithmeticPlusIntUnsignedSignedSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(uintIntSig, NotNil)
+
+	intResult, isNull, err = uintIntSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(13))
+
+	// case:1.3
+	args = []interface{}{int64(12), uint64(1)}
+
+	bf3, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf3, NotNil)
+	intuintSig, ok := bf3.(*builtinArithmeticPlusIntSignedUnsignedSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intuintSig, NotNil)
+
+	intResult, isNull, err = intuintSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(isNull, IsFalse)
+	c.Assert(intResult, Equals, int64(13))
+
+	// case:1.4
+	args = []interface{}{int64(12), int64(1)}
+
+	bf4, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf4, NotNil)
+	intintSig, ok := bf4.(*builtinArithmeticPlusIntSignedSignedSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intintSig, NotNil)
+
+	intResult, isNull, err = intuintSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(intResult, Equals, int64(13))
@@ -133,7 +178,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	// case 2
 	args = []interface{}{float64(1.01001), float64(-0.01)}
 
-	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	bf, err := funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
 	realSig, ok := bf.(*builtinArithmeticPlusRealSig)
@@ -183,7 +228,7 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	intSig, ok := bf.(*builtinArithmeticPlusIntSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 

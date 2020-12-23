@@ -38,7 +38,10 @@ var (
 var (
 	_ builtinFunc = &builtinArithmeticPlusRealSig{}
 	_ builtinFunc = &builtinArithmeticPlusDecimalSig{}
-	_ builtinFunc = &builtinArithmeticPlusIntSig{}
+	_ builtinFunc = &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticPlusIntUnsignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticPlusIntSignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticPlusIntSignedUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
@@ -190,6 +193,127 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig, nil
 	}
+}
+
+type builtinArithmeticPlusIntUnsignedUnsignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if uint64(a) > math.MaxUint64-uint64(b) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	return a + b, false, nil
+}
+
+type builtinArithmeticPlusIntUnsignedSignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusIntUnsignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusIntUnsignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b < 0 && uint64(-b) > uint64(a) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	if uint64(a) > math.MaxUint64-uint64(b) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	return a + b, false, nil
+}
+
+type builtinArithmeticPlusIntSignedSignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusIntSignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusIntSignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	// underflow and overflow cases
+	if (b < 0 && a < 0 && a+b > a) || (a > 0 && b > 0 && a+b < a) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	return a + b, false, nil
+}
+
+type builtinArithmeticPlusIntSignedUnsignedSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusIntSignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusIntSignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
+	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if a < 0 && uint64(-a) > uint64(b) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	if uint64(b) > math.MaxUint64-uint64(a) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	return a + b, false, nil
 }
 
 type builtinArithmeticPlusIntSig struct {
