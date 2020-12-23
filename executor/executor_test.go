@@ -6464,3 +6464,31 @@ func (s *testSuite) Test12178(c *C) {
 	tk.MustExec("insert into ta values (JSON_EXTRACT('{\"c\": \"1234567890123456789012345678901234567890123456789012345\"}', '$.c'))")
 	tk.MustQuery("select * from ta").Check(testkit.Rows("1234567890123456789012345678901234567890123456789012345.00"))
 }
+
+func (s *testSuite) TestTxnRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
+
+	tk2.MustExec("update t set a=2")
+
+	tk.MustExec("update t set a=3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+
+	// Check retry will activate the txn immediately.
+	tk.MustExec("set @var=10")
+	tk.MustExec("update t set a=@var")
+	tk2.MustExec("update t set a=2")
+	tk.MustExec("set @var=7")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
+}
