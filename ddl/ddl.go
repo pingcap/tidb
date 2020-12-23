@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -394,9 +395,16 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
+	// goroutine A:
+	// domain reload ------------------- lock domain
+	// reload GetLease  ---------------- lock ddl m
+	// ----------------------------------------------------
+	// goroutine B:
+	// ddl close ----------------------- lock ddl m
+	// wg workers ---------------------- owner reload lock domain (RunInGoTest)
+	//
+	// Since d.lease only be written in newDDL(), so it won't be any conflicts in then latter read usage.
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -666,4 +674,15 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }

@@ -817,7 +817,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	_, err = s.se.Execute(context.Background(), "drop stats t")
 	c.Assert(err, IsNil)
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
 	var checkErr error
 	times := 0

@@ -653,7 +653,7 @@ type ddlCallback struct {
 	do *Domain
 }
 
-// OnChanged implements overrides ddl Callback interface.
+// OnChanged overrides ddl Callback interface.
 func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
