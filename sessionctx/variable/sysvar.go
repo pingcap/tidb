@@ -107,7 +107,7 @@ type SysVar struct {
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Some sysvars are read-only. Attempting to set should always fail.
 	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, errors.Errorf("Variable '%s' is a read only variable", sv.Name)
+		return value, ErrIncorrectScope.GenWithStackByArgs(sv.Name, "read only")
 	}
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
@@ -1066,7 +1066,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
-	{Scope: ScopeSession, Name: TiDBConfig, Value: ""},
+	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},

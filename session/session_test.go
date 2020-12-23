@@ -3808,5 +3808,5 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 func (s *testSessionSerialSuite) TestIssue21944(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	_, err := tk1.Exec("set @@tidb_current_ts=1;")
-	c.Assert(err.Error(), Equals, "Variable 'tidb_current_ts' is a read only variable")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
 }
