@@ -758,22 +758,16 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	retTps := w.idxLookup.getRetTpsByHandle()
 	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
 	idxID := w.idxLookup.getIndexPlanRootID()
-	var indexScanBasicStats *execdetails.BasicRuntimeStats
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id && w.idxLookup.stats != nil {
-			indexScanBasicStats = &execdetails.BasicRuntimeStats{}
-			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, indexScanBasicStats)
+			w.idxLookup.stats.indexScanBasicStats = &execdetails.BasicRuntimeStats{}
+			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, w.idxLookup.stats.indexScanBasicStats)
 		}
 	}
 	for {
 		startTime := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
-		finishScan := time.Now()
-		if indexScanBasicStats != nil {
-			d := finishScan.Sub(startTime)
-			indexScanBasicStats.Record(d, chk.NumRows())
-			atomic.AddInt64(&w.idxLookup.stats.IndexScan, int64(d))
-		}
+		finishFetch := time.Now()
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -797,8 +791,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			w.resultCh <- task
 		}
 		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
-			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(time.Since(startTime)))
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
 		}
 	}
 }
@@ -831,9 +826,13 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			}
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
+		startTime := time.Now()
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, nil, scannedKeys, err
+		}
+		if w.idxLookup.stats.indexScanBasicStats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			return handles, retChk, scannedKeys, nil
@@ -1004,24 +1003,26 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 
 // IndexLookUpRunTimeStats record the indexlookup runtime stat
 type IndexLookUpRunTimeStats struct {
-	FetchHandle  int64
-	IndexScan    int64
-	TaskWait     int64
-	TableRowScan int64
-	TableTaskNum int64
-	Concurrency  int
+	// indexScanBasicStats uses to record basic runtime stats for index scan.
+	indexScanBasicStats *execdetails.BasicRuntimeStats
+	FetchHandleTotal    int64
+	FetchHandle         int64
+	TaskWait            int64
+	TableRowScan        int64
+	TableTaskNum        int64
+	Concurrency         int
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
-	fetchHandle := atomic.LoadInt64(&e.FetchHandle)
-	indexScan := atomic.LoadInt64(&e.IndexScan)
+	fetchHandle := atomic.LoadInt64(&e.FetchHandleTotal)
+	indexScan := atomic.LoadInt64(&e.FetchHandle)
 	taskWait := atomic.LoadInt64(&e.TaskWait)
 	tableScan := atomic.LoadInt64(&e.TableRowScan)
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task: {total: %s, fetch: %s, build: %s, wait: %s}",
+		buf.WriteString(fmt.Sprintf("index_task: {total: %s, fetch_handle: %s, build: %s, wait: %s}",
 			execdetails.FormatDuration(time.Duration(fetchHandle)),
 			execdetails.FormatDuration(time.Duration(indexScan)),
 			execdetails.FormatDuration(time.Duration(fetchHandle-indexScan-taskWait)),
@@ -1048,8 +1049,8 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
+	e.FetchHandleTotal += tmp.FetchHandleTotal
 	e.FetchHandle += tmp.FetchHandle
-	e.IndexScan += tmp.IndexScan
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
