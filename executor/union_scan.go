@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -179,6 +180,10 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
 			if err != nil {
 				return err
+			}
+			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(us.columns[idx].Flag) || mysql.HasPreventNullInsertFlag(us.columns[idx].Flag)) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(us.columns[idx])
 			}
 			mutableRow.SetDatum(idx, castDatum)
 		}

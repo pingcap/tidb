@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -91,7 +92,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"└─Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
-		"TableDual_5 0.00 root  rows:0",
+		"TableDual_6 0.00 root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
@@ -447,4 +448,77 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec("delete from t19141 partition (p0) where c_int in (2,3)") // No data changed
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
+}
+
+func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
+	gcfg := config.GetGlobalConfig()
+	etl := gcfg.EnableTableLock
+	gcfg.EnableTableLock = true
+	defer func() {
+		gcfg.EnableTableLock = etl
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbllock(id int, c int);")
+	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
+	tk.MustExec("lock table tbllock read;")
+	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
+}
+
+func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
+
+	_, err := tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1, 1));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+}
+
+func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
+	tk.MustExec("create table t1(id varchar(20) primary key)")
+	tk.MustExec("create table t2(id varchar(20), unique(id))")
+	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
+	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+	tk.MustExec("create table t5(id bit(64) primary key)")
+	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
+	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
+	tk.MustExec("insert into t5 values(48)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain " + sql)
+		res := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
+	}
 }

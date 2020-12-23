@@ -15,6 +15,7 @@ package memdb
 
 import (
 	"math"
+	"sync"
 	"unsafe"
 )
 
@@ -42,6 +43,7 @@ const (
 )
 
 type arena struct {
+	sync.Mutex
 	blockSize int
 	blocks    []arenaBlock
 }
@@ -57,6 +59,7 @@ func newArenaLocator() *arena {
 }
 
 func (a *arena) snapshot() arenaSnapshot {
+	a.Lock()
 	snap := arenaSnapshot{
 		blockSize: a.blockSize,
 		blocks:    len(a.blocks),
@@ -64,10 +67,12 @@ func (a *arena) snapshot() arenaSnapshot {
 	if len(a.blocks) > 0 {
 		snap.offsetInBlock = a.blocks[len(a.blocks)-1].length
 	}
+	a.Unlock()
 	return snap
 }
 
 func (a *arena) revert(snap arenaSnapshot) {
+	a.Lock()
 	for i := snap.blocks; i < len(a.blocks); i++ {
 		a.blocks[i] = arenaBlock{}
 	}
@@ -76,6 +81,7 @@ func (a *arena) revert(snap arenaSnapshot) {
 		a.blocks[len(a.blocks)-1].length = snap.offsetInBlock
 	}
 	a.blockSize = snap.blockSize
+	a.Unlock()
 }
 
 func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
@@ -84,7 +90,7 @@ func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
 	addr, data := a.alloc(nodeSize)
 	node := (*node)(unsafe.Pointer(&data[0]))
 	node.keyLen = uint16(len(key))
-	node.height = uint16(height)
+	node.height = uint8(height)
 	node.valLen = uint32(len(v))
 	copy(data[node.nodeLen():], key)
 	copy(data[node.nodeLen()+int(node.keyLen):], v)
@@ -92,7 +98,10 @@ func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
 }
 
 func (a *arena) getFrom(addr arenaAddr) []byte {
-	return a.blocks[addr.blockIdx-1].getFrom(addr.blockOffset)
+	a.Lock()
+	block := &a.blocks[addr.blockIdx-1]
+	a.Unlock()
+	return block.getFrom(addr.blockOffset)
 }
 
 func (a *arena) alloc(size int) (arenaAddr, []byte) {
@@ -122,7 +131,11 @@ func (a *arena) enlarge(allocSize, blockSize int) {
 	if a.blockSize > maxBlockSize {
 		a.blockSize = maxBlockSize
 	}
-	a.blocks = append(a.blocks, newArenaBlock(a.blockSize))
+	block := newArenaBlock(a.blockSize)
+
+	a.Lock()
+	a.blocks = append(a.blocks, block)
+	a.Unlock()
 }
 
 func (a *arena) allocInLastBlock(size int) (arenaAddr, []byte) {

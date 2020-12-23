@@ -458,7 +458,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
@@ -469,6 +469,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
 			}
 		}
 	}
@@ -643,45 +646,35 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value         string
-		ok            bool
-		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		value       string
+		sessionVars = e.ctx.GetSessionVars()
 	)
-	for _, v := range variable.SysVars {
-		if !e.GlobalScope {
-			// For a session scope variable,
-			// 1. try to fetch value from SessionVars.Systems;
-			// 2. if this variable is session-only, fetch value from SysVars
-			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
-		} else {
-			// If the scope of a system variable is ScopeNone,
-			// it's a read-only variable, so we return the default value of it.
-			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
+	if e.GlobalScope {
+		// Collect global scope variables,
+		// 1. Exclude the variables of ScopeSession in variable.SysVars;
+		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
+		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
+		for _, v := range variable.SysVars {
+			if v.Scope != variable.ScopeSession {
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendRow([]interface{}{v.Name, value})
+			}
 		}
+		return nil
+	}
+
+	// Collect session scope variables,
+	// If it is a session only variable, use the default value defined in code,
+	//   otherwise, fetch the value from table `mysql.Global_Variables`.
+	for _, v := range variable.SysVars {
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if !ok {
-			unreachedVars = append(unreachedVars, v.Name)
-			continue
 		}
 		e.appendRow([]interface{}{v.Name, value})
-	}
-	if len(unreachedVars) != 0 {
-		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, varName := range unreachedVars {
-			varValue, ok := systemVars[varName]
-			if !ok {
-				varValue = variable.SysVars[varName].Value
-			}
-			e.appendRow([]interface{}{varName, varValue})
-		}
 	}
 	return nil
 }
@@ -811,7 +804,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+					} else if col.DefaultIsExpr {
 						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))

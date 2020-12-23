@@ -1282,7 +1282,8 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 }
 
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
-// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
+// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
+// with int constant if the int constant falls into a sensible year representation.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	if ContainMutableConst(ctx, args) {
 		return args
@@ -1305,7 +1306,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			//		   -inf:  10000000 & 1 == 0
 			// For uint:
 			//			inf:  11111111 & 1 == 1
-			//		   -inf:  00000000 & 0 == 0
+			//		   -inf:  00000000 & 1 == 0
 			if arg1.Value.GetInt64()&1 == 1 {
 				isPositiveInfinite = true
 			} else {
@@ -1323,6 +1324,22 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			} else {
 				isPositiveInfinite = true
 			}
+		}
+	}
+	// int constant [cmp] year type
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
+		if failed == nil {
+			arg0.Value.SetInt64(adjusted)
+			finalArg0 = arg0
+		}
+	}
+	// year type [cmp] int constant
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
+		if failed == nil {
+			arg1.Value.SetInt64(adjusted)
+			finalArg1 = arg1
 		}
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
@@ -1344,7 +1361,67 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		return []Expression{NewOne(), NewZero()}
 	}
 
-	return []Expression{finalArg0, finalArg1}
+	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1})
+}
+
+func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
+	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
+	// and support for it would be removed in a future version.
+	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
+		return args
+	}
+	colArgs := make([]*Column, 2)
+	constArgs := make([]*Constant, 2)
+	for i, arg := range args {
+		switch x := arg.(type) {
+		case *Constant:
+			constArgs[i] = x
+		case *Column:
+			colArgs[i] = x
+		case *CorrelatedColumn:
+			colArgs[i] = &x.Column
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
+			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
+			if err != nil || isNull || v > 0 {
+				return args
+			}
+			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				if op == opcode.EQ || op == opcode.NullEQ {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
+						args[i], args[1-i] = NewOne(), NewZero()
+						return args
+					}
+				}
+			}
+			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				if v == 0 && (op == opcode.LE || op == opcode.GT || op == opcode.NullEQ || op == opcode.EQ || op == opcode.NE) {
+					return args
+				}
+				// `unsigned_col < 0` equals to `1 < 0`,
+				// `unsigned_col > -1` equals to `1 > 0`,
+				// `unsigned_col <= -1` equals to `1 <= 0`,
+				// `unsigned_col >= 0` equals to `1 >= 0`,
+				// `unsigned_col == -1` equals to `1 == 0`,
+				// `unsigned_col != -1` equals to `1 != 0`,
+				// `unsigned_col <=> -1` equals to `1 <=> 0`,
+				// so we can replace the column argument with `1`, and the other constant argument with `0`.
+				args[i], args[1-i] = NewOne(), NewZero()
+				return args
+			}
+		}
+	}
+	return args
 }
 
 // getFunction sets compare built-in function signatures for various types.

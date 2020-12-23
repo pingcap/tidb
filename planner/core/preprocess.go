@@ -188,6 +188,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -202,10 +207,53 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
+const (
+	// TypeInvalid for unexpected types.
+	TypeInvalid byte = iota
+	// TypeSelect for SelectStmt.
+	TypeSelect
+	// TypeDelete for DeleteStmt.
+	TypeDelete
+	// TypeUpdate for UpdateStmt.
+	TypeUpdate
+	// TypeInsert for InsertStmt.
+	TypeInsert
+)
 
+func bindableStmtType(node ast.StmtNode) byte {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		return TypeSelect
+	case *ast.DeleteStmt:
+		return TypeDelete
+	case *ast.UpdateStmt:
+		return TypeUpdate
+	case *ast.InsertStmt:
+		return TypeInsert
+	}
+	return TypeInvalid
+}
+
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	origTp := bindableStmtType(originNode)
+	hintedTp := bindableStmtType(hintedNode)
+	if origTp == TypeInvalid || hintedTp == TypeInvalid {
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+		return
+	}
+	if origTp != hintedTp {
+		p.err = errors.Errorf("hinted sql and original sql have different query types")
+		return
+	}
+	if origTp == TypeInsert {
+		origInsert, hintedInsert := originNode.(*ast.InsertStmt), hintedNode.(*ast.InsertStmt)
+		if origInsert.Select == nil || hintedInsert.Select == nil {
+			p.err = errors.Errorf("create binding only supports INSERT / REPLACE INTO SELECT")
+			return
+		}
+	}
+	originSQL := parser.Normalize(originNode.Text())
+	hintedSQL := parser.Normalize(hintedNode.Text())
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -556,13 +604,16 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
-		p.err = err
-		return
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }

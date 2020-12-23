@@ -258,13 +258,17 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	return handle, kv.ErrKeyExists
 }
 
-// Delete removes the entry for handle h and indexdValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error {
-	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
+// Delete removes the entry for handle h and indexedValues from KV index.
+func (c *index) Delete(sc *stmtctx.StatementContext, m kv.MemBuffer, indexedValues []types.Datum, h int64) error {
+	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
-	err = m.Delete(key)
+	if distinct {
+		err = m.DeleteWithNeedLock(key)
+	} else {
+		err = m.Delete(key)
+	}
 	return err
 }
 

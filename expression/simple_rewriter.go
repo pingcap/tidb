@@ -175,7 +175,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return -1, errNonUniq.GenWithStackByArgs(name.String(), "field list")
+				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}
 	}
@@ -453,7 +453,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		op = ast.UnaryMinus
 	case opcode.BitNeg:
 		op = ast.BitNeg
-	case opcode.Not:
+	case opcode.Not, opcode.Not2:
 		op = ast.UnaryNot
 	default:
 		sr.err = errors.Errorf("Unknown Unary Op %T", v.Op)

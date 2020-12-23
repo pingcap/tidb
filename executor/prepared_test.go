@@ -66,7 +66,7 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
 }
 
-func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
+func (s *testSuite9) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -87,6 +87,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
 	tkProcess := tk.Se.ShowProcess()
@@ -182,19 +183,20 @@ func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 
 	// For point get
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
-	tk.MustExec("set @v1 = 1")
-	tk.MustExec("set @v2 = 1")
+	tk.MustExec("set @v1 = '1'")
+	tk.MustExec("set @v2 = '1'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("1 1 111"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustExec("set @v1 = 2")
-	tk.MustExec("set @v2 = 2")
+	tk.MustExec("set @v1 = '2'")
+	tk.MustExec("set @v2 = '2'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("2 2 222"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-	tk.MustExec("set @v1 = 3")
-	tk.MustExec("set @v2 = 3")
+	tk.MustExec("set @v1 = '3'")
+	tk.MustExec("set @v2 = '3'")
 	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
@@ -246,4 +248,92 @@ func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 	tk.MustExec(`prepare stmt2 from "select * from ta, tb where ta.c = tb.b and (ta.a, ta.b) in ((?, ?), (?, ?))"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v1, @v2, @v2`).Check(testkit.Rows("a a 1 1 1", "b b 2 2 2"))
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
+}
+
+func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("create table t1(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t1 values('1',1,1.1),('2',2,222),('3',3,333)")
+	tk.MustExec("create table t2(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t2 values('3',3,3.3),('2',2,222),('3',3,333)")
+
+	var input []struct {
+		PrepareStmt string
+		Executes    []struct {
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			ExecuteSQL string
+		}
+	}
+	var output []struct {
+		PrepareStmt string
+		Executes    []struct {
+			SQL  string
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			Plan             []string
+			LastPlanUseCache string
+			Result           []string
+		}
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		tk.MustExec(tt.PrepareStmt)
+		s.testData.OnRecord(func() {
+			output[i].PrepareStmt = tt.PrepareStmt
+			output[i].Executes = make([]struct {
+				SQL  string
+				Vars []struct {
+					Name  string
+					Value string
+				}
+				Plan             []string
+				LastPlanUseCache string
+				Result           []string
+			}, len(tt.Executes))
+		})
+		c.Assert(output[i].PrepareStmt, Equals, tt.PrepareStmt)
+		for j, exec := range tt.Executes {
+			for _, v := range exec.Vars {
+				tk.MustExec(fmt.Sprintf(`set @%s = %s`, v.Name, v.Value))
+			}
+			res := tk.MustQuery(exec.ExecuteSQL)
+			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
+			tk.MustQuery(exec.ExecuteSQL)
+			tkProcess := tk.Se.ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+			s.testData.OnRecord(func() {
+				output[i].Executes[j].SQL = exec.ExecuteSQL
+				output[i].Executes[j].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+				output[i].Executes[j].Vars = exec.Vars
+				output[i].Executes[j].LastPlanUseCache = lastPlanUseCache.(string)
+				output[i].Executes[j].Result = s.testData.ConvertRowsToStrings(res.Rows())
+			})
+			c.Assert(output[i].Executes[j].SQL, Equals, exec.ExecuteSQL)
+			plan.Check(testkit.Rows(output[i].Executes[j].Plan...))
+			c.Assert(output[i].Executes[j].Vars, DeepEquals, exec.Vars)
+			c.Assert(output[i].Executes[j].LastPlanUseCache, Equals, lastPlanUseCache.(string))
+			res.Check(testkit.Rows(output[i].Executes[j].Result...))
+		}
+	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -92,7 +93,10 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		return point, errors.Trace(err)
+		// see issue #20101: overflow when converting integer to year
+		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrOverflow) {
+			return point, errors.Trace(err)
+		}
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {

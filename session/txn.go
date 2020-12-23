@@ -364,6 +364,12 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.stmtBuf.Delete(k)
 }
 
+// DeleteWithNeedLock overrides the Transaction interface.
+func (st *TxnState) DeleteWithNeedLock(k kv.Key) error {
+	st.initStmtBuf()
+	return st.stmtBuf.DeleteWithNeedLock(k)
+}
+
 // Iter overrides the Transaction interface.
 func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	retrieverIt, err := st.Transaction.Iter(k, upperBound)
@@ -428,7 +434,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	}
 	keys := make([]kv.Key, 0, st.stmtBufLen())
 	if err := kv.WalkMemBuffer(st.stmtBuf, func(k kv.Key, v []byte) error {
-		if !keyNeedToLock(k, v) {
+		if !st.stmtBuf.GetFlags(context.Background(), k).HasNeedLocked() && !keyNeedToLock(k, v) {
 			return nil
 		}
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
@@ -447,11 +453,13 @@ func keyNeedToLock(k, v []byte) bool {
 		// meta key always need to lock.
 		return true
 	}
-	isDelete := len(v) == 0
-	if isDelete {
-		// only need to delete row key.
+
+	// only need to delete row key here,
+	// primary key and unique indexes are handled outside.
+	if len(v) == 0 {
 		return k[10] == 'r'
 	}
+
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}

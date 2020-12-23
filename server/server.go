@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -90,13 +91,14 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
-	errInvalidSequence         = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
-	errInvalidType             = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
-	errNotAllowedCommand       = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
-	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
-	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
-	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
+	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
+	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
+	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
+	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
+	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
+	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil)) // MySQL returns a parse error
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -124,6 +126,7 @@ type Server struct {
 	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
+	inShutdownMode bool
 }
 
 // ConnectionCount gets current connection count.
@@ -340,9 +343,24 @@ func (s *Server) Run() error {
 	}
 }
 
+func (s *Server) startShutdown() {
+	s.rwlock.RLock()
+	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
+	s.inShutdownMode = true
+	s.rwlock.RUnlock()
+	// give the load balancer a chance to receive a few unhealthy health reports
+	// before acquiring the s.rwlock and blocking connections.
+	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
+	if waitTime > 0 {
+		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
+		time.Sleep(waitTime)
+	}
+}
+
 // Close closes the server.
 func (s *Server) Close() {
-	s.rwlock.Lock()
+	s.startShutdown()
+	s.rwlock.Lock() // prevent new connections
 	defer s.rwlock.Unlock()
 
 	if s.listener != nil {
@@ -391,10 +409,10 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("connection closed")
+		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -539,6 +557,12 @@ func (s *Server) getTLSConfig() *tls.Config {
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

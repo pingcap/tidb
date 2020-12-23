@@ -10,11 +10,11 @@
           "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
           "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
-          "    └─IndexMergeJoin_44 2.00 root  inner join, inner:TableReader_42, outer key:test.t.a, inner key:test.t.a",
-          "      ├─IndexReader_33(Build) 2.00 root  index:IndexRangeScan_32",
-          "      │ └─IndexRangeScan_32 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
-          "      └─TableReader_42(Probe) 1.00 root  data:TableRangeScan_41",
-          "        └─TableRangeScan_41 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:true"
+          "    └─IndexJoin_36 2.00 root  inner join, inner:TableReader_35, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "      ├─IndexReader_29(Build) 2.00 root  index:IndexRangeScan_28",
+          "      │ └─IndexRangeScan_28 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
+          "      └─TableReader_35(Probe) 1.00 root  data:TableRangeScan_34",
+          "        └─TableRangeScan_34 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:false"
         ]
       },
       {
@@ -83,6 +83,59 @@
           "IndexReader_7 1.00 root  index:Selection_6",
           "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
           "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"a\"), (\"a\",+inf], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPrefixIndexMultiColDNF",
+    "Cases": [
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "IndexLookUp_11 10.00 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:t(t) range:[\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 10.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "IndexLookUp_11 16.00 root  ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:t(t) range:[\"a\",\"a\"], [\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 16.00 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "TableReader_7 1.00 root  data:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "TableReader_7 1.60 root  data:Selection_6",
+          "└─Selection_6 1.60 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
         ]
       }
     ]

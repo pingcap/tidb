@@ -21,22 +21,24 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID              uint64
-	User            string
-	Host            string
-	DB              string
-	Digest          string
-	Plan            interface{}
-	PlanExplainRows [][]string
-	Time            time.Time
-	Info            string
-	CurTxnStartTS   uint64
-	StmtCtx         *stmtctx.StatementContext
-	StatsInfo       func(interface{}) map[string]uint64
+	ID               uint64
+	User             string
+	Host             string
+	DB               string
+	Digest           string
+	Plan             interface{}
+	PlanExplainRows  [][]string
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	Time             time.Time
+	Info             string
+	CurTxnStartTS    uint64
+	StmtCtx          *stmtctx.StatementContext
+	StatsInfo        func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
@@ -44,6 +46,7 @@ type ProcessInfo struct {
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
+	RedactSQL                 bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".

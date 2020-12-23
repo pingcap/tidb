@@ -239,6 +239,27 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
+func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
+	// For a normal transaction, if RPC returns context.Canceled error while sending commit
+	// requests, the transaction should go to the undetermined state.
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("va"))
+	c.Assert(err, IsNil)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+	}()
+
+	err = committer.commitMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	c.Assert(committer.mu.undeterminedErr, NotNil)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
+}
+
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 	loc, err := s.store.regionCache.LocateKey(NewBackofferWithVars(context.Background(), getMaxBackoff, nil), key)
 	c.Assert(err, IsNil)
@@ -608,7 +629,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 
 	lr := newLockResolver(s.store)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
-	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true, nil)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 

@@ -71,24 +71,24 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
-IndexJoin_26	5.00	root		inner join, inner:IndexLookUp_25, outer key:test.sgc2.a, inner key:test.sgc1.a
-├─TableReader_47(Build)	1.00	root		data:Selection_46
-│ └─Selection_46	1.00	cop[tikv]		not(isnull(test.sgc2.a))
-│   └─TableFullScan_45	1.00	cop[tikv]	table:sgc2	keep order:false
-└─IndexLookUp_25(Probe)	5.00	root		
-  ├─Selection_24(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
-  │ └─IndexRangeScan_22	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
-  └─TableRowIDScan_23(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
+IndexJoin_19	5.00	root		inner join, inner:IndexLookUp_18, outer key:test.sgc2.a, inner key:test.sgc1.a, equal cond:eq(test.sgc2.a, test.sgc1.a)
+├─TableReader_33(Build)	1.00	root		data:Selection_32
+│ └─Selection_32	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+│   └─TableFullScan_31	1.00	cop[tikv]	table:sgc2	keep order:false
+└─IndexLookUp_18(Probe)	5.00	root		
+  ├─Selection_17(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+  │ └─IndexRangeScan_15	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
+  └─TableRowIDScan_16(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
 Projection_6	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
-└─HashJoin_38	5.00	root		inner join, equal:[eq(test.sgc2.a, test.sgc1.a)]
-  ├─TableReader_57(Build)	1.00	root		data:Selection_56
-  │ └─Selection_56	1.00	cop[tikv]		not(isnull(test.sgc2.a))
-  │   └─TableFullScan_55	1.00	cop[tikv]	table:sgc2	keep order:false
-  └─TableReader_66(Probe)	5.00	root		data:Selection_65
-    └─Selection_65	5.00	cop[tikv]		not(isnull(test.sgc1.a))
-      └─TableFullScan_64	5.00	cop[tikv]	table:sgc1	keep order:false
+└─HashJoin_24	5.00	root		inner join, equal:[eq(test.sgc2.a, test.sgc1.a)]
+  ├─TableReader_43(Build)	1.00	root		data:Selection_42
+  │ └─Selection_42	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+  │   └─TableFullScan_41	1.00	cop[tikv]	table:sgc2	keep order:false
+  └─TableReader_52(Probe)	5.00	root		data:Selection_51
+    └─Selection_51	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+      └─TableFullScan_50	5.00	cop[tikv]	table:sgc1	keep order:false
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,

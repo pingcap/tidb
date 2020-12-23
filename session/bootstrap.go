@@ -180,7 +180,7 @@ const (
 		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		cm_sketch blob,
+		cm_sketch blob(6291456),
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
@@ -334,6 +334,9 @@ const (
 	tidbSystemTZ = "system_tz"
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
+	// The variable name in mysql.tidb table and it records the default value of
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -389,6 +392,10 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+	// version48 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version48 = 48
+	// version49 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	version49 = 49
 )
 
 var (
@@ -439,6 +446,8 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+		upgradeToVer48,
+		upgradeToVer49,
 	}
 )
 
@@ -1005,8 +1014,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {
@@ -1069,6 +1077,37 @@ func upgradeToVer47(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
+	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
+	// default value of mem-quota-query, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	if ver <= version38 {
+		writeMemoryQuotaQuery(s)
+	}
+}
+
+func writeMemoryQuotaQuery(s Session) {
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

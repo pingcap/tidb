@@ -203,12 +203,12 @@ func (s *testEvaluatorSuite) TestEvalExpr(c *C) {
 		var err error
 		c.Assert(colExpr.Vectorized(), IsTrue)
 		ctx.GetSessionVars().EnableVectorizedExpression = false
-		err = EvalExpr(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}
 		ctx.GetSessionVars().EnableVectorizedExpression = true
-		err = EvalExpr(ctx, colExpr, input, colBuf2)
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
 		if err != nil {
 			c.Fatal(err)
 		}

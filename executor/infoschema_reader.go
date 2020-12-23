@@ -1317,6 +1317,137 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 	e.rows = rows
 }
 
+// tableStorageStatsRetriever is used to read slow log data.
+type tableStorageStatsRetriever struct {
+	dummyCloser
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TableStorageStatsExtractor
+	initialTables []*initialTable
+	curTable      int
+	helper        *helper.Helper
+	stats         helper.PDRegionStats
+}
+
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+	if !e.initialized {
+		err := e.initialize(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(e.initialTables) == 0 || e.curTable >= len(e.initialTables) {
+		e.retrieved = true
+		return nil, nil
+	}
+
+	rows, err := e.setDataForTableStorageStats(sctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.outputCols) == len(e.table.Columns) {
+		return rows, nil
+	}
+	retRows := make([][]types.Datum, len(rows))
+	for i, fullRow := range rows {
+		row := make([]types.Datum, len(e.outputCols))
+		for j, col := range e.outputCols {
+			row[j] = fullRow[col.Offset]
+		}
+		retRows[i] = row
+	}
+	return retRows, nil
+}
+
+type initialTable struct {
+	db string
+	*model.TableInfo
+}
+
+func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
+	is := infoschema.GetInfoSchema(sctx)
+	var databases []string
+	schemas := e.extractor.TableSchema
+	tables := e.extractor.TableName
+
+	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
+	if len(schemas) == 0 {
+		return errors.Errorf("Please specify the 'table_schema'")
+	}
+
+	// Filter the sys or memory schema.
+	for schema := range schemas {
+		if !util.IsMemOrSysDB(schema) {
+			databases = append(databases, schema)
+		}
+	}
+
+	// Extract the tables to the initialTable.
+	for _, DB := range databases {
+		// The user didn't specified the table, extract all tables of this db to initialTable.
+		if len(tables) == 0 {
+			tbs := is.SchemaTables(model.NewCIStr(DB))
+			for _, tb := range tbs {
+				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+			}
+		} else {
+			// The user specified the table, extract the specified tables of this db to initialTable.
+			for tb := range tables {
+				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
+			}
+		}
+	}
+
+	// Cache the helper and return an error if PD unavailable.
+	tikvStore, ok := sctx.GetStore().(tikv.Storage)
+	if !ok {
+		return errors.Errorf("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	e.helper = helper.NewHelper(tikvStore)
+	_, err := e.helper.GetPDAddr()
+	if err != nil {
+		return err
+	}
+	e.initialized = true
+	return nil
+}
+
+func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.Context) ([][]types.Datum, error) {
+	rows := make([][]types.Datum, 0, 1024)
+	count := 0
+	for e.curTable < len(e.initialTables) && count < 1024 {
+		table := e.initialTables[e.curTable]
+		tableID := table.ID
+		err := e.helper.GetPDRegionStats(tableID, &e.stats)
+		if err != nil {
+			return nil, err
+		}
+		peerCount := len(e.stats.StorePeerCount)
+
+		record := types.MakeDatums(
+			table.db,            // TABLE_SCHEMA
+			table.Name.O,        // TABLE_NAME
+			tableID,             // TABLE_ID
+			peerCount,           // TABLE_PEER_COUNT
+			e.stats.Count,       // TABLE_REGION_COUNT
+			e.stats.EmptyCount,  // TABLE_EMPTY_REGION_COUNT
+			e.stats.StorageSize, // TABLE_SIZE
+			e.stats.StorageKeys, // TABLE_KEYS
+		)
+		rows = append(rows, record)
+		count++
+		e.curTable++
+	}
+	return rows, nil
+}
+
 func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	var err error

@@ -417,6 +417,12 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+	// OuterHashKeys indicates the outer keys used to build hash table during
+	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
+	OuterHashKeys []*expression.Column
+	// InnerHashKeys indicates the inner keys used to build hash table during
+	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
+	InnerHashKeys []*expression.Column
 }
 
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.

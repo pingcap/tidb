@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -28,6 +29,7 @@ func init() {
 		ast.If:     ifFoldHandler,
 		ast.Ifnull: ifNullFoldHandler,
 		ast.Case:   caseWhenHandler,
+		ast.IsNull: isNullHandler,
 	}
 }
 
@@ -37,6 +39,29 @@ func FoldConstant(expr Expression) Expression {
 	// keep the original coercibility values after folding
 	e.SetCoercibility(expr.Coercibility())
 	return e
+}
+
+func isNullHandler(expr *ScalarFunction) (Expression, bool) {
+	arg0 := expr.GetArgs()[0]
+	if constArg, isConst := arg0.(*Constant); isConst {
+		isDeferredConst := constArg.DeferredExpr != nil || constArg.ParamMarker != nil
+		value, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			return expr, isDeferredConst
+		}
+		if isDeferredConst {
+			return &Constant{Value: value, RetType: expr.RetType, DeferredExpr: expr}, true
+		}
+		return &Constant{Value: value, RetType: expr.RetType}, false
+	}
+	if mysql.HasNotNullFlag(arg0.GetType().Flag) {
+		return NewZero(), false
+	}
+	return expr, false
 }
 
 func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {

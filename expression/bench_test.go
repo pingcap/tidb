@@ -1244,6 +1244,20 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
+	} else if funcName == ast.GetVar {
+		var fc functionClass
+		tp := eType2FieldType(testCase.retEvalType)
+		switch testCase.retEvalType {
+		case types.ETInt:
+			fc = &getIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETDecimal:
+			fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETReal:
+			fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		default:
+			fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		}
+		baseFunc, err = fc.getFunction(ctx, cols)
 	} else {
 		baseFunc, err = funcs[funcName].getFunction(ctx, cols)
 	}

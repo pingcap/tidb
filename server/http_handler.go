@@ -23,6 +23,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -416,6 +417,7 @@ type valueHandler struct {
 
 const (
 	opTableRegions     = "regions"
+	opTableRanges      = "ranges"
 	opTableDiskUsage   = "disk-usage"
 	opTableScatter     = "scatter-table"
 	opStopTableScatter = "stop-scatter-table"
@@ -520,6 +522,34 @@ type TableRegions struct {
 	Indices       []IndexRegions `json:"indices"`
 }
 
+// RangeDetail contains detail information about a particular range
+type RangeDetail struct {
+	StartKey    []byte `json:"start_key"`
+	EndKey      []byte `json:"end_key"`
+	StartKeyHex string `json:"start_key_hex"`
+	EndKeyHex   string `json:"end_key_hex"`
+}
+
+func createRangeDetail(start, end []byte) RangeDetail {
+	return RangeDetail{
+		StartKey:    start,
+		EndKey:      end,
+		StartKeyHex: hex.EncodeToString(start),
+		EndKeyHex:   hex.EncodeToString(end),
+	}
+}
+
+// TableRanges is the response data for list table's ranges.
+// It contains ranges list for record and indices as well as the whole table.
+type TableRanges struct {
+	TableName string                 `json:"name"`
+	TableID   int64                  `json:"id"`
+	Range     RangeDetail            `json:"table"`
+	Record    RangeDetail            `json:"record"`
+	Index     RangeDetail            `json:"index"`
+	Indices   map[string]RangeDetail `json:"indices,omitempty"`
+}
+
 // RegionMeta contains a region's peer detail
 type RegionMeta struct {
 	ID          uint64              `json:"region_id"`
@@ -538,10 +568,9 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID uint64              `json:"region_id"`
-	StartKey []byte              `json:"start_key"`
-	EndKey   []byte              `json:"end_key"`
-	Frames   []*helper.FrameItem `json:"frames"`
+	RangeDetail `json:",inline"`
+	RegionID    uint64              `json:"region_id"`
+	Frames      []*helper.FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
@@ -963,8 +992,10 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch h.op {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
+	case opTableRanges:
+		h.handleRangeRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		h.handleDiskUsageRequest(schema, tableVal, w, req)
+		h.handleDiskUsageRequest(tableVal, w)
 	case opTableScatter:
 		// supports partition table, only get one physical table, prevent too many scatter schedulers.
 		ptbl, err := h.getPartition(tableVal, partitionName)
@@ -1218,6 +1249,45 @@ func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl tabl
 	writeData(w, tableRegions)
 }
 
+func createTableRanges(tblID int64, tblName string, indices []*model.IndexInfo) *TableRanges {
+	indexPrefix := tablecodec.GenTableIndexPrefix(tblID)
+	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
+	tableEnd := tablecodec.EncodeTablePrefix(tblID + 1)
+	ranges := &TableRanges{
+		TableName: tblName,
+		TableID:   tblID,
+		Range:     createRangeDetail(tablecodec.EncodeTablePrefix(tblID), tableEnd),
+		Record:    createRangeDetail(recordPrefix, tableEnd),
+		Index:     createRangeDetail(indexPrefix, recordPrefix),
+	}
+	if len(indices) != 0 {
+		indexRanges := make(map[string]RangeDetail)
+		for _, index := range indices {
+			start := tablecodec.EncodeTableIndexPrefix(tblID, index.ID)
+			end := tablecodec.EncodeTableIndexPrefix(tblID, index.ID+1)
+			indexRanges[index.Name.String()] = createRangeDetail(start, end)
+		}
+		ranges.Indices = indexRanges
+	}
+	return ranges
+}
+
+func (h tableHandler) handleRangeRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+	meta := tbl.Meta()
+	pi := meta.GetPartitionInfo()
+	if pi != nil {
+		// Partitioned table.
+		var data []*TableRanges
+		for _, def := range pi.Definitions {
+			data = append(data, createTableRanges(def.ID, def.Name.String(), meta.Indices))
+		}
+		writeData(w, data)
+		return
+	}
+
+	writeData(w, createTableRanges(meta.ID, meta.Name.String(), meta.Indices))
+}
+
 func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*TableRegions, error) {
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
@@ -1273,51 +1343,11 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	}, nil
 }
 
-// pdRegionStats is the json response from PD.
-type pdRegionStats struct {
-	Count            int              `json:"count"`
-	EmptyCount       int              `json:"empty_count"`
-	StorageSize      int64            `json:"storage_size"`
-	StoreLeaderCount map[uint64]int   `json:"store_leader_count"`
-	StorePeerCount   map[uint64]int   `json:"store_peer_count"`
-	StoreLeaderSize  map[uint64]int64 `json:"store_leader_size"`
-	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
-}
-
-func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWriter) {
 	tableID := tbl.Meta().ID
-	pdAddrs, err := h.getPDAddr()
+	var stats helper.PDRegionStats
+	err := h.GetPDRegionStats(tableID, &stats)
 	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	// Include table and index data, because their range located in tableID_i tableID_r
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Error(err)
-		}
-	}()
-
-	var stats pdRegionStats
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&stats); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -1413,9 +1443,8 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// create RegionDetail from RegionFrameRange
 	regionDetail := &RegionDetail{
-		RegionID: regionID,
-		StartKey: region.StartKey,
-		EndKey:   region.EndKey,
+		RegionID:    regionID,
+		RangeDetail: createRangeDetail(region.StartKey, region.EndKey),
 	}
 	schema, err := h.schema()
 	if err != nil {
@@ -1641,7 +1670,9 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
-	IsOwner bool `json:"is_owner"`
+	IsOwner  bool `json:"is_owner"`
+	MaxProcs int  `json:"max_procs"`
+	GOGC     int  `json:"gogc"`
 	*infosync.ServerInfo
 }
 
@@ -1661,6 +1692,8 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	info.MaxProcs = runtime.GOMAXPROCS(0)
+	info.GOGC = util.GetGOGC()
 	writeData(w, info)
 }
 

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -103,4 +104,41 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 			}
 		}
 	}
+}
+
+func (s *pkgTestSuite) TestHashJoinRuntimeStats(c *C) {
+	stats := &hashJoinRuntimeStats{
+		fetchAndBuildHashTable: 2 * time.Second,
+		hashStat: hashStatistic{
+			probeCollision:   1,
+			buildTableElapse: time.Millisecond * 100,
+		},
+		fetchAndProbe:    int64(5 * time.Second),
+		probe:            int64(4 * time.Second),
+		concurrent:       4,
+		maxFetchAndProbe: int64(2 * time.Second),
+	}
+	c.Assert(stats.String(), Equals, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}")
+}
+
+func (s *pkgTestSuite) TestIndexJoinRuntimeStats(c *C) {
+	stats := indexLookUpJoinRuntimeStats{
+		concurrency: 5,
+		probe:       int64(time.Second),
+		innerWorker: innerWorkerRuntimeStats{
+			totalTime: int64(time.Second * 5),
+			task:      16,
+			construct: int64(100 * time.Millisecond),
+			fetch:     int64(300 * time.Millisecond),
+			build:     int64(250 * time.Millisecond),
+			join:      int64(150 * time.Millisecond),
+		},
+	}
+	c.Assert(stats.String(), Equals, "inner:{total:5s, concurrency:5, task:16, construct:100ms, fetch:300ms, build:250ms, join:150ms}, probe:1s")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "inner:{total:10s, concurrency:5, task:32, construct:200ms, fetch:600ms, build:500ms, join:300ms}, probe:2s")
 }

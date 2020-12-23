@@ -696,3 +696,14 @@ func (c *Chunk) Reconstruct() {
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
 }
+
+// ToString returns all the values in a chunk.
+func (c *Chunk) ToString(ft []*types.FieldType) string {
+	var buf []byte
+	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+		row := c.GetRow(rowIdx)
+		buf = append(buf, row.ToString(ft)...)
+		buf = append(buf, '\n')
+	}
+	return string(buf)
+}

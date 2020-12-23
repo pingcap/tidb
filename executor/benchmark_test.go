@@ -17,7 +17,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -1110,6 +1112,8 @@ type indexJoinTestCase struct {
 	ctx             sessionctx.Context
 	outerJoinKeyIdx []int
 	innerJoinKeyIdx []int
+	outerHashKeyIdx []int
+	innerHashKeyIdx []int
 	innerIdx        []int
 	needOuterSort   bool
 	rawData         string
@@ -1137,6 +1141,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
@@ -1186,12 +1192,14 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		outerCtx: outerCtx{
 			rowTypes: leftTypes,
 			keyCols:  tc.outerJoinKeyIdx,
+			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
+			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
@@ -1436,6 +1444,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
@@ -1665,5 +1675,38 @@ func BenchmarkSortExec(b *testing.B) {
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
 		})
+	}
+}
+
+func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
+	// step 1. initial a huge line log file
+	hugeLine := make([]byte, 1024*1024*10)
+	for i := range hugeLine {
+		hugeLine[i] = 'a' + byte(i%26)
+	}
+	fileName := "tidb.log"
+	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	if err != nil {
+		b.Fatal(err)
+	}
+	file, err := os.OpenFile(fileName, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		file.Close()
+		os.Remove(fileName)
+	}()
+	stat, _ := file.Stat()
+	filesize := stat.Size()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, n, err := readLastLines(context.Background(), file, filesize)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != len(hugeLine) {
+			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
+		}
 	}
 }

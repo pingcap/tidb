@@ -209,6 +209,22 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	}
 }
 
+func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/information_schema/SCHEMATA/ranges")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+
+	var data TableRanges
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.TableName, Equals, "SCHEMATA")
+}
+
 func (ts *HTTPHandlerTestSuite) regionContainsTable(c *C, regionID uint64, tableID int64) bool {
 	resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", regionID))
 	c.Assert(err, IsNil)
@@ -248,6 +264,30 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	region := data[1]
 	_, err = ts.fetchStatus(fmt.Sprintf("/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestListTableRanges(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	// Test list table regions with error
+	resp, err := ts.fetchStatus("/tables/fdsfds/aaa/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/tables/tidb/pt/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+
+	var data []*TableRanges
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 3)
+	for i, partition := range data {
+		c.Assert(partition.TableName, Equals, fmt.Sprintf("p%d", i))
+	}
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {

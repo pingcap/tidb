@@ -16,12 +16,14 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -31,18 +33,27 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	retriever := &slowQueryRetriever{}
-	// Ignore the error is ok for test.
-	terror.Log(retriever.initialize(ctx))
-	rows, err := retriever.parseSlowLog(ctx, reader, 1024)
+func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
+	ctx := context.Background()
+	retriever.parseSlowLog(ctx, sctx, reader, logNum)
+	slowLog := <-retriever.parsedSlowLogCh
+	rows, err := slowLog.rows, slowLog.err
 	if err == io.EOF {
 		err = nil
 	}
 	return rows, err
 }
 
-func (s *testExecSuite) TestParseSlowLogFile(c *C) {
+func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+	retriever := &slowQueryRetriever{}
+	// Ignore the error is ok for test.
+	terror.Log(retriever.initialize(context.Background(), sctx))
+	rows, err := parseLog(retriever, sctx, reader, logNum)
+	return rows, err
+}
+
+func (s *testExecSuite) TestParseSlowLogPanic(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
@@ -62,12 +73,50 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 # Prev_stmt: update t set i = 1;
 use test;
 select * from t;`
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/errorMockParseSlowLogPanic", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/errorMockParseSlowLogPanic"), IsNil)
+	}()
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TimeZone = loc
+	_, err = parseSlowLog(sctx, reader, 64)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "panic test")
+}
+
+func (s *testExecSuite) TestParseSlowLogFile(c *C) {
+	slowLogStr :=
+		`# Time: 2019-04-28T15:24:04.309074+08:00
+# Txn_start_ts: 405888132465033227
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Exec_retry_time: 0.12 Exec_retry_count: 57
+# Query_time: 0.216905
+# Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
+# Is_internal: true
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Stats: t1:1,t2:2
+# Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
+# Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
+# Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2
+# Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
+# Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
+# Mem_max: 70724
+# Disk_max: 65536
+# Plan_from_cache: true
+# Succ: false
+# Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
+# Prev_stmt: update t set i = 1;
+use test;
+select * from t;`
 	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	rows, err := parseSlowLog(ctx, reader)
+	rows, err := parseSlowLog(ctx, reader, 64)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows), Equals, 1)
 	recordString := ""
@@ -79,7 +128,29 @@ select * from t;`
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,root,localhost,0,0.216905,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,update t set i = 1;,select * from t;"
+	expectRecordString := `2019-04-28 15:24:04.309074,` +
+		`405888132465033227,root,localhost,0,57,0.12,0.216905,` +
+		`0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,` +
+		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
+		`0,0,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`update t set i = 1;,select * from t;`
+	c.Assert(recordString, Equals, expectRecordString)
+
+	// Issue 20928
+	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	rows, err = parseSlowLog(ctx, reader, 1)
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Equals, 1)
+	recordString = ""
+	for i, value := range rows[0] {
+		str, err := value.ToString()
+		c.Assert(err, IsNil)
+		if i > 0 {
+			recordString += ","
+		}
+		recordString += str
+	}
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
@@ -97,7 +168,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
+	_, err = parseSlowLog(ctx, reader, 64)
 	c.Assert(err, IsNil)
 
 	// test for time format compatibility.
@@ -108,7 +179,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, err = parseSlowLog(ctx, reader)
+	rows, err = parseSlowLog(ctx, reader, 64)
 	c.Assert(err, IsNil)
 	c.Assert(len(rows) == 2, IsTrue)
 	t0Str, err := rows[0][0].ToString()
@@ -125,7 +196,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
+	_, err = parseSlowLog(ctx, reader, 64)
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
@@ -149,13 +220,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader := bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
+	_, err = parseSlowLog(ctx, reader, 64)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader)
+	_, err = parseSlowLog(ctx, reader, 64)
 	c.Assert(err, IsNil)
 }
 
@@ -206,7 +277,7 @@ select * from t;`)
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(ctx, scanner)
+	_, err = parseSlowLog(ctx, scanner, 64)
 	c.Assert(err, IsNil)
 
 	// Test parser error.
@@ -216,7 +287,7 @@ select * from t;`)
 `)
 
 	scanner = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, scanner)
+	_, err = parseSlowLog(ctx, scanner, 64)
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
@@ -354,9 +425,9 @@ select 7;`
 
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
-	ctx.GetSessionVars().SlowQueryFile = fileName3
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TimeZone = loc
+	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
 		if extractor.Enable {
@@ -369,12 +440,13 @@ select 7;`
 
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(ctx)
+		err := retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
-			rows, err := retriever.parseSlowLog(ctx, bufio.NewReader(retriever.files[0].file), 1024)
+			reader := bufio.NewReader(retriever.files[0].file)
+			rows, err := parseLog(retriever, sctx, reader, 64)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {

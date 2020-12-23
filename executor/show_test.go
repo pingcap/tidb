@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -627,6 +629,17 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 
+	// for issue #20446
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c int unsigned default 0);")
+	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+		""+
+			"t1 CREATE TABLE `t1` (\n"+
+			"  `c` int(10) unsigned DEFAULT '0'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t1")
+
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
 		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
@@ -722,7 +735,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT 11\n"+
+			"  `a` int(11) DEFAULT '11'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
@@ -879,6 +892,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
+func (s *testAutoRandomSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -913,9 +947,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	c.Assert(267, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[266][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -950,4 +984,27 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.SysVars {
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
 }

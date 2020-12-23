@@ -32,6 +32,11 @@ var (
 	sf          singleflight.Group
 )
 
+const (
+	lockFile  = "_dir.lock"
+	recordDir = "record"
+)
+
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
 func CheckAndInitTempDir() (err error) {
@@ -64,7 +69,6 @@ func InitializeTempDir() error {
 			return err
 		}
 	}
-	lockFile := "_dir.lock"
 	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
 	if err != nil {
 		switch err {
@@ -83,11 +87,12 @@ func InitializeTempDir() error {
 	}
 
 	// If it exists others files except lock file, creates another goroutine to clean them.
-	if len(subDirs) > 1 {
+	if len(subDirs) > 2 {
 		go func() {
 			for _, subDir := range subDirs {
 				// Do not remove the lock file.
-				if subDir.Name() == lockFile {
+				switch subDir.Name() {
+				case lockFile, recordDir:
 					continue
 				}
 				err := os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
@@ -107,4 +112,16 @@ func CleanUp() {
 		err := tempDirLock.Unlock()
 		terror.Log(errors.Trace(err))
 	}
+}
+
+// CheckAndCreateDir check whether the directory is existed. If not, then create it.
+func CheckAndCreateDir(path string) error {
+	_, err := os.Stat(path)
+	if err != nil && !os.IsExist(err) {
+		err = os.MkdirAll(path, 0755)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

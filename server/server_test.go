@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -440,6 +441,63 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *
 				c.Assert(fmt.Sprintf("%v", res[i][j]), Equals, fmt.Sprintf("%v", res1[i][j]))
 			}
 		}
+	})
+}
+func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
+	path := "/tmp/load_data_test.csv"
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	_, err = fp.WriteString(
+		"1	1\n" +
+			"2	2\n" +
+			"3	3\n" +
+			"4	4\n" +
+			"5	5\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_slow_query", func(dbt *DBTest) {
+		dbt.mustExec("create table t_slow (a int key, b int)")
+		defer func() {
+			dbt.mustExec("set tidb_slow_log_threshold=300;")
+			dbt.mustExec("set @@global.tidb_enable_stmt_summary=0")
+		}()
+		dbt.mustExec("set tidb_slow_log_threshold=0;")
+		dbt.mustExec("set @@global.tidb_enable_stmt_summary=1")
+		query := fmt.Sprintf("load data local infile %q into table t_slow", path)
+		dbt.mustExec(query)
+		dbt.mustExec("insert ignore into t_slow values (1,1);")
+
+		checkPlan := func(rows *sql.Rows, expectPlan string) {
+			dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+			var plan sql.NullString
+			err = rows.Scan(&plan)
+			dbt.Check(err, IsNil)
+			planStr := strings.ReplaceAll(plan.String, "\t", " ")
+			planStr = strings.ReplaceAll(planStr, "\n", " ")
+			c.Assert(planStr, Matches, expectPlan)
+		}
+
+		// Test for record slow log for load data statement.
+		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
+		checkPlan(rows, expectedPlan)
+		// Test for record statements_summary for load data statement.
+		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		checkPlan(rows, expectedPlan)
+		// Test log normal statement after executing load date.
+		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1"))
+		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
+		checkPlan(rows, expectedPlan)
 	})
 }
 
@@ -867,6 +925,28 @@ func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	})
 }
 
+func (cli *testServerClient) runTestExplainForConn(c *C) {
+	cli.runTestsOnNewDB(c, nil, "explain_for_conn", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists t")
+		dbt.mustExec("create table t (a int key, b int)")
+		dbt.mustExec("insert t values (1, 1)")
+		rows := dbt.mustQuery("select connection_id();")
+		c.Assert(rows.Next(), IsTrue)
+		var connID int64
+		err := rows.Scan(&connID)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		dbt.mustQuery("select * from t where a=1")
+		rows = dbt.mustQuery("explain for connection " + strconv.Itoa(int(connID)))
+		c.Assert(rows.Next(), IsTrue)
+		row := make([]string, 9)
+		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7], &row[8])
+		c.Assert(err, IsNil)
+		c.Assert(strings.Join(row, ","), Matches, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*")
+		c.Assert(rows.Close(), IsNil)
+	})
+}
+
 func (cli *testServerClient) runTestErrorCode(c *C) {
 	cli.runTestsOnNewDB(c, nil, "ErrorCode", func(dbt *DBTest) {
 		dbt.mustExec("create table test (c int PRIMARY KEY);")
@@ -1082,8 +1162,22 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
+// The golang sql driver (and most drivers) should have multi-statement
+// disabled by default for security reasons. Lets ensure that the behavior
+// is correct.
+
+func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
+	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+	})
+}
+
 func (cli *testServerClient) runTestMultiStatements(c *C) {
-	cli.runTestsOnNewDB(c, nil, "MultiStatements", func(dbt *DBTest) {
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Params = map[string]string{"multiStatements": "true"}
+	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 

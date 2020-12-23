@@ -45,7 +45,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -141,7 +140,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 1:
 		useCursor = true
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", flag)
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
 	}
 
 	// skip iteration-count, always 1
@@ -638,7 +637,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	if config.RedactLogEnabled() {
+	if sv.EnableRedactLog {
 		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()

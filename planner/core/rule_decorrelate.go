@@ -179,12 +179,21 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
 
 				for i, aggFunc := range agg.AggFuncs {
-					if idx := apply.schema.ColumnIndex(aggFunc.Args[0].(*expression.Column)); idx != -1 {
-						desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
-						if err != nil {
-							return nil, err
+					switch expr := aggFunc.Args[0].(type) {
+					case *expression.Column:
+						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
+							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
+							if err != nil {
+								return nil, err
+							}
+							newAggFuncs = append(newAggFuncs, desc)
 						}
-						newAggFuncs = append(newAggFuncs, desc)
+					case *expression.ScalarFunction:
+						expr.RetType = expr.RetType.Clone()
+						expr.RetType.Flag &= ^mysql.NotNullFlag
+						newAggFuncs = append(newAggFuncs, aggFunc)
+					default:
+						newAggFuncs = append(newAggFuncs, aggFunc)
 					}
 				}
 				agg.AggFuncs = newAggFuncs

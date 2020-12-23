@@ -91,7 +91,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy testSuite check-static vet staticcheck
+check: fmt errcheck lint tidy testSuite check-static vet staticcheck errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -124,6 +124,10 @@ errcheck:tools/bin/errcheck
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
+
+errdoc:tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh
 
 lint:tools/bin/revive
 	@echo "linting"
@@ -301,6 +305,10 @@ tools/bin/misspell:tools/check/go.mod
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
+
+tools/bin/errdoc-gen: go.mod
+	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
+
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
 
@@ -313,3 +321,13 @@ vectorized-bench:
 			-bench=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-run=BenchmarkVectorizedBuiltin$(VB_FILE)Func \
 			-args "$(VB_FUNC)"
+
+testpkg: failpoint-enable
+ifeq ("$(pkg)", "")
+	@echo "Require pkg parameter"
+else
+	@echo "Running unit test for github.com/pingcap/tidb/$(pkg)"
+	@export log_level=fatal; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)

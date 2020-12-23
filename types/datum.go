@@ -101,6 +101,11 @@ func (d *Datum) Collation() string {
 	return d.collation
 }
 
+// SetCollation sets the collation of the datum.
+func (d *Datum) SetCollation(collation string) {
+	d.collation = collation
+}
+
 // Frac gets the frac of the datum.
 func (d *Datum) Frac() int {
 	return int(d.decimal)
@@ -897,7 +902,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
 		return 0, overflow(f, target.Tp)
 	}
 	return f, nil
@@ -947,10 +952,14 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
+		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed part is all whitespaces
+		var overflowed string
+		var characterLen int
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			characterLen := utf8.RuneCountInString(s)
+			characterLen = utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
@@ -967,13 +976,27 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				overflowed = s[truncateLen:]
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
-			err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+			characterLen = len(s)
+			overflowed = s[flen:]
 			s = truncateStr(s, flen)
-		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
+		}
+
+		if len(overflowed) != 0 {
+			trimed := strings.TrimRight(overflowed, " \t\n\r")
+			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.Tp) {
+				if tp.Tp == mysql.TypeVarchar {
+					sc.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
+				}
+			} else {
+				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+			}
+		}
+
+		if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}
@@ -1333,12 +1356,15 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		s := d.GetString()
-		y, err = StrToInt(sc, s, false)
+		trimS := strings.TrimSpace(s)
+		y, err = StrToInt(sc, trimS, false)
 		if err != nil {
 			ret.SetInt64(0)
 			return ret, errors.Trace(err)
 		}
-		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
+		// condition:
+		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
+		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
 			adjust = true
 		}
 	case KindMysqlTime:
@@ -1356,9 +1382,53 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	y, err = AdjustYear(y, adjust)
 	if err != nil {
-		_, err = invalidConv(d, target.Tp)
+		err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
 	}
 	ret.SetInt64(y)
+	return ret, err
+}
+
+// ConvertDatumToFloatYear converts datum into MySQL year with float type
+func ConvertDatumToFloatYear(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
+	return d.convertToMysqlFloatYear(sc, types.NewFieldType(mysql.TypeYear))
+}
+
+func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+	var (
+		ret    Datum
+		y      float64
+		err    error
+		adjust bool
+	)
+	switch d.k {
+	case KindString, KindBytes:
+		s := d.GetString()
+		trimS := strings.TrimSpace(s)
+		y, err = StrToFloat(sc, trimS, false)
+		if err != nil {
+			ret.SetFloat64(0)
+			return ret, errors.Trace(err)
+		}
+		// condition:
+		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
+		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
+			adjust = true
+		}
+	case KindMysqlTime:
+		y = float64(d.GetMysqlTime().Year())
+	case KindMysqlDuration:
+		y = float64(time.Now().Year())
+	default:
+		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
+		if err != nil {
+			_, err = invalidConv(d, target.Tp)
+			ret.SetFloat64(0)
+			return ret, err
+		}
+		y = ret.GetFloat64()
+	}
+	y = adjustYearForFloat(y, adjust)
+	ret.SetFloat64(y)
 	return ret, err
 }
 
@@ -1377,8 +1447,13 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
-	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
+	// Avoid byte size panic, never goto this branch.
+	if target.Flen <= 0 || target.Flen >= 128 {
 		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
+	}
+	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
+		uintValue &= (1 << (uint64(target.Flen))) - 1
+		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
@@ -1570,6 +1645,11 @@ func (d *Datum) ToDecimal(sc *stmtctx.StatementContext) (*MyDecimal, error) {
 
 // ToInt64 converts to a int64.
 func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
+	switch d.Kind() {
+	case KindMysqlBit:
+		uintVal, err := d.GetBinaryLiteral().ToInt(sc)
+		return int64(uintVal), err
+	}
 	return d.toSignedInteger(sc, mysql.TypeLonglong)
 }
 

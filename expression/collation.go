@@ -140,7 +140,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if _, ok := sysConstFuncs[sf.FuncName.L]; ok {
 		return CoercibilitySysconst
 	}
-	if !types.IsString(sf.RetType.Tp) {
+	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	coer := CoercibilityIgnorable
@@ -155,14 +155,14 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
 	if c.Value.IsNull() {
 		return CoercibilityIgnorable
-	} else if !types.IsString(c.RetType.Tp) {
+	} else if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityCoercible
 }
 
 func deriveCoercibilityForColumn(c *Column) Coercibility {
-	if !types.IsString(c.RetType.Tp) {
+	if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit

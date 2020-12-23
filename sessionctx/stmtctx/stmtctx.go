@@ -145,6 +145,7 @@ type StatementContext struct {
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            string
+	encodedPlan           string
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -214,6 +215,16 @@ func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
 	sc.planNormalized, sc.planDigest = normalized, planDigest
+}
+
+// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) GetEncodedPlan() string {
+	return sc.encodedPlan
+}
+
+// SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
+	sc.encodedPlan = encodedPlan
 }
 
 // TableEntry presents table in db.
@@ -493,7 +504,24 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
-	sc.mu.execDetails.CommitDetail = commitDetails
+	if commitDetails != nil {
+		if sc.mu.execDetails.CommitDetail == nil {
+			sc.mu.execDetails.CommitDetail = commitDetails
+		} else {
+			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
+	sc.mu.Unlock()
+}
+
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
 	sc.mu.Unlock()
 }
 

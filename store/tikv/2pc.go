@@ -164,6 +164,9 @@ type twoPhaseCommitter struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
 	}
+
+	// doingAmend means the amend prewrite is ongoing.
+	doingAmend bool
 }
 
 // CommitterMutations contains transaction operations.
@@ -172,6 +175,14 @@ type CommitterMutations struct {
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
+}
+
+// Mutation represents a single transaction operation.
+type Mutation struct {
+	KeyOp             pb.Op
+	Key               []byte
+	Value             []byte
+	IsPessimisticLock bool
 }
 
 // NewCommiterMutations creates a CommitterMutations object with sizeHint reserved.
@@ -247,6 +258,14 @@ func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.keys = append(c.keys, mutations.keys...)
 	c.values = append(c.values, mutations.values...)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+}
+
+// AppendMutation merges a single Mutation into the current mutations.
+func (c *CommitterMutations) AppendMutation(mutation Mutation) {
+	c.ops = append(c.ops, mutation.KeyOp)
+	c.keys = append(c.keys, mutation.Key)
+	c.values = append(c.values, mutation.Value)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -532,7 +551,7 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 		return false
 	}
 
-	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
 			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
@@ -555,7 +574,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	var batches []batchMutations
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+
+	switch act := action.(type) {
+	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -564,6 +585,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
+	case actionPessimisticLock:
+		if act.LockCtx.Stats != nil {
+			act.LockCtx.Stats.RegionNum = int32(len(groups))
+		}
 	}
 
 	primaryIdx := -1
@@ -627,6 +652,16 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
+			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if s, ok := v.(string); !ok {
+					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+					time.Sleep(2 * time.Second)
+				} else if s == "skip" {
+					failpoint.Return()
+				}
+			})
+
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -902,7 +937,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Key: m.keys[i],
 		}
 		existErr := c.txn.us.GetKeyExistErrInfo(m.keys[i])
-		if existErr != nil {
+		if existErr != nil || (c.doingAmend && m.GetOps()[i] == pb.Op_Insert) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -934,7 +969,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			time.Sleep(300 * time.Millisecond)
 			return kv.ErrWriteConflict
 		})
+		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -989,7 +1029,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
+		startTime = time.Now()
 		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.ResolveLockTime, int64(time.Since(startTime)))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1146,6 +1190,14 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Stringer("info", logutil.Hex(rejected)))
 
+			// Do not retry for a txn which has a too large MinCommitTs
+			// 3600000 << 18 = 943718400000
+			if rejected.MinCommitTs-rejected.AttemptedCommitTs > 943718400000 {
+				err := errors.Errorf("2PC MinCommitTS is too large, we got MinCommitTS: %d, and AttemptedCommitTS: %d",
+					rejected.MinCommitTs, rejected.AttemptedCommitTs)
+				return errors.Trace(err)
+			}
+
 			// Update commit ts and retry.
 			commitTS, err := c.store.getTimestampWithRetry(bo)
 			if err != nil {
@@ -1176,8 +1228,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
+				zap.Stringer("primaryKey", kv.Key(c.primaryKey)),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("commitTS", c.commitTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS),
 				zap.Strings("keys", hexBatchKeys(batch.mutations.keys)))
 			return errors.Trace(err)
 		}
@@ -1364,6 +1418,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			// If schema check failed between commitTS and newCommitTs, report schema change error.
 			_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
 			if err != nil {
+				logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
+					zap.Uint64("startTS", c.startTS),
+					zap.Uint64("amendTS", c.commitTS),
+					zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
+					zap.Uint64("newCommitTS", newCommitTS))
 				return errors.Trace(err)
 			}
 			commitTS = newCommitTS
@@ -1465,12 +1524,64 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	}
 	// Prewrite new mutations.
 	if addMutations != nil && len(addMutations.keys) > 0 {
+		var keysNeedToLock CommitterMutations
+		for i := 0; i < addMutations.len(); i++ {
+			if addMutations.isPessimisticLock[i] {
+				keysNeedToLock.Push(addMutations.ops[i], addMutations.keys[i], addMutations.values[i], addMutations.isPessimisticLock[i])
+			}
+		}
+		// For unique index amend, we need to pessimistic lock the generated new index keys first.
+		// Set doingAmend to true to force the pessimistic lock do the exist check for these keys.
+		c.doingAmend = true
+		defer func() { c.doingAmend = false }()
+		if keysNeedToLock.len() > 0 {
+			lCtx := &kv.LockCtx{
+				Killed:        c.lockCtx.Killed,
+				ForUpdateTS:   c.forUpdateTS,
+				LockWaitTime:  c.lockCtx.LockWaitTime,
+				WaitStartTime: time.Now(),
+			}
+			tryTimes := uint(0)
+			retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+			for tryTimes < retryLimit {
+				pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+				err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+				if err != nil {
+					// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+					if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+						newForUpdateTSVer, err := c.store.CurrentVersion()
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+						c.forUpdateTS = newForUpdateTSVer.Ver
+						logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+							zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+							zap.Uint64("newForUpdateTS", c.forUpdateTS))
+						tryTimes++
+						continue
+					}
+					logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+					return false, err
+				}
+				logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+					zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.len()))
+				break
+			}
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+					zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
+				return false, err
+			}
+		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)
 		if err != nil {
 			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 			return false, err
 		}
+		// Commit the amended secondary keys in the commit phase.
+		c.mutations.MergeMutations(*addMutations)
 		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
 		return true, nil
 	}
@@ -1700,10 +1811,9 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
-		backoffer, cancel = batchExe.backoffer.Fork()
+		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
 	// concurrently do the work for each batch.
@@ -1713,14 +1823,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
+			logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
+				logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))

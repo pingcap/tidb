@@ -45,6 +45,11 @@ var (
 	_ AggFunc = (*approxCountDistinctPartial2)(nil)
 	_ AggFunc = (*approxCountDistinctFinal)(nil)
 
+	// All the AggFunc implementations for "APPROX_PERCENTILE" are listed here.
+	_ AggFunc = (*percentileOriginal4Int)(nil)
+	_ AggFunc = (*percentileOriginal4Real)(nil)
+	_ AggFunc = (*percentileOriginal4Decimal)(nil)
+
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	_ AggFunc = (*firstRow4Decimal)(nil)
 	_ AggFunc = (*firstRow4Int)(nil)
@@ -151,6 +156,10 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
+
+	// frac stores digits of the fractional part of decimals,
+	// which makes the decimal be the result of type inferring.
+	frac int
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {

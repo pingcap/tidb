@@ -502,3 +502,19 @@ partition p4 values less than (9223372036854775806))`)
 	tk.MustQuery("select * from t_int where id = -4294967294").Check(testkit.Rows())
 	tk.MustQuery("select * from t_int where id < -12345 order by id desc").Check(testkit.Rows("-429496729312", "-9223372036854775803"))
 }
+
+func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t4")
+	tk.MustExec(`CREATE TABLE t4(
+	a bit(1) DEFAULT NULL,
+	b int(11) DEFAULT NULL
+	) PARTITION BY HASH(a)
+	PARTITIONS 3`)
+	defer tk.MustExec("drop tables if exists t4")
+	tk.MustExec("INSERT INTO t4 VALUES(0, 0)")
+	tk.MustExec("INSERT INTO t4 VALUES(1, 1)")
+	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
+	result.Check(testkit.Rows("\x01 1"))
+}

@@ -16,196 +16,202 @@ package ddl
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/terror"
+	parser_mysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
 	// errWorkerClosed means we have already closed the DDL worker.
-	errInvalidWorker = terror.ClassDDL.New(mysql.ErrInvalidDDLWorker, mysql.MySQLErrName[mysql.ErrInvalidDDLWorker])
+	errInvalidWorker = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)
 	// errNotOwner means we are not owner and can't handle DDL jobs.
-	errNotOwner              = terror.ClassDDL.New(mysql.ErrNotOwner, mysql.MySQLErrName[mysql.ErrNotOwner])
-	errCantDecodeIndex       = terror.ClassDDL.New(mysql.ErrCantDecodeIndex, mysql.MySQLErrName[mysql.ErrCantDecodeIndex])
-	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
-	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
-	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])
-	errRunMultiSchemaChanges = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "multi schema change"))
-	errWaitReorgTimeout      = terror.ClassDDL.New(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
-	errInvalidStoreVer       = terror.ClassDDL.New(mysql.ErrInvalidStoreVersion, mysql.MySQLErrName[mysql.ErrInvalidStoreVersion])
+	errNotOwner              = dbterror.ClassDDL.NewStd(mysql.ErrNotOwner)
+	errCantDecodeIndex       = dbterror.ClassDDL.NewStd(mysql.ErrCantDecodeIndex)
+	errInvalidDDLJob         = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
+	errCancelledDDLJob       = dbterror.ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
+	errFileNotFound          = dbterror.ClassDDL.NewStd(mysql.ErrFileNotFound)
+	errRunMultiSchemaChanges = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
+	errWaitReorgTimeout      = dbterror.ClassDDL.NewStdErr(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
+	errInvalidStoreVer       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidStoreVersion)
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
-	ErrRepairTableFail = terror.ClassDDL.New(mysql.ErrRepairTable, mysql.MySQLErrName[mysql.ErrRepairTable])
+	ErrRepairTableFail = dbterror.ClassDDL.NewStd(mysql.ErrRepairTable)
 
 	// We don't support dropping column with index covered now.
-	errCantDropColWithIndex       = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop column with index"))
-	errUnsupportedAddColumn       = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add column"))
-	errUnsupportedModifyColumn    = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "modify column: %s"))
-	errUnsupportedModifyCharset   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "modify %s"))
-	errUnsupportedModifyCollation = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "modifying collation from %s to %s"))
-	errUnsupportedPKHandle        = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "drop integer primary key"))
-	errUnsupportedCharset         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "charset %s and collate %s"))
-	errUnsupportedShardRowIDBits  = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "shard_row_id_bits for table with primary key as row id"))
-	errBlobKeyWithoutLength       = terror.ClassDDL.New(mysql.ErrBlobKeyWithoutLength, mysql.MySQLErrName[mysql.ErrBlobKeyWithoutLength])
-	errKeyPart0                   = terror.ClassDDL.New(mysql.ErrKeyPart0, mysql.MySQLErrName[mysql.ErrKeyPart0])
-	errIncorrectPrefixKey         = terror.ClassDDL.New(mysql.ErrWrongSubKey, mysql.MySQLErrName[mysql.ErrWrongSubKey])
-	errTooLongKey                 = terror.ClassDDL.New(mysql.ErrTooLongKey, mysql.MySQLErrName[mysql.ErrTooLongKey])
-	errKeyColumnDoesNotExits      = terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
-	errUnknownTypeLength          = terror.ClassDDL.New(mysql.ErrUnknownTypeLength, mysql.MySQLErrName[mysql.ErrUnknownTypeLength])
-	errUnknownFractionLength      = terror.ClassDDL.New(mysql.ErrUnknownFractionLength, mysql.MySQLErrName[mysql.ErrUnknownFractionLength])
-	errInvalidDDLJobVersion       = terror.ClassDDL.New(mysql.ErrInvalidDDLJobVersion, mysql.MySQLErrName[mysql.ErrInvalidDDLJobVersion])
-	errInvalidUseOfNull           = terror.ClassDDL.New(mysql.ErrInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
-	errTooManyFields              = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
-	errInvalidSplitRegionRanges   = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
-	errReorgPanic                 = terror.ClassDDL.New(mysql.ErrReorgPanic, mysql.MySQLErrName[mysql.ErrReorgPanic])
-	errFkColumnCannotDrop         = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
-	errFKIncompatibleColumns      = terror.ClassDDL.New(mysql.ErrFKIncompatibleColumns, mysql.MySQLErrName[mysql.ErrFKIncompatibleColumns])
+	errCantDropColWithIndex       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
+	errUnsupportedAddColumn       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
+	errUnsupportedModifyColumn    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
+	errUnsupportedModifyCharset   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify %s"), nil))
+	errUnsupportedModifyCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modifying collation from %s to %s"), nil))
+	errUnsupportedPKHandle        = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop integer primary key"), nil))
+	errUnsupportedCharset         = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "charset %s and collate %s"), nil))
+	errUnsupportedShardRowIDBits  = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "shard_row_id_bits for table with primary key as row id"), nil))
+	errBlobKeyWithoutLength       = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
+	errKeyPart0                   = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
+	errIncorrectPrefixKey         = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
+	errTooLongKey                 = dbterror.ClassDDL.NewStd(mysql.ErrTooLongKey)
+	errKeyColumnDoesNotExits      = dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
+	errUnknownTypeLength          = dbterror.ClassDDL.NewStd(mysql.ErrUnknownTypeLength)
+	errUnknownFractionLength      = dbterror.ClassDDL.NewStd(mysql.ErrUnknownFractionLength)
+	errInvalidDDLJobVersion       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJobVersion)
+	errInvalidUseOfNull           = dbterror.ClassDDL.NewStd(mysql.ErrInvalidUseOfNull)
+	errTooManyFields              = dbterror.ClassDDL.NewStd(mysql.ErrTooManyFields)
+	errInvalidSplitRegionRanges   = dbterror.ClassDDL.NewStd(mysql.ErrInvalidSplitRegionRanges)
+	errReorgPanic                 = dbterror.ClassDDL.NewStd(mysql.ErrReorgPanic)
+	errFkColumnCannotDrop         = dbterror.ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
+	errFKIncompatibleColumns      = dbterror.ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 
-	errOnlyOnRangeListPartition = terror.ClassDDL.New(mysql.ErrOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
+	errOnlyOnRangeListPartition = dbterror.ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// errWrongKeyColumn is for table column cannot be indexed.
-	errWrongKeyColumn = terror.ClassDDL.New(mysql.ErrWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
+	errWrongKeyColumn = dbterror.ClassDDL.NewStd(mysql.ErrWrongKeyColumn)
 	// errWrongFKOptionForGeneratedColumn is for wrong foreign key reference option on generated columns.
-	errWrongFKOptionForGeneratedColumn = terror.ClassDDL.New(mysql.ErrWrongFKOptionForGeneratedColumn, mysql.MySQLErrName[mysql.ErrWrongFKOptionForGeneratedColumn])
+	errWrongFKOptionForGeneratedColumn = dbterror.ClassDDL.NewStd(mysql.ErrWrongFKOptionForGeneratedColumn)
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
-	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(mysql.ErrUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
+	errUnsupportedOnGeneratedColumn = dbterror.ClassDDL.NewStd(mysql.ErrUnsupportedOnGeneratedColumn)
 	// errGeneratedColumnNonPrior forbids to refer generated column non prior to it.
-	errGeneratedColumnNonPrior = terror.ClassDDL.New(mysql.ErrGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
+	errGeneratedColumnNonPrior = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnNonPrior)
 	// errDependentByGeneratedColumn forbids to delete columns which are dependent by generated columns.
-	errDependentByGeneratedColumn = terror.ClassDDL.New(mysql.ErrDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
+	errDependentByGeneratedColumn = dbterror.ClassDDL.NewStd(mysql.ErrDependentByGeneratedColumn)
 	// errJSONUsedAsKey forbids to use JSON as key or index.
-	errJSONUsedAsKey = terror.ClassDDL.New(mysql.ErrJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
+	errJSONUsedAsKey = dbterror.ClassDDL.NewStd(mysql.ErrJSONUsedAsKey)
 	// errBlobCantHaveDefault forbids to give not null default value to TEXT/BLOB/JSON.
-	errBlobCantHaveDefault = terror.ClassDDL.New(mysql.ErrBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
-	errTooLongIndexComment = terror.ClassDDL.New(mysql.ErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
+	errBlobCantHaveDefault = dbterror.ClassDDL.NewStd(mysql.ErrBlobCantHaveDefault)
+	errTooLongIndexComment = dbterror.ClassDDL.NewStd(mysql.ErrTooLongIndexComment)
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
-	ErrInvalidDefaultValue = terror.ClassDDL.New(mysql.ErrInvalidDefault, mysql.MySQLErrName[mysql.ErrInvalidDefault])
+	ErrInvalidDefaultValue = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDefault)
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
-	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(mysql.ErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
+	ErrGeneratedColumnRefAutoInc = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnRefAutoInc)
+	// ErrExpressionIndexCanNotRefer forbids to refer expression index to auto-increment column.
+	ErrExpressionIndexCanNotRefer = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexRefAutoIncrement)
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
-	ErrUnsupportedAddPartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add partitions"))
+	ErrUnsupportedAddPartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partitions"), nil))
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
-	ErrUnsupportedCoalescePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "coalesce partitions"))
-	errUnsupportedReorganizePartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "reorganize partition"))
-	errUnsupportedCheckPartition      = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "check partition"))
-	errUnsupportedOptimizePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "optimize partition"))
-	errUnsupportedRebuildPartition    = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "rebuild partition"))
-	errUnsupportedRemovePartition     = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "remove partitioning"))
-	errUnsupportedExchangePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "exchange partition"))
+	ErrUnsupportedCoalescePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "coalesce partitions"), nil))
+	errUnsupportedReorganizePartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "reorganize partition"), nil))
+	errUnsupportedCheckPartition      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "check partition"), nil))
+	errUnsupportedOptimizePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "optimize partition"), nil))
+	errUnsupportedRebuildPartition    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "rebuild partition"), nil))
+	errUnsupportedRemovePartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "remove partitioning"), nil))
+	errUnsupportedExchangePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "exchange partition"), nil))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
-	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnFunctionIsNotAllowed])
+	ErrGeneratedColumnFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
-	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition by range columns"))
-	errUnsupportedCreatePartition         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
-	errTablePartitionDisabled             = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, "Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it")
-	errUnsupportedIndexType               = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
+	ErrUnsupportedPartitionByRangeColumns = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition by range columns"), nil))
+	errUnsupportedCreatePartition         = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil))
+	errTablePartitionDisabled             = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil))
+	errUnsupportedIndexType               = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
+	errWindowInvalidWindowFuncUse         = dbterror.ClassDDL.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
 
 	// ErrDupKeyName returns for duplicated key name
-	ErrDupKeyName = terror.ClassDDL.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
+	ErrDupKeyName = dbterror.ClassDDL.NewStd(mysql.ErrDupKeyName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
-	ErrInvalidDDLState = terror.ClassDDL.New(mysql.ErrInvalidDDLState, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState]))
+	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
-	ErrUnsupportedModifyPrimaryKey = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "%s primary key"))
+	ErrUnsupportedModifyPrimaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
 
 	// ErrColumnBadNull returns for a bad null value.
-	ErrColumnBadNull = terror.ClassDDL.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	ErrColumnBadNull = dbterror.ClassDDL.NewStd(mysql.ErrBadNull)
 	// ErrBadField forbids to refer to unknown column.
-	ErrBadField = terror.ClassDDL.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	ErrBadField = dbterror.ClassDDL.NewStd(mysql.ErrBadField)
 	// ErrCantRemoveAllFields returns for deleting all columns.
-	ErrCantRemoveAllFields = terror.ClassDDL.New(mysql.ErrCantRemoveAllFields, mysql.MySQLErrName[mysql.ErrCantRemoveAllFields])
+	ErrCantRemoveAllFields = dbterror.ClassDDL.NewStd(mysql.ErrCantRemoveAllFields)
 	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
-	ErrCantDropFieldOrKey = terror.ClassDDL.New(mysql.ErrCantDropFieldOrKey, mysql.MySQLErrName[mysql.ErrCantDropFieldOrKey])
+	ErrCantDropFieldOrKey = dbterror.ClassDDL.NewStd(mysql.ErrCantDropFieldOrKey)
 	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
-	ErrInvalidOnUpdate = terror.ClassDDL.New(mysql.ErrInvalidOnUpdate, mysql.MySQLErrName[mysql.ErrInvalidOnUpdate])
+	ErrInvalidOnUpdate = dbterror.ClassDDL.NewStd(mysql.ErrInvalidOnUpdate)
 	// ErrTooLongIdent returns for too long name of database/table/column/index.
-	ErrTooLongIdent = terror.ClassDDL.New(mysql.ErrTooLongIdent, mysql.MySQLErrName[mysql.ErrTooLongIdent])
+	ErrTooLongIdent = dbterror.ClassDDL.NewStd(mysql.ErrTooLongIdent)
 	// ErrWrongDBName returns for wrong database name.
-	ErrWrongDBName = terror.ClassDDL.New(mysql.ErrWrongDBName, mysql.MySQLErrName[mysql.ErrWrongDBName])
+	ErrWrongDBName = dbterror.ClassDDL.NewStd(mysql.ErrWrongDBName)
 	// ErrWrongTableName returns for wrong table name.
-	ErrWrongTableName = terror.ClassDDL.New(mysql.ErrWrongTableName, mysql.MySQLErrName[mysql.ErrWrongTableName])
+	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
-	ErrWrongColumnName = terror.ClassDDL.New(mysql.ErrWrongColumnName, mysql.MySQLErrName[mysql.ErrWrongColumnName])
+	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
-	ErrInvalidGroupFuncUse = terror.ClassDDL.New(mysql.ErrInvalidGroupFuncUse, mysql.MySQLErrName[mysql.ErrInvalidGroupFuncUse])
+	ErrInvalidGroupFuncUse = dbterror.ClassDDL.NewStd(mysql.ErrInvalidGroupFuncUse)
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
-	ErrTableMustHaveColumns = terror.ClassDDL.New(mysql.ErrTableMustHaveColumns, mysql.MySQLErrName[mysql.ErrTableMustHaveColumns])
+	ErrTableMustHaveColumns = dbterror.ClassDDL.NewStd(mysql.ErrTableMustHaveColumns)
 	// ErrWrongNameForIndex returns for wrong index name.
-	ErrWrongNameForIndex = terror.ClassDDL.New(mysql.ErrWrongNameForIndex, mysql.MySQLErrName[mysql.ErrWrongNameForIndex])
+	ErrWrongNameForIndex = dbterror.ClassDDL.NewStd(mysql.ErrWrongNameForIndex)
 	// ErrUnknownCharacterSet returns unknown character set.
-	ErrUnknownCharacterSet = terror.ClassDDL.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	ErrUnknownCharacterSet = dbterror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
 	// ErrUnknownCollation returns unknown collation.
-	ErrUnknownCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, mysql.MySQLErrName[mysql.ErrUnknownCollation])
+	ErrUnknownCollation = dbterror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
 	// ErrCollationCharsetMismatch returns when collation not match the charset.
-	ErrCollationCharsetMismatch = terror.ClassDDL.New(mysql.ErrCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
+	ErrCollationCharsetMismatch = dbterror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 	// ErrConflictingDeclarations return conflict declarations.
-	ErrConflictingDeclarations = terror.ClassDDL.New(mysql.ErrConflictingDeclarations, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrConflictingDeclarations], "CHARACTER SET ", "%s", "CHARACTER SET ", "%s"))
+	ErrConflictingDeclarations = dbterror.ClassDDL.NewStdErr(mysql.ErrConflictingDeclarations, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrConflictingDeclarations].Raw, "CHARACTER SET ", "%s", "CHARACTER SET ", "%s"), nil))
 	// ErrPrimaryCantHaveNull returns All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
-	ErrPrimaryCantHaveNull = terror.ClassDDL.New(mysql.ErrPrimaryCantHaveNull, mysql.MySQLErrName[mysql.ErrPrimaryCantHaveNull])
+	ErrPrimaryCantHaveNull = dbterror.ClassDDL.NewStd(mysql.ErrPrimaryCantHaveNull)
 	// ErrErrorOnRename returns error for wrong database name in alter table rename
-	ErrErrorOnRename = terror.ClassDDL.New(mysql.ErrErrorOnRename, mysql.MySQLErrName[mysql.ErrErrorOnRename])
+	ErrErrorOnRename = dbterror.ClassDDL.NewStd(mysql.ErrErrorOnRename)
 	// ErrViewSelectClause returns error for create view with select into clause
-	ErrViewSelectClause = terror.ClassDDL.New(mysql.ErrViewSelectClause, mysql.MySQLErrName[mysql.ErrViewSelectClause])
+	ErrViewSelectClause = dbterror.ClassDDL.NewStd(mysql.ErrViewSelectClause)
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
-	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(mysql.ErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
+	ErrNotAllowedTypeInPartition = dbterror.ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
-	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(mysql.ErrPartitionMgmtOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionMgmtOnNonpartitioned])
+	ErrPartitionMgmtOnNonpartitioned = dbterror.ClassDDL.NewStd(mysql.ErrPartitionMgmtOnNonpartitioned)
 	// ErrDropPartitionNonExistent returns error in list of partition.
-	ErrDropPartitionNonExistent = terror.ClassDDL.New(mysql.ErrDropPartitionNonExistent, mysql.MySQLErrName[mysql.ErrDropPartitionNonExistent])
+	ErrDropPartitionNonExistent = dbterror.ClassDDL.NewStd(mysql.ErrDropPartitionNonExistent)
 	// ErrSameNamePartition returns duplicate partition name.
-	ErrSameNamePartition = terror.ClassDDL.New(mysql.ErrSameNamePartition, mysql.MySQLErrName[mysql.ErrSameNamePartition])
+	ErrSameNamePartition = dbterror.ClassDDL.NewStd(mysql.ErrSameNamePartition)
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
-	ErrRangeNotIncreasing = terror.ClassDDL.New(mysql.ErrRangeNotIncreasing, mysql.MySQLErrName[mysql.ErrRangeNotIncreasing])
+	ErrRangeNotIncreasing = dbterror.ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
-	ErrPartitionMaxvalue = terror.ClassDDL.New(mysql.ErrPartitionMaxvalue, mysql.MySQLErrName[mysql.ErrPartitionMaxvalue])
-	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
-	ErrDropLastPartition = terror.ClassDDL.New(mysql.ErrDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
-	//ErrTooManyPartitions returns too many partitions were defined.
-	ErrTooManyPartitions = terror.ClassDDL.New(mysql.ErrTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
-	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
-	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrPartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
+	ErrPartitionMaxvalue = dbterror.ClassDDL.NewStd(mysql.ErrPartitionMaxvalue)
+	// ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
+	ErrDropLastPartition = dbterror.ClassDDL.NewStd(mysql.ErrDropLastPartition)
+	// ErrTooManyPartitions returns too many partitions were defined.
+	ErrTooManyPartitions = dbterror.ClassDDL.NewStd(mysql.ErrTooManyPartitions)
+	// ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
+	ErrPartitionFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFunctionIsNotAllowed)
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
-	ErrPartitionFuncNotAllowed = terror.ClassDDL.New(mysql.ErrPartitionFuncNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFuncNotAllowed])
+	ErrPartitionFuncNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFuncNotAllowed)
 	// ErrUniqueKeyNeedAllFieldsInPf returns must include all columns in the table's partitioning function.
-	ErrUniqueKeyNeedAllFieldsInPf = terror.ClassDDL.New(mysql.ErrUniqueKeyNeedAllFieldsInPf, mysql.MySQLErrName[mysql.ErrUniqueKeyNeedAllFieldsInPf])
-	errWrongExprInPartitionFunc   = terror.ClassDDL.New(mysql.ErrWrongExprInPartitionFunc, mysql.MySQLErrName[mysql.ErrWrongExprInPartitionFunc])
+	ErrUniqueKeyNeedAllFieldsInPf = dbterror.ClassDDL.NewStd(mysql.ErrUniqueKeyNeedAllFieldsInPf)
+	errWrongExprInPartitionFunc   = dbterror.ClassDDL.NewStd(mysql.ErrWrongExprInPartitionFunc)
 	// ErrWarnDataTruncated returns data truncated error.
-	ErrWarnDataTruncated = terror.ClassDDL.New(mysql.WarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
+	ErrWarnDataTruncated = dbterror.ClassDDL.NewStd(mysql.WarnDataTruncated)
 	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.
-	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(mysql.ErrCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
+	ErrCoalesceOnlyOnHashPartition = dbterror.ClassDDL.NewStd(mysql.ErrCoalesceOnlyOnHashPartition)
 	// ErrViewWrongList returns create view must include all columns in the select clause
-	ErrViewWrongList = terror.ClassDDL.New(mysql.ErrViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+	ErrViewWrongList = dbterror.ClassDDL.NewStd(mysql.ErrViewWrongList)
 	// ErrAlterOperationNotSupported returns when alter operations is not supported.
-	ErrAlterOperationNotSupported = terror.ClassDDL.New(mysql.ErrAlterOperationNotSupportedReason, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
+	ErrAlterOperationNotSupported = dbterror.ClassDDL.NewStd(mysql.ErrAlterOperationNotSupportedReason)
 	// ErrWrongObject returns for wrong object.
-	ErrWrongObject = terror.ClassDDL.New(mysql.ErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	ErrWrongObject = dbterror.ClassDDL.NewStd(mysql.ErrWrongObject)
 	// ErrTableCantHandleFt returns FULLTEXT keys are not supported by table type
-	ErrTableCantHandleFt = terror.ClassDDL.New(mysql.ErrTableCantHandleFt, mysql.MySQLErrName[mysql.ErrTableCantHandleFt])
+	ErrTableCantHandleFt = dbterror.ClassDDL.NewStd(mysql.ErrTableCantHandleFt)
 	// ErrFieldNotFoundPart returns an error when 'partition by columns' are not found in table columns.
-	ErrFieldNotFoundPart = terror.ClassDDL.New(mysql.ErrFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
+	ErrFieldNotFoundPart = dbterror.ClassDDL.NewStd(mysql.ErrFieldNotFoundPart)
 	// ErrWrongTypeColumnValue returns 'Partition column values of incorrect type'
-	ErrWrongTypeColumnValue = terror.ClassDDL.New(mysql.ErrWrongTypeColumnValue, mysql.MySQLErrName[mysql.ErrWrongTypeColumnValue])
+	ErrWrongTypeColumnValue = dbterror.ClassDDL.NewStd(mysql.ErrWrongTypeColumnValue)
 	// ErrFunctionalIndexPrimaryKey returns 'The primary key cannot be a functional index'
-	ErrFunctionalIndexPrimaryKey = terror.ClassDDL.New(mysql.ErrFunctionalIndexPrimaryKey, mysql.MySQLErrName[mysql.ErrFunctionalIndexPrimaryKey])
+	ErrFunctionalIndexPrimaryKey = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexPrimaryKey)
 	// ErrFunctionalIndexOnField returns 'Functional index on a column is not supported. Consider using a regular index instead'
-	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
+	ErrFunctionalIndexOnField = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnField)
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
-	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
+	ErrInvalidAutoRandom = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAutoRandom)
+	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
+	ErrDerivedMustHaveAlias = dbterror.ClassDDL.NewStd(mysql.ErrDerivedMustHaveAlias)
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
-	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	ErrSequenceRunOut = dbterror.ClassDDL.NewStd(mysql.ErrSequenceRunOut)
 	// ErrSequenceInvalidData returns when sequence values are conflicting.
-	ErrSequenceInvalidData = terror.ClassDDL.New(mysql.ErrSequenceInvalidData, mysql.MySQLErrName[mysql.ErrSequenceInvalidData])
+	ErrSequenceInvalidData = dbterror.ClassDDL.NewStd(mysql.ErrSequenceInvalidData)
 	// ErrSequenceAccessFail returns when sequences are not able to access.
-	ErrSequenceAccessFail = terror.ClassDDL.New(mysql.ErrSequenceAccessFail, mysql.MySQLErrName[mysql.ErrSequenceAccessFail])
+	ErrSequenceAccessFail = dbterror.ClassDDL.NewStd(mysql.ErrSequenceAccessFail)
 	// ErrNotSequence returns when object is not a sequence.
-	ErrNotSequence = terror.ClassDDL.New(mysql.ErrNotSequence, mysql.MySQLErrName[mysql.ErrNotSequence])
+	ErrNotSequence = dbterror.ClassDDL.NewStd(mysql.ErrNotSequence)
 	// ErrUnknownSequence returns when drop / alter unknown sequence.
-	ErrUnknownSequence = terror.ClassDDL.New(mysql.ErrUnknownSequence, mysql.MySQLErrName[mysql.ErrUnknownSequence])
+	ErrUnknownSequence = dbterror.ClassDDL.NewStd(mysql.ErrUnknownSequence)
 	// ErrSequenceUnsupportedTableOption returns when unsupported table option exists in sequence.
-	ErrSequenceUnsupportedTableOption = terror.ClassDDL.New(mysql.ErrSequenceUnsupportedTableOption, mysql.MySQLErrName[mysql.ErrSequenceUnsupportedTableOption])
+	ErrSequenceUnsupportedTableOption = dbterror.ClassDDL.NewStd(mysql.ErrSequenceUnsupportedTableOption)
 	// ErrColumnTypeUnsupportedNextValue is returned when sequence next value is assigned to unsupported column type.
-	ErrColumnTypeUnsupportedNextValue = terror.ClassDDL.New(mysql.ErrColumnTypeUnsupportedNextValue, mysql.MySQLErrName[mysql.ErrColumnTypeUnsupportedNextValue])
+	ErrColumnTypeUnsupportedNextValue = dbterror.ClassDDL.NewStd(mysql.ErrColumnTypeUnsupportedNextValue)
 	// ErrAddColumnWithSequenceAsDefault is returned when the new added column with sequence's nextval as it's default value.
-	ErrAddColumnWithSequenceAsDefault = terror.ClassDDL.New(mysql.ErrAddColumnWithSequenceAsDefault, mysql.MySQLErrName[mysql.ErrAddColumnWithSequenceAsDefault])
+	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
 	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
-	ErrUnsupportedExpressionIndex = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "creating expression index without allow-expression-index in config"))
+	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index without allow-expression-index in config"), nil))
 )

@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -47,6 +48,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
@@ -137,6 +139,7 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
+		router.Handle("/tables/{db}/{table}/ranges", tableHandler{tikvHandlerTool, opTableRanges})
 		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
@@ -178,6 +181,30 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+
+			val, err := strconv.Atoi(string(body))
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				if _, err := w.Write([]byte(err.Error())); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+
+			util.SetGOGC(val)
+		}
+	})
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
@@ -311,6 +338,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	s.statusServer = &http.Server{Addr: s.statusAddr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 	s.grpcServer = NewRPCServer(s.cfg, s.dom, s)
+	service.RegisterChannelzServiceToServer(s.grpcServer)
 
 	go util.WithRecovery(func() {
 		err := s.grpcServer.Serve(grpcL)
@@ -359,7 +387,13 @@ type status struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
+	// If the server is in the process of shutting down, return a non-200 status.
+	// It is important not to return status{} as acquiring the s.ConnectionCount()
+	// acquires a lock that may already be held by the shutdown process.
+	if s.inShutdownMode {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
@@ -369,8 +403,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		logutil.BgLogger().Error("encode json failed", zap.Error(err))
-	} else {
-		_, err = w.Write(js)
-		terror.Log(errors.Trace(err))
+		return
 	}
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
 }

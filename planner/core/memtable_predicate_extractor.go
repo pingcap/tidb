@@ -926,8 +926,69 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
+// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`.
+type TableStorageStatsExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component.
+	SkipRequest bool
+	// TableSchema represents tableSchema applied to, and we should apply all table disk usage if there is no schema specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table_schema in ('test', 'information_schema').
+	TableSchema set.StringSet
+	// TableName represents tableName applied to, and we should apply all table disk usage if there is no table specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table in ('schemata', 'tables').
+	TableName set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface.
+func (e *TableStorageStatsExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `table_schema` columns.
+	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	// Extract the `table_name` columns.
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	e.SkipRequest = schemaSkip || tableSkip
+	if e.SkipRequest {
+		return nil
+	}
+	e.TableSchema = tableSchema
+	e.TableName = tableName
+	return remained
+}
+
+func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
+	}
+	if r.Len() > 0 && len(e.TableName) > 0 {
+		r.WriteString(", ")
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
+	}
+	return r.String()
+}
+
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
 }
 
 // TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.

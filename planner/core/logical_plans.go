@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -144,7 +145,7 @@ type LogicalJoin struct {
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
 	redundantSchema *expression.Schema
 	redundantNames  types.NameSlice
 
@@ -507,6 +508,11 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	is               infoschema.InfoSchema
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

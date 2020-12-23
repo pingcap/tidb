@@ -228,6 +228,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 type illegalFunctionChecker struct {
 	hasIllegalFunc bool
 	hasAggFunc     bool
+	hasWindowFunc  bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -246,6 +247,9 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	case *ast.AggregateFuncExpr:
 		// Aggregate function is not allowed
 		c.hasAggFunc = true
+		return inNode, true
+	case *ast.WindowFuncExpr:
+		c.hasWindowFunc = true
 		return inNode, true
 	}
 	return inNode, false
@@ -266,6 +270,9 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	}
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
+	}
+	if c.hasWindowFunc {
+		return errWindowInvalidWindowFuncUse
 	}
 	return nil
 }
@@ -305,6 +312,17 @@ func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo
 	if exists {
 		if _, found := dependencies[autoIncrementColumn]; found {
 			return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
+		}
+	}
+	return nil
+}
+
+// checkExpressionIndexAutoIncrement checks if an generated column depends on an auto-increment column and raises an error if so.
+func checkExpressionIndexAutoIncrement(name string, dependencies map[string]struct{}, tbInfo *model.TableInfo) error {
+	exists, autoIncrementColumn := infoschema.HasAutoIncrementColumn(tbInfo)
+	if exists {
+		if _, found := dependencies[autoIncrementColumn]; found {
+			return ErrExpressionIndexCanNotRefer.GenWithStackByArgs(name)
 		}
 	}
 	return nil

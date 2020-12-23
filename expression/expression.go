@@ -200,6 +200,16 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// ExprNotNull checks if an expression is possible to be null.
+func ExprNotNull(expr Expression) bool {
+	if c, ok := expr.(*Constant); ok {
+		return !c.Value.IsNull()
+	}
+	// For ScalarFunction, the result would not be correct until we support maintaining
+	// NotNull flag for it.
+	return mysql.HasNotNullFlag(expr.GetType().Flag)
+}
+
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
 //		INSERT INTO t VALUES ("999999999999999999");
@@ -322,12 +332,15 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
+		if expr.GetType().Hybrid() {
+			eType = types.ETInt
+		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, input, buf); err != nil {
+		if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -463,8 +476,9 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 // EvalExpr evaluates this expr according to its type.
 // And it selects the method for evaluating expression based on
 // the environment variables and whether the expression can be vectorized.
-func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	evalType := expr.GetType().EvalType()
+// Note: the input argument `evalType` is needed because of that when `expr` is
+// of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
+func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -775,7 +789,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -1163,7 +1177,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsDecimal:
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
+			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
 			return true
 		default:
 			return false

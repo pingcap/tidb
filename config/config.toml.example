@@ -51,9 +51,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 
@@ -63,6 +60,10 @@ lower-case-table-names = 2
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
+
+# Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
+# The health check will fail immediately but the server will not start shutting down until the time has elapsed.
+graceful-wait-before-shutdown = 0
 
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 check-mb4-value-in-utf8 = true
@@ -210,6 +211,17 @@ max-procs = 0
 # Max memory size to use, 0 use the total usable memory in the machine.
 max-memory = 0
 
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
+
+# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
+# and less than or equal to 1. The default value is 0.8.
+# If this configuration is set to 0 or 1, it'll disable the alarm.
+# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
+# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
+# `memory-usage-alarm-ratio * server-memory-quota`; otherwise, it'll be `memory-usage-alarm-ratio * system memory size`.
+memory-usage-alarm-ratio = 0.8
+
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -260,6 +272,11 @@ committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 600000
+
+# The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
+# If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
+# If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
+gogc = 100
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -372,6 +389,8 @@ enable = false
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.

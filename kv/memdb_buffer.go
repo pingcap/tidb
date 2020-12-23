@@ -88,6 +88,11 @@ func (m *memDbBuffer) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
+// GetFlags returns the flags associated with key.
+func (m *memDbBuffer) GetFlags(ctx context.Context, k Key) memdb.KeyFlags {
+	return m.sandbox.GetFlags(k)
+}
+
 // Set associates key with value.
 func (m *memDbBuffer) Set(k Key, v []byte) error {
 	if len(v) == 0 {
@@ -107,6 +112,15 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
 	m.sandbox.Put(k, nil)
+	if m.Size() > int(m.bufferSizeLimit) {
+		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
+	}
+	return nil
+}
+
+// DeleteWithNeedLock delete key with a need lock mark
+func (m *memDbBuffer) DeleteWithNeedLock(k Key) error {
+	m.sandbox.PutWithNeedLock(k, nil)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
 	}

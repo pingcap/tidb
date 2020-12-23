@@ -57,6 +57,16 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("do @a := (select * from t where i = 1)")
+	tk2.MustExec("insert into t values (2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite3) TestSetRoleAllCorner(c *C) {
@@ -607,17 +617,10 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 		testkit.Rows("0 16"))
 	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
 		testkit.Rows("1", "2"))
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows("1 0",
-			"1 1",
-			"1 2",
-			"1 3",
-			"2 0",
-			"2 1",
-			"2 2",
-			"2 3"))
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
+	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
 
 	tk.MustExec("drop stats t")
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(

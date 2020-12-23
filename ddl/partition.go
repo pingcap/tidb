@@ -103,11 +103,14 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// none -> replica only
-		job.SchemaState = model.StateReplicaOnly
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// none -> replica only
+		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
 		// Here need do some tiflash replica complement check.
@@ -314,11 +317,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		}
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
-		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if len(s.Partition.ColumnNames) != 1 {
-			pi.Enable = false
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
-		}
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)

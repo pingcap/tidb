@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -91,17 +90,15 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-
+			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				delete(sessionVars.Users, name)
+				delete(sessionVars.UserVarTypes, name)
 			} else {
-				svalue, err1 := value.ToString()
-				if err1 != nil {
-					return err1
-				}
-
-				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
+				sessionVars.Users[name] = value
+				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
+			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -212,11 +209,11 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			terror.Log(err)
 		}
 	}
-	if name != variable.AutoCommit {
+	if scopeStr == scopeGlobal {
 		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	} else {
-		// Some applications will set `autocommit` variable before query.
-		// This will print too many unnecessary log info.
+		// Clients are often noisy in setting session variables such as
+		// autocommit, timezone, query cache
 		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 

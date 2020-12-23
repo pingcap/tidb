@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	ptypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -34,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -91,7 +94,7 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Execu
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -100,7 +103,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject(true), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -108,17 +111,25 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PointGetPlan) AccessObject() string {
+func (p *PointGetPlan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else {
+			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		}
 	}
 	if p.IndexInfo != nil {
 		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -248,23 +259,27 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObject() string {
+func (p *BatchPointGetPlan) AccessObject(_ bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
 		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -376,7 +391,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x); fp != nil {
+		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockTp)); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -452,6 +467,9 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
+			if !checkCanConvertInPointGet(handleCol, d) {
+				return nil
+			}
 			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
 			if err != nil {
 				return nil
@@ -474,6 +492,14 @@ func newBatchPointGetPlan(
 	// The columns in where clause should be covered by unique index
 	var matchIdxInfo *model.IndexInfo
 	permutations := make([]int, len(whereColNames))
+	colInfos := make([]*model.ColumnInfo, len(whereColNames))
+	for i, innerCol := range whereColNames {
+		for _, col := range tbl.Columns {
+			if col.Name.L == innerCol {
+				colInfos[i] = col
+			}
+		}
+	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic {
 			continue
@@ -517,14 +543,23 @@ func newBatchPointGetPlan(
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
+			if len(x.Values) != len(whereColNames) {
+				return nil
+			}
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
 			for index, inner := range x.Values {
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+						return nil
+					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+						return nil
+					}
 					values[permIndex] = innerX.Datum
 					valuesParams[permIndex] = innerX
 				default:
@@ -532,8 +567,14 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+				return nil
+			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+				return nil
+			}
 			values = []types.Datum{x.Datum}
 			valuesParams = []*driver.ParamMarkerExpr{x}
 		default:
@@ -649,7 +690,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 2. It must be a single table select.
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
+func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
 	if selStmt.Having != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -728,6 +769,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return p
 	}
 
+	check = check && ctx.GetSessionVars().ConnectionID > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
 			continue
@@ -736,6 +781,18 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			continue
 		}
 		if isTableDual {
+			if check && latestIndexes == nil {
+				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				if err != nil {
+					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
+					return nil
+				}
+			}
+			if check {
+				if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
+			}
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
@@ -744,6 +801,18 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		idxValues, idxValueParams := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
+		}
+		if check && latestIndexes == nil {
+			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			if err != nil {
+				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
+				return nil
+			}
+		}
+		if check {
+			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
 		}
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
@@ -783,15 +852,24 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		return nil
-	}
+	visitInfos := []visitInfo{}
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
+		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return errors.New("privilege check fail")
 		}
+		// This visitInfo is only for table lock check, so we do not need column field,
+		// just fill it empty string.
+		visitInfos = append(visitInfos, visitInfo{
+			privilege: checkType,
+			db:        dbName,
+			table:     tableName,
+			column:    "",
+			err:       nil,
+		})
 	}
-	return nil
+
+	infoSchema := infoschema.GetInfoSchema(ctx)
+	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
 func buildSchemaFromFields(
@@ -940,6 +1018,9 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
 		}
+		if !checkCanConvertInPointGet(col, d) {
+			return nil, false
+		}
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -961,6 +1042,28 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
+}
+
+func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
+	kind := d.Kind()
+	switch col.FieldType.EvalType() {
+	case ptypes.ETString:
+		switch kind {
+		case types.KindInt64, types.KindUint64,
+			types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			// column type is String and constant type is numeric
+			return false
+		}
+	}
+	switch col.FieldType.Tp {
+	case mysql.TypeBit:
+		switch kind {
+		case types.KindString:
+			// column type is Bit and constant type is string
+			return false
+		}
+	}
+	return true
 }
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
@@ -1023,7 +1126,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		OrderBy: updateStmt.Order,
 		Limit:   updateStmt.Limit,
 	}
-	pointGet := tryPointGetPlan(ctx, selStmt)
+	pointGet := tryPointGetPlan(ctx, selStmt, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
@@ -1115,7 +1218,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		OrderBy: delStmt.Order,
 		Limit:   delStmt.Limit,
 	}
-	if pointGet := tryPointGetPlan(ctx, selStmt); pointGet != nil {
+	if pointGet := tryPointGetPlan(ctx, selStmt, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
 				names: pointGet.outputNames,
@@ -1165,7 +1268,7 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		RetType:  &col.FieldType,
+		RetType:  col.FieldType.Clone(),
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,

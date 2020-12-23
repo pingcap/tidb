@@ -294,12 +294,12 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned NOT NULL DEFAULT 0,\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
@@ -547,6 +547,7 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 # Txn_start_ts: 406315658548871171
 # User@Host: root[root] @ localhost [127.0.0.1]
 # Conn_ID: 6
+# Exec_retry_time: 0.12 Exec_retry_count: 57
 # Query_time: 4.895492
 # Parse_time: 0.4
 # Compile_time: 0.2
@@ -635,10 +636,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -798,6 +799,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+		tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 		re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 		c.Assert(re, NotNil)
@@ -946,6 +948,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Point get another database.
 	tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'")
+	// Test for Encode plan cache.
+	p1 := tk.Se.GetSessionVars().StmtCtx.GetEncodedPlan()
+	c.Assert(len(p1) > 0, IsTrue)
+	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(len(rows[0]), Equals, 1)
+	c.Assert(rows[0][0], Matches, ".*\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME.*")
 	tk.MustQuery(`select table_names
 			from information_schema.statements_summary
 			where digest_text like 'select variable_value%' and schema_name='test'`,
@@ -953,6 +962,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Test `create database`.
 	tk.MustExec("create database if not exists test")
+	// Test for Encode plan cache.
+	p2 := tk.Se.GetSessionVars().StmtCtx.GetEncodedPlan()
+	c.Assert(p2, Equals, "")
 	tk.MustQuery(`select table_names
 			from information_schema.statements_summary
 			where digest_text like 'create database%' and schema_name='test'`,
@@ -1341,5 +1353,23 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	for i, v := range versions {
 		version := infoschema.FormatVersion(v, false)
 		c.Assert(version, Equals, res[i])
+	}
+}
+
+func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
+	nodes := []infoschema.ServerInfo{
+		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "0.0.0.0:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "localhost:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "0.0.0.0:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "127.0.0.1:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "localhost:10080"},
+	}
+	for i := range nodes {
+		nodes[i].ResolveLoopBackAddr()
+	}
+	for _, n := range nodes {
+		c.Assert(n.Address, Equals, "192.168.130.22:4000")
+		c.Assert(n.StatusAddr, Equals, "192.168.130.22:10080")
 	}
 }

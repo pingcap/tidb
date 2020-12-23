@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -61,7 +62,7 @@ type BatchPointGetExec struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	snapshot kv.Snapshot
-	stats    *pointGetRuntimeStats
+	stats    *runtimeStatsWithSnapshot
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -143,8 +144,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
+		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
@@ -157,7 +157,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if sessVars.InTxn() {
-		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		if e.lock {
+			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		} else {
+			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+		}
 	}
 
 	var handleVals map[string][]byte
@@ -231,12 +235,21 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		sort.Slice(e.handles, func(i int, j int) bool {
+		less := func(i int, j int) bool {
 			if e.desc {
 				return e.handles[i] > e.handles[j]
 			}
 			return e.handles[i] < e.handles[j]
-		})
+		}
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+			less = func(i int, j int) bool {
+				if e.desc {
+					return uint64(e.handles[i]) > uint64(e.handles[j])
+				}
+				return uint64(e.handles[i]) < uint64(e.handles[j])
+			}
+		}
+		sort.Slice(e.handles, less)
 	}
 
 	keys := make([]kv.Key, len(e.handles))

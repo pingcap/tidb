@@ -4000,18 +4000,18 @@ PartitionUnion_10	1000.00	root
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4	keep order:false, stats:pseudo
 explain select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
 id	estRows	task	access object	operator info
-PartitionUnion_10	1000.00	root		
-├─TableReader_13	250.00	root		data:Selection_12
-│ └─Selection_12	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+PartitionUnion_10	13293.33	root		
+├─TableReader_13	3323.33	root		data:Selection_12
+│ └─Selection_12	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
 │   └─TableFullScan_11	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
-├─TableReader_16	250.00	root		data:Selection_15
-│ └─Selection_15	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+├─TableReader_16	3323.33	root		data:Selection_15
+│ └─Selection_15	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
 │   └─TableFullScan_14	10000.00	cop[tikv]	table:t1, partition:p2	keep order:false, stats:pseudo
-├─TableReader_19	250.00	root		data:Selection_18
-│ └─Selection_18	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+├─TableReader_19	3323.33	root		data:Selection_18
+│ └─Selection_18	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
 │   └─TableFullScan_17	10000.00	cop[tikv]	table:t1, partition:p3	keep order:false, stats:pseudo
-└─TableReader_22	250.00	root		data:Selection_21
-  └─Selection_21	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+└─TableReader_22	3323.33	root		data:Selection_21
+  └─Selection_21	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1, partition:p4	keep order:false, stats:pseudo
 drop table t1;
 create table t1 (a bigint) partition by range(a+0) (

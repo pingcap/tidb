@@ -157,15 +157,22 @@ type stmtSummaryByDigestElement struct {
 	maxPrewriteRegionNum int32
 	sumTxnRetry          int64
 	maxTxnRetry          int
+	sumExecRetryCount    int64
+	sumExecRetryTime     time.Duration
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
 	authUsers            map[string]struct{}
 	// other
-	sumMem          int64
-	maxMem          int64
-	sumDisk         int64
-	maxDisk         int64
-	sumAffectedRows uint64
+	sumMem               int64
+	maxMem               int64
+	sumDisk              int64
+	maxDisk              int64
+	sumAffectedRows      uint64
+	sumKVTotal           time.Duration
+	sumPDTotal           time.Duration
+	sumBackoffTotal      time.Duration
+	sumWriteSQLRespTotal time.Duration
+	prepared             bool
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
@@ -173,6 +180,9 @@ type stmtSummaryByDigestElement struct {
 	// plan cache
 	planInCache   bool
 	planCacheHits int64
+	// pessimistic execution retry information.
+	execRetryCount uint
+	execRetryTime  time.Duration
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -199,6 +209,10 @@ type StmtExecInfo struct {
 	IsInternal     bool
 	Succeed        bool
 	PlanInCache    bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
+	execdetails.StmtExecDetails
+	Prepared bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -324,8 +338,8 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	return rows
 }
 
-// GetMoreThanOnceSelect gets users' select SQLs that occurred more than once.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string) {
+// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than once.
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() ([]string, []string) {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -337,7 +351,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "Select" {
+			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
@@ -584,6 +598,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
+		prepared:      sei.Prepared,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -754,6 +769,14 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if ssElement.lastSeen.Before(sei.StartTime) {
 		ssElement.lastSeen = sei.StartTime
 	}
+	if sei.ExecRetryCount > 0 {
+		ssElement.execRetryCount += sei.ExecRetryCount
+		ssElement.execRetryTime += sei.ExecRetryTime
+	}
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.BackoffDuration))
+	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -829,12 +852,19 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int(ssElement.maxPrewriteRegionNum),
 		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
 		ssElement.maxTxnRetry,
+		int(ssElement.execRetryCount),
+		int64(ssElement.execRetryTime),
 		ssElement.sumBackoffTimes,
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
 		avgInt(ssElement.sumDisk, ssElement.execCount),
 		ssElement.maxDisk,
+		avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount),
+		ssElement.prepared,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
