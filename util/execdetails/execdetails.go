@@ -184,6 +184,9 @@ type TimeDetail struct {
 
 // String implements the fmt.Stringer interface.
 func (td *TimeDetail) String() string {
+	if td == nil {
+		return ""
+	}
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if td.ProcessTime > 0 {
 		buf.WriteString("total_process_time: ")
