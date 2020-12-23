@@ -234,13 +234,13 @@ type ScanDetail struct {
 
 // Merge merges scan detail execution details into self.
 func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
-	sd.TotalKeys += scanDetail.TotalKeys
-	sd.ProcessedKeys += scanDetail.ProcessedKeys
-	sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
-	sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
-	sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
-	sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
-	sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
+	atomic.AddInt64(&sd.TotalKeys, scanDetail.TotalKeys)
+	atomic.AddInt64(&sd.ProcessedKeys, scanDetail.ProcessedKeys)
+	atomic.AddUint64(&sd.RocksdbDeleteSkippedCount, scanDetail.RocksdbDeleteSkippedCount)
+	atomic.AddUint64(&sd.RocksdbKeySkippedCount, scanDetail.RocksdbKeySkippedCount)
+	atomic.AddUint64(&sd.RocksdbBlockCacheHitCount, scanDetail.RocksdbBlockCacheHitCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadCount, scanDetail.RocksdbBlockReadCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
 }
 
 // String implements the fmt.Stringer interface.
