@@ -1558,6 +1558,35 @@ func (s *testSuite) TestIssue19836(c *C) {
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
 }
 
+func (s *testSuite) TestReCreateBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+
+	tk.MustQuery("select * from mysql.bind_info").Check(testkit.Rows())
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+}
+
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
