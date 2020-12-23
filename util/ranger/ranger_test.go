@@ -435,7 +435,7 @@ create table t(
 			exprStr:     `a = 'a' and b not in (1, 2, 3)`,
 			accessConds: "[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[(\"a\" NULL,\"a\" 1)]",
+			resultStr:   "[(\"a\" NULL,\"a\" 1) (\"a\" 3,\"a\" +inf]]",
 		},
 		{
 			indexPos:    0,

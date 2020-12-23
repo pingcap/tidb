@@ -296,7 +296,8 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if eqOrInCount > 0 {
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
-			saveConditions := newConditions
+			saveConditions := make([]expression.Expression, len(newConditions))
+			copy(saveConditions, newConditions)
 			// For cases like `a = 1 and ((b = 1 and c = 1) or (b = 3)) and d = 3` on index (a,b,c),
 			// or condition cases need to be handled separately to take advantage of more index columns.
 			for i, cond := range saveConditions {
@@ -347,16 +348,20 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				for i, resRange := range res.Ranges {
+				var resRanges []*Range
+				for _, resRange := range res.Ranges {
 					var saveRange []*Range
 					saveRange = append(saveRange, resRange)
+
 					if len(resRange.LowVal) == eqOrInCount {
 						saveRange = appendRanges2PointRanges(saveRange, tailRes.Ranges)
-						res.Ranges[i] = saveRange[0]
+						resRanges = append(resRanges, saveRange...)
 					} else if len(resRange.LowVal) < eqOrInCount {
+						resRanges = append(resRanges, resRange)
 						res.RemainedConds = append(res.RemainedConds, tailRes.AccessConds...)
 					}
 				}
+				res.Ranges = resRanges
 				res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
