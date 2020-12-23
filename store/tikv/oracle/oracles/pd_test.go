@@ -43,7 +43,6 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 	ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 10)
 	if err != nil {
 		t.Errorf("%v\n", err)
@@ -62,7 +61,6 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	for i := uint64(3); i < 1e9; i += i/100 + 1 {
 		start = time.Now()
 		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-		oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 		ts, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, i)
 		if err != nil {
 			t.Errorf("%v\n", err)
