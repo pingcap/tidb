@@ -372,6 +372,12 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+<<<<<<< HEAD
+=======
+	expressionClause
+	windowOrderByClause
+	partitionByClause
+>>>>>>> f2a88ffa4... planner: report error for invalid window specs which are not used (#21083)
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -384,6 +390,12 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+<<<<<<< HEAD
+=======
+	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
+>>>>>>> f2a88ffa4... planner: report error for invalid window specs which are not used (#21083)
 }
 
 type capFlagType = uint64
