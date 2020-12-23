@@ -1306,14 +1306,14 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustExec("analyze table s;")
 
 	tk.MustQuery("desc select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexJoin_16 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
-		"  ├─TableReader_21(Build) 64.00 root  data:Selection_20",
-		"  │ └─Selection_20 64.00 cop[tikv]  not(isnull(test.t.b))",
-		"  │   └─TableFullScan_19 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
-		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
+		"HashAgg_7 1.00 root  funcs:count(1)->Column#6",
+		"└─IndexJoin_13 64.00 root  inner join, inner:IndexReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
+		"  ├─TableReader_18(Build) 64.00 root  data:Selection_17",
+		"  │ └─Selection_17 64.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │   └─TableFullScan_16 64.00 cop[tikv] table:t keep order:false",
+		"  └─IndexReader_12(Probe) 1.00 root  index:Selection_11",
+		"    └─Selection_11 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexRangeScan_10 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false"))
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
 	tk.MustQuery("select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
@@ -1335,14 +1335,14 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	//tk.MustQuery("select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
-		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexHashJoin_18 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
-		"  ├─TableReader_21(Build) 64.00 root  data:Selection_20",
-		"  │ └─Selection_20 64.00 cop[tikv]  not(isnull(test.t.b))",
-		"  │   └─TableFullScan_19 64.00 cop[tikv] table:t keep order:false",
-		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
-		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
-		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
+		"HashAgg_7 1.00 root  funcs:count(1)->Column#6",
+		"└─IndexHashJoin_15 64.00 root  inner join, inner:IndexReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
+		"  ├─TableReader_18(Build) 64.00 root  data:Selection_17",
+		"  │ └─Selection_17 64.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │   └─TableFullScan_16 64.00 cop[tikv] table:t keep order:false",
+		"  └─IndexReader_12(Probe) 1.00 root  index:Selection_11",
+		"    └─Selection_11 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
+		"      └─IndexRangeScan_10 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
 	))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows("64"))
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
@@ -1427,15 +1427,15 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 		"      └─TableRowIDScan_13 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
-		"StreamAgg_14 1.00 root  funcs:count(1)->Column#11",
-		"└─IndexHashJoin_29 7.20 root  semi join, inner:IndexLookUp_27, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
-		"  ├─TableReader_23(Build) 9.00 root  data:Selection_22",
-		"  │ └─Selection_22 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"  │   └─TableFullScan_21 9.00 cop[tikv] table:l1 keep order:false",
-		"  └─IndexLookUp_27(Probe) 3.00 root  ",
-		"    ├─IndexRangeScan_24(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
-		"    └─Selection_26(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
-		"      └─TableRowIDScan_25 3.00 cop[tikv] table:l2 keep order:false"))
+		"StreamAgg_11 1.00 root  funcs:count(1)->Column#11",
+		"└─IndexHashJoin_26 7.20 root  semi join, inner:IndexLookUp_24, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
+		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"  │   └─TableFullScan_18 9.00 cop[tikv] table:l1 keep order:false",
+		"  └─IndexLookUp_24(Probe) 3.00 root  ",
+		"    ├─IndexRangeScan_21(Build) 3.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
+		"    └─Selection_23(Probe) 3.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
+		"      └─TableRowIDScan_22 3.00 cop[tikv] table:l2 keep order:false"))
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 
