@@ -130,7 +130,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if sysVar.Scope == variable.ScopeNone || sysVar.ReadOnly {
+	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
 	}
 	var valStr string
