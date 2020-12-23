@@ -262,6 +262,22 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
+	if join, isJoin := p.(*LogicalJoin); isJoin && join.redundantSchema != nil {
+		for i, col := range join.redundantSchema.Columns {
+			if p.Schema().Contains(col) {
+				continue
+			}
+			newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+			newCol, _ := col.Clone().(*expression.Column)
+			newCol.RetType = newFunc.RetTp
+			schema4Agg.Append(newCol)
+			names = append(names, join.redundantNames[i])
+		}
+	}
 	hasGroupBy := len(gbyItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
