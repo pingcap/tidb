@@ -3321,7 +3321,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, oracle.GlobalTxnScope)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with global scope
 	result = tk.MustQuery("select * from t1")
@@ -3345,7 +3345,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100")
@@ -3363,7 +3363,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
 	c.Assert(txn.Valid(), IsTrue)

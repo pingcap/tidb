@@ -943,6 +943,92 @@ func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
 	c.Assert(rows[0][8], Equals, "manual")
 }
 
+func (s *testSuite) TestBaselineDBLowerCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("drop database if exists SPM")
+	tk.MustExec("create database SPM")
+	tk.MustExec("use SPM")
+	tk.MustExec("create table t(a int, b int)")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("update t set a = a + 1")
+	tk.MustExec("update t set a = a + 1")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "update t set a = a + ?")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustExec("drop global binding for update t set a = a + 1")
+	rows = tk.MustQuery("show global bindings").Rows()
+	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustExec("drop global binding for select * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("create session binding for select * from t using select * from t")
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustExec("drop session binding for select * from t")
+	rows = tk.MustQuery("show session bindings").Rows()
+	// DROP SESSION BINGING should remove the binding even if we are in SPM database.
+	c.Assert(len(rows), Equals, 0)
+
+	s.cleanBindingEnv(tk)
+	// Simulate existing bindings with upper case default_db.
+	tk.MustExec("insert into mysql.bind_info values('select * from t', 'select * from t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
+		"select * from t SPM",
+	))
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustExec("drop global binding for select * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
+	c.Assert(len(rows), Equals, 0)
+
+	s.cleanBindingEnv(tk)
+	// Simulate existing bindings with upper case default_db.
+	tk.MustExec("insert into mysql.bind_info values('select * from t', 'select * from t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
+		"select * from t SPM",
+	))
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustExec("create global binding for select * from t using select * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	// default_db should have lower case.
+	c.Assert(rows[0][2], Equals, "spm")
+	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
+		"select * from t spm using",
+	))
+}
+
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -1804,4 +1890,24 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	// Charset and Collation are empty now, they are not used currently.
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
+}
+
+func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b))")
+	tk.MustExec("create table t2(a int, b int)")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
+	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `t1` SET `b`=1 WHERE `b`=2 AND (`a` IN (SELECT `a` FROM `t2` WHERE `b`=1) OR `c` IN (SELECT `a` FROM `t2` WHERE `b`=1))"
+	c.Assert(rows[0][1], Equals, bindSQL)
+	tk.MustExec(bindSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 }
