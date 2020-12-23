@@ -181,6 +181,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
@@ -241,6 +242,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
@@ -313,6 +315,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
 func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (err error) {
+	db = strings.ToLower(db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
@@ -470,7 +473,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
-		Db:          row.GetString(2),
+		Db:          strings.ToLower(row.GetString(2)),
 		Bindings:    []Binding{hint},
 	}
 	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
@@ -565,7 +568,7 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL && strings.EqualFold(bindRecord.Db, db) {
+		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
 			return bindRecord
 		}
 	}
@@ -574,7 +577,7 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	sql := fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND LOWER(default_db)=%s`,
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db),
 	)
@@ -607,7 +610,7 @@ func (h *BindHandle) lockBindInfoSQL() string {
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
 	updateTsStr := updateTs.String()
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and update_time<%s`,
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and LOWER(default_db)=%s and update_time<%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTsStr),
 		expression.Quote(originalSQL),
