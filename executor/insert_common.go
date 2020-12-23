@@ -970,6 +970,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
+		if r.ignored {
+			continue
+		}
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
