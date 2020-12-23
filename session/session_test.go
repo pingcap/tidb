@@ -3813,3 +3813,9 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	_, err = tk.Exec("set @@last_plan_from_cache='123';")
 	c.Assert(err.Error(), Equals, "Variable 'last_plan_from_cache' is a read only variable")
 }
+
+func (s *testSessionSerialSuite) TestIssue21944(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk1.Exec("set @@tidb_current_ts=1;")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
+}
