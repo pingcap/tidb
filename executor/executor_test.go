@@ -6442,7 +6442,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
 	tk.MustExec("analyze table t;")
 	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
 	var (
 		ind  int
 		flag bool
@@ -6462,7 +6462,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
 	tk.MustExec("analyze table t;")
 	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
+	c.Assert(result.Rows()[1][0], Equals, "└─Apply_38")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
 	for ind = 0; ind < len(value)-5; ind++ {
@@ -7266,6 +7266,46 @@ func (s *testSuite) Test12201(c *C) {
 	tk.MustQuery("select * from e where case 1 when 1 then e end").Check(testkit.Rows("a", "b"))
 	tk.MustQuery("select * from e where case e when 1 then e end").Check(testkit.Rows("a"))
 	tk.MustQuery("select * from e where case 1 when e then e end").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite) TestIssue21451(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (en enum('c', 'b', 'a'));")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
+	tk.MustQuery("select max(en) from t;").Check(testkit.Rows("c"))
+	tk.MustQuery("select min(en) from t;").Check(testkit.Rows("a"))
+	tk.MustQuery("select * from t order by en;").Check(testkit.Rows("c", "b", "a"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c');")
+	tk.MustQuery("select max(s) from t;").Check(testkit.Rows("c"))
+	tk.MustQuery("select min(s) from t;").Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(id int, en enum('c', 'b', 'a'))")
+	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
+	tk.MustQuery("select id, max(en) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
+	tk.MustQuery("select id, min(en) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(id int, s set('c', 'b', 'a'));")
+	tk.MustExec("insert into t values (1, 'a'),(2, 'b'), (3, 'c'), (1, 'c');")
+	tk.MustQuery("select id, max(s) from t where id=1 group by id;").Check(testkit.Rows("1 c"))
+	tk.MustQuery("select id, min(s) from t where id=1 group by id;").Check(testkit.Rows("1 a"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(e enum('e','d','c','b','a'))")
+	tk.MustExec("insert into t values ('e'),('d'),('c'),('b'),('a');")
+	tk.MustQuery("select * from t order by e limit 1;").Check(testkit.Rows("e"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(s set('e', 'd', 'c', 'b', 'a'))")
+	tk.MustExec("insert into t values ('e'),('d'),('c'),('b'),('a');")
+	tk.MustQuery("select * from t order by s limit 1;").Check(testkit.Rows("e"))
+	tk.MustExec("drop table t")
 }
 
 func (s *testSuite) TestIssue15563(c *C) {
