@@ -1267,7 +1267,7 @@ func (e *indexScanProcessor) Finish() error {
 
 func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
 	for i := 0; i < isc.columnLen; i++ {
-		if bytes.Compare(isc.prevVals[i], curVals[i]) != 0 {
+		if !bytes.Equal(isc.prevVals[i], curVals[i]) {
 			return false
 		}
 	}
