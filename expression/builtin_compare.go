@@ -1366,10 +1366,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 // refineArgsByTypeRange handle the case that constant exceeds the range corresponding to the type of column when `column <cmp> constant`.
 // If necessary, we will convert the result of the comparison into constant true or constant false.
 func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, args []Expression) []Expression {
-	// We should guarantee the number of arguments are equal to two.
-	if len(args) != 2 {
-		return args
-	}
 	arg0Tp, arg1Tp := args[0].GetType(), args[1].GetType()
 	// Now, we only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
