@@ -185,8 +185,17 @@ type TimeDetail struct {
 // String implements the fmt.Stringer interface.
 func (td *TimeDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	buf.WriteString(ProcessTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
-	buf.WriteString(", " + WaitTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
+	if td.ProcessTime > 0 {
+		buf.WriteString("total_process_time: ")
+		buf.WriteString(FormatDuration(td.ProcessTime))
+	}
+	if td.WaitTime > 0 {
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("total_wait_time: ")
+		buf.WriteString(FormatDuration(td.WaitTime))
+	}
 	return buf.String()
 }
 

@@ -812,13 +812,15 @@ func (rs *SnapshotRuntimeStats) String() string {
 		d := time.Duration(ms) * time.Millisecond
 		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
 	}
-	if rs.timeDetail != nil {
+	timeDetail := rs.timeDetail.String()
+	if timeDetail != "" {
 		buf.WriteString(", ")
-		buf.WriteString(rs.timeDetail.String())
+		buf.WriteString(timeDetail)
 	}
-	if rs.scanDetail != nil {
+	scanDetail := rs.scanDetail.String()
+	if scanDetail != "" {
 		buf.WriteString(", ")
-		buf.WriteString(rs.scanDetail.String())
+		buf.WriteString(scanDetail)
 	}
 	return buf.String()
 }
