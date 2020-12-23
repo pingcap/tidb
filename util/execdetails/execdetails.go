@@ -183,7 +183,7 @@ type TimeDetail struct {
 }
 
 // String implements the fmt.Stringer interface.
-func (td TimeDetail) String() string {
+func (td *TimeDetail) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString(ProcessTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
 	buf.WriteString(", " + WaitTimeStr + ": " + strconv.FormatFloat(td.ProcessTime.Seconds(), 'f', -1, 64))
@@ -191,7 +191,7 @@ func (td TimeDetail) String() string {
 }
 
 // MergeFromTimeDetail merges time detail from pb into itself.
-func (td TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
+func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
 	if timeDetail != nil {
 		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
 		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
