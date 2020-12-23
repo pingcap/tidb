@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -204,6 +205,9 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+	}
+	if !ret {
+		logutil.BgLogger().Debug("Agg function " + strings.ToLower(aggFunc.Name) + " can not pushed to cop(" + storeType.Name() + ")")
 	}
 	return ret
 }

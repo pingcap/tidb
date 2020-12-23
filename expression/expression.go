@@ -1154,6 +1154,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(scalarFunc, storeType) {
+		logutil.BgLogger().Debug("Scalar function " + scalarFunc.FuncName.L + " can not pushed to cop(" + storeType.Name() + ")")
 		return false
 	}
 
