@@ -974,7 +974,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "update t set a = a + ?")
+	c.Assert(rows[0][0], Equals, "update spm . t set a = a + ?")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustExec("drop global binding for update t set a = a + 1")
@@ -985,7 +985,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	tk.MustExec("create global binding for select * from t using select * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from spm . t")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustExec("drop global binding for select * from t")
@@ -996,7 +996,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	tk.MustExec("create session binding for select * from t using select * from t")
 	rows = tk.MustQuery("show session bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from spm . t")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustExec("drop session binding for select * from t")
@@ -1032,7 +1032,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from spm . t")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustExec("create global binding for select * from t using select * from t")
@@ -1855,7 +1855,7 @@ func (s *testSuite) TestReCreateBind(c *C) {
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from t using",
+		"select * from test . t using",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -1910,7 +1910,7 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 }
 
 func (s *testSuite) TestIssue20417(c *C) {
-  tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
