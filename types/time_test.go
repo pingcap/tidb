@@ -171,7 +171,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDatetime(sc, test)
-		c.Assert(err, NotNil)
+		c.Assert(err != nil || sc.WarningCount() > 0, Equals, true)
+		sc.SetWarnings(nil)
 	}
 }
 
