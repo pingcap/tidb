@@ -106,10 +106,26 @@ const (
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
 	TypeLoadData = "LoadData"
+<<<<<<< HEAD
+=======
+	// TypeTableSample is the type of TableSample.
+	TypeTableSample = "TableSample"
+	// TypeTableFullScan is the type of TableFullScan.
+	TypeTableFullScan = "TableFullScan"
+	// TypeTableRangeScan is the type of TableRangeScan.
+	TypeTableRangeScan = "TableRangeScan"
+	// TypeTableRowIDScan is the type of TableRowIDScan.
+	TypeTableRowIDScan = "TableRowIDScan"
+	// TypeIndexFullScan is the type of IndexFullScan.
+	TypeIndexFullScan = "IndexFullScan"
+	// TypeIndexRangeScan is the type of IndexRangeScan.
+	TypeIndexRangeScan = "IndexRangeScan"
+>>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 )
 
 // plan id.
 const (
+<<<<<<< HEAD
 	typeSelID int = iota + 1
 	typeSetID
 	typeProjID
@@ -151,6 +167,55 @@ const (
 	typeClusterMemTableReader
 	typeDataSourceID
 	typeLoadDataID
+=======
+	typeSelID                 int = 1
+	typeSetID                 int = 2
+	typeProjID                int = 3
+	typeAggID                 int = 4
+	typeStreamAggID           int = 5
+	typeHashAggID             int = 6
+	typeShowID                int = 7
+	typeJoinID                int = 8
+	typeUnionID               int = 9
+	typeTableScanID           int = 10
+	typeMemTableScanID        int = 11
+	typeUnionScanID           int = 12
+	typeIdxScanID             int = 13
+	typeSortID                int = 14
+	typeTopNID                int = 15
+	typeLimitID               int = 16
+	typeHashJoinID            int = 17
+	typeMergeJoinID           int = 18
+	typeIndexJoinID           int = 19
+	typeIndexMergeJoinID      int = 20
+	typeIndexHashJoinID       int = 21
+	typeApplyID               int = 22
+	typeMaxOneRowID           int = 23
+	typeExistsID              int = 24
+	typeDualID                int = 25
+	typeLockID                int = 26
+	typeInsertID              int = 27
+	typeUpdateID              int = 28
+	typeDeleteID              int = 29
+	typeIndexLookUpID         int = 30
+	typeTableReaderID         int = 31
+	typeIndexReaderID         int = 32
+	typeWindowID              int = 33
+	typeTiKVSingleGatherID    int = 34
+	typeIndexMergeID          int = 35
+	typePointGet              int = 36
+	typeShowDDLJobs           int = 37
+	typeBatchPointGet         int = 38
+	typeClusterMemTableReader int = 39
+	typeDataSourceID          int = 40
+	typeLoadDataID            int = 41
+	typeTableSampleID         int = 42
+	typeTableFullScan         int = 43
+	typeTableRangeScan        int = 44
+	typeTableRowIDScan        int = 45
+	typeIndexFullScan         int = 46
+	typeIndexRangeScan        int = 47
+>>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -238,6 +303,21 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDataSourceID
 	case TypeLoadData:
 		return typeLoadDataID
+<<<<<<< HEAD
+=======
+	case TypeTableSample:
+		return typeTableSampleID
+	case TypeTableFullScan:
+		return typeTableFullScan
+	case TypeTableRangeScan:
+		return typeTableRangeScan
+	case TypeTableRowIDScan:
+		return typeTableRowIDScan
+	case TypeIndexFullScan:
+		return typeIndexFullScan
+	case TypeIndexRangeScan:
+		return typeIndexRangeScan
+>>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 	}
 	// Should never reach here.
 	return 0
@@ -326,6 +406,16 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
+	case typeTableFullScan:
+		return TypeTableFullScan
+	case typeTableRangeScan:
+		return TypeTableRangeScan
+	case typeTableRowIDScan:
+		return TypeTableRowIDScan
+	case typeIndexFullScan:
+		return TypeIndexFullScan
+	case typeIndexRangeScan:
+		return TypeIndexRangeScan
 	}
 
 	// Should never reach here.
