@@ -18,6 +18,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,7 +40,8 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t table.Table
+	t       table.Table
+	ignored bool
 }
 
 // encodeNewRow encodes a new row to value.
@@ -96,6 +99,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				result = append(result, toBeCheckedRow{ignored: true})
+				return result, nil
+			}
 			return nil, err
 		}
 	}
