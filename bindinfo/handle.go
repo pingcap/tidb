@@ -213,17 +213,22 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		h.bindInfo.Unlock()
 	}()
 
-	txn, err1 := h.sctx.Context.Txn(true)
-	if err1 != nil {
-		return err1
+	var txn kv.Transaction
+	txn, err = h.sctx.Context.Txn(true)
+	if err != nil {
+		return err
 	}
 	now := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(txn.StartTS())), mysql.TypeTimestamp, 3)
 
 	if oldRecord != nil {
 		for _, binding := range oldRecord.Bindings {
-			_, err1 = exec.ExecuteInternal(context.TODO(), h.logicalDeleteBindInfoSQL(record.OriginalSQL, record.Db, now, binding.BindSQL))
+			// Binding recreation should physically delete previous bindings, since marking them as deleted may
+			// cause unexpected binding caches if there are concurrent CREATE BINDING on multiple tidb instances,
+			// because the record with `using` status is not guaranteed to have larger update_time than those records
+			// with `deleted` status.
+			_, err = exec.ExecuteInternal(context.TODO(), h.deleteBindInfoSQL(record.OriginalSQL, record.Db, binding.BindSQL))
 			if err != nil {
-				return err1
+				return err
 			}
 		}
 	}
@@ -290,9 +295,10 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		h.bindInfo.Unlock()
 	}()
 
-	txn, err1 := h.sctx.Context.Txn(true)
-	if err1 != nil {
-		return err1
+	var txn kv.Transaction
+	txn, err = h.sctx.Context.Txn(true)
+	if err != nil {
+		return err
 	}
 
 	if duplicateBinding != nil {

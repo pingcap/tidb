@@ -6415,6 +6415,36 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
+func (s *testSuite) TestIssue21441(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/executor/issue21441", `return`)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/issue21441")
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec(`insert into t values(1),(2),(3)`)
+	tk.Se.GetSessionVars().InitChunkSize = 1
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	sql := `
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t union all
+select a from t`
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1", "1", "1", "1", "1", "1", "1", "1",
+		"2", "2", "2", "2", "2", "2", "2", "2",
+		"3", "3", "3", "3", "3", "3", "3", "3",
+	))
+
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 4").Check(testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
+}
+
 func (s *testSuite) Test17780(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6430,4 +6460,32 @@ func (s *testSuite) Test13004(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
 	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
+}
+
+func (s *testSuite) TestTxnRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
+
+	tk2.MustExec("update t set a=2")
+
+	tk.MustExec("update t set a=3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+
+	// Check retry will activate the txn immediately.
+	tk.MustExec("set @var=10")
+	tk.MustExec("update t set a=@var")
+	tk2.MustExec("update t set a=2")
+	tk.MustExec("set @var=7")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }
