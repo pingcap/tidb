@@ -417,6 +417,11 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Host = *host
 	}
 	if actualFlags[nmAdvertiseAddress] {
+		var err error
+		if len(strings.Split(*advertiseAddress, " ")) > 1 {
+			err = errors.Errorf("Only support one advertise-address")
+		}
+		terror.MustNil(err)
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
