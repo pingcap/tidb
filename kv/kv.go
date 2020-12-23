@@ -56,6 +56,16 @@ const (
 	SchemaAmender
 	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
 	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
+	// Enable1PC indicates whether one-phase commit is enabled
+	Enable1PC
+	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
+	GuaranteeExternalConsistency
+	// TxnScope indicates which @@txn_scope this transaction will work with.
+	TxnScope
 )
 
 // Priority value for transaction priority.
@@ -167,11 +177,21 @@ type MemBufferIterator interface {
 	Iterator
 	HasValue() bool
 	Flags() KeyFlags
+	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
+
+	// RLock locks the MemBuffer for shared read.
+	// In the most case, MemBuffer will only used by single goroutine,
+	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
+	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
+	RLock()
+	// RUnlock unlocks the MemBuffer.
+	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
@@ -183,6 +203,11 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
+
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
 
 	// Reset reset the MemBuffer to initial states.
 	Reset()
@@ -201,6 +226,13 @@ type MemBuffer interface {
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
+	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+	SnapshotGetter() Getter
+	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	SnapshotIter(k, upperbound Key) Iterator
 
 	// Size returns sum of keys and values length.
 	Size() int
@@ -270,6 +302,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -281,7 +314,7 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -371,6 +404,8 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -380,8 +415,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.
@@ -425,21 +458,25 @@ type Driver interface {
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
-	// Begin transaction
+	// Begin a global transaction
 	Begin() (Transaction, error)
-	// BeginWithStartTS begins transaction with startTS.
-	BeginWithStartTS(startTS uint64) (Transaction, error)
+	// Begin a transaction with the given txnScope (local or global)
+	BeginWithTxnScope(txnScope string) (Transaction, error)
+	// BeginWithStartTS begins transaction with given txnScope and startTS.
+	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
-	// CurrentVersion returns current max committed version.
-	CurrentVersion() (Version, error)
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
@@ -450,6 +487,8 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	// GetMemCache return memory mamager of the storage
+	GetMemCache() MemManager
 }
 
 // FnKeyCmp is the function for iterator the keys
@@ -466,7 +505,7 @@ type Iterator interface {
 
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
-	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool, tableID *int64) (regionID []uint64, err error)
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

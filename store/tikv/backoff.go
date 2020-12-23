@@ -58,7 +58,8 @@ var (
 
 func (t backoffType) metric() prometheus.Observer {
 	switch t {
-	case boTiKVRPC:
+	// TODO: distinguish tikv and tiflash in metrics
+	case boTiKVRPC, boTiFlashRPC:
 		return tikvBackoffHistogramRPC
 	case BoTxnLock:
 		return tikvBackoffHistogramLock
@@ -68,7 +69,7 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramPD
 	case BoRegionMiss:
 		return tikvBackoffHistogramRegionMiss
-	case boServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return tikvBackoffHistogramServerBusy
 	case boStaleCmd:
 		return tikvBackoffHistogramStaleCmd
@@ -129,13 +130,16 @@ type backoffType int
 // Back off types.
 const (
 	boTiKVRPC backoffType = iota
+	boTiFlashRPC
 	BoTxnLock
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	boServerBusy
+	boTiKVServerBusy
+	boTiFlashServerBusy
 	boTxnNotFound
 	boStaleCmd
+	boMaxTsNotSynced
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -143,7 +147,7 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		vars.Hook(t.String(), vars)
 	}
 	switch t {
-	case boTiKVRPC:
+	case boTiKVRPC, boTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
@@ -156,10 +160,12 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 500, NoJitter)
 	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
-	case boServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
 		return NewBackoffFn(2, 1000, NoJitter)
+	case boMaxTsNotSynced:
+		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
 }
@@ -168,6 +174,8 @@ func (t backoffType) String() string {
 	switch t {
 	case boTiKVRPC:
 		return "tikvRPC"
+	case boTiFlashRPC:
+		return "tiflashRPC"
 	case BoTxnLock:
 		return "txnLock"
 	case boTxnLockFast:
@@ -176,12 +184,16 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case boServerBusy:
-		return "serverBusy"
+	case boTiKVServerBusy:
+		return "tikvServerBusy"
+	case boTiFlashServerBusy:
+		return "tiflashServerBusy"
 	case boStaleCmd:
 		return "staleCommand"
 	case boTxnNotFound:
 		return "txnNotFound"
+	case boMaxTsNotSynced:
+		return "maxTsNotSynced"
 	}
 	return ""
 }
@@ -190,22 +202,29 @@ func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
+	case boTiFlashRPC:
+		return ErrTiFlashServerTimeout
 	case BoTxnLock, boTxnLockFast, boTxnNotFound:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
 	case BoRegionMiss:
 		return ErrRegionUnavailable
-	case boServerBusy:
+	case boTiKVServerBusy:
 		return ErrTiKVServerBusy
+	case boTiFlashServerBusy:
+		return ErrTiFlashServerBusy
 	case boStaleCmd:
 		return ErrTiKVStaleCommand
+	case boMaxTsNotSynced:
+		return ErrTiKVMaxTimestampNotSynced
 	}
 	return ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
+	GetAllMembersBackoff           = 5000
 	copBuildTaskMaxBackoff         = 5000
 	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
@@ -228,7 +247,7 @@ const (
 
 var (
 	// CommitMaxBackoff is max sleep time of the 'commit' command
-	CommitMaxBackoff = 41000
+	CommitMaxBackoff = uint64(41000)
 
 	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
 	PrewriteMaxBackoff = 20000

@@ -59,7 +59,6 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		kvRanges:        kvRanges,
 		desc:            us.desc,
 		conditions:      us.conditions,
-		addedRows:       make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,
@@ -72,15 +71,21 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	for _, col := range m.index.Columns {
 		tps = append(tps, &cols[col.Offset].FieldType)
 	}
-	if m.table.PKIsHandle {
+	switch {
+	case m.table.PKIsHandle:
 		for _, col := range m.table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				tps = append(tps, &col.FieldType)
 				break
 			}
 		}
-	} else {
-		// ExtraHandle Column tp.
+	case m.table.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(m.table)
+		for _, pkCol := range pkIdx.Columns {
+			colInfo := m.table.Columns[pkCol.Offset]
+			tps = append(tps, &colInfo.FieldType)
+		}
+	default: // ExtraHandle Column tp.
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
@@ -188,7 +193,6 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
@@ -275,14 +279,12 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID {
+				if colID == col.ID && !types.CommonHandleNeedRestoredData(&col.FieldType) {
 					values[offset] = handle.EncodedCol(i)
 					break
 				}
 			}
-			continue
-		}
-		if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
+		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(col.Flag) {
 				// PK column is Unsigned.
@@ -323,10 +325,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		return err
 	}
 	for _, rg := range kvRanges {
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return err
-		}
+		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err
@@ -393,7 +392,6 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:           idxLookUpReader.table.Meta(),
 		kvRanges:        kvRanges,
 		desc:            idxLookUpReader.desc,
-		addedRowsLen:    us.dirty.addedRows.Len(),
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,
@@ -433,16 +431,11 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
-	handleColIDs := []int64{-1}
-	if tblInfo.IsCommonHandle {
-		handleColIDs = handleColIDs[:0]
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		for _, idxCol := range pkIdx.Columns {
-			colID := tblInfo.Columns[idxCol.Offset].ID
-			handleColIDs = append(handleColIDs, colID)
-		}
+	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, handleColIDs, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
@@ -452,6 +445,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
+		pkColIDs:      pkColIDs,
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,

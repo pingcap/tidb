@@ -19,14 +19,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -313,6 +317,11 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`insert into t1 values('我');`)
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a year);`)
+	_, err = tk.Exec(`insert into t values(2156);`)
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -328,6 +337,93 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 1970-01-01 09:20:34`,
 	))
+
+	// test for ambiguous cases
+	cases := []struct {
+		lit    string
+		expect string
+	}{
+		{"2020-10-22", "2020-10-22 00:00:00"},
+		{"2020-10-22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22 16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16:31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31:15-10", "2020-10-23 10:31:15"},
+
+		{"2020.10-22", "2020-10-22 00:00:00"},
+		{"2020-10.22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22.16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16.31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+14", "2020-10-22 10:31:15"},
+
+		{"2020-10:22", "2020-10-22 00:00:00"},
+		{"2020-10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10-22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+09:30", "2020-10-22 15:01:15"},
+
+		{"2020.10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10.22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22.16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31.15+09:30", "2020-10-22 15:01:15"},
+	}
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (dt datetime)`)
+	tk.MustExec(`set @@time_zone='+08:00'`)
+	for _, ca := range cases {
+		tk.MustExec(`delete from t`)
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s')", ca.lit))
+		tk.MustQuery(`select * from t`).Check(testkit.Rows(ca.expect))
+	}
+
+	// test for time zone change
+	tzcCases := []struct {
+		tz1  string
+		lit  string
+		tz2  string
+		exp1 string
+		exp2 string
+	}{
+		{"+08:00", "2020-10-22T16:53:40Z", "+00:00", "2020-10-23 00:53:40", "2020-10-22 16:53:40"},
+		{"-08:00", "2020-10-22T16:53:40Z", "+08:00", "2020-10-22 08:53:40", "2020-10-23 00:53:40"},
+		{"-03:00", "2020-10-22T16:53:40+03:00", "+08:00", "2020-10-22 10:53:40", "2020-10-22 21:53:40"},
+		{"+08:00", "2020-10-22T16:53:40+08:00", "+08:00", "2020-10-22 16:53:40", "2020-10-22 16:53:40"},
+	}
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (dt datetime, ts timestamp)")
+	for _, ca := range tzcCases {
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz1))
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s', '%s')", ca.lit, ca.lit))
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz2))
+		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
+	}
+
+	// test for datetime in compare
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (ts timestamp)")
+	tk.MustExec("insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z')")
+	tk.MustQuery(fmt.Sprintf("select count(*) from t where ts > '2020-10-22T12:00:00Z'")).Check(testkit.Rows("2"))
+
+	// test for datetime with fsp
+	fspCases := []struct {
+		fsp  uint
+		lit  string
+		exp1 string
+		exp2 string
+	}{
+		{2, "2020-10-27T14:39:10.10+00:00", "2020-10-27 22:39:10.10", "2020-10-27 22:39:10.10"},
+		{1, "2020-10-27T14:39:10.3+0200", "2020-10-27 20:39:10.3", "2020-10-27 20:39:10.3"},
+		{6, "2020-10-27T14:39:10.3-02", "2020-10-28 00:39:10.300000", "2020-10-28 00:39:10.300000"},
+		{2, "2020-10-27T14:39:10.10Z", "2020-10-27 22:39:10.10", "2020-10-27 22:39:10.10"},
+	}
+
+	tk.MustExec("set @@time_zone='+08:00'")
+	for _, ca := range fspCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t (dt datetime(%d), ts timestamp(%d))", ca.fsp, ca.fsp))
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s', '%s')", ca.lit, ca.lit))
+		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
+	}
 }
 
 func (s *testSuite3) TestInsertZeroYear(c *C) {
@@ -933,6 +1029,22 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
+func (s *testSuite3) TestInsertFloatOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t,t1;`)
+	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
+	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
+	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
+	tk.Exec("create table t1(id1 float,id2 float)")
+	tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
+	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
+	tk.MustExec("drop table if exists t,t1")
+}
+
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
@@ -1313,6 +1425,113 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	c.Assert(cnt, Equals, 15)
 }
 
+func (s *testSuite10) TestInsertRuntimeStat(c *C) {
+	stats := &executor.InsertRuntimeStat{
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
+		SnapshotRuntimeStats: nil,
+		CheckInsertTime:      2 * time.Second,
+		Prefetch:             1 * time.Second,
+	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
+}
+
+func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	for _, enable := range []int{1, 0} {
+		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t value (34, '12Ak');")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t value (34, '12ak');")
+		tk.MustExec("delete from t where b = '12ak';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime primary key);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustExec("delete from t where a = '2020-01-01';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int primary key );")
+		tk.MustExec("insert into t value (1);")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime unique);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+
+		tk.MustExec("begin pessimistic;")
+		tk.MustExec("insert into t values ('a7', 'a', 10);")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustExec("rollback;")
+	}
+}
+
+func (s *testSerialSuite) TestIssue20768(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a year, primary key(a))")
+	tk.MustExec("insert ignore into t1 values(null)")
+	tk.MustExec("create table t2(a int, key(a))")
+	tk.MustExec("insert into t2 values(0)")
+	tk.MustQuery("select /*+ hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+}
+
+func (s *testSuite9) TestIssue10402(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table vctt (v varchar(4), c char(4))")
+	tk.MustExec("insert into vctt values ('ab  ', 'ab   ')")
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab   ab"))
+	tk.MustExec("delete from vctt")
+	tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
+	c.Check(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(4))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Check(fmt.Sprintf("%v", warns), Equals, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]")
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
+	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
+}
+
 func combination(items []string) func() []string {
 	current := 1
 	buf := make([]string, len(items))
@@ -1329,4 +1548,24 @@ func combination(items []string) func() []string {
 		current++
 		return buf
 	}
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h enum(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
 }

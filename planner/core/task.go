@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -34,7 +33,7 @@ import (
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be CopTask, RootTask, MPPTask or a ParallelTask.
+// A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type task interface {
 	count() float64
 	addCost(cost float64)
@@ -72,10 +71,7 @@ type copTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	partitionTable struct {
-		pruningConds   []expression.Expression
-		partitionNames []model.CIStr
-	}
+	partitionInfo PartitionInfo
 }
 
 func (t *copTask) invalid() bool {
@@ -176,6 +172,15 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
+		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
+		p.SetChildren(pj.children...)
+		p.stats = tasks[0].plan().statsInfo()
+		rt, _ := tasks[0].(*rootTask)
+		rt.p = pj.children[0]
+		pj.SetChildren(p)
+		return pj.attach2Task(p.basePhysicalPlan.attach2Task(tasks...))
+	}
 	p.stats = tasks[0].plan().statsInfo()
 	return p.basePhysicalPlan.attach2Task(tasks...)
 }
@@ -539,9 +544,9 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of broadcast join operator itself.
 func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
-	buildCnt := lCnt
+	buildCnt, probeCnt := lCnt, rCnt
 	if p.InnerChildIdx == 1 {
-		buildCnt = rCnt
+		buildCnt, probeCnt = rCnt, lCnt
 	}
 	sessVars := p.ctx.GetSessionVars()
 	// Cost of building hash table.
@@ -558,7 +563,18 @@ func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
 		rightSchema:   p.children[1].Schema(),
 	}
 	numPairs := helper.estimate()
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		if len(p.OtherConditions) > 0 {
+			numPairs *= 0.5
+		} else {
+			numPairs = 0
+		}
+	}
 	probeCost := numPairs * sessVars.CopCPUFactor
+	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
+		probeCost *= SelectionFactor
+		probeCost += probeCnt * sessVars.CPUFactor
+	}
 	// should divided by the concurrency in tiflash, which should be the number of core in tiflash nodes.
 	probeCost /= float64(sessVars.CopTiFlashConcurrencyFactor)
 	cpuCost += probeCost
@@ -661,8 +677,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
-	p.PartitionTable.PruningConds = t.partitionTable.pruningConds
-	p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
+	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
@@ -718,9 +733,29 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
+	needExtraProj := false
+	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
+
+		tp := t.tablePlan
+		for len(tp.Children()) > 0 {
+			if len(tp.Children()) == 1 {
+				tp = tp.Children()[0]
+			} else {
+				join := tp.(*PhysicalBroadCastJoin)
+				tp = join.children[1-join.InnerChildIdx]
+			}
+		}
+		ts := tp.(*PhysicalTableScan)
+		prevColumnLen := len(ts.Columns)
+		prevSchema = ts.schema.Clone()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		if len(ts.Columns) > prevColumnLen {
+			// Add an projection to make sure not to output extract columns.
+			needExtraProj = true
+		}
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -731,8 +766,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			partialPlans: t.idxMergePartPlans,
 			tablePlan:    t.tablePlan,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
-		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
-		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
+		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
@@ -741,8 +775,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
-		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
-		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
+		p.PartitionInfo = t.partitionInfo
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
@@ -761,11 +794,16 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
-		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
+		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		newTask.p = p
+		if needExtraProj {
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
+			proj.SetSchema(prevSchema)
+			proj.SetChildren(p)
+			newTask.p = proj
+		} else {
+			newTask.p = p
+		}
 	}
 
 	if len(t.rootTaskConds) > 0 {
@@ -832,6 +870,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			stats := deriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		}
 		t = finishCopTask(p.ctx, cop)
 		sunk = p.sinkIntoIndexLookUp(t)
@@ -901,11 +941,7 @@ func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	storeType := kv.TiKV
-	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-		storeType = tableScan.StoreType
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
@@ -1052,7 +1088,8 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
-		if expression.ContainVirtualColumn(aggFunc.Args) {
+		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
+		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
@@ -1159,7 +1196,7 @@ func BuildFinalModeAggregation(
 						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
 						// items.
 						// maybe we can unify them sometime.
-						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 						}

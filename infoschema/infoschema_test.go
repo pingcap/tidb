@@ -110,7 +110,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, 1)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -282,7 +282,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
 	builder.Build()
 	is := handle.Get()

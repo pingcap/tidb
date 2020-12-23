@@ -1688,7 +1688,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{1025, "2001"},
 		{"8a8", "10"},
 		{"abc", "0"},
-		//overflow uint64
+		// overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
 		{types.NewBinaryLiteralFromUint(255, -1), "377"}, // b'11111111'
@@ -1770,13 +1770,13 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{-12332.123456, -4, "zh_CN", nil}
+	}{-12332.123456, -4, "zh_CN", "-12,332"}
 	formatTests3 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{"-12332.123456", "4", "de_GE", nil}
+	}{"-12332.123456", "4", "de_GE", "-12,332.1235"}
 	formatTests4 := struct {
 		number    interface{}
 		precision interface{}
@@ -1835,8 +1835,10 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r4, testutil.DatumEquals, types.NewDatum(formatTests4.ret))
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 1)
-	c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[0].Err), IsTrue)
+	c.Assert(len(warnings), Equals, 3)
+	for i := 0; i < 3; i++ {
+		c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[i].Err), IsTrue)
+	}
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
 
@@ -2375,13 +2377,40 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	fc := funcs[ast.WeightString]
-	tests := []struct {
+	type weightStringTest struct {
 		str     string
 		padding string
 		length  int
 		expect  interface{}
-	}{
+	}
+
+	checkResult := func(collation string, tests []weightStringTest) {
+		fc := funcs[ast.WeightString]
+		for _, test := range tests {
+			str := types.NewCollationStringDatum(test.str, collation, utf8.RuneCountInString(test.str))
+			var f builtinFunc
+			var err error
+			if test.padding == "NONE" {
+				f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
+			} else {
+				padding := types.NewDatum(test.padding)
+				length := types.NewDatum(test.length)
+				f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
+			}
+			c.Assert(err, IsNil)
+			result, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, IsNil)
+			if result.IsNull() {
+				c.Assert(test.expect, IsNil)
+				continue
+			}
+			res, err := result.ToString()
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, test.expect)
+		}
+	}
+
+	generalTests := []weightStringTest{
 		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
 		{"中", "NONE", 0, "\x4E\x2D"},
 		{"a", "CHAR", 5, "\x00A"},
@@ -2398,26 +2427,23 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
-	for _, test := range tests {
-		str := types.NewCollationStringDatum(test.str, "utf8mb4_general_ci", utf8.RuneCountInString(test.str))
-		var f builtinFunc
-		var err error
-		if test.padding == "NONE" {
-			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str}))
-		} else {
-			padding := types.NewDatum(test.padding)
-			length := types.NewDatum(test.length)
-			f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, padding, length}))
-		}
-		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		if result.IsNull() {
-			c.Assert(test.expect, IsNil)
-			continue
-		}
-		res, err := result.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.expect)
+	unicodeTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x0e3"},
+		{"a ", "CHAR", 5, "\x0e3"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
 	}
+
+	checkResult("utf8mb4_general_ci", generalTests)
+	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }

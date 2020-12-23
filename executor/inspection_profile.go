@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -57,11 +58,12 @@ type metricNode struct {
 }
 
 type metricValue struct {
-	sum    float64
-	count  int
-	avgP99 float64
-	avgP90 float64
-	avgP80 float64
+	sum     float64
+	count   int
+	avgP99  float64
+	avgP90  float64
+	avgP80  float64
+	comment string
 }
 
 type metricValueType int
@@ -108,7 +110,9 @@ func (m *metricValue) getComment() string {
 	if m.count == 0 {
 		return ""
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf := bytes.NewBuffer(make([]byte, 0, 64))
+	buf.WriteString(m.comment)
+	buf.WriteString("\n\n")
 	buf.WriteString("total_time: ")
 	buf.WriteString(time.Duration(int64(m.sum * float64(time.Second))).String())
 	buf.WriteByte('\n')
@@ -277,6 +281,15 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 		}
 		setQuantileValue(n.value, quantile, totalValue/float64(cnt))
 	}
+
+	// 4. Add metric comment.
+	def, ok := infoschema.MetricTableMap[n.table+"_total_time"]
+	if ok {
+		n.value.comment = def.Comment
+		for label, value := range n.labelValue {
+			value.comment = fmt.Sprintf("%s, the label of [%v] is [%v]", def.Comment, strings.Join(n.label, ","), label)
+		}
+	}
 	return nil
 }
 
@@ -310,11 +323,16 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string)
 
 // Collect uses to collect the related metric information.
 func (pb *profileBuilder) Collect() error {
-	pb.buf.WriteString(fmt.Sprintf(`digraph "%s" {`, "tidb_profile"))
-	pb.buf.WriteByte('\n')
-	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
-	pb.buf.WriteByte('\n')
-	err := pb.addMetricTree(pb.genTiDBQueryTree(), "tidb_query")
+	tidbQuery := pb.genTiDBQueryTree()
+	err := pb.init(tidbQuery, "tidb_query")
+	if err != nil {
+		return err
+	}
+	err = pb.traversal(tidbQuery)
+	if err != nil {
+		return err
+	}
+	err = pb.traversal(pb.genTiDBGCTree())
 	if err != nil {
 		return err
 	}
@@ -337,8 +355,8 @@ func (pb *profileBuilder) getNameID(name string) uint64 {
 	return id
 }
 
-func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
-	if root == nil {
+func (pb *profileBuilder) init(total *metricNode, name string) error {
+	if total == nil {
 		return nil
 	}
 	tp := "total_time"
@@ -348,9 +366,13 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	case metricValueCnt:
 		tp = "total_count"
 	}
+	pb.buf.WriteString(fmt.Sprintf(`digraph "%s" {`, "tidb_profile"))
+	pb.buf.WriteByte('\n')
+	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
+	pb.buf.WriteByte('\n')
 	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name+"_"+tp, pb.start.String(), pb.end.Sub(pb.start).String()))
 	pb.buf.WriteByte('\n')
-	v, err := pb.GetTotalValue(root)
+	v, err := pb.GetTotalValue(total)
 	if err != nil {
 		return err
 	}
@@ -359,7 +381,7 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	} else {
 		pb.totalValue = 1
 	}
-	return pb.traversal(root)
+	return nil
 }
 
 func (pb *profileBuilder) GetTotalValue(root *metricNode) (float64, error) {
@@ -504,9 +526,12 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 }
 
 func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeight, colorWeight float64) {
-	baseFontSize, maxFontGrowth := 5, 18.0
+	baseFontSize, maxFontSize, maxFontGrowth := 5, 64, 18.0
 	fontSize := baseFontSize
 	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
+	if fontSize > maxFontSize {
+		fontSize = maxFontSize
+	}
 
 	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
 		pb.getNameID(name), labelValue, comment, fontSize,
@@ -542,13 +567,13 @@ func (pb *profileBuilder) formatValueByTp(value float64) string {
 		if math.IsNaN(value) {
 			return ""
 		}
-		if value > 1 {
+		if math.Abs(value) > 1 {
 			// second unit
 			return fmt.Sprintf("%.2fs", value)
-		} else if value*1000 > 1 {
+		} else if math.Abs(value*1000) > 1 {
 			// millisecond unit
 			return fmt.Sprintf("%.2f ms", value*1000)
-		} else if value*1000*1000 > 1 {
+		} else if math.Abs(value*1000*1000) > 1 {
 			// microsecond unit
 			return fmt.Sprintf("%.2f ms", value*1000*1000)
 		}
@@ -609,6 +634,21 @@ func (pb *profileBuilder) dotColor(score float64, isBackground bool) string {
 	return fmt.Sprintf("#%02x%02x%02x", uint8(r*255.0), uint8(g*255.0), uint8(b*255.0))
 }
 
+func (pb *profileBuilder) genTiDBGCTree() *metricNode {
+	tidbGC := &metricNode{
+		table:          "tidb_gc",
+		isPartOfParent: true,
+		label:          []string{"stage"},
+		children: []*metricNode{
+			{
+				table:          "tidb_kv_request",
+				isPartOfParent: true,
+			},
+		},
+	}
+	return tidbGC
+}
+
 func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 	tidbKVRequest := &metricNode{
 		table:          "tidb_kv_request",
@@ -617,6 +657,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		children: []*metricNode{
 			{
 				table: "tidb_batch_client_wait",
+				unit:  int64(10e8),
 			},
 			{
 				table: "tidb_batch_client_wait_conn",
@@ -635,8 +676,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 						table: "tikv_cop_request",
 						children: []*metricNode{
 							{
-								table: "tikv_cop_wait",
-								label: []string{"type"},
+								table:     "tikv_cop_wait",
+								label:     []string{"type"},
+								condition: "type != 'all'",
 							},
 							{table: "tikv_cop_handle"},
 						},
@@ -675,6 +717,10 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 							},
 						},
 					},
+					{
+						table: "tikv_gc_tasks",
+						label: []string{"task"},
+					},
 				},
 			},
 		},
@@ -698,6 +744,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 					},
 					{
 						table: "tidb_owner_handle_syncer",
+					},
+					{
+						table: "tidb_meta_operation",
 					},
 				},
 			},

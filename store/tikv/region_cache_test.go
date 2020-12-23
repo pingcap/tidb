@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	pd "github.com/tikv/pd/client"
 )
 
 type testRegionCacheSuite struct {
@@ -118,6 +119,34 @@ func (s *testRegionCacheSuite) getAddr(c *C, key []byte, replicaRead kv.ReplicaR
 		return ""
 	}
 	return ctx.Addr
+}
+
+func (s *testRegionCacheSuite) TestStoreLabels(c *C) {
+	testcases := []struct {
+		storeID uint64
+	}{
+		{
+			storeID: s.store1,
+		},
+		{
+			storeID: s.store2,
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.storeID)
+		store := s.cache.getStoreByStoreID(testcase.storeID)
+		_, err := store.initResolve(s.bo, s.cache)
+		c.Assert(err, IsNil)
+		labels := []*metapb.StoreLabel{
+			{
+				Key:   "id",
+				Value: fmt.Sprintf("%v", testcase.storeID),
+			},
+		}
+		stores := s.cache.getStoresByLabels(labels)
+		c.Assert(len(stores), Equals, 1)
+		c.Assert(stores[0].labels, DeepEquals, labels)
+	}
 }
 
 func (s *testRegionCacheSuite) TestSimple(c *C) {
@@ -594,6 +623,96 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
 }
 
+func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
+	dc1Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-1",
+		},
+	}
+	dc2Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-2",
+		},
+	}
+	dc3Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-3",
+		},
+	}
+	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
+	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
+
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.UpdateStoreLabels(store3, dc1Label)
+	// Region have 3 peer, leader located in dc-1, followers located in dc-1, dc-2
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	seed := rand.Uint32()
+
+	testcases := []struct {
+		name               string
+		t                  kv.ReplicaReadType
+		labels             []*metapb.StoreLabel
+		expectStoreIDRange map[uint64]struct{}
+	}{
+		{
+			name:   "any Peer,located in dc-1",
+			t:      kv.ReplicaReadMixed,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+				store3:   {},
+			},
+		},
+		{
+			name:   "any Peer,located in dc-2",
+			t:      kv.ReplicaReadMixed,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store2: {},
+			},
+		},
+		{
+			name:   "only follower,located in dc-1",
+			t:      kv.ReplicaReadFollower,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				store3: {},
+			},
+		},
+		{
+			name:   "only leader, shouldn't consider labels",
+			t:      kv.ReplicaReadLeader,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+		{
+			name:   "no label matching, fallback to leader",
+			t:      kv.ReplicaReadMixed,
+			labels: dc3Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, testcase.t, seed, WithMatchLabels(testcase.labels))
+		c.Assert(err, IsNil)
+		_, exist := testcase.expectStoreIDRange[ctx.Store.storeID]
+		c.Assert(exist, Equals, true)
+	}
+}
+
 func (s *testRegionCacheSuite) TestSplit(c *C) {
 	seed := rand.Uint32()
 	r := s.getRegion(c, []byte("x"))
@@ -704,7 +823,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
-	ctxTiFlash.Peer.IsLearner = true
+	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner
 	r := ctxTiFlash.Meta
 	reqSend := NewRegionRequestSender(s.cache, nil)
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{r}}}
@@ -1079,7 +1198,43 @@ func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
 	c.Assert(followReqSeed, Equals, uint32(1))
 }
 
-func (s *testRegionRequestSuite) TestGetRegionByIDFromCache(c *C) {
+func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
+	// 2 peers [peer1, peer2] and let peer2 become leader
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	s.cache.UpdateLeader(loc.Region, s.store2, 0)
+
+	// current leader is peer2 in [peer1, peer2]
+	loc, err = s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+	c.Assert(err, IsNil)
+	c.Assert(ctx.Peer.StoreId, Equals, s.store2)
+
+	// simulate peer1 became down in kv heartbeat and loaded before response back.
+	cpMeta := &metapb.Region{
+		Id:          ctx.Meta.Id,
+		StartKey:    ctx.Meta.StartKey,
+		EndKey:      ctx.Meta.EndKey,
+		RegionEpoch: ctx.Meta.RegionEpoch,
+		Peers:       make([]*metapb.Peer, len(ctx.Meta.Peers)),
+	}
+	copy(cpMeta.Peers, ctx.Meta.Peers)
+	cpRegion := &pd.Region{
+		Meta:      cpMeta,
+		DownPeers: []*metapb.Peer{{Id: s.peer1, StoreId: s.store1}},
+	}
+	filterUnavailablePeers(cpRegion)
+	region := &Region{meta: cpRegion.Meta}
+	err = region.init(s.cache)
+	c.Assert(err, IsNil)
+	s.cache.insertRegionToCache(region)
+
+	// OnSendFail should not panic
+	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
+}
+
+func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)

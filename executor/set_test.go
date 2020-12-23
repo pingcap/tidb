@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite5) TestSetVar(c *C) {
+func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -260,8 +260,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	binlogValue := "0"
+	if config.GetGlobalConfig().Binlog.Enable {
+		binlogValue = "1"
+	}
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
@@ -375,7 +379,7 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_wait_split_region_timeout' can't be set to the value of '0'")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_backoff_weight = 3")
@@ -404,18 +408,24 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_metric_query_step(9) cannot be smaller than 10 or larger than 216000")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_step' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("120"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_range_duration = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_range_duration = 9")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
 
 	// test for tidb_slow_log_masking
@@ -424,17 +434,82 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_slow_log_masking = 0")
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
-	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
-	c.Assert(err, NotNil)
+	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
 
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
-	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
-	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 200"), IsNil)  // now permitted due to TiDB #19809
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
+
+	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	// test for tidb_mem_quota_apply_cache
+	defVal := fmt.Sprintf("%v", variable.DefTiDBMemQuotaApplyCache)
+	tk.MustQuery(`select @@tidb_mem_quota_apply_cache`).Check(testkit.Rows(defVal))
+	tk.MustExec(`set global tidb_mem_quota_apply_cache = 1`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_mem_quota_apply_cache = 0`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_mem_quota_apply_cache = 123`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_mem_quota_apply_cache`).Check(testkit.Rows("123"))
+
+	// test for tidb_enable_parallel_apply
+	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_enable_parallel_apply = 1`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_enable_parallel_apply = 0`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_parallel_apply=1`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = 0")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = on")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = off")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
+	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
+
+	tk.MustExec(`SET @@character_set_results = NULL;`)
+	tk.MustQuery(`select @@character_set_results;`).Check(testkit.Rows(""))
+
+	varList := []string{"character_set_server", "character_set_client", "character_set_filesystem", "character_set_database"}
+	for _, v := range varList {
+		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
+		// we do not support set character_set_xxx or collation_xxx to a collation id.
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
+		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
+	}
+
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
+	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -567,6 +642,47 @@ func (s *testSuite5) TestSetCharset(c *C) {
 		"utf8",
 		"binary",
 	)
+}
+
+func (s *testSuite5) TestSetCollationAndCharset(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	ctx := tk.Se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+
+	cases := []struct {
+		charset         string
+		collation       string
+		expectCharset   string
+		expectCollation string
+	}{
+		{variable.CharacterSetConnection, variable.CollationConnection, "utf8", "utf8_bin"},
+		{variable.CharsetDatabase, variable.CollationDatabase, "utf8", "utf8_bin"},
+		{variable.CharacterSetServer, variable.CollationServer, "utf8", "utf8_bin"},
+	}
+
+	for _, t := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", t.charset, t.expectCharset))
+		sVar, ok := sessionVars.GetSystemVar(t.charset)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCharset)
+		sVar, ok = sessionVars.GetSystemVar(t.collation)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCollation)
+	}
+
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	ctx = tk.Se.(sessionctx.Context)
+	sessionVars = ctx.GetSessionVars()
+
+	for _, t := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", t.collation, t.expectCollation))
+		sVar, ok := sessionVars.GetSystemVar(t.charset)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCharset)
+		sVar, ok = sessionVars.GetSystemVar(t.collation)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCollation)
+	}
 }
 
 func (s *testSuite5) TestValidateSetVar(c *C) {
@@ -959,6 +1075,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	tk.MustQuery("select @@tidb_hashagg_partial_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_hashagg_final_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_window_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_streamagg_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBStreamAggConcurrency)))
 	tk.MustQuery("select @@tidb_projection_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_distsql_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefDistSQLScanConcurrency)))
 
@@ -972,6 +1089,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefTiDBStreamAggConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
 
@@ -1007,6 +1125,9 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	checkSet(variable.TiDBWindowConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, 1)
 
+	checkSet(variable.TiDBStreamAggConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, 1)
+
 	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
 	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
@@ -1023,6 +1144,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=-1;")
 	tk.MustExec("set @@tidb_hashagg_final_concurrency=-1;")
 	tk.MustExec("set @@tidb_window_concurrency=-1;")
+	tk.MustExec("set @@tidb_streamagg_concurrency=-1;")
 	tk.MustExec("set @@tidb_projection_concurrency=-1;")
 
 	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
@@ -1031,6 +1153,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 
 	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")

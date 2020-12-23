@@ -15,6 +15,8 @@ package kv
 
 import (
 	"context"
+
+	"github.com/pingcap/parser/model"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
@@ -24,14 +26,14 @@ type UnionStore interface {
 
 	// HasPresumeKeyNotExists returns whether the key presumed key not exists error for the lazy check.
 	HasPresumeKeyNotExists(k Key) bool
-	// DeleteKeyExistErrInfo deletes the key presume key not exists error flag for the lazy check.
+	// UnmarkPresumeKeyNotExists deletes the key presume key not exists error flag for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
 	// CacheIndexName caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.
-	CacheIndexName(tableID, indexID int64, name string)
+	CacheTableInfo(id int64, info *model.TableInfo)
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
-	GetIndexName(tableID, indexID int64) string
+	GetTableInfo(id int64) *model.TableInfo
 
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -63,16 +65,12 @@ type Options interface {
 	Get(opt Option) (v interface{}, ok bool)
 }
 
-type idxNameKey struct {
-	tableID, indexID int64
-}
-
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
 	memBuffer    *memdb
 	snapshot     Snapshot
-	idxNameCache map[idxNameKey]string
+	idxNameCache map[int64]*model.TableInfo
 	opts         options
 }
 
@@ -81,7 +79,7 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		snapshot:     snapshot,
 		memBuffer:    newMemDB(),
-		idxNameCache: make(map[idxNameKey]string),
+		idxNameCache: make(map[int64]*model.TableInfo),
 		opts:         make(map[Option]interface{}),
 	}
 }
@@ -146,18 +144,12 @@ func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
 	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
 }
 
-func (us *unionStore) GetIndexName(tableID, indexID int64) string {
-	key := idxNameKey{tableID: tableID, indexID: indexID}
-	name, ok := us.idxNameCache[key]
-	if !ok {
-		return "UNKNOWN"
-	}
-	return name
+func (us *unionStore) GetTableInfo(id int64) *model.TableInfo {
+	return us.idxNameCache[id]
 }
 
-func (us *unionStore) CacheIndexName(tableID, indexID int64, name string) {
-	key := idxNameKey{tableID: tableID, indexID: indexID}
-	us.idxNameCache[key] = name
+func (us *unionStore) CacheTableInfo(id int64, info *model.TableInfo) {
+	us.idxNameCache[id] = info
 }
 
 // SetOption implements the unionStore SetOption interface.

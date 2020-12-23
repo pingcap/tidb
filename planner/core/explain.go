@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -37,7 +40,7 @@ import (
 type dataAccesser interface {
 
 	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject() string
+	AccessObject(normalized bool) string
 
 	// OperatorInfo return other operator information to be explained.
 	OperatorInfo(normalized bool) string
@@ -49,31 +52,36 @@ type partitionAccesser interface {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
-	return p.Lock.String()
+	return fmt.Sprintf("%s %v", p.Lock.LockType.String(), p.Lock.WaitSec)
 }
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isFullScan() {
-			return "IndexFullScan_" + strconv.Itoa(p.id)
-		}
-		return "IndexRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalIndexScan) TP() string {
+	if p.isFullScan() {
+		return plancodec.TypeIndexFullScan
+	}
+	return plancodec.TypeIndexRangeScan
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject() string {
+func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -81,7 +89,9 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
-		if pi := p.Table.GetPartitionInfo(); pi != nil {
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
@@ -89,7 +99,11 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	if len(p.Index.Columns) > 0 {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
 		for i, idxCol := range p.Index.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.Index.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -103,7 +117,9 @@ func (p *PhysicalIndexScan) AccessObject() string {
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	if len(p.rangeInfo) > 0 {
-		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
+		if !normalized {
+			fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeInfo)
+		}
 	} else if p.haveCorCol() {
 		if normalized {
 			fmt.Fprintf(buffer, "range: decided by %s, ", expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
@@ -155,27 +171,32 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isChildOfIndexLookUp {
-			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if p.isFullScan() {
-			return "TableFullScan_" + strconv.Itoa(p.id)
-		}
-		return "TableRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalTableScan) TP() string {
+	if p.isChildOfIndexLookUp {
+		return plancodec.TypeTableRowIDScan
+	} else if p.isFullScan() {
+		return plancodec.TypeTableFullScan
+	}
+	return plancodec.TypeTableRangeScan
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalTableScan) AccessObject() string {
+func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -183,7 +204,9 @@ func (p *PhysicalTableScan) AccessObject() string {
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
-		if pi := p.Table.GetPartitionInfo(); pi != nil {
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
@@ -266,13 +289,13 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return ""
 }
 
 func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -283,12 +306,12 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
-func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, conds []expression.Expression, names []model.CIStr) string {
+func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
 	var buffer bytes.Buffer
-	idxArr, err := PartitionPruning(sctx, tbl, conds, names)
+	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
 	if err != nil {
 		return "partition pruning error" + err.Error()
 	}
@@ -331,7 +354,7 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.IndexPlans[0].(*PhysicalIndexScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -344,7 +367,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	}
 
 	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -359,7 +382,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -372,7 +395,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 	}
 
 	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -383,7 +406,7 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -394,7 +417,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string 
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -456,7 +479,13 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	}
 	for i := 0; i < len(p.AggFuncs); i++ {
 		builder.WriteString("funcs:")
-		fmt.Fprintf(builder, "%v->%v", aggregation.ExplainAggFunc(p.AggFuncs[i]), p.schema.Columns[i])
+		var colName string
+		if normalized {
+			colName = p.schema.Columns[i].ExplainNormalizedInfo()
+		} else {
+			colName = p.schema.Columns[i].ExplainInfo()
+		}
+		fmt.Fprintf(builder, "%v->%v", aggregation.ExplainAggFunc(p.AggFuncs[i], normalized), colName)
 		if i+1 < len(p.AggFuncs) {
 			builder.WriteString(", ")
 		}
@@ -471,17 +500,26 @@ func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.explainInfo(false, false)
 }
 
-func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
+// ExplainInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
+	return p.explainInfo(false, true)
+}
+
+func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
 	}
 
 	buffer := bytes.NewBufferString(p.JoinType.String())
-	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	if normalized {
+		fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].TP())
+	} else {
+		fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
+	}
 	if len(p.OuterJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", outer key:%s",
 			expression.ExplainColumnList(p.OuterJoinKeys))
@@ -489,6 +527,18 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 	if len(p.InnerJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
+	}
+
+	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
+		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
+		for i := range p.OuterHashKeys {
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
+			exprs = append(exprs, expr)
+		}
+		fmt.Fprintf(buffer, ", equal cond:%s",
+			sortedExplainExpressionList(exprs))
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
@@ -507,7 +557,12 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+	return p.explainInfo(true, false)
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo(true, true)
 }
 
 // ExplainInfo implements Plan interface.
@@ -604,15 +659,20 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(true)
 }
 
-func (p *PhysicalBroadCastJoin) explainInfo() string {
+func (p *PhysicalBroadCastJoin) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
+	}
+
 	buffer := new(bytes.Buffer)
 
 	buffer.WriteString(p.JoinType.String())
@@ -624,6 +684,21 @@ func (p *PhysicalBroadCastJoin) explainInfo() string {
 	if len(p.RightJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", right key:%s",
 			expression.ExplainColumnList(p.RightJoinKeys))
+	}
+	if len(p.LeftConditions) > 0 {
+		if normalized {
+			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+		} else {
+			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		}
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			sortedExplainExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -724,8 +799,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
+	explainIds := make([]fmt.Stringer, len(p.DataSources))
+	for i := range p.DataSources {
+		explainIds[i] = p.DataSources[i].ExplainID()
+	}
+
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIds)
 	return buffer.String()
 }
 
@@ -771,7 +851,7 @@ func (p *LogicalAggregation) ExplainInfo() string {
 	if len(p.AggFuncs) > 0 {
 		buffer.WriteString("funcs:")
 		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(agg))
+			buffer.WriteString(aggregation.ExplainAggFunc(agg, false))
 			if i+1 < len(p.AggFuncs) {
 				buffer.WriteString(", ")
 			}
@@ -894,7 +974,11 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.Source.tableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(index.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -920,7 +1004,7 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -928,7 +1012,7 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject() string {
+func (p *PhysicalMemTable) AccessObject(_ bool) string {
 	return "table:" + p.Table.Name.O
 }
 
@@ -938,9 +1022,4 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 		return p.Extractor.explainInfo(p)
 	}
 	return ""
-}
-
-func tryOldPartitionImplementation(sctx sessionctx.Context) bool {
-	_, ok := sctx.GetSessionVars().Users["try_old_partition_implementation"]
-	return ok
 }

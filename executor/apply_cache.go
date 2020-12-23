@@ -14,18 +14,20 @@
 package executor
 
 import (
+	"sync"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // applyCache is used in the apply executor. When we get the same value of the outer row.
 // We fetch the inner rows in the cache not to fetch them in the inner executor.
 type applyCache struct {
-	cache       *kvcache.SimpleLRUCache
+	lock        sync.Mutex
+	cache       *kvcache.SimpleLRUCache // cache.Get/Put are not thread-safe, so it's protected by the lock above
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
 }
@@ -46,15 +48,27 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)
 	c := applyCache{
 		cache:       cache,
-		memCapacity: ctx.GetSessionVars().NestedLoopJoinCacheCapacity,
-		memTracker:  memory.NewTracker(stringutil.StringerStr("applyCache"), -1),
+		memCapacity: ctx.GetSessionVars().MemQuotaApplyCache,
+		memTracker:  memory.NewTracker(memory.LabelForApplyCache, -1),
 	}
 	return &c, nil
 }
 
-// Get gets a cache item according to cache key.
+func (c *applyCache) get(key applyCacheKey) (value kvcache.Value, ok bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.cache.Get(key)
+}
+
+func (c *applyCache) put(key applyCacheKey, val kvcache.Value) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.cache.Put(key, val)
+}
+
+// Get gets a cache item according to cache key. It's thread-safe.
 func (c *applyCache) Get(key applyCacheKey) (*chunk.List, error) {
-	value, hit := c.cache.Get(&key)
+	value, hit := c.get(key)
 	if !hit {
 		return nil, nil
 	}
@@ -62,7 +76,7 @@ func (c *applyCache) Get(key applyCacheKey) (*chunk.List, error) {
 	return typedValue, nil
 }
 
-// Set inserts an item to the cache.
+// Set inserts an item to the cache. It's thread-safe.
 func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 	mem := applyCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
@@ -76,7 +90,7 @@ func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 		c.memTracker.Consume(-applyCacheKVMem(evictedKey.(applyCacheKey), evictedValue.(*chunk.List)))
 	}
 	c.memTracker.Consume(mem)
-	c.cache.Put(key, value)
+	c.put(key, value)
 	return true, nil
 }
 

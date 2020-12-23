@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -33,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/peer"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -186,6 +187,10 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	}
 	defer se.Close()
 
+	if p, ok := peer.FromContext(ctx); ok {
+		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
+	}
+
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleRequest(ctx, req)
 }
@@ -206,7 +211,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	// TODO: remove this.
 	se.GetSessionVars().SetHashAggPartialConcurrency(1)
 	se.GetSessionVars().SetHashAggFinalConcurrency(1)
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -88,20 +89,51 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdGet:
 		resp.Resp, err = c.usSvr.KvGet(ctx, req.Get())
 	case tikvrpc.CmdScan:
-		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
+		kvScanReq := req.Scan()
+		failpoint.Inject("rpcScanResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.ScanResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: kvScanReq.StartKey,
+							LockVersion: kvScanReq.Version - 1,
+							Key:         kvScanReq.StartKey,
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
+
+		resp.Resp, err = c.usSvr.KvScan(ctx, kvScanReq)
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
-			switch val.(string) {
-			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+			if val != nil {
+				switch val.(string) {
+				case "notLeader":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+					}, nil)
+				case "writeConflict":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{{Conflict: &kvrpcpb.WriteConflict{}}}},
+					}, nil)
+				}
 			}
 		})
 
 		r := req.Prewrite()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
 		resp.Resp, err = c.usSvr.KvPrewrite(ctx, r)
+
+		failpoint.Inject("rpcPrewriteTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, undeterminedErr)
+			}
+		})
 	case tikvrpc.CmdPessimisticLock:
 		r := req.PessimisticLock()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
@@ -135,10 +167,31 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.KvCleanup(ctx, req.Cleanup())
 	case tikvrpc.CmdCheckTxnStatus:
 		resp.Resp, err = c.usSvr.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
+	case tikvrpc.CmdCheckSecondaryLocks:
+		resp.Resp, err = c.usSvr.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case tikvrpc.CmdTxnHeartBeat:
 		resp.Resp, err = c.usSvr.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	case tikvrpc.CmdBatchGet:
-		resp.Resp, err = c.usSvr.KvBatchGet(ctx, req.BatchGet())
+		batchGetReq := req.BatchGet()
+		failpoint.Inject("rpcBatchGetResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.BatchGetResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: batchGetReq.Keys[0],
+							LockVersion: batchGetReq.Version - 1,
+							Key:         batchGetReq.Keys[0],
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
+
+		resp.Resp, err = c.usSvr.KvBatchGet(ctx, batchGetReq)
 	case tikvrpc.CmdBatchRollback:
 		resp.Resp, err = c.usSvr.KvBatchRollback(ctx, req.BatchRollback())
 	case tikvrpc.CmdScanLock:
@@ -169,6 +222,23 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:
 		resp.Resp, err = c.handleCopStream(ctx, req.Cop())
+	case tikvrpc.CmdBatchCop:
+		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+			if value.(bool) {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
+
+		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+			if value.(string) == addr {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
+	case tikvrpc.CmdMPPConn:
+		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout)
+	case tikvrpc.CmdMPPTask:
+		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask())
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -179,12 +249,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
 	default:
-		err = errors.Errorf("unsupport this request type %v", req.Type)
+		err = errors.Errorf("not support this request type %v", req.Type)
 	}
 	if err != nil {
 		return nil, err
 	}
-	regErr, err := resp.GetRegionError()
+	var regErr *errorpb.Error = nil
+	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
+		regErr, err = resp.GetRegionError()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +280,48 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 		Tikv_CoprocessorStreamClient: new(mockCopStreamClient),
 		Response:                     copResp,
 	}, nil
+}
+
+func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration) (*tikvrpc.MPPStreamResponse, error) {
+	mockServer := new(mockMPPConnectStreamServer)
+	err := c.usSvr.EstablishMPPConnection(r, mockServer)
+	if err != nil {
+		return nil, err
+	}
+	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0}
+	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
+	_, cancel := context.WithCancel(ctx)
+	streamResp.Lease.Cancel = cancel
+	streamResp.Timeout = timeout
+	first, err := streamResp.Recv()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	streamResp.MPPDataPacket = first
+	return streamResp, nil
+}
+
+func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
+	return c.usSvr.DispatchMPPTask(ctx, r)
+}
+
+func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
+	mockBatchCopServer := &mockBatchCoprocessorStreamServer{}
+	err := c.usSvr.BatchCoprocessor(r, mockBatchCopServer)
+	if err != nil {
+		return nil, err
+	}
+	var mockBatchCopClient = mockBatchCopClient{batchResponses: mockBatchCopServer.batchResponses, idx: 0}
+	batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: &mockBatchCopClient}
+	_, cancel := context.WithCancel(ctx)
+	batchResp.Lease.Cancel = cancel
+	batchResp.Timeout = timeout
+	first, err := batchResp.Recv()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	batchResp.BatchResponse = first
+	return batchResp, nil
 }
 
 func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *debugpb.GetRegionPropertiesRequest) (*debugpb.GetRegionPropertiesResponse, error) {
@@ -315,4 +430,68 @@ type mockCopStreamClient struct {
 
 func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return nil, io.EOF
+}
+
+type mockBatchCopClient struct {
+	mockClientStream
+	batchResponses []*coprocessor.BatchResponse
+	idx            int
+}
+
+func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
+	if mock.idx < len(mock.batchResponses) {
+		ret := mock.batchResponses[mock.idx]
+		mock.idx++
+		var err error = nil
+		if len(ret.OtherError) > 0 {
+			err = errors.New(ret.OtherError)
+			ret = nil
+		}
+		return ret, err
+	}
+	return nil, io.EOF
+}
+
+type mockMPPConnectionClient struct {
+	mockClientStream
+	mppResponses []*mpp.MPPDataPacket
+	idx          int
+}
+
+func (mock *mockMPPConnectionClient) Recv() (*mpp.MPPDataPacket, error) {
+	if mock.idx < len(mock.mppResponses) {
+		ret := mock.mppResponses[mock.idx]
+		mock.idx++
+		return ret, nil
+	}
+	return nil, io.EOF
+}
+
+type mockServerStream struct{}
+
+func (mockServerStream) SetHeader(metadata.MD) error  { return nil }
+func (mockServerStream) SendHeader(metadata.MD) error { return nil }
+func (mockServerStream) SetTrailer(metadata.MD)       {}
+func (mockServerStream) Context() context.Context     { return nil }
+func (mockServerStream) SendMsg(interface{}) error    { return nil }
+func (mockServerStream) RecvMsg(interface{}) error    { return nil }
+
+type mockBatchCoprocessorStreamServer struct {
+	mockServerStream
+	batchResponses []*coprocessor.BatchResponse
+}
+
+func (mockBatchCopServer *mockBatchCoprocessorStreamServer) Send(response *coprocessor.BatchResponse) error {
+	mockBatchCopServer.batchResponses = append(mockBatchCopServer.batchResponses, response)
+	return nil
+}
+
+type mockMPPConnectStreamServer struct {
+	mockServerStream
+	mppResponses []*mpp.MPPDataPacket
+}
+
+func (mockMPPConnectStreamServer *mockMPPConnectStreamServer) Send(mppResponse *mpp.MPPDataPacket) error {
+	mockMPPConnectStreamServer.mppResponses = append(mockMPPConnectStreamServer.mppResponses, mppResponse)
+	return nil
 }

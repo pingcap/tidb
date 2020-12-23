@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 
@@ -1144,6 +1145,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	ctx := testNewContext(d)
 	defer d.Stop()
 	tests := []struct {
 		origin string
@@ -1151,23 +1153,26 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
-		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
-		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")},
+		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("decimal change from decimal(2, 1) to decimal(3, 2), and tidb_enable_change_column_type is false")},
+		{"decimal(2,1)", "decimal(2,2)", errUnsupportedModifyColumn.GenWithStackByArgs("decimal change from decimal(2, 1) to decimal(2, 2), and tidb_enable_change_column_type is false")},
 		{"decimal(2,1)", "decimal(2,1)", nil},
+		{"decimal(2,1)", "int", errUnsupportedModifyColumn.GenWithStackByArgs("type int(11) not match origin decimal(2,1), and tidb_enable_change_column_type is false")},
+		{"decimal", "int", errUnsupportedModifyColumn.GenWithStackByArgs("type int(11) not match origin decimal(10,0), and tidb_enable_change_column_type is false")},
+		{"decimal(2,1)", "bigint", errUnsupportedModifyColumn.GenWithStackByArgs("type bigint(20) not match origin decimal(2,1), and tidb_enable_change_column_type is false")},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
 		ftB := s.colDefStrToFieldType(c, tt.to)
-		err := checkModifyTypes(ftA, ftB, false)
+		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
-			c.Assert(tt.err, IsNil)
+			c.Assert(tt.err, IsNil, Commentf("origin:%v, to:%v", tt.origin, tt.to))
 		} else {
 			c.Assert(err.Error(), Equals, tt.err.Error())
 		}
@@ -1195,4 +1200,50 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 	}
 	err := checkDuplicateColumn(colObjects)
 	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
+	// cause go routine in TiDB leak test.
+	defer d.Stop()
+
+	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
+		tinyBlobMaxLength-1, blobMaxLength-1, mediumBlobMaxLength-1, longBlobMaxLength-1)
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	tblInfo, err := BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	c.Assert(err, IsNil)
+	genIDs, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	tblInfo.ID = genIDs[0]
+
+	ctx := testNewContext(d)
+	err = ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	c.Assert(t.Cols()[0].Tp, Equals, mysql.TypeTinyBlob)
+	c.Assert(t.Cols()[0].Flen, Equals, tinyBlobMaxLength)
+	c.Assert(t.Cols()[1].Tp, Equals, mysql.TypeBlob)
+	c.Assert(t.Cols()[1].Flen, Equals, blobMaxLength)
+	c.Assert(t.Cols()[2].Tp, Equals, mysql.TypeMediumBlob)
+	c.Assert(t.Cols()[2].Flen, Equals, mediumBlobMaxLength)
+	c.Assert(t.Cols()[3].Tp, Equals, mysql.TypeLongBlob)
+	c.Assert(t.Cols()[3].Flen, Equals, longBlobMaxLength)
+
+	oldRow := types.MakeDatums([]byte("a"), []byte("a"), []byte("a"), []byte("a"))
+	_, err = t.AddRecord(ctx, oldRow)
+	c.Assert(err, IsNil)
+
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }

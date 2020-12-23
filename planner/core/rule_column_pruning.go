@@ -137,9 +137,15 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
 	new = make([]*util.ByItems, 0, len(old))
+	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
+		hash := string(byItem.Expr.HashCode(nil))
+		_, hashMatch := seen[hash]
+		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if len(cols) == 0 {
+		if hashMatch {
+			// do nothing, should be filtered
+		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				new = append(new, byItem)
 			}
@@ -213,6 +219,8 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -360,7 +368,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
+	if !IsSelectForUpdateLockType(p.Lock.LockType) {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
@@ -422,6 +430,16 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 		parentUsedCols = append(parentUsedCols, by.Col)
 	}
 	return parentUsedCols
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
+	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
+		return nil
+	}
+
+	p.inlineProjection(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 func (*columnPruner) name() string {

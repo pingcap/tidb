@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -59,8 +60,9 @@ var (
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
 	_ PhysicalPlan = &PhysicalShuffle{}
-	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
+	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
+	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -77,10 +79,15 @@ type PhysicalTableReader struct {
 	IsCommonHandle bool
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
+}
+
+// PartitionInfo indicates partition helper info in physical plan.
+type PartitionInfo struct {
+	PruningConds   []expression.Expression
+	PartitionNames []model.CIStr
+	Columns        []*expression.Column
+	ColumnNames    types.NameSlice
 }
 
 // GetTablePlan exports the tablePlan.
@@ -107,6 +114,12 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader.PartitionInfo = PartitionInfo{
+		PruningConds:   sg.Source.allConds,
+		PartitionNames: sg.Source.partitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.names,
+	}
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -167,10 +180,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -251,10 +261,7 @@ type PhysicalIndexLookUpReader struct {
 	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -311,10 +318,7 @@ type PhysicalIndexMergeReader struct {
 	tablePlan PhysicalPlan
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -464,6 +468,10 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+
+	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -511,6 +519,16 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	copyColumn := make([]*model.ColumnInfo, len(columns))
+	copy(copyColumn, columns)
+	var extraColumn *expression.Column
+	var extraColumnModel *model.ColumnInfo
+	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
+		extraColumn = schema.Columns[len(schema.Columns)-1]
+		extraColumnModel = copyColumn[len(copyColumn)-1]
+		schema.Columns = schema.Columns[:len(schema.Columns)-1]
+		copyColumn = copyColumn[:len(copyColumn)-1]
+	}
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -521,14 +539,18 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
-	return columns
+	if extraColumn != nil {
+		schema.Columns = append(schema.Columns, extraColumn)
+		copyColumn = append(copyColumn, extraColumnModel)
+	}
+	return copyColumn
 }
 
-//SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
+// SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
 func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool) {
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
@@ -777,6 +799,12 @@ type PhysicalIndexJoin struct {
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
 	CompareFilters *ColWithCmpFuncManager
+	// OuterHashKeys indicates the outer keys used to build hash table during
+	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
+	OuterHashKeys []*expression.Column
+	// InnerHashKeys indicates the inner keys used to build hash table during
+	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
+	InnerHashKeys []*expression.Column
 }
 
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
@@ -816,7 +844,87 @@ type PhysicalMergeJoin struct {
 // PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
+	EqualConditions  []*expression.ScalarFunction
 	globalChildIndex int
+}
+
+// PhysicalExchangerBase is the common part of Exchanger and ExchangerClient.
+type PhysicalExchangerBase struct {
+	basePhysicalPlan
+}
+
+// PhysicalExchangeReceiver accepts connection and receives data passively.
+type PhysicalExchangeReceiver struct {
+	PhysicalExchangerBase
+
+	Tasks   []*kv.MPPTask
+	ChildPf *Fragment
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	fieldTypes := make([]*tipb.FieldType, 0, len(e.ChildPf.Schema().Columns))
+	for _, column := range e.ChildPf.Schema().Columns {
+		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
+	}
+	ecExec := &tipb.ExchangeReceiver{
+		EncodedTaskMeta: encodedTask,
+		FieldTypes:      fieldTypes,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:               tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: ecExec,
+		ExecutorId:       &executorID,
+	}, nil
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+type PhysicalExchangeSender struct {
+	PhysicalExchangerBase
+
+	Tasks        []*kv.MPPTask
+	ExchangeType tipb.ExchangeType
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	ecExec := &tipb.ExchangeSender{
+		Tp:              e.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		Child:           child,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:             tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: ecExec,
+		ExecutorId:     &executorID,
+	}, nil
 }
 
 // Clone implements PhysicalPlan interface.
@@ -838,7 +946,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock ast.SelectLockType
+	Lock *ast.SelectLockInfo
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
@@ -846,7 +954,7 @@ type PhysicalLock struct {
 
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	Offset uint64
 	Count  uint64
@@ -856,11 +964,11 @@ type PhysicalLimit struct {
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	return cloned, nil
 }
 
@@ -1020,6 +1128,15 @@ type PhysicalUnionScan struct {
 	HandleCols HandleCols
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
+}
+
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
@@ -1092,8 +1209,8 @@ type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.Item
-	OrderBy         []property.Item
+	PartitionBy     []property.SortItem
+	OrderBy         []property.SortItem
 	Frame           *WindowFrame
 }
 
@@ -1121,7 +1238,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 }
 
 // PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
 // Take `Window` operator for example:
 //  Shuffle -> Window -> Sort -> DataSource, will be separated into:
@@ -1132,11 +1249,11 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	Tails       []PhysicalPlan
+	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1145,15 +1262,17 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
+	PartitionRangeSplitterType
 )
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleDataSourceStub struct {
+type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// Worker points to `executor.shuffleReceiver`.
+	Receiver unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1212,4 +1331,32 @@ func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
 		}
 	}()
 	return v.Clone()
+}
+
+// PhysicalTableSample represents a table sample plan.
+// It returns the sample rows to its parent operand.
+type PhysicalTableSample struct {
+	physicalSchemaProducer
+	TableSampleInfo *TableSampleInfo
+	TableInfo       table.Table
+	Desc            bool
+}
+
+// TableSampleInfo contains the information for PhysicalTableSample.
+type TableSampleInfo struct {
+	AstNode    *ast.TableSample
+	FullSchema *expression.Schema
+	Partitions []table.PartitionedTable
+}
+
+// NewTableSampleInfo creates a new TableSampleInfo.
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+	if node == nil {
+		return nil
+	}
+	return &TableSampleInfo{
+		AstNode:    node,
+		FullSchema: fullSchema,
+		Partitions: pt,
+	}
 }

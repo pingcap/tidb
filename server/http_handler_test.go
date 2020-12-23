@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -77,13 +78,13 @@ type HTTPHandlerTestSerialSuite struct {
 	*basicHTTPHandlerTestSuite
 }
 
-var _ = Suite(&HTTPHandlerTestSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = Suite(&HTTPHandlerTestSuite{&basicHTTPHandlerTestSuite{}})
 
-var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{&basicHTTPHandlerTestSuite{}})
+
+func (ts *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
+	ts.testServerClient = newTestServerClient()
+}
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
@@ -143,7 +144,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	for _, t := range testCases {
 		var f *helper.FrameItem
 		if t.indexID == 0 {
-			f = r.GetRecordFrame(t.tableID, "", "")
+			f = r.GetRecordFrame(t.tableID, "", "", false)
 		} else {
 			f = r.GetIndexFrame(t.tableID, t.indexID, "", "", "")
 		}
@@ -153,6 +154,40 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 			c.Assert(f, IsNil)
 		}
 	}
+}
+
+func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
+	sTableID := int64(3)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	expectIndexValues := make([]string, 0, len(indexValues))
+	for _, v := range indexValues {
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		expectIndexValues = append(expectIndexValues, str)
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
+
+	startKey := tablecodec.EncodeRowKey(sTableID, encodedValue)
+
+	region := &tikv.KeyLocation{
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+	}
+	r, err := helper.NewRegionFrameRange(region)
+	c.Assert(err, IsNil)
+	c.Assert(r.First.IsRecord, IsTrue)
+	c.Assert(r.First.RecordID, Equals, int64(0))
+	c.Assert(r.First.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.First.IndexName, Equals, "PRIMARY")
+	c.Assert(r.Last.RecordID, Equals, int64(0))
+	c.Assert(r.Last.IndexValues, IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
@@ -168,7 +203,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsTrue)
 	c.Assert(r.Last.IsRecord, IsTrue)
-	c.Assert(r.GetRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.GetRecordFrame(300, "", "", false), NotNil)
 	c.Assert(r.GetIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
@@ -185,14 +220,15 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsFalse)
 	c.Assert(r.Last.IsRecord, IsTrue)
-	c.Assert(r.GetRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.GetRecordFrame(3, "", "", false), NotNil)
 	c.Assert(r.GetIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := ts.fetchStatus("/tables/information_schema/SCHEMATA/regions")
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	defer resp.Body.Close()
@@ -207,6 +243,59 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	for _, region := range data.RecordRegions {
 		c.Assert(ts.regionContainsTable(c, region.ID, data.TableID), IsTrue)
 	}
+}
+
+func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var data TableRegions
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data.RecordRegions) > 0, IsTrue)
+	// list region
+	for _, region := range data.RecordRegions {
+		resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", region.ID))
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+		decoder := json.NewDecoder(resp.Body)
+		var data RegionDetail
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		frameCnt := 0
+		for _, f := range data.Frames {
+			if f.DBName == "tidb" && f.TableName == "t" {
+				frameCnt++
+			}
+		}
+		// Primary index is as the record frame, so frame count is 1.
+		c.Assert(frameCnt, Equals, 1)
+		c.Assert(resp.Body.Close(), IsNil)
+	}
+}
+
+func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/ranges")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+
+	var data TableRanges
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.TableName, Equals, "t")
+	c.Assert(len(data.Indices), Equals, 1)
+	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
 }
 
 func (ts *HTTPHandlerTestSuite) regionContainsTable(c *C, regionID uint64, tableID int64) bool {
@@ -248,6 +337,30 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	region := data[1]
 	_, err = ts.fetchStatus(fmt.Sprintf("/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestListTableRanges(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	// Test list table regions with error
+	resp, err := ts.fetchStatus("/tables/fdsfds/aaa/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/tables/tidb/pt/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+
+	var data []*TableRanges
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 3)
+	for i, partition := range data {
+		c.Assert(partition.TableName, Equals, fmt.Sprintf("p%d", i))
+	}
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
@@ -360,16 +473,22 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
 	cfg := newTestConfig()
-	cfg.Port = ts.port
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = ts.statusPort
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go server.Run()
 	ts.waitUntilServerOnline()
+}
+
+func getPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
 }
 
 func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
@@ -422,6 +541,11 @@ partition by range (a)
 	txn2.Exec("insert into tidb.pt values (666, 'def')")
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
+
+	dbt.mustExec("set @@tidb_enable_clustered_index = 1")
+	dbt.mustExec("drop table if exists t")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b))")
+	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
@@ -973,14 +1097,14 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
-	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
+	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
+	c.Assert(variable.ProcessGeneralLog.Load(), IsFalse)
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")

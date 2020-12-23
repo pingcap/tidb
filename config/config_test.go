@@ -171,7 +171,7 @@ unrecognized-option-test = true
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
-	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*invalid configuration option(?:.|\n)*")
 	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
@@ -188,18 +188,25 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
-nested-loop-join-cache-capacity = 100
 max-index-length = 3080
+index-limit = 70
+table-column-count-limit = 4000
 skip-register-to-dashboard = true
+deprecate-integer-display-length = true
+txn-scope = "dc-1"
+enable-enum-length-limit = false
+stores-refresh-interval = 30
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
-enable-async-commit=true
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+[tikv-client.async-commit]
+keys-limit=123
+total-key-size-limit=1024
 [stmt-summary]
 enable=false
 enable-internal-query=true
@@ -211,6 +218,11 @@ history-size=100
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
+[labels]
+foo= "bar"
+group= "abc"
+[security]
+spilled-file-encryption-method = "plaintext"
 `)
 
 	c.Assert(err, IsNil)
@@ -229,7 +241,8 @@ engines = ["tiflash"]
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
-	c.Assert(conf.TiKVClient.EnableAsyncCommit, Equals, true)
+	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
+	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
@@ -248,11 +261,20 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.IndexLimit, Equals, 70)
+	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
+	c.Assert(len(conf.Labels), Equals, 2)
+	c.Assert(conf.Labels["foo"], Equals, "bar")
+	c.Assert(conf.Labels["group"], Equals, "abc")
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
+	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
+	c.Assert(conf.TxnScope, Equals, "dc-1")
+	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
 [log.file]
@@ -285,6 +307,15 @@ enable-telemetry = false
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, false)
+
+	_, err = f.WriteString(`
+[security]
+spilled-file-encryption-method = "aes128-ctr"
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodAES128CTR)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
@@ -445,6 +476,30 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
+func (s *testConfigSuite) TestIndexLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLimit int, shouldBeValid bool) {
+		conf.IndexLimit = indexLimit
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefIndexLimit, true)
+	checkValid(DefIndexLimit-1, false)
+	checkValid(DefMaxOfIndexLimit, true)
+	checkValid(DefMaxOfIndexLimit+1, false)
+}
+
+func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
+		conf.TableColumnCountLimit = uint32(tableColumnLimit)
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefTableColumnCountLimit, true)
+	checkValid(DefTableColumnCountLimit-1, false)
+	checkValid(DefMaxOfTableColumnCountLimit, true)
+	checkValid(DefMaxOfTableColumnCountLimit+1, false)
+}
+
 func (s *testConfigSuite) TestParsePath(c *C) {
 	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
 	c.Assert(err, IsNil)
@@ -481,7 +536,7 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
 }
@@ -518,4 +573,22 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	defaultConf.EnableTelemetry = originalEnableTelemetry
 	CheckTableBeforeDrop = originalCheckTableBeforeDrop
 	StoreGlobalConfig(originalGlobalConfig)
+}
+
+func (s *testConfigSuite) TestSecurityValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		spilledFileEncryptionMethod string
+		valid                       bool
+	}{
+		{"", false},
+		{"Plaintext", true},
+		{"plaintext123", false},
+		{"aes256-ctr", false},
+		{"aes128-ctr", true},
+	}
+	for _, tt := range tests {
+		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
 }

@@ -14,13 +14,15 @@
 package cophandler
 
 import (
+	"bytes"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/twmb/murmur3"
 	"golang.org/x/net/context"
 )
 
@@ -57,13 +60,13 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp.OtherError = err.Error()
 		return resp
 	}
-	y.Assert(len(ranges) == 1)
+	y.Assert(len(ranges) >= 1)
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
-		resp, err = handleAnalyzeIndexReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
-		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else {
-		resp, err = handleAnalyzeColumnsReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeColumnsReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
 		resp = &coprocessor.Response{
@@ -73,22 +76,54 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 	return resp
 }
 
-func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := int32(statistics.Version1)
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = *analyzeReq.IdxReq.Version
+	}
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsVer:     statsVer,
+	}
+	if analyzeReq.IdxReq.TopNSize != nil {
+		processor.topNCount = *analyzeReq.IdxReq.TopNSize
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
-	if err != nil {
-		return nil, err
+	for _, ran := range rans {
+		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if statsVer == statistics.Version2 {
+		if processor.topNCurValuePair.Count != 0 {
+			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
+		}
+		sort.Slice(processor.topNValuePairs, func(i, j int) bool {
+			if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
+				return true
+			} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
+				return false
+			}
+			return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
+		})
+		if len(processor.topNValuePairs) > int(processor.topNCount) {
+			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+		}
 	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		if statsVer == statistics.Version2 {
+			for _, valueCnt := range processor.topNValuePairs {
+				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
+				processor.cms.SubValue(h1, h2, valueCnt.Count)
+			}
+		}
+		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -97,7 +132,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 	return &coprocessor.Response{Data: data}, nil
 }
 
-func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
@@ -105,14 +140,16 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, ran kv.KeyRange, 
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
-	if err != nil {
-		return nil, err
+	for _, ran := range rans {
+		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
+		if err != nil {
+			return nil, err
+		}
 	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		cm = statistics.CMSketchToProto(processor.cms, nil)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -128,18 +165,35 @@ type analyzeIndexProcessor struct {
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
 	rowBuf       []byte
+
+	statsVer         int32
+	topNCount        int32
+	topNValuePairs   []statistics.TopNMeta
+	topNCurValuePair statistics.TopNMeta
 }
 
-func (p *analyzeIndexProcessor) Process(key, value []byte) error {
+func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
 	if err != nil {
 		return err
 	}
 	p.rowBuf = p.rowBuf[:0]
+
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
 		if p.cms != nil {
 			p.cms.InsertBytes(p.rowBuf)
+		}
+	}
+	if p.statsVer == statistics.Version2 {
+		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
+			p.topNCurValuePair.Count++
+		} else {
+			if p.topNCurValuePair.Count > 0 {
+				p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+			}
+			p.topNCurValuePair.Encoded = safeCopy(p.rowBuf)
+			p.topNCurValuePair.Count = 1
 		}
 	}
 	rowData := safeCopy(p.rowBuf)
@@ -182,6 +236,8 @@ func (p *analyzeCommonHandleProcessor) Process(key, value []byte) error {
 type analyzeColumnsExec struct {
 	skipVal
 	reader  *dbreader.DBReader
+	ranges  []kv.KeyRange
+	curRan  int
 	seekKey []byte
 	endKey  []byte
 	startTS uint64
@@ -193,7 +249,7 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
 	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
 	evalCtx := &evalContext{sc: sc}
@@ -208,8 +264,10 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analy
 	}
 	e := &analyzeColumnsExec{
 		reader:  dbReader,
-		seekKey: ran.StartKey,
-		endKey:  ran.EndKey,
+		seekKey: rans[0].StartKey,
+		endKey:  rans[0].EndKey,
+		ranges:  rans,
+		curRan:  0,
 		startTS: startTS,
 		chk:     chunk.NewChunkWithCapacity(evalCtx.fieldTps, 1),
 		decoder: decoder,
@@ -288,7 +346,13 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if req.NumRows() < req.Capacity() {
-		e.seekKey = e.endKey
+		if e.curRan == len(e.ranges)-1 {
+			e.seekKey = e.endKey
+		} else {
+			e.curRan++
+			e.seekKey = e.ranges[e.curRan].StartKey
+			e.endKey = e.ranges[e.curRan].EndKey
+		}
 	}
 	return nil
 }

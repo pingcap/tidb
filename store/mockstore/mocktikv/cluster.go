@@ -24,9 +24,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 )
 
@@ -152,7 +152,7 @@ func (c *Cluster) CancelStore(storeID uint64) {
 	c.Lock()
 	defer c.Unlock()
 
-	//A store returns context.Cancelled Error when cancel is true.
+	// A store returns context.Cancelled Error when cancel is true.
 	if store := c.stores[storeID]; store != nil {
 		store.cancel = true
 	}
@@ -198,11 +198,11 @@ func (c *Cluster) GetAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 }
 
 // AddStore add a new Store to the cluster.
-func (c *Cluster) AddStore(storeID uint64, addr string) {
+func (c *Cluster) AddStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.stores[storeID] = newStore(storeID, addr)
+	c.stores[storeID] = newStore(storeID, addr, labels...)
 }
 
 // RemoveStore removes a Store from the cluster.
@@ -237,6 +237,11 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
+	return c.getRegionByKeyNoLock(key)
+}
+
+// getRegionByKeyNoLock returns the Region and its leader whose range contains the key without Lock.
+func (c *Cluster) getRegionByKeyNoLock(key []byte) (*metapb.Region, *metapb.Peer) {
 	for _, r := range c.regions {
 		if regionContains(r.Meta.StartKey, r.Meta.EndKey, key) {
 			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
@@ -250,7 +255,7 @@ func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) 
 	c.RLock()
 	defer c.RUnlock()
 
-	currentRegion, _ := c.GetRegionByKey(key)
+	currentRegion, _ := c.getRegionByKeyNoLock(key)
 	if len(currentRegion.StartKey) == 0 {
 		return nil, nil
 	}
@@ -424,6 +429,13 @@ func (c *Cluster) ScheduleDelay(startTS, regionID uint64, dur time.Duration) {
 	c.delayMu.Lock()
 	c.delayEvents[delayKey{startTS: startTS, regionID: regionID}] = dur
 	c.delayMu.Unlock()
+}
+
+// UpdateStoreLabels merge the target and owned labels together
+func (c *Cluster) UpdateStoreLabels(storeID uint64, labels []*metapb.StoreLabel) {
+	c.Lock()
+	defer c.Unlock()
+	c.stores[storeID].mergeLabels(labels)
 }
 
 func (c *Cluster) handleDelay(startTS, regionID uint64) {
@@ -659,4 +671,26 @@ func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store 
 			Labels:  labels,
 		},
 	}
+}
+
+func (s *Store) mergeLabels(labels []*metapb.StoreLabel) {
+	if len(s.meta.Labels) < 1 {
+		s.meta.Labels = labels
+		return
+	}
+	kv := make(map[string]string, len(s.meta.Labels))
+	for _, label := range s.meta.Labels {
+		kv[label.Key] = label.Value
+	}
+	for _, label := range labels {
+		kv[label.Key] = label.Value
+	}
+	mergedLabels := make([]*metapb.StoreLabel, 0, len(kv))
+	for k, v := range kv {
+		mergedLabels = append(mergedLabels, &metapb.StoreLabel{
+			Key:   k,
+			Value: v,
+		})
+	}
+	s.meta.Labels = mergedLabels
 }

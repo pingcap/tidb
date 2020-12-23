@@ -1,4 +1,4 @@
-sig/executor:
+sig/execution:
   - distsql/*
   - executor/*
   - util/chunk/*

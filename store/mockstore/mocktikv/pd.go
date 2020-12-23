@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -69,8 +69,16 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 	return tsMu.physicalTS, tsMu.logicalTS, nil
 }
 
+func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {
+	return c.GetTS(ctx)
+}
+
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return &mockTSFuture{c, ctx, false}
+}
+
+func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
+	return c.GetTSAsync(ctx)
 }
 
 type mockTSFuture struct {
@@ -90,6 +98,10 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	region, peer := c.cluster.GetRegionByKey(key)
 	return &pd.Region{Meta: region, Leader: peer}, nil
+}
+
+func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
+	return &pd.Region{}, nil
 }
 
 func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
@@ -167,8 +179,20 @@ func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
 }
 
+func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	return nil, nil
+}
+
+func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+	return nil, nil
+}
+
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
+}
+
+func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
 }
 
 func (c *pdClient) GetLeaderAddr() string { return "mockpd" }

@@ -15,10 +15,17 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
+	"math/rand"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -406,17 +413,9 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-	_, err = tk.Exec("select std(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
-	_, err = tk.Exec("select stddev(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
-	_, err = tk.Exec("select stddev_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select var_samp(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -428,6 +427,63 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
 	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
 	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+
+	// For stddev_pop()/std()/stddev() function
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (grp int, a bigint unsigned, c char(10) not null);`)
+	tk.MustExec(`insert into t1 values (1,1,"a");`)
+	tk.MustExec(`insert into t1 values (2,2,"b");`)
+	tk.MustExec(`insert into t1 values (2,3,"c");`)
+	tk.MustExec(`insert into t1 values (3,4,"E");`)
+	tk.MustExec(`insert into t1 values (3,5,"C");`)
+	tk.MustExec(`insert into t1 values (3,6,"D");`)
+	tk.MustQuery(`select stddev_pop(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev_pop(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select std(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select std(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+std(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select stddev(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	// test null
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a int, b int);")
+	tk.MustQuery("select  stddev_pop(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  std(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  stddev(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustQuery("select stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustExec("insert into t1 values (2,null);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustExec("insert into t1 values (2,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustExec("insert into t1 values (3,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+
+	// For var_samp()/stddev_samp()
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int(11),value1 float(10,2));")
+	tk.MustExec("INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);")
+	result = tk.MustQuery("select id, stddev_pop(value1), var_pop(value1), stddev_samp(value1), var_samp(value1) from t1 group by id order by id;")
+	result.Check(testkit.Rows("1 0.816496580927726 0.6666666666666666 1 1", "2 1.118033988749895 1.25 1.2909944487358056 1.6666666666666667"))
+
+	// For issue #19676 The result of stddev_pop(distinct xxx) is wrong
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustQuery("select  stddev_pop(id) from t1;").Check(testkit.Rows("0.5"))
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustQuery("select  stddev_pop(distinct id) from t1;").Check(testkit.Rows("0.5"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {
@@ -721,10 +777,10 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 
 	// FixMe: test functional dependency of derived table
-	//tk.MustQuery("select * from (select * from t) as e group by a")
-	//tk.MustQuery("select * from (select * from t) as e group by b,d")
-	//err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	//c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	// tk.MustQuery("select * from (select * from t) as e group by a")
+	// tk.MustQuery("select * from (select * from t) as e group by b,d")
+	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	// c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
@@ -1092,4 +1148,152 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 	)`)
 	tk.MustExec(`INSERT INTO t1 VALUES (2084,0.02040000000000000000),(35324,0.02190000000000000000),(43760,0.00510000000000000000),(46084,0.01400000000000000000),(46312,0.00560000000000000000),(61632,0.02730000000000000000),(94676,0.00660000000000000000),(102244,0.01810000000000000000),(113144,0.02140000000000000000),(157024,0.02750000000000000000),(157144,0.01750000000000000000),(182076,0.02370000000000000000),(188696,0.02330000000000000000),(833,0.00390000000000000000),(6701,0.00230000000000000000),(8533,0.01690000000000000000),(13801,0.01360000000000000000),(20797,0.00680000000000000000),(36677,0.00550000000000000000),(46305,0.01290000000000000000),(76113,0.00430000000000000000),(76753,0.02400000000000000000),(92393,0.01720000000000000000),(111733,0.02690000000000000000),(152757,0.00250000000000000000),(162393,0.02760000000000000000),(167169,0.00440000000000000000),(168097,0.01360000000000000000),(180309,0.01720000000000000000),(19918,0.02620000000000000000),(58674,0.01820000000000000000),(67454,0.01510000000000000000),(70870,0.02880000000000000000),(89614,0.02530000000000000000),(106742,0.00180000000000000000),(107886,0.01580000000000000000),(147506,0.02230000000000000000),(148366,0.01340000000000000000),(167258,0.01860000000000000000),(194438,0.00500000000000000000),(10307,0.02850000000000000000),(14539,0.02210000000000000000),(27703,0.00050000000000000000),(32495,0.00680000000000000000),(39235,0.01450000000000000000),(52379,0.01640000000000000000),(54551,0.01910000000000000000),(85659,0.02330000000000000000),(104483,0.02670000000000000000),(109911,0.02040000000000000000),(114523,0.02110000000000000000),(119495,0.02120000000000000000),(137603,0.01910000000000000000),(154031,0.02580000000000000000);`)
 	tk.MustQuery("SELECT count(distinct col1) FROM t1").Check(testkit.Rows("48"))
+}
+
+func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
+	partialInfo := &executor.AggWorkerInfo{
+		Concurrency: 5,
+		WallTime:    int64(time.Second * 20),
+	}
+	finalInfo := &executor.AggWorkerInfo{
+		Concurrency: 8,
+		WallTime:    int64(time.Second * 10),
+	}
+	stats := &executor.HashAggRuntimeStats{
+		PartialConcurrency: 5,
+		PartialWallTime:    int64(time.Second * 20),
+		FinalConcurrency:   8,
+		FinalWallTime:      int64(time.Second * 10),
+	}
+	for i := 0; i < partialInfo.Concurrency; i++ {
+		stats.PartialStats = append(stats.PartialStats, &executor.AggWorkerStat{
+			TaskNum:    5,
+			WaitTime:   int64(2 * time.Second),
+			ExecTime:   int64(1 * time.Second),
+			WorkerTime: int64(i) * int64(time.Second),
+		})
+	}
+	for i := 0; i < finalInfo.Concurrency; i++ {
+		stats.FinalStats = append(stats.FinalStats, &executor.AggWorkerStat{
+			TaskNum:    5,
+			WaitTime:   int64(2 * time.Millisecond),
+			ExecTime:   int64(1 * time.Millisecond),
+			WorkerTime: int64(i) * int64(time.Millisecond),
+		})
+	}
+	expect := "partial_worker:{wall_time:20s, concurrency:5, task_num:25, tot_wait:10s, tot_exec:5s, tot_time:10s, max:4s, p95:4s}, final_worker:{wall_time:10s, concurrency:8, task_num:40, tot_wait:16ms, tot_exec:8ms, tot_time:28ms, max:7ms, p95:7ms}"
+	c.Assert(stats.String(), Equals, expect)
+	c.Assert(stats.String(), Equals, expect)
+	c.Assert(stats.Clone().String(), Equals, expect)
+	stats.Merge(stats.Clone())
+	expect = "partial_worker:{wall_time:40s, concurrency:5, task_num:50, tot_wait:20s, tot_exec:10s, tot_time:20s, max:4s, p95:4s}, final_worker:{wall_time:20s, concurrency:8, task_num:80, tot_wait:32ms, tot_exec:16ms, tot_time:56ms, max:7ms, p95:7ms}"
+	c.Assert(stats.String(), Equals, expect)
+}
+
+func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+	data := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if str, ok := row[0].(string); ok {
+			tokens := strings.Split(str, ",")
+			sort.Slice(tokens, func(i, j int) bool {
+				return tokens[i] < tokens[j]
+			})
+			data = append(data, strings.Join(tokens, ","))
+		}
+	}
+
+	sort.Slice(data, func(i, j int) bool {
+		return data[i] < data[j]
+	})
+
+	return data
+}
+
+func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
+	}
+
+	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
+	concurrencies := []int{1, 2, 4, 8}
+	var expected []string
+	for _, con := range concurrencies {
+		tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d", con))
+		if con == 1 {
+			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
+		} else {
+			er := tk.MustQuery("explain " + sql).Rows()
+			ok := false
+			for _, l := range er {
+				str := fmt.Sprintf("%v", l)
+				if strings.Contains(str, "Shuffle") {
+					ok = true
+					break
+				}
+			}
+			c.Assert(ok, Equals, true)
+			obtained := reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
+			c.Assert(len(obtained), Equals, len(expected))
+			for i := 0; i < len(obtained); i++ {
+				c.Assert(obtained[i], Equals, expected[i])
+			}
+		}
+	}
+}
+
+func (s *testSuiteAgg) TestIssue20658(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+
+	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)", "var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
+	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
+
+	sqls := make([]string, 0, len(aggFuncs))
+	for _, af := range aggFuncs {
+		sql := fmt.Sprintf(sqlFormat, af)
+		sqls = append(sqls, sql)
+	}
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	}
+
+	concurrencies := []int{1, 2, 4, 8}
+	for _, sql := range sqls {
+		var expected [][]interface{}
+		for _, con := range concurrencies {
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
+			if con == 1 {
+				expected = tk.MustQuery(sql).Sort().Rows()
+			} else {
+				er := tk.MustQuery("explain " + sql).Rows()
+				ok := false
+				for _, l := range er {
+					str := fmt.Sprintf("%v", l)
+					if strings.Contains(str, "Shuffle") {
+						ok = true
+						break
+					}
+				}
+				c.Assert(ok, Equals, true)
+				rows := tk.MustQuery(sql).Sort().Rows()
+
+				c.Assert(len(rows), Equals, len(expected))
+				for i := range rows {
+					v1, err := strconv.ParseFloat(rows[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					v2, err := strconv.ParseFloat(expected[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					c.Assert(math.Abs(v1-v2), Less, 1e-3)
+				}
+			}
+		}
+	}
 }

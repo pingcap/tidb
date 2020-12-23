@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -32,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -59,13 +63,26 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
-	doneHandle atomic.Value // nullableHandle
+
+	doneKey atomic.Value // nullable kv.Key
+
+	// element is used to record the current element in the reorg process, it can be
+	// accessed by reorg-worker and daemon-worker concurrently.
+	element atomic.Value
+
+	// warnings is used to store the warnings when doing the reorg job under
+	// a certain SQL Mode.
+	mu struct {
+		sync.Mutex
+		warnings      map[errors.ErrorID]*terror.Error
+		warningsCount map[errors.ErrorID]int64
+	}
 }
 
-// nullableHandle can store <nil> handle.
+// nullableKey can store <nil> kv.Key.
 // Storing a nil object to atomic.Value can lead to panic. This is a workaround.
-type nullableHandle struct {
-	handle kv.Handle
+type nullableKey struct {
+	key kv.Key
 }
 
 // toString is used in log to avoid nil dereference panic.
@@ -106,35 +123,80 @@ func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) setNextHandle(doneHandle kv.Handle) {
-	rc.doneHandle.Store(nullableHandle{handle: doneHandle})
+func (rc *reorgCtx) setNextKey(doneKey kv.Key) {
+	rc.doneKey.Store(nullableKey{key: doneKey})
+}
+
+func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
+	rc.element.Store(element)
+}
+
+func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	if len(warnings) == 0 || len(warningsCount) == 0 {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.mu.warnings, rc.mu.warningsCount = mergeWarningsAndWarningsCount(warnings, rc.mu.warnings, warningsCount, rc.mu.warningsCount)
+}
+
+func (rc *reorgCtx) resetWarnings() {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
+	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 }
 
 func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) getRowCountAndHandle() (int64, kv.Handle) {
+func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 	row := atomic.LoadInt64(&rc.rowCount)
-	h, _ := (rc.doneHandle.Load()).(nullableHandle)
-	return row, h.handle
+	h, _ := (rc.doneKey.Load()).(nullableKey)
+	element, _ := (rc.element.Load()).(*meta.Element)
+	return row, h.key, element
 }
 
 func (rc *reorgCtx) clean() {
 	rc.setRowCount(0)
-	rc.setNextHandle(nil)
+	rc.setNextKey(nil)
+	rc.resetWarnings()
 	rc.doneCh = nil
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+	// Sleep for reorgDelay before doing reorganization.
+	// This provides a safe window for async commit and 1PC to commit with an old schema.
+	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+	if lease > 0 {
+		cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+		reorgDelay := cfg.SafeWindow + cfg.AllowedClockDrift
+		logutil.BgLogger().Info("sleep before reorganization to make async commit safe",
+			zap.Duration("duration", reorgDelay))
+		time.Sleep(reorgDelay)
+	}
+
 	job := reorgInfo.Job
+	// This is for tests compatible, because most of the early tests try to build the reorg job manually
+	// without reorg meta info, which will cause nil pointer in here.
+	if job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{
+			SQLMode:       mysql.ModeNone,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		}
+	}
 	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		w.wg.Add(1)
 		w.reorgCtx.doneCh = make(chan error, 1)
 		// initial reorgCtx
 		w.reorgCtx.setRowCount(job.GetRowCount())
-		w.reorgCtx.setNextHandle(reorgInfo.StartHandle)
+		w.reorgCtx.setNextKey(reorgInfo.StartKey)
+		w.reorgCtx.setCurrentElement(reorgInfo.currElement)
+		w.reorgCtx.mu.warnings = make(map[errors.ErrorID]*terror.Error)
+		w.reorgCtx.mu.warningsCount = make(map[errors.ErrorID]int64)
 		go func() {
 			defer w.wg.Done()
 			w.reorgCtx.doneCh <- f()
@@ -154,36 +216,75 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
-		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
+		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		if err == nil {
-			metrics.AddIndexProgress.Set(100)
-		}
+
+		// Update a job's warnings.
+		w.mergeWarningsIntoJob(job)
+
 		w.reorgCtx.clean()
-		return errors.Trace(err)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		switch reorgInfo.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+		case model.ActionModifyColumn:
+			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+		}
+		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
+			return errors.Trace(err1)
+		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		w.reorgCtx.setNextHandle(nil)
+		w.reorgCtx.setNextKey(nil)
 		w.reorgCtx.setRowCount(0)
+		w.reorgCtx.resetWarnings()
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
+		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		updateAddIndexProgress(w, tblInfo, rowCount)
+		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
+
+		// Update a job's warnings.
+		w.mergeWarningsIntoJob(job)
+
+		w.reorgCtx.resetWarnings()
+
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
-		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
-			zap.Int64("totalAddedRowCount", rowCount), zap.String("doneHandle", toString(doneHandle)), zap.Error(err))
+		// Since daemon-worker is triggered by timer to store the info half-way.
+		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
+		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
+
+		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
+			zap.Duration("waitTime", waitTimeout),
+			zap.ByteString("elementType", currentElement.TypeKey),
+			zap.Int64("elementID", currentElement.ID),
+			zap.Int64("totalAddedRowCount", rowCount),
+			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
+			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
+	return nil
 }
 
-func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
+func (w *worker) mergeWarningsIntoJob(job *model.Job) {
+	w.reorgCtx.mu.Lock()
+	partWarnings := w.reorgCtx.mu.warnings
+	partWarningsCount := w.reorgCtx.mu.warningsCount
+	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	w.reorgCtx.mu.Unlock()
+}
+
+func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+	addedRowCount int64) {
 	if tblInfo == nil || addedRowCount == 0 {
 		return
 	}
@@ -197,7 +298,12 @@ func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount i
 	if progress > 1 {
 		progress = 1
 	}
-	metrics.AddIndexProgress.Set(progress * 100)
+	switch reorgInfo.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+	case model.ActionModifyColumn:
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+	}
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
@@ -246,23 +352,25 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 type reorgInfo struct {
 	*model.Job
 
-	// StartHandle is the first handle of the adding indices table.
-	StartHandle kv.Handle
-	// EndHandle is the last handle of the adding indices table.
-	EndHandle kv.Handle
-	d         *ddlCtx
-	first     bool
+	StartKey kv.Key
+	EndKey   kv.Key
+	d        *ddlCtx
+	first    bool
 	// PhysicalTableID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+	elements        []*meta.Element
+	currElement     *meta.Element
 }
 
 func (r *reorgInfo) String() string {
-	return "StartHandle:" + toString(r.StartHandle) + "," +
-		"EndHandle:" + toString(r.EndHandle) + "," +
-		"first:" + strconv.FormatBool(r.first) + "," +
+	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
+		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
+		"StartHandle:" + tryDecodeToHandleString(r.StartKey) + "," +
+		"EndHandle:" + tryDecodeToHandleString(r.EndKey) + "," +
+		"First:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
 }
 
@@ -312,10 +420,16 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := ranger.FullIntRange(false)
-	var builder distsql.RequestBuilder
-	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
-		SetDAGRequest(dagPB).
+	var b distsql.RequestBuilder
+	var builder *distsql.RequestBuilder
+	var ranges []*ranger.Range
+	if tbl.Meta().IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges, nil)
+	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
@@ -339,6 +453,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
 func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var handleCols []*model.ColumnInfo
+	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
 	switch {
 	case tblInfo.PKIsHandle:
@@ -349,7 +464,7 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 			}
 		}
 	case tblInfo.IsCommonHandle:
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkIdx = tables.FindPrimaryIndex(tblInfo)
 		cols := tblInfo.Cols()
 		for _, idxCol := range pkIdx.Columns {
 			handleCols = append(handleCols, cols[idxCol.Offset])
@@ -379,18 +494,20 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 	sessCtx := newContext(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
+		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols []*model.ColumnInfo) (kv.Handle, error) {
+func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		fieldTypes = append(fieldTypes, &col.FieldType)
 	}
 	datumRow := row.GetDatumRow(fieldTypes)
+	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
 	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)
@@ -401,31 +518,35 @@ func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols
 }
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle kv.Handle, err error) {
+func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil, true,
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			startHandle = h
+			startHandleKey = rowKey
 			return false, nil
 		})
 	if err != nil {
-		return startHandle, endHandle, errors.Trace(err)
+		return startHandleKey, endHandleKey, errors.Trace(err)
 	}
-	var emptyTable bool
-	endHandle, emptyTable, err = d.GetTableMaxHandle(snapshotVer, tbl)
+	maxHandle, isEmptyTable, err := d.GetTableMaxHandle(snapshotVer, tbl)
 	if err != nil {
-		return startHandle, endHandle, errors.Trace(err)
+		return startHandleKey, nil, errors.Trace(err)
 	}
-	if emptyTable || endHandle.Compare(startHandle) < 0 {
+	if maxHandle != nil {
+		endHandleKey = tbl.RecordKey(maxHandle)
+	}
+	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
-			zap.Int64("table/partition ID", tbl.GetPhysicalID()), zap.String("endHandle", toString(endHandle)), zap.String("startHandle", toString(startHandle)))
-		endHandle = startHandle
+			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
+			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
+			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
+		endHandleKey = startHandleKey
 	}
 	return
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {
@@ -434,15 +555,28 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
+func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	var (
-		start kv.Handle
-		end   kv.Handle
-		pid   int64
-		info  reorgInfo
+		element *meta.Element
+		start   kv.Key
+		end     kv.Key
+		pid     int64
+		info    reorgInfo
 	)
 
 	if job.SnapshotVer == 0 {
+		// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
+		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
+		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
+				if err := t.RemoveReorgElement(job); err != nil {
+					failpoint.Return(nil, errors.Trace(err))
+				}
+				info.first = true
+				failpoint.Return(&info, nil)
+			}
+		})
+
 		info.first = true
 		// get the current version for reorganization if we don't have
 		ver, err := getValidCurrentVersion(d.store)
@@ -464,37 +598,124 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		logutil.BgLogger().Info("[ddl] job get table range",
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
+			zap.String("startHandle", tryDecodeToHandleString(start)),
+			zap.String("endHandle", tryDecodeToHandleString(end)))
 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = t.UpdateDDLReorgHandle(job, start, end, pid)
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
+		element = elements[0]
 	} else {
+		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
+			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
+			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
+			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
+				if err := t.RemoveReorgElement(job); err != nil {
+					failpoint.Return(nil, errors.Trace(err))
+				}
+			}
+		})
+
 		var err error
-		start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
+		element, start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
-			return nil, errors.Trace(err)
+			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
+			// It's compatible with the older TiDB versions.
+			// We'll try to remove it in the next major TiDB version.
+			if meta.ErrDDLReorgElementNotExist.Equal(err) {
+				job.SnapshotVer = 0
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+			}
+			return &info, errors.Trace(err)
 		}
 	}
 	info.Job = job
 	info.d = d
-	info.StartHandle = start
-	info.EndHandle = end
+	info.StartKey = start
+	info.EndKey = end
 	info.PhysicalTableID = pid
+	info.currElement = element
+	info.elements = elements
 
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
-	if startHandle == nil && endHandle == nil {
+func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+	var (
+		element *meta.Element
+		start   kv.Key
+		end     kv.Key
+		pid     int64
+		info    reorgInfo
+	)
+	if job.SnapshotVer == 0 {
+		info.first = true
+		// get the current version for reorganization if we don't have
+		ver, err := getValidCurrentVersion(d.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pid = partitionIDs[0]
+		tb := tbl.(table.PartitionedTable).GetPartition(pid)
+		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
+			zap.String("startHandle", tryDecodeToHandleString(start)),
+			zap.String("endHandle", tryDecodeToHandleString(end)))
+
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
+		// Update info should after data persistent.
+		job.SnapshotVer = ver.Ver
+		element = elements[0]
+	} else {
+		var err error
+		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		if err != nil {
+			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
+			// It's compatible with the older TiDB versions.
+			// We'll try to remove it in the next major TiDB version.
+			if meta.ErrDDLReorgElementNotExist.Equal(err) {
+				job.SnapshotVer = 0
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+			}
+			return &info, errors.Trace(err)
+		}
+	}
+	info.Job = job
+	info.d = d
+	info.StartKey = start
+	info.EndKey = end
+	info.PhysicalTableID = pid
+	info.currElement = element
+	info.elements = elements
+
+	return &info, nil
+}
+
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
-	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
+
+	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }

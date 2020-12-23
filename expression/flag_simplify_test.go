@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,18 +25,18 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-var _ = Suite(&testSuite2{})
+var _ = Suite(&testFlagSimplifySuite{})
 
-type testSuite2 struct {
+type testFlagSimplifySuite struct {
 	store    kv.Storage
 	dom      *domain.Domain
 	ctx      sessionctx.Context
 	testData testutil.TestData
 }
 
-func (s *testSuite2) cleanEnv(c *C) {
+func (s *testFlagSimplifySuite) cleanEnv(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_partition")
+	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
@@ -44,45 +44,38 @@ func (s *testSuite2) cleanEnv(c *C) {
 	}
 }
 
-func (s *testSuite2) SetUpSuite(c *C) {
+func (s *testFlagSimplifySuite) SetUpSuite(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	s.ctx = mock.NewContext()
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "partition_pruner")
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "flag_simplify")
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite2) TearDownSuite(c *C) {
+func (s *testFlagSimplifySuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testSuite2) TestHashPartitionPruner(c *C) {
+func (s *testFlagSimplifySuite) TestSimplifyExpressionByFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database test_partition")
-	tk.MustExec("use test_partition")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t2(id int, a int, b int, primary key(id, a)) partition by hash(id + a) partitions 10;")
-	tk.MustExec("create table t1(id int primary key, a int, b int) partition by hash(id) partitions 10;")
-	tk.MustExec("create table t3(id int, a int, b int, primary key(id, a)) partition by hash(id) partitions 10;")
-	tk.MustExec("create table t4(d datetime, a int, b int, primary key(d, a)) partition by hash(year(d)) partitions 10;")
-	tk.MustExec("create table t5(d date, a int, b int, primary key(d, a)) partition by hash(month(d)) partitions 10;")
-	tk.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
-	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a bigint unsigned not null, b bigint unsigned)")
 
 	var input []string
 	var output []struct {
-		SQL    string
-		Result []string
+		SQL  string
+		Plan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

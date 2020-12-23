@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -23,11 +24,14 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -155,6 +159,69 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	tk2.MustQuery("show grants")
 }
 
+func (s *testSuite5) TestShowStatsPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user show_stats")
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
+	_, err = tk1.Exec("show stats_meta")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_BUCKETS")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_HEALTHY")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	tk.MustExec("grant select on mysql.* to show_stats")
+	tk1.MustExec("show stats_meta")
+	tk1.MustExec("SHOW STATS_BUCKETS")
+	tk1.MustExec("SHOW STATS_HEALTHY")
+	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+}
+
+func (s *testSuite5) TestIssue18878(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	tk.MustQuery("show grants")
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	err = tk.QueryToErr("show grants for root@127.0.0.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error())
+	err = tk.QueryToErr("show grants for root@localhost")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "localhost").Error())
+	err = tk.QueryToErr("show grants for root@1.1.1.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error())
+	tk.MustExec("create user `show_grants`@`127.0.%`")
+	err = tk.QueryToErr("show grants for `show_grants`@`127.0.0.1`")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error())
+	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
+}
+
+func (s *testSuite5) TestIssue17794(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'root'@'8.8.%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se1, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil), IsTrue)
+	tk1.Se = se1
+
+	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk1.MustQuery("show grants").Check(testkit.Rows("GRANT USAGE ON *.* TO 'root'@'8.8.%'"))
+}
+
 func (s *testSuite5) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
@@ -197,11 +264,10 @@ func (s *testSuite5) TestShow2(c *C) {
 
 	tk.MustExec("set global autocommit=0")
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 0"))
+	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit OFF"))
 	tk.MustExec("set global autocommit = 1")
 	tk2 := testkit.NewTestKit(c, s.store)
-	// TODO: In MySQL, the result is "autocommit ON".
-	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit ON"))
 
 	// TODO: Specifying the charset for national char/varchar should not be supported.
 	tk.MustExec("drop table if exists test_full_column")
@@ -289,6 +355,12 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("seq SEQUENCE", "t BASE TABLE", "v VIEW"))
+
+	// Bug 19427
+	tk.MustQuery("SHOW FULL TABLES in INFORMATION_SCHEMA like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
+	tk.MustQuery("SHOW FULL TABLES in information_schema like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
+	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
+
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -469,7 +541,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -554,6 +626,17 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
+
+	// for issue #20446
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c int unsigned default 0);")
+	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+		""+
+			"t1 CREATE TABLE `t1` (\n"+
+			"  `c` int(10) unsigned DEFAULT '0'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t1")
 
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
@@ -675,7 +758,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT 11\n"+
+			"  `a` int(11) DEFAULT '11'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
@@ -726,6 +809,70 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+	// Test issue #20327
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as ('a'));")
+	result := tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+	result = tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
+
+	// Test show list partition table
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST (`id`) (\n"+
+			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
+			")"))
+	// Test show list column partition table
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(id) (\n"+
+			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
+			")"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
+    	partition p0 values in ((3, '1'), (5, '5')),
+    	partition p1 values in ((1, '1')));`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(id,name) (\n"+
+			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
+			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
+			")"))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -864,6 +1011,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
+func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -898,9 +1066,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	c.Assert(267, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[266][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -935,4 +1103,122 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2), b varchar(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int DEFAULT NULL,\n" +
+		"  `b` varchar(2) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(10), b bigint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bigint DEFAULT NULL,\n" +
+		"  `b` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
+	// Here it will occur 2 warnings.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` tinyint DEFAULT NULL,\n" +
+		"  `c` tinyint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(5), b smallint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` smallint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(5), b mediumint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` mediumint DEFAULT NULL,\n" +
+		"  `b` mediumint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL,\n" +
+		"  `c` mediumint DEFAULT NULL,\n" +
+		"  `d` int DEFAULT NULL,\n" +
+		"  `e` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
+	// Test for switch variable which shouldn't seen by users.
+	for _, one := range variable.FeatureSwitchVariables {
+		res := tk.MustQuery("show variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+		res = tk.MustQuery("show global variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+	}
+}
+
+func (s *testSuite5) TestIssue19507(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+
+	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
+	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
 }

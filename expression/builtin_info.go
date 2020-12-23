@@ -18,9 +18,7 @@
 package expression
 
 import (
-	"encoding/hex"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -28,11 +26,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
@@ -757,35 +753,23 @@ func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	return decodeKey(b.ctx, s), false, nil
+	decode := func(ctx sessionctx.Context, s string) string { return s }
+	if fn := b.ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
+		decode = fn.(func(ctx sessionctx.Context, s string) string)
+	}
+	return decode(b.ctx, s), false, nil
 }
 
-func decodeKey(ctx sessionctx.Context, s string) string {
-	key, err := hex.DecodeString(s)
-	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-		return s
-	}
-	// Auto decode byte if needed.
-	_, bs, err := codec.DecodeBytes(key, nil)
-	if err == nil {
-		key = bs
-	}
-	// Try to decode it as a record key.
-	tableID, handle, err := tablecodec.DecodeRecordKey(key)
-	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
-	}
-	// Try decode as table index key.
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + strings.Join(indexValues, ",")
-	}
+// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
+type TiDBDecodeKeyFunctionKeyType int
 
-	// TODO: try to decode other type key.
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-	return s
+// String() implements Stringer.
+func (k TiDBDecodeKeyFunctionKeyType) String() string {
+	return "tidb_decode_key"
 }
+
+// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
+const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
 
 type tidbDecodePlanFunctionClass struct {
 	baseFunctionClass
@@ -819,7 +803,10 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 		return "", isNull, err
 	}
 	planTree, err := plancodec.DecodePlan(planString)
-	return planTree, false, err
+	if err != nil {
+		return planString, false, nil
+	}
+	return planTree, false, nil
 }
 
 type nextValFunctionClass struct {
@@ -1002,7 +989,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
 }
@@ -1039,7 +1026,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flag |= mysql.UnsignedFlag
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil
 }

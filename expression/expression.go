@@ -48,9 +48,13 @@ const (
 )
 
 // EvalAstExpr evaluates ast expression directly.
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // RewriteAstExpr rewrites ast expression directly.
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
@@ -200,6 +204,16 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// ExprNotNull checks if an expression is possible to be null.
+func ExprNotNull(expr Expression) bool {
+	if c, ok := expr.(*Constant); ok {
+		return !c.Value.IsNull()
+	}
+	// For ScalarFunction, the result would not be correct until we support maintaining
+	// NotNull flag for it.
+	return mysql.HasNotNullFlag(expr.GetType().Flag)
+}
+
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
 //		INSERT INTO t VALUES ("999999999999999999");
@@ -321,17 +335,26 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
-		eType := expr.GetType().EvalType()
+		tp := expr.GetType()
+		eType := tp.EvalType()
+		if CanImplicitEvalReal(expr) {
+			eType = types.ETReal
+		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, input, buf); err != nil {
+		// Take the implicit evalReal path if possible.
+		if CanImplicitEvalReal(expr) {
+			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+				return nil, nil, err
+			}
+		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
+		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -371,7 +394,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -430,11 +453,28 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
-				if err != nil {
-					return err
+				var fVal float64
+				var err error
+				sVal := buf.GetString(i)
+				if tp.Hybrid() {
+					switch tp.Tp {
+					case mysql.TypeEnum, mysql.TypeSet:
+						fVal = float64(len(sVal))
+					case mysql.TypeBit:
+						var bl types.BinaryLiteral = buf.GetBytes(i)
+						iVal, err := bl.ToInt(sc)
+						if err != nil {
+							return err
+						}
+						fVal = float64(iVal)
+					}
+				} else {
+					fVal, err = types.StrToFloat(sc, sVal, false)
+					if err != nil {
+						return err
+					}
 				}
-				if iVal == 0 {
+				if fVal == 0 {
 					isZero[i] = 0
 				} else {
 					isZero[i] = 1
@@ -470,11 +510,36 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 	return nil
 }
 
+func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+		err = expr.VecEvalReal(ctx, input, result)
+	} else {
+		ind, n := 0, input.NumRows()
+		iter := chunk.NewIterator4Chunk(input)
+		result.ResizeFloat64(n, false)
+		f64s := result.Float64s()
+		for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+			value, isNull, err := expr.EvalReal(ctx, it)
+			if err != nil {
+				return err
+			}
+			if isNull {
+				result.SetNull(ind, isNull)
+			} else {
+				f64s[ind] = value
+			}
+			ind++
+		}
+	}
+	return
+}
+
 // EvalExpr evaluates this expr according to its type.
 // And it selects the method for evaluating expression based on
 // the environment variables and whether the expression can be vectorized.
-func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	evalType := expr.GetType().EvalType()
+// Note: the input argument `evalType` is needed because of that when `expr` is
+// of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
+func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -727,7 +792,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -777,9 +842,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
@@ -788,7 +850,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -806,9 +868,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
@@ -897,7 +956,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
-		ast.IsTruth,
+		ast.IsTruthWithoutNull,
+		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
 		// arithmetical functions.
@@ -1007,7 +1067,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4,
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
-		ast.IsIPv6:
+		ast.IsIPv6,
+		ast.UUID:
 		ret = true
 
 	// A special case: Only push down Round by signature
@@ -1119,7 +1180,9 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 		return false
 	}
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		return pc.columnToPBExpr(x) != nil
@@ -1179,7 +1242,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsDecimal:
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
+			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
 			return true
 		default:
 			return false
@@ -1187,6 +1254,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		default:
+			return false
+		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundDec:
 			return true
 		default:
 			return false
@@ -1214,15 +1289,23 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }

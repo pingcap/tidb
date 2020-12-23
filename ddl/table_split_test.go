@@ -75,7 +75,7 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	var loc *tikv.KeyLocation
 	var err error
 	cache := store.GetRegionCache()
-	loc, err = cache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 5000, nil), regionStartKey)
+	loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
 	c.Assert(err, IsNil)
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)

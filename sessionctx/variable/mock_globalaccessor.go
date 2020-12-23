@@ -24,7 +24,7 @@ func NewMockGlobalAccessor() *MockGlobalAccessor {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
-	v, ok := SysVars[name]
+	v, ok := sysVars[name]
 	if ok {
 		return v.Value, nil
 	}

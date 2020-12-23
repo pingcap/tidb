@@ -225,7 +225,22 @@ explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1
 drop table t;
 CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
     i int(10) unsigned DEFAULT NULL,
-    x int(10) unsigned DEFAULT 0,
+    x int(10) unsigned DEFAULT '0',
     PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
+
+# for issue 21692
+create table precise_types (
+    a BIGINT UNSIGNED NOT NULL,
+    b BIGINT NOT NULL,
+    c DECIMAL(21,1) NOT NULL,
+    d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+    18446744073709551614,
+    -9223372036854775806,
+    99999999999999999999,
+    18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;

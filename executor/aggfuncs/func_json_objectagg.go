@@ -14,12 +14,19 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
+)
+
+const (
+	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
+	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
 )
 
 type jsonObjectAgg struct {
@@ -33,7 +40,7 @@ type partialResult4JsonObjectAgg struct {
 func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
-	return PartialResult(&p), 0
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -97,12 +104,44 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString))
+				memDelta += getValMemDelta(realVal)
+			}
 			p.entries[keyString] = realVal
 		default:
 			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return 0, nil
+	return memDelta, nil
+}
+
+func getValMemDelta(val interface{}) (memDelta int64) {
+	memDelta = DefInterfaceSize
+	switch v := val.(type) {
+	case bool:
+		memDelta += DefBoolSize
+	case int64:
+		memDelta += DefInt64Size
+	case uint64:
+		memDelta += DefUint64Size
+	case float64:
+		memDelta += DefFloat64Size
+	case string:
+		memDelta += int64(len(v))
+	case json.BinaryJSON:
+		// +1 for the memory usage of the TypeCode of json
+		memDelta += int64(len(v.Value) + 1)
+	case *types.MyDecimal:
+		memDelta += DefMyDecimalSize
+	case []uint8:
+		memDelta += int64(len(v))
+	case types.Time:
+		memDelta += DefTimeSize
+	case types.Duration:
+		memDelta += DefDurationSize
+	}
+	return memDelta
 }
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {

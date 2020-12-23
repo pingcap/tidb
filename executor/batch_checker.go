@@ -15,7 +15,9 @@ package executor
 
 import (
 	"context"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,20 +30,14 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-type keyValue struct {
-	key   kv.Key
-	value []byte
-}
-
 type keyValueWithDupInfo struct {
-	newKV        keyValue
+	newKey       kv.Key
 	dupErr       error
 	commonHandle bool
 }
 
 type toBeCheckedRow struct {
 	row        []types.Datum
-	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
@@ -110,10 +106,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
-	newRowValue, err := encodeNewRow(ctx, t, row)
-	if err != nil {
-		return nil, err
-	}
 	// Append record keys and errors.
 	var handle kv.Handle
 	if t.Meta().IsCommonHandle {
@@ -131,15 +123,31 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
+		fn := func() string {
+			var str string
+			var err error
+			if t.Meta().IsCommonHandle {
+				data := make([]types.Datum, len(handleCols))
+				for i, col := range handleCols {
+					data[i] = row[col.Offset]
+				}
+				str, err = formatDataForDupError(data)
+			} else {
+				str, err = row[handleCols[0].Offset].ToString()
+			}
+			if err != nil {
+				return kv.GetDuplicateErrorHandleString(handle)
+			}
+			return str
+		}
 		handleKey = &keyValueWithDupInfo{
-			newKV: keyValue{
-				key:   t.RecordKey(handle),
-				value: newRowValue,
-			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(handle.String), "PRIMARY"),
+			newKey: t.RecordKey(handle),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
 
+	// addChangingColTimes is used to fetch values while processing "modify/change column" operation.
+	addChangingColTimes := 0
 	// append unique keys and errors
 	for _, v := range t.WritableIndices() {
 		if !v.Meta().Unique {
@@ -147,6 +155,12 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		if t.Meta().IsCommonHandle && v.Meta().Primary {
 			continue
+		}
+		if len(row) < len(t.WritableCols()) && addChangingColTimes == 0 {
+			if col := tables.FindChangingCol(t.WritableCols(), v.Meta()); col != nil {
+				row = append(row, row[col.DependencyColumnOffset])
+				addChangingColTimes++
+			}
 		}
 		colVals, err1 := v.FetchValues(row, nil)
 		if err1 != nil {
@@ -163,24 +177,38 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
-		colValStr, err1 := types.DatumsToString(colVals, false)
+		colValStr, err1 := formatDataForDupError(colVals)
 		if err1 != nil {
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKV:        keyValue{key: key},
+			newKey:       key,
 			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
 			commonHandle: t.Meta().IsCommonHandle,
 		})
 	}
+	if addChangingColTimes == 1 {
+		row = row[:len(row)-1]
+	}
 	result = append(result, toBeCheckedRow{
 		row:        row,
-		rowValue:   newRowValue,
 		handleKey:  handleKey,
 		uniqueKeys: uniqueKeys,
 		t:          t,
 	})
 	return result, nil
+}
+
+func formatDataForDupError(data []types.Datum) (string, error) {
+	strs := make([]string, 0, len(data))
+	for _, datum := range data {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	return strings.Join(strs, "-"), nil
 }
 
 // getOldRow gets the table record row from storage for batch check.

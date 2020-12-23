@@ -159,7 +159,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	executorID := ""
 	if storeType == kv.TiFlash && p.IsGlobalRead {
 		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
+		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, p.Ranges, nil)
+		if err != nil {
+			return nil, err
+		}
 		for _, keyRange := range ranges {
 			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
 		}
@@ -202,6 +205,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
+		} else if col.ID == model.ExtraPidColID {
+			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}
@@ -254,20 +259,57 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	if err != nil {
 		return nil, err
 	}
+
+	leftConditions, err := expression.ExpressionsToPBList(sc, p.LeftConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	rightConditions, err := expression.ExpressionsToPBList(sc, p.RightConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	otherConditions, err := expression.ExpressionsToPBList(sc, p.OtherConditions, client)
+	if err != nil {
+		return nil, err
+	}
+
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {
 	case LeftOuterJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case SemiJoin:
+		pbJoinType = tipb.JoinType_TypeSemiJoin
+	case AntiSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiSemiJoin
+	case LeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeLeftOuterSemiJoin
+	case AntiLeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
+	}
+	probeFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	for _, equalCondition := range p.EqualConditions {
+		retType := equalCondition.RetType.Clone()
+		chs, coll := equalCondition.CharsetAndCollation(ctx)
+		retType.Charset = chs
+		retType.Collate = coll
+		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))
+		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
 	}
 	join := &tipb.Join{
-		JoinType:      pbJoinType,
-		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
-		InnerIdx:      int64(p.InnerChildIdx),
-		LeftJoinKeys:  left,
-		RightJoinKeys: right,
-		Children:      []*tipb.Executor{lChildren, rChildren},
+		JoinType:        pbJoinType,
+		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:        int64(p.InnerChildIdx),
+		LeftJoinKeys:    left,
+		RightJoinKeys:   right,
+		ProbeTypes:      probeFiledTypes,
+		BuildTypes:      buildFiledTypes,
+		LeftConditions:  leftConditions,
+		RightConditions: rightConditions,
+		OtherConditions: otherConditions,
+		Children:        []*tipb.Executor{lChildren, rChildren},
 	}
 
 	executorID := p.ExplainID().String()
@@ -282,7 +324,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		if c.IsGenerated() && !c.GeneratedStored {
 			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
 		}
-		if c.OriginDefaultValue == nil {
+		if c.GetOriginDefaultValue() == nil {
 			continue
 		}
 

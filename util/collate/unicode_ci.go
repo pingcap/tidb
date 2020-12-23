@@ -13,17 +13,109 @@
 
 package collate
 
+import (
+	"github.com/pingcap/tidb/util/stringutil"
+)
+
+const (
+	// magic number indicate weight has 2 uint64, should get from `longRuneMap`
+	longRune uint64 = 0xFFFD
+)
+
+// unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicodeCICollator struct {
 }
 
-// Compare implements Collator interface. Always return 0 temporary, will change when implement
+// Compare implements Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
-	return 0
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+	// weight of a, b. weight in unicode_ci may has 8 uint16s. xn indicate first 4 u16s, xs indicate last 4 u16s
+	an, bn := uint64(0), uint64(0)
+	as, bs := uint64(0), uint64(0)
+	// rune of a, b
+	ar, br := rune(0), rune(0)
+	// decode index of a, b
+	ai, bi := 0, 0
+	for {
+		if an == 0 {
+			if as == 0 {
+				for an == 0 && ai < len(a) {
+					ar, ai = decodeRune(a, ai)
+					an, as = convertRuneUnicodeCI(ar)
+				}
+			} else {
+				an = as
+				as = 0
+			}
+		}
+
+		if bn == 0 {
+			if bs == 0 {
+				for bn == 0 && bi < len(b) {
+					br, bi = decodeRune(b, bi)
+					bn, bs = convertRuneUnicodeCI(br)
+				}
+			} else {
+				bn = bs
+				bs = 0
+			}
+		}
+
+		if an == 0 || bn == 0 {
+			return sign(int(an) - int(bn))
+		}
+
+		if an == bn {
+			an, bn = 0, 0
+			continue
+		}
+
+		for an != 0 && bn != 0 {
+			if (an^bn)&0xFFFF == 0 {
+				an >>= 16
+				bn >>= 16
+			} else {
+				return sign(int(an&0xFFFF) - int(bn&0xFFFF))
+			}
+		}
+	}
 }
 
-// Key implements Collator interface. Always return nothing temporary, will change when implement
+// Key implements Collator interface.
 func (uc *unicodeCICollator) Key(str string) []byte {
-	return []byte{}
+	str = truncateTailingSpace(str)
+	buf := make([]byte, 0, len(str)*2)
+	r := rune(0)
+	si := 0                        // decode index of s
+	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
+
+	for si < len(str) {
+		r, si = decodeRune(str, si)
+		sn, ss = convertRuneUnicodeCI(r)
+		for sn != 0 {
+			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
+			sn >>= 16
+		}
+		for ss != 0 {
+			buf = append(buf, byte((ss&0xFF00)>>8), byte(ss))
+			ss >>= 16
+		}
+	}
+	return buf
+}
+
+// convert rune to weights.
+// `first` represent first 4 uint16 weights of rune
+// `second` represent last 4 uint16 weights of rune if exist, 0 if not
+func convertRuneUnicodeCI(r rune) (first, second uint64) {
+	if r > 0xFFFF {
+		return 0xFFFD, 0
+	}
+	if mapTable[r] == longRune {
+		return longRuneMap[r][0], longRuneMap[r][1]
+	}
+	return mapTable[r], 0
 }
 
 // Pattern implements Collator interface.
@@ -36,12 +128,27 @@ type unicodePattern struct {
 	patTypes []byte
 }
 
-// Compile implements WildcardPattern interface. Do nothing temporary, will change when implement
+// Compile implements WildcardPattern interface.
 func (p *unicodePattern) Compile(patternStr string, escape byte) {
-
+	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
-// DoMatch implements WildcardPattern interface. Always return false temporary, will change when implement
+// DoMatch implements WildcardPattern interface.
 func (p *unicodePattern) DoMatch(str string) bool {
-	return false
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		if a > 0xFFFF || b > 0xFFFF {
+			return a == b
+		}
+
+		ar, br := mapTable[a], mapTable[b]
+		if ar != br {
+			return false
+		}
+
+		if ar == longRune {
+			return a == b
+		}
+
+		return true
+	})
 }

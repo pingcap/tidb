@@ -656,6 +656,7 @@ func main() {
 		"set @@tidb_window_concurrency=4",
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
+		"set @@tidb_enable_clustered_index=0;",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {

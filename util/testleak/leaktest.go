@@ -51,6 +51,7 @@ func interestingGoroutines() (gs []string) {
 		"interestingGoroutines",
 		"runtime.MHeap_Scavenger",
 		"created by os/signal.init",
+		"gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun",
 		// these go routines are async terminated, so they may still alive after test end, thus cause
 		// false positive leak failures
 		"google.golang.org/grpc.(*addrConn).resetTransport",
@@ -58,11 +59,13 @@ func interestingGoroutines() (gs []string) {
 		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
+		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*tikvStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
-		"github.com/pingcap/badger.(*writeWorker).runMergeLSM",
+		"github.com/pingcap/badger",
+		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {

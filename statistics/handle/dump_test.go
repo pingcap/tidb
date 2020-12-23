@@ -147,10 +147,10 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	for i := 0; i < 30; i++ {
 		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
 	}
-	cms, _, _ := statistics.NewCMSketchWithTopN(5, 2048, fakeData, 20, 100)
+	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.CurStatsVersion, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -183,4 +183,41 @@ func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
 	h := s.do.StatsHandle()
 	_, err = h.DumpStatsToJSON("test", tbl.Meta(), nil)
 	c.Assert(err, IsNil)
+}
+
+func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustExec("analyze table t")
+
+	is := s.do.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tbl := h.GetTableStats(tableInfo.Meta())
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	c.Assert(err, IsNil)
+	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	c.Assert(err, IsNil)
+	assertTableEqual(c, loadTbl, tbl)
+
+	cleanEnv(c, s.store, s.do)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		c.Assert(h.Update(is), IsNil)
+		wg.Done()
+	}()
+	err = h.LoadStatsFromJSON(is, jsonTbl)
+	wg.Wait()
+	c.Assert(err, IsNil)
+	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
+	assertTableEqual(c, loadTblInStorage, tbl)
 }

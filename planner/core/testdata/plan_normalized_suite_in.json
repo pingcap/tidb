@@ -24,7 +24,28 @@
 			"delete from t1",
 			"delete from t1 where a>0 and b=1 and c!=2",
 			"create table t1_tmp (a int)",
-			"alter table t1_tmp add column c int"
+			"alter table t1_tmp add column c int",
+			"insert into t3 values (4,20),(30,30)",
+			"select * from t3 where a=4",
+			"select * from t3 where a=30",
+			"select * from t4 where a=10",
+			"select * from t4 where a=20"
+		]
+	},
+	{
+		"name": "TestPreferRangeScan",
+		"cases": [
+			"select * from test where age=5;",
+			"select * from test where age=5;"
+		]
+	},
+	{
+		"name": "TestNormalizedPlanForDiffStore",
+		"cases": [
+			"explain select /*+ read_from_storage(tiflash[t1]) */ * from t1",
+			"explain select /*+ read_from_storage(tikv[t1]) */ * from t1",
+			"explain select /*+ read_from_storage(tiflash[t1]) */ a+b from t1 where a+b < 1",
+			"explain select /*+ read_from_storage(tikv[t1]) */ a+b from t1 where a+b < 1"
 		]
 	}
 ]

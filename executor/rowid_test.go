@@ -64,6 +64,7 @@ func (s *testSuite1) TestExportRowID(c *C) {
 func (s *testSuite1) TestNotAllowWriteRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table tt(id binary(10), c int, primary key(id));")
 	tk.MustExec("insert tt values (1, 10);")
 	// select statement

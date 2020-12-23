@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -52,7 +52,8 @@ type testExecSerialSuite struct {
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []*util.ProcessInfo
+	PS       []*util.ProcessInfo
+	serverID uint64
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -75,10 +76,20 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager) KillAllConnections() {
 }
 
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return msm.serverID
+}
+
+func (msm *mockSessionManager) SetServerID(serverID uint64) {
+	msm.serverID = serverID
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
@@ -109,7 +120,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, nil),
+		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -235,6 +246,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 		FieldsInfo: &ast.FieldsClause{
 			Enclosed:   '"',
 			Terminated: ",",
+			Escaped:    '\\',
 		},
 	}
 
@@ -246,6 +258,33 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
 	c.Assert(err, IsNil)
+}
+
+func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
+	tests := []struct {
+		input      string
+		escapeChar byte
+		expected   []string
+	}{
+		{
+			`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`,
+			byte(0), // escaped by ''
+			[]string{`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`},
+		},
+	}
+
+	for _, test := range tests {
+		ldInfo := LoadDataInfo{
+			FieldsInfo: &ast.FieldsClause{
+				Enclosed:   '"',
+				Terminated: ",",
+				Escaped:    test.escapeChar,
+			},
+		}
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {
@@ -268,7 +307,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -278,7 +317,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -304,7 +343,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -334,7 +373,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -356,7 +395,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx = mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
 	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
 	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt = mockDataSourceParameters{
@@ -367,7 +406,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource = buildMockDataSource(opt)
 	exec = &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -390,4 +429,20 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	c.Assert(len(exec.partitionList) <= 4, IsTrue)
 	err = exec.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
+	stats := &slowQueryRuntimeStats{
+		totalFileNum: 2,
+		readFileNum:  2,
+		readFile:     time.Second,
+		initialize:   time.Millisecond,
+		readFileSize: 1024 * 1024 * 1024,
+		parseLog:     int64(time.Millisecond * 100),
+		concurrent:   15,
+	}
+	c.Assert(stats.String(), Equals, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
 }

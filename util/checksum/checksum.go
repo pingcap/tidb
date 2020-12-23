@@ -151,6 +151,9 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 			err = nil
 			// continue if n > 0 and r.err is io.EOF
 		}
+		if n < checksumSize {
+			return nn, errChecksumFail
+		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(buf)
 		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))

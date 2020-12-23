@@ -40,7 +40,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(&ConnTestSuite{})
+var _ = SerialSuites(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -160,6 +160,32 @@ func (ts *ConnTestSuite) TestIssue1768(c *C) {
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 
+func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
+	c.Parallel()
+	// this data is from a MySQL 8.0 client
+	data := []byte{
+		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x72, 0x6f,
+		0x6f, 0x74, 0x0, 0x0, 0x63, 0x61, 0x63, 0x68, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x68, 0x61,
+		0x32, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x0, 0x79, 0x4, 0x5f, 0x70,
+		0x69, 0x64, 0x5, 0x37, 0x37, 0x30, 0x38, 0x36, 0x9, 0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66,
+		0x6f, 0x72, 0x6d, 0x6, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x3, 0x5f, 0x6f, 0x73, 0x5,
+		0x4c, 0x69, 0x6e, 0x75, 0x78, 0xc, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x6e,
+		0x61, 0x6d, 0x65, 0x8, 0x6c, 0x69, 0x62, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x7, 0x6f, 0x73,
+		0x5f, 0x75, 0x73, 0x65, 0x72, 0xa, 0x6e, 0x75, 0x6c, 0x6c, 0x6e, 0x6f, 0x74, 0x6e, 0x69,
+		0x6c, 0xf, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69,
+		0x6f, 0x6e, 0x6, 0x38, 0x2e, 0x30, 0x2e, 0x32, 0x31, 0xc, 0x70, 0x72, 0x6f, 0x67, 0x72,
+		0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x5, 0x6d, 0x79, 0x73, 0x71, 0x6c,
+	}
+
+	var resp handshakeResponse41
+	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
+	c.Assert(err, IsNil)
+	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
+	c.Assert(err, IsNil)
+	c.Assert(resp.AuthPlugin == "caching_sha2_password", IsTrue)
+}
+
 func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
@@ -173,7 +199,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -463,9 +489,10 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = genPorts()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
 	defer server.Close()
 
@@ -487,11 +514,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}
@@ -530,21 +557,21 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	//There is no underlying netCon, use failpoint to avoid panic
+	// There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
-	connID := 1
-	se.SetConnectionID(uint64(connID))
+	connID := uint64(1)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: uint32(connID),
+		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
@@ -552,8 +579,8 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
-		clients: map[uint32]*clientConn{
-			uint32(connID): cc,
+		clients: map[uint64]*clientConn{
+			connID: cc,
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
@@ -648,10 +675,16 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
+	tk.MustExec("set @@tidb_enable_clustered_index=0")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"

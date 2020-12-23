@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"runtime/trace"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -27,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -65,6 +67,8 @@ type IndexNestedLoopHashJoin struct {
 	curTask        *indexHashJoinTask
 	// taskCh is only used when `keepOuterOrder` is true.
 	taskCh chan *indexHashJoinTask
+
+	stats *indexLookUpJoinRuntimeStats
 }
 
 type indexHashJoinOuterWorker struct {
@@ -143,12 +147,19 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
+	if e.runtimeStats != nil {
+		e.stats = &indexLookUpJoinRuntimeStats{}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	e.startWorkers(ctx)
 	return nil
 }
 
 func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	if e.stats != nil {
+		e.stats.concurrency = concurrency
+	}
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
 	innerCh := make(chan *indexHashJoinTask, concurrency)
@@ -189,8 +200,12 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexHashJoinResult{
-			err: errors.New(fmt.Sprintf("%v", r)),
+		err := errors.New(fmt.Sprintf("%v", r))
+		if !e.keepOuterOrder {
+			e.resultCh <- &indexHashJoinResult{err: err}
+		} else {
+			task := &indexHashJoinTask{err: err}
+			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
 			e.cancelFunc()
@@ -245,6 +260,9 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 		if e.isDryUpTasks(ctx) {
 			return nil
 		}
+		if e.curTask.err != nil {
+			return e.curTask.err
+		}
 		select {
 		case result, ok = <-e.curTask.resultCh:
 			if !ok {
@@ -296,12 +314,6 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		}
 		e.taskCh = nil
 	}
-	if e.runtimeStats != nil {
-		concurrency := cap(e.joinChkResourceCh)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
-	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 	}
@@ -310,6 +322,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
@@ -318,10 +331,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		})
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
-			ow.pushToChan(ctx, task, ow.innerCh)
 			if ow.keepOuterOrder {
+				task.keepOuterOrder, task.resultCh = true, make(chan *indexHashJoinResult, 1)
 				ow.pushToChan(ctx, task, ow.taskCh)
 			}
+			ow.pushToChan(ctx, task, ow.innerCh)
 			return
 		}
 		if task == nil {
@@ -331,6 +345,9 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 			return
 		}
 		if ow.keepOuterOrder {
+			failpoint.Inject("testIssue20779", func() {
+				panic("testIssue20779")
+			})
 			if finished := ow.pushToChan(ctx, task, ow.taskCh); finished {
 				return
 			}
@@ -401,6 +418,10 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 	for _, ran := range e.indexRanges {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
+	var innerStats *innerWorkerRuntimeStats
+	if e.stats != nil {
+		innerStats = &e.stats.innerWorker
+	}
 	iw := &indexHashJoinInnerWorker{
 		innerWorker: innerWorker{
 			innerCtx:      e.innerCtx,
@@ -409,6 +430,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
+			stats:         innerStats,
 		},
 		taskCh:            taskCh,
 		joiner:            e.joiners[workerID],
@@ -433,6 +455,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 }
 
 func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexHashJoinInnerWorker").End()
 	var task *indexHashJoinTask
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
@@ -449,12 +472,13 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		if !ok {
 			break
 		}
+		// We need to init resultCh before the err is returned.
+		if task.keepOuterOrder {
+			resultCh = task.resultCh
+		}
 		if task.err != nil {
 			joinResult.err = task.err
 			break
-		}
-		if task.keepOuterOrder {
-			resultCh = task.resultCh
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
 		if err != nil {
@@ -505,6 +529,12 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 }
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
+	if iw.stats != nil {
+		start := time.Now()
+		defer func() {
+			atomic.AddInt64(&iw.stats.build, int64(time.Since(start)))
+		}()
+	}
 	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
 	task.lookupMap = newUnsafeHashTable(task.outerResult.Len())
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
@@ -516,14 +546,14 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 				continue
 			}
 			row := chk.GetRow(rowIdx)
-			keyColIdx := iw.outerCtx.keyCols
-			for _, i := range keyColIdx {
+			hashColIdx := iw.outerCtx.hashCols
+			for _, i := range hashColIdx {
 				if row.IsNull(i) {
 					continue OUTER
 				}
 			}
 			h.Reset()
-			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, keyColIdx, buf)
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, hashColIdx, buf)
 			failpoint.Inject("testIndexHashJoinBuildErr", func() {
 				err = errors.New("mockIndexHashJoinBuildErr")
 			})
@@ -542,7 +572,6 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 	if err != nil {
 		return err
 	}
-	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
 	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
 }
 
@@ -554,6 +583,16 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
+	var joinStartTime time.Time
+	if iw.stats != nil {
+		start := time.Now()
+		defer func() {
+			endTime := time.Now()
+			atomic.AddInt64(&iw.stats.totalTime, int64(endTime.Sub(start)))
+			atomic.AddInt64(&iw.stats.join, int64(endTime.Sub(joinStartTime)))
+		}()
+	}
+
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
@@ -563,6 +602,8 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		return err
 	}
 	iw.wg.Wait()
+
+	joinStartTime = time.Now()
 	if !task.keepOuterOrder {
 		return iw.doJoinUnordered(ctx, task, joinResult, h, resultCh)
 	}
@@ -589,6 +630,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
+					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
 				if !ok {
@@ -602,7 +644,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 
 func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
 	h.Reset()
-	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.rowTypes, iw.keyCols, buf)
+	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.rowTypes, iw.hashCols, buf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -616,7 +658,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
 		outerRow := task.outerResult.GetRow(ptr)
-		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.keyCols)
+		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.hashCols)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -736,7 +778,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
-						return nil
+						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)
 					if !ok {
