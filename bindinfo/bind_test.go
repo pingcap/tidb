@@ -956,7 +956,7 @@ func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
 	// so there would be no new binding captured.
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "select /*+ use_index(t) */ * from t")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(t )*/ * FROM SPM.t")
 	c.Assert(rows[0][8], Equals, "manual")
 }
 
@@ -1005,16 +1005,16 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t where b = ? and c > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `t` WHERE `b`=? AND `c`>?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
 
 	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t where b = ? and c > ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `t` WHERE `b`=? AND `c`>?")
+	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c > ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b`=? AND `c`>?")
 }
 
 func (s *testSuite) TestDropSingleBindings(c *C) {
@@ -1816,8 +1816,8 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "update t set name = ? where name <= ?")
-	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `t` SET `name`=_ASCII'hello' WHERE `name`<=_ASCII'abc'")
+	c.Assert(rows[0][0], Equals, "update test . t set name = _ascii ? where name <= _ascii ?")
+	c.Assert(rows[0][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx`)*/ `test`.`t` SET `name`=_ASCII'hello' WHERE `name`<=_ASCII'abc'")
 	// Charset and Collation are empty now, they are not used currently.
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
