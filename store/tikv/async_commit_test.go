@@ -389,12 +389,19 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 // TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
 func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	localTxn := s.beginAsyncCommit(c)
+	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")
-	c.Assert(localTxn.committer.checkAsyncCommit(), Equals, false)
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = localTxn.Commit(ctx)
+	c.Assert(atomic.LoadUint32(&localTxn.committer.useAsyncCommit), Equals, uint32(0))
 
 	globalTxn := s.beginAsyncCommit(c)
+	err = globalTxn.Set([]byte("b"), []byte("b1"))
 	globalTxn.SetOption(kv.TxnScope, "global")
-	c.Assert(globalTxn.committer.checkAsyncCommit(), Equals, true)
+	c.Assert(err, IsNil)
+	err = globalTxn.Commit(ctx)
+	c.Assert(atomic.LoadUint32(&globalTxn.committer.useAsyncCommit), Equals, uint32(1))
 }
 
 type mockResolveClient struct {
