@@ -89,7 +89,6 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			err: ".*no instance can meet the constraint.*",
 		},
 
-
 		{
 			input: []*ast.PlacementSpec{{
 				Role:        ast.PlacementRoleVoter,
