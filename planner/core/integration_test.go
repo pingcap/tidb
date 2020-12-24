@@ -2427,7 +2427,7 @@ func (s *testIntegrationSuite) TestIssue22071(c *C) {
 	tk.MustQuery("select n in (1,n) from (select a in (1,2) as n from t) g;").Check(testkit.Rows("1", "1", "1"))
 }
 
-func (s *testIntegrationSerialSuite) TestPushDownProjection(c *C) {
+func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2447,11 +2447,15 @@ func (s *testIntegrationSerialSuite) TestPushDownProjection(c *C) {
 		}
 	}
 
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	result := tk.MustQuery("desc select a+1 from t")
-	c.Assert(result.Rows()[1][0], Equals, "└─Projection_3")
+	result := tk.MustQuery("desc select /*+ hash_agg()*/count(b) from  (select a + 1 as b from t)A;")
+	// Projection -> TableReader
+	c.Assert(result.Rows()[1][0], Equals, "└─Projection_7")
+	c.Assert(result.Rows()[2][0], Equals, "  └─TableReader_11")
 
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
-	result = tk.MustQuery("desc select a+1 from t")
-	c.Assert(result.Rows()[0][0], Equals, "Projection_3")
+	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
+	result = tk.MustQuery("desc select /*+ hash_agg()*/count(b) from  (select a + 1 as b from t)A;")
+	// TableReader -> HashAgg -> Projection, Projection is pushed down under TableReader
+	c.Assert(result.Rows()[1][0], Equals, "└─TableReader_13")
+	c.Assert(result.Rows()[2][0], Equals, "  └─HashAgg_8")
+	c.Assert(result.Rows()[3][0], Equals, "    └─Projection_10")
 }

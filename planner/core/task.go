@@ -1049,7 +1049,7 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 			if projConcurrency <= 0 {
 				projConcurrency = 1
 			}
-			cop.addCost(p.GetCost(tasks[0].count() / float64(projConcurrency)))
+			cop.addCost(p.GetCost(tasks[0].count()))
 			return cop
 		}
 	}

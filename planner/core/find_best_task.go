@@ -248,14 +248,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			curTask = curTask.convertToRootTask(p.ctx)
 		}
 
-		// convert to root task as needed to satisfy property
-		if prop.TaskTp == property.RootTaskType {
-			_, ok := curTask.(*rootTask)
-			if !ok {
-				curTask = finishCopTask(p.ctx, curTask)
-			}
-		}
-
 		// Enforce curTask property
 		if addEnforcer {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
