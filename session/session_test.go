@@ -3804,3 +3804,9 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
 }
+
+func (s *testSessionSerialSuite) TestIssue21944(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk1.Exec("set @@tidb_current_ts=1;")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
+}
