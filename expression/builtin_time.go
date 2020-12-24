@@ -5560,6 +5560,10 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 		return "", isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
+	_, err = types.ParseDatetime(sc, arg1Str)
+	if err == nil {
+		return "", true, err
+	}
 	arg1, err = types.ParseDuration(sc, arg1Str, getFsp4TimeAddSub(arg1Str))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
