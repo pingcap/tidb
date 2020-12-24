@@ -75,6 +75,53 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			input: []*ast.PlacementSpec{{
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*duplicated constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*no instance can meet the constraint.*",
+		},
+
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*no instance can meet the constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["-  zone=sh", "-zone = bj"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
 				Replicas:    3,
 				Constraints: `["+  zone=sh", "-zone = bj"]`,
 			}},
