@@ -246,7 +246,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
-	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrIncorrectScope), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
