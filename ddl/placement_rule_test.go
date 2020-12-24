@@ -194,26 +194,11 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 		{
 			input: []*ast.PlacementSpec{
 				{
-					Role:        ast.PlacementRoleLearner,
-					Tp:          ast.PlacementAdd,
-					Replicas:    3,
-					Constraints: `["+  zone=sh", "-zone = bj"]`,
-				},
-				{
-					Role: ast.PlacementRoleVoter,
+					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			output: []*placement.Rule{
-				{
-					Role:  placement.Learner,
-					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
-						{Key: "zone", Op: "in", Values: []string{"sh"}},
-						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
-					},
-				},
-			},
+			err: ".*there is no rule to drop.*",
 		},
 	}
 	for i, t := range tests {
@@ -224,7 +209,8 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			bundle = t.bundle
 		}
 		out, err := buildPlacementSpecs(bundle, t.input)
-		if err == nil {
+		if t.err == "" {
+			c.Assert(err, IsNil)
 			expected, err := json.Marshal(t.output)
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
@@ -241,7 +227,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
 			}
 		} else {
-			c.Assert(err.Error(), ErrorMatches, t.err)
+			c.Assert(err, ErrorMatches, t.err)
 		}
 	}
 }
