@@ -951,6 +951,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return err
 }
 
+// Close implements the Executor interface.
 func (e *SelectLockExec) Close() error {
 	e.inited = false
 	return e.baseExecutor.Close()
