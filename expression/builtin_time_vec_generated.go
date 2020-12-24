@@ -404,12 +404,11 @@ func (b *builtinAddStringAndStringSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		sc := b.ctx.GetSessionVars().StmtCtx
-		_, err = types.ParseDatetime(sc, arg1)
-		if err == nil {
+		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
 		}
+		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration, err := types.ParseDuration(sc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {

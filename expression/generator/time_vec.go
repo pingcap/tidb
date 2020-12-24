@@ -54,7 +54,7 @@ import (
 {{ end }}
 {{ define "SetNull" }}{{if .Output.Fixed}}result.SetNull(i, true){{else}}result.AppendNull(){{end}} // fixed: {{.Output.Fixed }}{{ end }}
 {{ define "ConvertStringToDuration" }}
-		{{ if and (ne .SigName "builtinAddStringAndStringSig") (ne .SigName "builtinSubStringAndStringSig") }}
+		{{ if (ne .SigName "builtinSubStringAndStringSig") }}
 		if !isDuration(arg1) {
 			{{ template "SetNull" . }}
 			continue

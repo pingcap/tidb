@@ -5559,11 +5559,15 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	if !isDuration(arg1Str) {
+		return "", true, nil
+	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	_, err = types.ParseDatetime(sc, arg1Str)
-	if err == nil {
+	arg1Time, _ := types.ParseDatetime(sc, arg1Str)
+	if arg1Time.Month() > 0 {
 		return "", true, err
 	}
+
 	arg1, err = types.ParseDuration(sc, arg1Str, getFsp4TimeAddSub(arg1Str))
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
