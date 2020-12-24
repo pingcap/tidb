@@ -350,16 +350,14 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 // which indicates whether the range is valid or not.
 func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
 	if isUnsigned {
 		return val, op, true
 	}
-
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if !isNegative && val.GetUint64() > math.MaxInt64 {
+		if val.Kind() == types.KindUint64 && val.GetUint64() > math.MaxInt64 {
 			switch op {
-			case ast.GT, ast.GE:
+			case ast.GT, ast.GE, ast.EQ, ast.NullEQ:
 				return val, op, false
 			case ast.NE, ast.LE, ast.LT:
 				op = ast.LE
@@ -367,17 +365,17 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 			}
 		}
 	case mysql.TypeFloat:
-		if val.GetFloat64() > math.MaxFloat32 {
+		if val.Kind() == types.KindFloat64 && val.GetFloat64() > math.MaxFloat32 {
 			switch op {
-			case ast.GT, ast.GE:
+			case ast.GT, ast.GE, ast.EQ, ast.NullEQ:
 				return val, op, false
 			case ast.NE, ast.LE, ast.LT:
 				op = ast.LE
 				val = types.NewFloat32Datum(math.MaxFloat32)
 			}
-		} else if val.GetFloat64() < -math.MaxFloat32 {
+		} else if val.Kind() == types.KindFloat64 && val.GetFloat64() < -math.MaxFloat32 {
 			switch op {
-			case ast.LE, ast.LT:
+			case ast.LE, ast.LT, ast.EQ, ast.NullEQ:
 				return val, op, false
 			case ast.GT, ast.GE, ast.NE:
 				op = ast.GE
