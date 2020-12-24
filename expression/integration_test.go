@@ -5918,6 +5918,12 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("<nil>"))
 }
 
+func (s *testIntegrationSuite) TestIssue15346(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("select collation(format_bytes(1024)) != 'binary';").Check(testkit.Rows("1"))
+	tk.MustQuery("select collation(format_nano_time(234)) != 'binary';").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -8373,6 +8379,24 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 		testkit.Rows("838:59:59 18446744072635875328"))
 	tk.MustQuery("show warnings;").Check(
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
+}
+
+func (s *testIntegrationSuite) TestIssue21677(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(1e int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustQuery("select t.1e from test.t;").Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(99e int, r10 int);")
+	tk.MustExec("insert into t values (1, 10), (2, 2);")
+	tk.MustQuery("select 99e+r10 from t;").Check(testkit.Rows("11", "4"))
+	tk.MustQuery("select .78$123;").Check(testkit.Rows("0.78"))
+	tk.MustGetErrCode("select .78$421+1;", mysql.ErrParse)
+	tk.MustQuery("select t. `r10` > 3 from t;").Check(testkit.Rows("1", "0"))
+	tk.MustQuery("select * from t where t. `r10` > 3;").Check(testkit.Rows("1 10"))
 }
 
 func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
