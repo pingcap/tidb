@@ -70,6 +70,35 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 		if err != nil {
 			return constraints, err
 		}
+
+		for _, cnst := range constraints {
+			if label.Key == cnst.Key {
+				sameOp := label.Op == cnst.Op
+				sameVal := label.Values[0] == cnst.Values[0]
+				// no following cases:
+				// 1. duplicated constraint
+				// 2. no instance can meet: +dc=sh, -dc=sh
+				// 3. can not match multiple instances: +dc=sh, +dc=bj
+				if sameOp && sameVal {
+					str, err := label.Restore()
+					if err != nil {
+						str = err.Error()
+					}
+					return constraints, errors.Errorf("duplicated constraint %s", str)
+				} else if (!sameOp && sameVal) || (sameOp && !sameVal && label.Op == In) {
+					s1, err := label.Restore()
+					if err != nil {
+						s1 = err.Error()
+					}
+					s2, err := cnst.Restore()
+					if err != nil {
+						s2 = err.Error()
+					}
+					return constraints, errors.Errorf("no instance can meet the constraint %s <=> %s", s1, s2)
+				}
+			}
+		}
+
 		constraints = append(constraints, label)
 	}
 	return constraints, nil
