@@ -394,6 +394,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 	err = localTxn.Commit(ctx)
+	c.Assert(err, IsNil)
 	c.Assert(atomic.LoadUint32(&localTxn.committer.useAsyncCommit), Equals, uint32(0))
 
 	globalTxn := s.beginAsyncCommit(c)
@@ -401,6 +402,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	globalTxn.SetOption(kv.TxnScope, "global")
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
+	c.Assert(err, IsNil)
 	c.Assert(atomic.LoadUint32(&globalTxn.committer.useAsyncCommit), Equals, uint32(1))
 }
 
