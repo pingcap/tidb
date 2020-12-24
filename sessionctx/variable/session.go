@@ -165,6 +165,8 @@ type TransactionContext struct {
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
+	// TxnScope indicates the value of txn_scope
+	TxnScope string
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
