@@ -161,6 +161,11 @@ error = '''
 Incorrect index name '%-.100s'
 '''
 
+["ddl:1286"]
+error = '''
+Unknown storage engine '%s'
+'''
+
 ["ddl:1292"]
 error = '''
 Truncated incorrect %-.64s value: '%-.128s'
@@ -931,6 +936,21 @@ error = '''
 Internal : %s
 '''
 
+["planner:3029"]
+error = '''
+Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
+'''
+
+["planner:3065"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, references column '%s' which is not in SELECT list; this is incompatible with %s
+'''
+
+["planner:3066"]
+error = '''
+Expression #%d of ORDER BY clause is not in SELECT list, contains aggregate function; this is incompatible with %s
+'''
+
 ["planner:3105"]
 error = '''
 The value specified for generated column '%s' in table '%s' is not allowed.
@@ -1534,6 +1554,11 @@ invalid year
 ["types:8037"]
 error = '''
 invalid week mode format: '%v'
+'''
+
+["types:8129"]
+error = '''
+TiDB does not yet support JSON objects with the key length >= 65536
 '''
 
 ["variable:1193"]

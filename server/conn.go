@@ -199,10 +199,10 @@ func (cc *clientConn) String() string {
 // the client to switch, so lets ask for mysql_native_password
 // https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
 func (cc *clientConn) authSwitchRequest(ctx context.Context) ([]byte, error) {
-	enclen := 1 + len("mysql_native_password") + 1 + len(cc.salt) + 1
+	enclen := 1 + len(mysql.AuthNativePassword) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
-	data = append(data, 0xfe) // switch request
-	data = append(data, []byte("mysql_native_password")...)
+	data = append(data, mysql.AuthSwitchRequest) // switch request
+	data = append(data, []byte(mysql.AuthNativePassword)...)
 	data = append(data, byte(0x00)) // requires null
 	data = append(data, cc.salt...)
 	data = append(data, 0)
@@ -332,7 +332,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, cc.salt[8:]...)
 	data = append(data, 0)
 	// auth-plugin name
-	data = append(data, []byte("mysql_native_password")...)
+	data = append(data, []byte(mysql.AuthNativePassword)...)
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
@@ -628,7 +628,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	// switching from other methods should work, but not tested
-	if resp.AuthPlugin == "caching_sha2_password" {
+	if resp.AuthPlugin == mysql.AuthCachingSha2Password {
 		resp.Auth, err = cc.authSwitchRequest(ctx)
 		if err != nil {
 			logutil.Logger(ctx).Warn("attempt to send auth switch request packet failed", zap.Error(err))
@@ -1287,7 +1287,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
 	}
-
+	if !loadDataInfo.Table.Meta().IsBaseTable() {
+		return errors.New("can only load data into base tables")
+	}
 	err := cc.writeReq(ctx, loadDataInfo.Path)
 	if err != nil {
 		return err

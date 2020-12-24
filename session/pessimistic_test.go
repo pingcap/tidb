@@ -384,6 +384,11 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 1000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists conflict")
@@ -1593,6 +1598,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 
 	// tk2 starts a pessimistic transaction and make some changes on table t1.
 	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
 	tk2.MustExec("alter table t1 add column c3 int after c1")
@@ -1607,6 +1613,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
+
 func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -1619,6 +1626,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
 
 	// Extend column field length is acceptable.
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
 	tk2.MustExec("alter table t1 modify column c2 bigint")
@@ -1887,6 +1895,7 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
 	tk2.MustExec("alter table t1 add column new_col int")
@@ -1894,6 +1903,7 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 
 	// Set off the global variable.
 	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
@@ -1911,9 +1921,6 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk2.MustExec("alter table t1 add column new_col2 int")
 	tk4.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
-
-	// Restore.
-	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
 }
 
 func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
@@ -2027,6 +2034,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := s.newAsyncCommitTestKitWithInit(c)
 	tk3 := s.newAsyncCommitTestKitWithInit(c)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
 	tk.MustExec("begin pessimistic")
@@ -2068,9 +2078,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
-	_ = tk.ExecToErr("commit")
-	// TODO: wait for https://github.com/pingcap/tidb/pull/21531
-	// c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }
@@ -2094,6 +2102,9 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values (1, 1)")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2)")
@@ -2123,9 +2134,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
-	_ = tk.ExecToErr("commit")
-	// TODO: Check the error after supporting falling back to 2PC in TiKV.
-	// c.Assert(err, IsNil)
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }
@@ -2211,4 +2220,43 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
 	*/
+
+	// Test pessimistic retry for unique index amend.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 1), (2, 2);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c)")
+	tk.MustExec("insert into t values(3, 5)")
+	tk.MustExec("update t set c = 4 where c = 2")
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		err = tk2.ExecToErr("begin pessimistic")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("insert into t values(5, 5)")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("delete from t where id = 5")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		// let commit in tk start.
+		errCh <- err
+		time.Sleep(time.Millisecond * 100)
+		err = tk2.ExecToErr("commit")
+		errCh <- err
+	}()
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	err = <-errCh
+	c.Assert(err, Equals, nil)
 }

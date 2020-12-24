@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -79,7 +80,9 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -234,15 +237,15 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql	TEXT NOT NULL  ,
-      	bind_sql 		TEXT NOT NULL ,
-      	default_db 		TEXT NOT NULL,
-		status 			TEXT NOT NULL,
-		create_time 	TIMESTAMP(3) NOT NULL,
-		update_time 	TIMESTAMP(3) NOT NULL,
-		charset 		TEXT NOT NULL,
-		collation 		TEXT NOT NULL,
-		source 			VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		original_sql TEXT NOT NULL,
+		bind_sql TEXT NOT NULL,
+		default_db TEXT NOT NULL,
+		status TEXT NOT NULL,
+		create_time TIMESTAMP(3) NOT NULL,
+		update_time TIMESTAMP(3) NOT NULL,
+		charset TEXT NOT NULL,
+		collation TEXT NOT NULL,
+		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -437,6 +440,10 @@ const (
 	version55 = 55
 	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
 	version56 = 56
+	// version57 fixes the bug of concurrent create / drop binding
+	version57 = 57
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
 )
 
 var (
@@ -497,6 +504,8 @@ var (
 		upgradeToVer54,
 		upgradeToVer55,
 		upgradeToVer56,
+		upgradeToVer57,
+		upgradeToVer58,
 	}
 )
 
@@ -1228,6 +1237,33 @@ func upgradeToVer56(s Session, ver int64) {
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
+func upgradeToVer57(s Session, ver int64) {
+	if ver >= version57 {
+		return
+	}
+	insertBuiltinBindInfoRow(s)
+}
+
+func initBindInfoTable(s Session) {
+	mustExecute(s, CreateBindInfoTable)
+	insertBuiltinBindInfoRow(s)
+}
+
+func insertBuiltinBindInfoRow(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES ("%s", "%s", "mysql", "%s", "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", "%s")`,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
@@ -1291,7 +1327,7 @@ func doDDLWorks(s Session) {
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
-	mustExecute(s, CreateBindInfoTable)
+	initBindInfoTable(s)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
@@ -1311,7 +1347,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
@@ -1333,6 +1369,13 @@ func doDMLWorks(s Session) {
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.DynamicOnly)
+				}
+			}
+			if v.Name == variable.TiDBEnableChangeMultiSchema {
+				vVal = variable.BoolOff
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					// enable change multi schema in test case for compatibility with old cases.
+					vVal = variable.BoolOn
 				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
@@ -1378,7 +1421,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))

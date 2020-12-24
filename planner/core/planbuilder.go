@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
@@ -41,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -151,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -163,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
@@ -372,6 +373,8 @@ const (
 	showStatement
 	globalOrderByClause
 	expressionClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -385,6 +388,8 @@ var clauseMsg = map[clauseCode]string{
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -457,6 +462,13 @@ type PlanBuilder struct {
 
 	// isSampling indicates whether the query is sampling.
 	isSampling bool
+
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
+	cachedResultSetNodes  map[*ast.Join]LogicalPlan
+	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 }
 
 type handleColHelper struct {
@@ -562,11 +574,14 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor: processor,
+		ctx:                   sctx,
+		is:                    is,
+		colMapper:             make(map[*ast.ColumnNameExpr]int),
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:         processor,
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
 	}, savedBlockNames
 }
 
@@ -1705,25 +1720,44 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
+// CMSketchSizeLimit indicates the size limit of CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+
+var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
+}
+
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(statistics.AnalyzeOptionDefault))
-	for key, val := range statistics.AnalyzeOptionDefault {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
 		optMap[key] = val
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
-			if opt.Value > statistics.AnalyzeOptionLimit[opt.Type] {
-				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], statistics.AnalyzeOptionLimit[opt.Type])
+			if opt.Value > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		} else {
-			if opt.Value == 0 || opt.Value > statistics.AnalyzeOptionLimit[opt.Type] {
-				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], statistics.AnalyzeOptionLimit[opt.Type])
+			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		}
 		optMap[opt.Type] = opt.Value
 	}
-	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > statistics.CMSketchSizeLimit {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", statistics.CMSketchSizeLimit)
+	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
+		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	return optMap, nil
 }

@@ -34,13 +34,6 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# The maximum memory limitation for statistics. Default: 32GB
-# This value must not be less than 32GB.
-mem-quota-statistics = 34359738368
-
-# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
-nested-loop-join-cache-capacity = 20971520
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
@@ -63,6 +56,10 @@ enable-batch-dml = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
+
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behind a proxy.
+compatible-kill-query = false
 
 # Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
@@ -260,7 +257,7 @@ stats-lease = "3s"
 run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.05
+feedback-probability = 0.0
 
 # The max number of query feedback that cache in memory.
 query-feedback-limit = 512
@@ -487,6 +484,10 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
+# enable global kill.
+enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

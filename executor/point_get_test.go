@@ -598,16 +598,28 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	}
 }
 
-func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
+func (s *testSerialSuite) mustExecDDL(tk *testkit.TestKit, c *C, sql string) {
+	tk.MustExec(sql)
+	c.Assert(s.domain.Reload(), IsNil)
+}
+
+func (s *testSerialSuite) TestPointGetReadLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Se.GetSessionVars().EnablePointGetCache = false
+	}()
+
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "lock tables point read")
 
 	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -619,17 +631,15 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	explain = fmt.Sprintf("%v", rows[0])
 	ok := strings.Contains(explain, "num_rpc")
 	c.Assert(ok, IsFalse)
-	tk.MustExec("unlock tables")
+	s.mustExecDDL(tk, c, "unlock tables")
 
-	// Force reload schema to ensure the cache is released.
-	c.Assert(s.dom.Reload(), IsNil)
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*num_rpc.*")
 
 	// Test cache release after unlocking tables.
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "lock tables point read")
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
@@ -641,18 +651,19 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	ok = strings.Contains(explain, "num_rpc")
 	c.Assert(ok, IsFalse)
 
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock tables point read")
+	s.mustExecDDL(tk, c, "unlock tables")
+	s.mustExecDDL(tk, c, "lock tables point read")
 
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*num_rpc.*")
 
-	tk.MustExec("unlock tables")
+	s.mustExecDDL(tk, c, "unlock tables")
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})

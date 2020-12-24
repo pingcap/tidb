@@ -179,7 +179,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		primary := txn.committer.primary()
 		bo := NewBackofferWithVars(context.Background(), 5000, nil)
-		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false)
+		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
 		c.Assert(err, IsNil)
 		c.Assert(txnStatus.IsCommitted(), IsFalse)
 		c.Assert(txnStatus.action, Equals, kvrpcpb.Action_NoAction)
@@ -203,6 +203,8 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		c.Assert(gotSecondaries, DeepEquals, expectedSecondaries)
 
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+		txn.committer.cleanup(context.Background())
+		txn.committer.cleanWg.Wait()
 	}
 
 	test([]string{"a"}, []string{"a1"})
