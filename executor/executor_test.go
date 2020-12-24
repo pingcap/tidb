@@ -2892,7 +2892,7 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	_, err = tk.Exec("set @@tidb_current_ts = '1'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
@@ -2946,7 +2946,7 @@ func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
 	c.Assert(strings.Contains(err.Error(), rows7[0][1].(string)), IsTrue)
 
 	_, err = tk.Exec("set @@tidb_last_txn_info = '{}'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
