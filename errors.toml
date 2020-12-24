@@ -1061,6 +1061,11 @@ error = '''
 Variable '%s' cannot be set using SET_VAR hint.
 '''
 
+["planner:3954"]
+error = '''
+Misplaced INTO clause, INTO is not allowed inside subqueries, and must be placed at end of UNION clauses
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
