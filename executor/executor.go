@@ -921,7 +921,9 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
-					hasKeys = true
+					if !hasKeys {
+						hasKeys = true
+					}
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
 				}
 			}

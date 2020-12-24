@@ -305,7 +305,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
-			hasKeys = true
+			if !hasKeys {
+				hasKeys = true
+			}
 			existKeys = append(existKeys, key)
 		}
 	}
