@@ -436,7 +436,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	e.initRuntimeStats()
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -449,6 +448,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
+	e.initRuntimeStats()
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
