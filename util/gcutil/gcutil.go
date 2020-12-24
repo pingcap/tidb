@@ -26,36 +26,26 @@ import (
 
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%s'`
-	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-                              ON DUPLICATE KEY
-			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
+	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'`
 )
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCEnable)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(rows) != 1 {
-		return false, errors.New("can not get 'tikv_gc_enable'")
-	}
-	return rows[0].GetString(0) == "true", nil
+	return variable.TiDBOptOn(val), nil
 }
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	return errors.Trace(err)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOff)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	return errors.Trace(err)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOn)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.

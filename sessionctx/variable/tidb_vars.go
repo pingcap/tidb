@@ -509,6 +509,23 @@ const (
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
 
+// TiDB vars that have only global scope
+
+const (
+	// TiKVGCEnable description
+	TiKVGCEnable = "tikv_gc_enable"
+	// TiKVGCRunInterval description
+	TiKVGCRunInterval = "tikv_gc_run_interval"
+	// TiKVGCLifetime description
+	TiKVGCLifetime = "tikv_gc_life_time"
+	// TiKVGCConcurrency description
+	TiKVGCConcurrency = "tikv_gc_concurrency"
+	// TiKVGCMode description
+	TiKVGCMode = "tikv_gc_mode"
+	// TiKVGCScanLockMode description
+	TiKVGCScanLockMode = "tikv_gc_scan_lock_mode"
+)
+
 // Default TiDB system variable values.
 const (
 	DefHostname                         = "localhost"

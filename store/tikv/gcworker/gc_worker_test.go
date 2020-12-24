@@ -271,10 +271,17 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(lastRun, NotNil)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
-	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
+
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	gcDefaultLifeTime, err := strToDuration("10m0s") // variable.TiKVGCLifetime default
+	c.Assert(err, IsNil)
+	s.timeEqual(c, safePoint.Add(*gcDefaultLifeTime), now, 2*time.Second)
 
 	// Change GC run interval.
-	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
+	t := time.Minute * 5
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCRunInterval, t.String())
 	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 4)
 	ok, _, err = s.gcWorker.prepare()
@@ -286,7 +293,8 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// Change GC life time.
-	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
+	t = time.Minute * 30
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCLifetime, t.String())
 	c.Assert(err, IsNil)
 	s.oracle.AddOffset(time.Minute * 5)
 	ok, _, err = s.gcWorker.prepare()
@@ -303,73 +311,73 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 
 	// Change GC concurrency.
-	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()
+	ctx := context.Background()
+	concurrencyStr, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCConcurrency)
 	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, gcDefaultConcurrency)
+	i64, err := strconv.ParseInt(concurrencyStr, 10, 32)
+	c.Assert(err, IsNil)
+	concurrency := int(i64)
+	c.Assert(concurrency, Equals, -1) // variable.TiKVGCConcurrency default
+	autoConcurrencyFinalValue, err := s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(autoConcurrencyFinalValue > 0, Equals, true)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, "1") // set to the min non auto value.
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, gcMinConcurrency)
+	c.Assert(concurrency, Equals, 1) // the value just set.
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1))
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, "-2") // invalid option
+	c.Assert(err, NotNil)
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, gcMinConcurrency)
+	c.Assert(concurrency, Equals, 1) // the previous value.
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000))
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, strconv.Itoa(1000000)) // invalid option
+	c.Assert(err, NotNil)
+	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
-	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, gcMaxConcurrency)
+	c.Assert(concurrency, Equals, 1) // the previous value.
 
 	// Change GC enable status.
 	s.oracle.AddOffset(time.Minute * 40)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOff)
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsFalse)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOn)
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
 
 	// Check gc life time small than min.
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCLifetime, time.Minute.String())
+	c.Assert(err, NotNil) // one minute is too short.
+
+	t = time.Minute * 10
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCLifetime, t.String())
+	c.Assert(err, IsNil)
+	str, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCLifetime)
+	c.Assert(err, IsNil)
+	lifeTime, err := strToDuration(str)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, t)
+
 	s.oracle.AddOffset(time.Minute * 40)
-	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute)
+	t = time.Minute * 30
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCLifetime, t.String())
 	c.Assert(err, IsNil)
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
-	lifeTime, err := s.gcWorker.loadDuration(gcLifeTimeKey)
+	str, err = se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCLifetime)
 	c.Assert(err, IsNil)
-	c.Assert(*lifeTime, Equals, gcMinLifeTime)
+	lifeTime, err = strToDuration(str)
+	c.Assert(err, IsNil)
+	c.Assert(*lifeTime, Equals, t)
 
-	s.oracle.AddOffset(time.Minute * 40)
-	err = s.gcWorker.saveDuration(gcLifeTimeKey, time.Minute*30)
-	c.Assert(err, IsNil)
-	ok, _, err = s.gcWorker.prepare()
-	c.Assert(err, IsNil)
-	c.Assert(ok, IsTrue)
-	lifeTime, err = s.gcWorker.loadDuration(gcLifeTimeKey)
-	c.Assert(err, IsNil)
-	c.Assert(*lifeTime, Equals, 30*time.Minute)
-
-	// Change auto concurrency
-	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
-	c.Assert(err, IsNil)
-	useAutoConcurrency, err := s.gcWorker.checkUseAutoConcurrency()
-	c.Assert(err, IsNil)
-	c.Assert(useAutoConcurrency, IsFalse)
-	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
-	c.Assert(err, IsNil)
-	useAutoConcurrency, err = s.gcWorker.checkUseAutoConcurrency()
-	c.Assert(err, IsNil)
-	c.Assert(useAutoConcurrency, IsTrue)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
@@ -405,24 +413,18 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
-	// Pick a concurrency that doesn't equal to the number of stores.
-	concurrencyConfig := 25
-	c.Assert(concurrencyConfig, Not(Equals), len(s.cluster.GetAllStores()))
-	err := s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(concurrencyConfig))
+
+	// Explicitly set the concurrency to -1 (AUTO) and then verify that
+	// The getGCConcurrency returns the number equal to the number of stores.
+
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	err := se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, "-1")
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-
-	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanFalse)
-	c.Assert(err, IsNil)
 	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(concurrency, Equals, concurrencyConfig)
-
-	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
-	c.Assert(err, IsNil)
-	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
-	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, len(s.cluster.GetAllStores()))
 }
 
@@ -433,75 +435,83 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	gcSafePointCacheInterval = 1
 
 	p := s.createGCProbe(c, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcDefaultConcurrency)
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), 2) // gcDefaultConcurrency
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
 	p = s.createGCProbe(c, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMinConcurrency)
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), 1) // gcMinConcurrency
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
 	p = s.createGCProbe(c, "k1")
-	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), gcMaxConcurrency)
+	err = s.gcWorker.doGC(ctx, s.mustAllocTs(c), 128) // gcMaxConcurrency
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
 	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
 	// Now the row must be set to the default value.
-	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	str, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCMode)
 	c.Assert(err, IsNil)
-	c.Assert(str, Equals, gcModeDistributed)
+	c.Assert(str, Equals, "DISTRIBUTED")
 
-	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "cenTraL")
 	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, false)
 
-	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "distribuTed")
 	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
 
-	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
-	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, Equals, true)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "invalid_mode")
+	c.Assert(err, NotNil) // won't change the value
+	str, err = se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCMode)
+	c.Assert(str, Equals, "DISTRIBUTED") // keeps previous value.
+
 }
 
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
+
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, gcScanLockModeDefault == gcScanLockModePhysical)
+	c.Assert(usePhysical, Equals, true)
 	// Now the row must be set to the default value.
-	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
+	str, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCScanLockMode)
 	c.Assert(err, IsNil)
-	c.Assert(str, Equals, gcScanLockModeDefault)
+	c.Assert(str, Equals, "PHYSICAL")
 
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCScanLockMode, "legaCY")
 	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
 	c.Assert(usePhysical, Equals, false)
 
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCScanLockMode, "phySICAL")
 	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
 	c.Assert(usePhysical, Equals, true)
 
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
-	c.Assert(err, IsNil)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCScanLockMode, "invalid_mode")
+	c.Assert(err, NotNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
+	c.Assert(usePhysical, Equals, true) // unchanged
 }
 
 func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
@@ -745,14 +755,18 @@ func (c *testGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	gcSafePointCacheInterval = 0
 
-	veryLong := gcDefaultLifeTime * 10
+	veryLong := time.Minute * 10 * 10 // gcDefaultLifeTime * 10
 	// Avoid failing at interval check. `lastFinish` is checked by os time.
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	// Use central mode to do this test.
-	err := s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	err := se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "CENTRAL")
 	c.Assert(err, IsNil)
 	p := s.createGCProbe(c, "k1")
-	s.oracle.AddOffset(gcDefaultLifeTime * 2)
+	s.oracle.AddOffset(time.Minute * 10 * 2) // gcDefaultLifeTime * 2
 
 	// Skip if GC is running.
 	s.gcWorker.gcIsRunning = true
@@ -765,12 +779,12 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	c.Assert(err, IsNil)
 
 	// Skip if prepare failed (disabling GC will make prepare returns ok = false).
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, "OFF")
 	c.Assert(err, IsNil)
 	err = s.gcWorker.leaderTick(context.Background())
 	c.Assert(err, IsNil)
 	s.checkNotCollected(c, p)
-	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, "ON")
 	c.Assert(err, IsNil)
 	// Reset GC last run time
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
@@ -805,7 +819,7 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 	c.Assert(err, IsNil)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
 	p = s.createGCProbe(c, "k1")
-	s.oracle.AddOffset(gcDefaultLifeTime * 2)
+	s.oracle.AddOffset(time.Minute * 10 * 2) // gcDefaultLifeTime * 2
 
 	err = s.gcWorker.leaderTick(context.Background())
 	c.Assert(err, IsNil)
@@ -897,7 +911,10 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	c.Assert(err, NotNil)
 
 	// Test central mode
-	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "CENTRAL")
 	c.Assert(err, IsNil)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)

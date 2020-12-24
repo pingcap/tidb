@@ -62,6 +62,8 @@ const (
 	TypeUnsigned TypeFlag = 5
 	// TypeTime for time of day (a TiDB extension)
 	TypeTime TypeFlag = 6
+	// TypeDuration for a golang duration (a TiDB extension)
+	TypeDuration TypeFlag = 7
 
 	// BoolOff is the canonical string representation of a boolean false.
 	BoolOff = "OFF"
@@ -134,6 +136,8 @@ func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkEnumSystemVar(value, vars)
 	case TypeTime:
 		return sv.checkTimeSystemVar(value, vars)
+	case TypeDuration:
+		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
 }
@@ -156,6 +160,22 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 		return "", err
 	}
 	return t.Format(FullDayTimeFormat), nil
+}
+
+func (sv *SysVar) checkDurationSystemVar(value string, vars *SessionVars) (string, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// Check for min/max violations
+	if int64(d) < sv.MinValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	if uint64(d) > sv.MaxValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// return a string representation of the duration
+	return d.String(), nil
 }
 
 func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string, error) {
@@ -1190,6 +1210,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
+
+	/* tikv gc metrics */
+	{Scope: ScopeGlobal, Name: TiKVGCEnable, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiKVGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiKVGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiKVGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
+	{Scope: ScopeGlobal, Name: TiKVGCMode, Value: "DISTRIBUTED", Type: TypeEnum, PossibleValues: []string{"DISTRIBUTED", "CENTRAL"}},
+	{Scope: ScopeGlobal, Name: TiKVGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
