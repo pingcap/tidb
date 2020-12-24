@@ -455,6 +455,9 @@ func (s *testPlanNormalize) TestExplainFormatHintRecoverableForTiFlashReplica(c 
 	rows := tk.MustQuery("explain select * from t").Rows()
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 
+	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
+	c.Assert(rows[0][0], Equals, "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
+
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
