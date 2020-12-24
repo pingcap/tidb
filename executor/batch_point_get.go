@@ -264,6 +264,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys[i] = key
 	}
 
+	hasKeys := false
 	var values map[string][]byte
 	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
@@ -273,6 +274,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		for _, idxKey := range indexKeys {
 			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
 			if val := handleVals[string(idxKey)]; len(val) == 0 {
+				if !hasKeys {
+					hasKeys = true
+				}
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
@@ -292,7 +296,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		existKeys = make([]kv.Key, 0, len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
-	hasKeys := false
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -312,10 +315,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Lock exists keys only for Read Committed Isolation.
-	if e.lock && rc {
-		err = e.lockKeys(ctx, existKeys)
-		if err != nil {
-			return err
+	if e.lock {
+		if rc {
+			err = e.lockKeys(ctx, existKeys)
+			if err != nil {
+				return err
+			}
 		}
 		if hasKeys {
 			// Update partition table IDs
