@@ -1693,7 +1693,10 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+<<<<<<< HEAD
 				forceReloadDomain(s.tk.Se)
+=======
+>>>>>>> be29d7e05... ddl: fix db_test failure caused by domain reload delay under a high overload (#21928)
 				n := rand.Intn(num)
 				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
@@ -3413,7 +3416,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -3865,8 +3868,24 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
 
+<<<<<<< HEAD
 	forceReloadDomain(s.tk.Se)
 	result := s.tk.MustQuery(`show create table t_mcc`)
+=======
+	tk.MustExec("alter table t modify c bit")
+	check("c", func(f uint) bool {
+		return mysql.HasUnsignedFlag(f) && !mysql.HasBinaryFlag(f)
+	})
+}
+
+func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
+	defer s.mustExec(tk, c, "drop table t_mcc;")
+
+	result := tk.MustQuery(`show create table t_mcc`)
+>>>>>>> be29d7e05... ddl: fix db_test failure caused by domain reload delay under a high overload (#21928)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
