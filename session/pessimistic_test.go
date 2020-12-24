@@ -2092,6 +2092,12 @@ func (s *testPessimisticSuite) TestIssue20975UpdateNoChange(c *C) {
 	tk1.MustExec("update t1 set c=c")
 	tk2.MustExec("create table t2(a int)")
 	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("update t1 set c=c")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
 }
 
 func (s *testPessimisticSuite) TestIssue20975SelectForUpdate(c *C) {
@@ -2105,6 +2111,13 @@ func (s *testPessimisticSuite) TestIssue20975SelectForUpdate(c *C) {
 	tk1.MustExec("select * from t1 for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
 }
 
 func (s *testPessimisticSuite) TestIssue20975SelectForUpdatePointGet(c *C) {
@@ -2148,6 +2161,31 @@ func (s *testPessimisticSuite) TestIssue20975SelectForUpdatePointGet(c *C) {
 	tk1.MustExec("select * from t1 where d=1 for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d=1 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d=100 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=5 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
 }
 
 func (s *testPessimisticSuite) TestIssue20975SelectForUpdateBatchPointGet(c *C) {
@@ -2202,6 +2240,35 @@ func (s *testPessimisticSuite) TestIssue20975SelectForUpdateBatchPointGet(c *C) 
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
 
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (1, 2) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (3, 4) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d in (100, 200) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where c in (30, 40) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("set transaction isolation level read committed")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where c in (30, 100) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
 }
 
 func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {

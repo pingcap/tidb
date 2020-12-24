@@ -871,6 +871,7 @@ type SelectLockExec struct {
 
 	// tblID2Table is cached to reduce cost.
 	tblID2Table map[int64]table.PartitionedTable
+	inited      bool
 }
 
 // Open implements the Executor Open interface.
@@ -932,7 +933,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	err = doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
-	if err == nil && len(e.keys) > 0 {
+	if !e.inited && err == nil && len(e.keys) > 0 {
 		// Just update table delta when there really has keys locked.
 		if len(e.tblID2Handle) > 0 {
 			for id := range e.tblID2Handle {
@@ -945,8 +946,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				e.updateDeltaForTableID(pid)
 			}
 		}
+		e.inited = true
 	}
 	return err
+}
+
+func (e *SelectLockExec) Close() error {
+	e.inited = false
+	return e.baseExecutor.Close()
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
