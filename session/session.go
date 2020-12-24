@@ -437,8 +437,11 @@ func (s *session) doCommit(ctx context.Context) error {
 	for id := range relatedPhysicalTables {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
-	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	// If table delta is empty means no changes for any table. So do not need SchemaChecker.
+	if len(physicalTableIDs) > 0 {
+		// Set this option for 2 phase commit to validate schema lease.
+		s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	}
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {

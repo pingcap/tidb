@@ -192,6 +192,11 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *baseExecutor) updateDeltaForTableID(id int64) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+}
+
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
@@ -900,6 +905,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	hasKeys := false
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -915,6 +921,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
+					hasKeys = true
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
 				}
 			}
@@ -926,7 +933,22 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	}
 
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	err = doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	if err == nil && hasKeys {
+		// Just update table delta when there really has keys locked.
+		if len(e.tblID2Handle) > 0 {
+			for id := range e.tblID2Handle {
+				e.updateDeltaForTableID(id)
+			}
+		}
+		if len(e.partitionedTable) > 0 {
+			for _, p := range e.partitionedTable {
+				pid := p.Meta().ID
+				e.updateDeltaForTableID(pid)
+			}
+		}
+	}
+	return err
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {

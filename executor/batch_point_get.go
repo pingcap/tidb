@@ -292,6 +292,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		existKeys = make([]kv.Key, 0, len(values))
 	}
 	e.values = make([][]byte, 0, len(values))
+	hasKeys := false
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -304,6 +305,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
+			hasKeys = true
 			existKeys = append(existKeys, key)
 		}
 	}
@@ -312,6 +314,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		err = e.lockKeys(ctx, existKeys)
 		if err != nil {
 			return err
+		}
+		if hasKeys {
+			// Update partition table IDs
+			for _, pid := range e.physIDs {
+				e.updateDeltaForTableID(pid)
+			}
+			// Update table ID
+			e.updateDeltaForTableID(e.tblInfo.ID)
 		}
 	}
 	e.handles = handles
