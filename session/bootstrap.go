@@ -80,7 +80,9 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -440,6 +442,8 @@ const (
 	version56 = 56
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
 )
 
 var (
@@ -501,6 +505,7 @@ var (
 		upgradeToVer55,
 		upgradeToVer56,
 		upgradeToVer57,
+		upgradeToVer58,
 	}
 )
 
@@ -1250,6 +1255,15 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
@@ -1333,7 +1347,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
@@ -1407,7 +1421,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
