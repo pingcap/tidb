@@ -110,6 +110,18 @@ drop placement policy
 	role=follower`)
 	c.Assert(err, NotNil)
 
+add placement policy
+	role=xxx
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*missing the ROLE=xx field.*")
+
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -182,10 +194,22 @@ drop placement policy
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=follower
+	constraints='[]'`)
+	c.Assert(err, ErrorMatches, ".*array CONSTRAINTS should be with a positive REPLICAS.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*array or object.*")
+	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array or object.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=voter
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array or object.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -206,6 +230,12 @@ add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=follower
 	replicas=2`)
+	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	role=leader`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
 	// checkPlacementSpecConstraint
