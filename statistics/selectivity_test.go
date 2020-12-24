@@ -147,7 +147,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear4Test()
+	do.StatsHandle().Clear()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.

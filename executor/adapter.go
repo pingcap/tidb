@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -436,9 +438,10 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 
 func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for !chk.IsFull() && c.idx < len(c.rows) {
-		chk.AppendRow(c.rows[c.idx])
-		c.idx++
+	if !chk.IsFull() && c.idx < len(c.rows) {
+		numToAppend := mathutil.Min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
+		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
+		c.idx += numToAppend
 	}
 	return nil
 }
@@ -602,7 +605,9 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return nil
 	}
 	if newForUpdateTS == 0 {
-		version, err := seCtx.GetStore().CurrentVersion()
+		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
+		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
+		version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
 		if err != nil {
 			return err
 		}
@@ -970,7 +975,7 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	planTree := getEncodedPlan(sctx, p)
+	planTree, _ := getEncodedPlan(sctx, p, false, nil)
 	if len(planTree) == 0 {
 		return planTree
 	}
@@ -988,14 +993,23 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 	return
 }
 
-// getEncodedPlan uses to get encoded plan.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan) (encodedPlan string) {
+// getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
+	hintStr = sctx.GetSessionVars().StmtCtx.GetPlanHint()
 	if len(encodedPlan) > 0 {
 		return
 	}
 	encodedPlan = plannercore.EncodePlan(p)
 	sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	if genHint {
+		hints := plannercore.GenHintsFromPhysicalPlan(p)
+		if n != nil {
+			hints = append(hints, hint.ExtractTableHintsFromStmtNode(n, nil)...)
+		}
+		hintStr = hint.RestoreOptimizerHints(hints)
+		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
+	}
 	return
 }
 
@@ -1017,8 +1031,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		return
 	}
 	stmtCtx := sessVars.StmtCtx
+	// Make sure StmtType is filled even if succ is false.
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
@@ -1032,8 +1051,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest)
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() string {
-		return getEncodedPlan(a.Ctx, a.Plan)
+	planGenerator := func() (string, string) {
+		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL, a.StmtNode)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
@@ -1062,6 +1081,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
+		Charset:         charset,
+		Collation:       collation,
 		NormalizedSQL:   normalizedSQL,
 		Digest:          digest,
 		PrevSQL:         prevSQL,

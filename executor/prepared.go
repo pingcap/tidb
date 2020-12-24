@@ -147,7 +147,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareDDL
 	}
 
-	if _, ok := stmt.(*ast.LoadDataStmt); ok {
+	switch stmt.(type) {
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
 		return ErrUnsupportedPs
 	}
 
@@ -197,7 +198,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err

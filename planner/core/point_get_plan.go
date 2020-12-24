@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -425,7 +425,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
-			if util.IsMemDB(fp.dbName) {
+			if tidbutil.IsMemDB(fp.dbName) {
 				return nil
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
@@ -436,7 +436,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
-			if util.IsMemDB(fp.dbName) {
+			if tidbutil.IsMemDB(fp.dbName) {
 				return nil
 			}
 			if fp.IsTableDual {
@@ -1200,6 +1200,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			},
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
 	return updatePlan

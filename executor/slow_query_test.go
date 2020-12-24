@@ -51,7 +51,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
 	retriever := &slowQueryRetriever{}
 	// Ignore the error is ok for test.
-	terror.Log(retriever.initialize(sctx))
+	terror.Log(retriever.initialize(context.Background(), sctx))
 	rows, err := parseLog(retriever, sctx, reader, logNum)
 	return rows, err
 }
@@ -439,7 +439,7 @@ select 7;`
 			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(sctx)
+		err := retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
@@ -563,14 +563,14 @@ select 9;`
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
 		sctx.GetSessionVars().SlowQueryFile = fileName4
-		err := retriever.initialize(sctx)
+		err := retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
 			reader := bufio.NewReader(retriever.files[0].file)
 			offset := &offset{length: 0, offset: 0}
-			rows, err := retriever.getBatchLogForReversedScan(reader, offset, 3)
+			rows, err := retriever.getBatchLogForReversedScan(context.Background(), reader, offset, 3)
 			c.Assert(err, IsNil)
 			for _, row := range rows {
 				for j, log := range row {

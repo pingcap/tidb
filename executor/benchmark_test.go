@@ -17,7 +17,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -301,6 +303,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 	sg.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = sg
+	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
 	if !dataSourceSorted {
 		byItems := make([]*util.ByItems, 0, len(sg.GroupByItems))
 		for _, col := range sg.GroupByItems {
@@ -314,13 +317,19 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		sg.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
+	var (
+		plan     core.PhysicalPlan
+		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
+	)
 	if concurrency > 1 {
+		if dataSourceSorted {
+			splitter = core.PartitionRangeSplitterType
+		}
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []core.PhysicalPlan{tail},
 			DataSources:  []core.PhysicalPlan{src},
-			SplitterType: core.PartitionHashSplitterType,
+			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(sg)
@@ -412,7 +421,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 
 func BenchmarkShuffleStreamAggRows(b *testing.B) {
 	b.ReportAllocs()
-	sortTypes := []bool{true}
+	sortTypes := []bool{false, true}
 	rows := []int{10000, 100000, 1000000, 10000000}
 	concurrencies := []int{1, 2, 4, 8}
 	for _, row := range rows {
@@ -1452,7 +1461,43 @@ type mergeJoinTestCase struct {
 	childrenUsedSchema [][]bool
 }
 
-func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *MergeJoinExec {
+func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, leftExec, rightExec Executor, defaultValues []types.Datum,
+	compareFuncs []expression.CompareFunc, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) *MergeJoinExec {
+	// only benchmark inner join
+	mergeJoinExec := &MergeJoinExec{
+		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, leftExec, rightExec),
+		compareFuncs: compareFuncs,
+		isOuterJoin:  false,
+	}
+
+	mergeJoinExec.joiner = newJoiner(
+		tc.ctx,
+		0,
+		false,
+		defaultValues,
+		nil,
+		retTypes(leftExec),
+		retTypes(rightExec),
+		tc.childrenUsedSchema,
+	)
+
+	mergeJoinExec.innerTable = &mergeJoinTable{
+		isInner:    true,
+		childIndex: 1,
+		joinKeys:   innerJoinKeys,
+	}
+
+	mergeJoinExec.outerTable = &mergeJoinTable{
+		childIndex: 0,
+		filters:    nil,
+		joinKeys:   outerJoinKeys,
+	}
+
+	return mergeJoinExec
+}
+
+func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *mockDataSource, sorted bool, concurrency int) Executor {
 	outerCols, innerCols := tc.columns(), tc.columns()
 
 	joinSchema := expression.NewSchema()
@@ -1489,35 +1534,82 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 
 	defaultValues := make([]types.Datum, len(innerCols))
 
-	// only benchmark inner join
-	e := &MergeJoinExec{
-		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, leftExec, rightExec),
-		compareFuncs: compareFuncs,
-		isOuterJoin:  false,
+	var leftExec, rightExec Executor
+	if sorted {
+		leftSortExec := &SortExec{
+			baseExecutor: newBaseExecutor(tc.ctx, innerDS.schema, 3, innerDS),
+			ByItems:      make([]*util.ByItems, 0, len(tc.innerJoinKeyIdx)),
+			schema:       innerDS.schema,
+		}
+		for _, key := range innerJoinKeys {
+			leftSortExec.ByItems = append(leftSortExec.ByItems, &util.ByItems{Expr: key})
+		}
+		leftExec = leftSortExec
+
+		rightSortExec := &SortExec{
+			baseExecutor: newBaseExecutor(tc.ctx, outerDS.schema, 4, outerDS),
+			ByItems:      make([]*util.ByItems, 0, len(tc.outerJoinKeyIdx)),
+			schema:       outerDS.schema,
+		}
+		for _, key := range outerJoinKeys {
+			rightSortExec.ByItems = append(rightSortExec.ByItems, &util.ByItems{Expr: key})
+		}
+		rightExec = rightSortExec
+	} else {
+		leftExec = innerDS
+		rightExec = outerDS
 	}
 
-	e.joiner = newJoiner(
-		tc.ctx,
-		0,
-		false,
-		defaultValues,
-		nil,
-		retTypes(leftExec),
-		retTypes(rightExec),
-		tc.childrenUsedSchema,
-	)
+	var e Executor
+	if concurrency == 1 {
+		e = prepareMergeJoinExec(tc, joinSchema, leftExec, rightExec, defaultValues, compareFuncs, innerJoinKeys, outerJoinKeys)
+	} else {
+		// build dataSources
+		dataSources := []Executor{leftExec, rightExec}
+		// build splitters
+		innerByItems := make([]expression.Expression, 0, len(innerJoinKeys))
+		for _, innerJoinKey := range innerJoinKeys {
+			innerByItems = append(innerByItems, innerJoinKey)
+		}
+		outerByItems := make([]expression.Expression, 0, len(outerJoinKeys))
+		for _, outerJoinKey := range outerJoinKeys {
+			outerByItems = append(outerByItems, outerJoinKey)
+		}
+		splitters := []partitionSplitter{
+			&partitionHashSplitter{
+				byItems:    innerByItems,
+				numWorkers: concurrency,
+			},
+			&partitionHashSplitter{
+				byItems:    outerByItems,
+				numWorkers: concurrency,
+			},
+		}
+		// build ShuffleMergeJoinExec
+		shuffle := &ShuffleExec{
+			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
+			concurrency:  concurrency,
+			dataSources:  dataSources,
+			splitters:    splitters,
+		}
 
-	e.innerTable = &mergeJoinTable{
-		isInner:    true,
-		childIndex: 1,
-		joinKeys:   innerJoinKeys,
-	}
+		// build workers, only benchmark inner join
+		shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+		for i := range shuffle.workers {
+			leftReceiver := shuffleReceiver{
+				baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
+			}
+			rightReceiver := shuffleReceiver{
+				baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
+			}
+			w := &shuffleWorker{
+				receivers: []*shuffleReceiver{&leftReceiver, &rightReceiver},
+			}
+			w.childExec = prepareMergeJoinExec(tc, joinSchema, &leftReceiver, &rightReceiver, defaultValues, compareFuncs, innerJoinKeys, outerJoinKeys)
 
-	e.outerTable = &mergeJoinTable{
-		childIndex: 0,
-		filters:    nil,
-		joinKeys:   outerJoinKeys,
+			shuffle.workers[i] = w
+		}
+		e = shuffle
 	}
 
 	return e
@@ -1605,7 +1697,7 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		var exec Executor
 		switch joinType {
 		case innerMergeJoin:
-			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			exec = prepare4MergeJoin(tc, innerDS, outerDS, true, 2)
 		}
 
 		tmpCtx := context.Background()
@@ -1889,5 +1981,38 @@ func BenchmarkLimitExec(b *testing.B) {
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkLimitExec(b, cas)
 		})
+	}
+}
+
+func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
+	// step 1. initial a huge line log file
+	hugeLine := make([]byte, 1024*1024*10)
+	for i := range hugeLine {
+		hugeLine[i] = 'a' + byte(i%26)
+	}
+	fileName := "tidb.log"
+	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	if err != nil {
+		b.Fatal(err)
+	}
+	file, err := os.OpenFile(fileName, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		file.Close()
+		os.Remove(fileName)
+	}()
+	stat, _ := file.Stat()
+	filesize := stat.Size()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, n, err := readLastLines(context.Background(), file, filesize)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != len(hugeLine) {
+			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
+		}
 	}
 }
