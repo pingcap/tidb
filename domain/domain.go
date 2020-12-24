@@ -90,7 +90,12 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
+
+	ddlLease     time.Duration
+	lastReloadAt time.Time
 }
+
+var emptyTime time.Time
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
 // infoschema version, if it is the same as the schema version at startTS, we don't need to reload again.
@@ -358,10 +363,31 @@ func (do *Domain) Reload() error {
 
 	// Lock here for only once at the same time.
 	do.m.Lock()
-	defer do.m.Unlock()
+	defer func() {
+		do.lastReloadAt = time.Now()
+		do.m.Unlock()
+	}()
 
 	startTime := time.Now()
-
+	if do.lastReloadAt != emptyTime {
+		reloadInterval := startTime.Sub(do.lastReloadAt)
+		intervalOffset := reloadInterval - do.ddlLease/2
+		if intervalOffset >= 0 {
+			metrics.LoadSchemaIntervalBias.Observe(float64(intervalOffset.Milliseconds()))
+		}
+		if intervalOffset >= do.ddlLease {
+			// more than 2 * ddlLease
+			metrics.LoadSchemaIntervalWarning.WithLabelValues("one_ddl_lease").Inc()
+		} else if intervalOffset > do.ddlLease/2 {
+			// a little more than half ddlLease
+			metrics.LoadSchemaIntervalWarning.WithLabelValues("half_ddl_lease").Inc()
+		}
+		if intervalOffset >= 0 {
+			logutil.BgLogger().Debug(fmt.Sprintf("Reload Schema Interval: %v, bias: %v", reloadInterval, intervalOffset.Milliseconds()))
+		} else {
+			logutil.BgLogger().Debug(fmt.Sprintf("Reload Schema Interval: %v", reloadInterval))
+		}
+	}
 	var err error
 	var neededSchemaVersion int64
 
@@ -520,6 +546,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
+	logutil.BgLogger().Info(fmt.Sprintf("[DEBUG] Lease time: %v", lease))
 	ticker := time.NewTicker(lease / 2)
 	defer func() {
 		ticker.Stop()
@@ -680,6 +707,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoHandle:          infoschema.NewHandle(store),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+		ddlLease:            ddlLease,
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -787,6 +815,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
+	do.lastReloadAt = emptyTime
 	err = do.Reload()
 	if err != nil {
 		return err

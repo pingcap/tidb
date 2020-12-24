@@ -94,6 +94,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadPrivilegeCounter)
 	prometheus.MustRegister(LoadSchemaCounter)
 	prometheus.MustRegister(LoadSchemaDuration)
+	prometheus.MustRegister(LoadSchemaIntervalBias)
+	prometheus.MustRegister(LoadSchemaIntervalWarning)
 	prometheus.MustRegister(MetaHistogram)
 	prometheus.MustRegister(NewSessionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)

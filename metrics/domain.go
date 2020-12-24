@@ -38,6 +38,24 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		})
 
+	LoadSchemaIntervalBias = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "load_schema_interval_bias_milliseconds",
+			Help:      "Bucketed histogram of interval time (ms) bias with half lease time in load schema.",
+			Buckets:   prometheus.ExponentialBuckets(5, 2, 14), // 5ms ~ 40s
+		})
+
+	// LoadSchemaIntervalWarning records the load schema interval warning counts.
+	LoadSchemaIntervalWarning = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "load_schema_interval_warning",
+			Help:      "Load schema interval warnings",
+		}, []string{LblType})
+
 	// LoadPrivilegeCounter records the counter of load privilege.
 	LoadPrivilegeCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
