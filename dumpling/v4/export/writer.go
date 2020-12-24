@@ -171,6 +171,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		// don't rebuild connection when dump for the first time
 		if retryTime > 1 {
 			conn, err = w.rebuildConnFn(conn)
+			w.conn = conn
 			if err != nil {
 				return
 			}
