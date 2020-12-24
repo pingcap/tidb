@@ -622,7 +622,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point' )")
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
@@ -650,9 +650,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
+	tk.MustExec("DROP TABLE t_recover")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
