@@ -67,6 +67,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -79,6 +80,7 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -145,6 +147,8 @@ type StatementContext struct {
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            string
+	encodedPlan           string
+	planHint              string
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -224,6 +228,26 @@ func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
 	sc.planNormalized, sc.planDigest = normalized, planDigest
+}
+
+// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) GetEncodedPlan() string {
+	return sc.encodedPlan
+}
+
+// SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
+	sc.encodedPlan = encodedPlan
+}
+
+// GetPlanHint gets the hint string generated from the plan.
+func (sc *StatementContext) GetPlanHint() string {
+	return sc.planHint
+}
+
+// SetPlanHint sets the hint for the plan.
+func (sc *StatementContext) SetPlanHint(hint string) {
+	sc.planHint = hint
 }
 
 // TableEntry presents table in db.
@@ -546,12 +570,10 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 }
 
 // ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table` and `load data infile` statements, when not in strict SQL mode.
+// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	// TODO: Currently altering column of integer to unsigned integer is not supported.
-	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
@@ -689,7 +711,7 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 

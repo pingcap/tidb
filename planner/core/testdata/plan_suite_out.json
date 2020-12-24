@@ -261,7 +261,7 @@
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
-        "Best": "IndexLookUp(Index(t.c_d_e)[(0,2) (4,6) (8,10) (12,14) (16,18)], Table(t))"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1] [5,5] [9,9] [13,13] [17,17]], Table(t))"
       },
       {
         "SQL": "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
@@ -357,7 +357,7 @@
       },
       {
         "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
-        "Best": "IndexMergeJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
       },
       {
         "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
@@ -422,11 +422,11 @@
       },
       {
         "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
-        "Best": "IndexMergeJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
-        "Best": "IndexMergeJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 1 KindInt64 1])->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
+        "Best": "IndexJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 1 KindInt64 1])->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
@@ -442,7 +442,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-        "Best": "IndexMergeJoin{IndexMergeJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
+        "Best": "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
@@ -685,12 +685,12 @@
         "Hints": "use_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), merge_join(@`del_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), merge_join(@`upd_1` `test`.`t1`)"
       },
       {
-        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.a=1 where t1.a=t2.a",
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
         "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
         "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`)"
       },
@@ -971,7 +971,7 @@
       },
       {
         "SQL": "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
-        "Best": "IndexReader(Index(t.c_d_e)[(1 2,1 4) (1 5,1 7) (2 2,2 4) (2 5,2 7) (3 2,3 4) (3 5,3 7)])->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 3,1 3] [1 6,1 6] [2 3,2 3] [2 6,2 6] [3 3,3 3] [3 6,3 6]])->Projection"
       },
       {
         "SQL": "select a from t where c in (1, 2, 3)",
@@ -1398,7 +1398,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -1641,6 +1641,22 @@
         "Result": [
           "1"
         ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg_11 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
+          "└─PartitionUnion_12 16000.00 root  ",
+          "  ├─HashAgg_15 8000.00 root  group by:Column#15, funcs:firstrow(Column#13)->Column#6, funcs:firstrow(Column#14)->Column#5",
+          "  │ └─Projection_35 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#13, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#14, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#15",
+          "  │   └─TableReader_21 10000.00 root  data:TableFullScan_20",
+          "  │     └─TableFullScan_20 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  └─HashAgg_26 8000.00 root  group by:Column#18, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#5",
+          "    └─Projection_36 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#16, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#17, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#18",
+          "      └─TableReader_32 10000.00 root  data:TableFullScan_31",
+          "        └─TableFullScan_31 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   },
@@ -1808,6 +1824,19 @@
         "Result": [
           "1"
         ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg_8 16000.00 root  group by:Column#3, funcs:firstrow(Column#3)->Column#3",
+          "└─Projection_9 20000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#3",
+          "  └─PartitionUnion_10 20000.00 root  ",
+          "    ├─TableReader_12 10000.00 root  data:TableFullScan_11",
+          "    │ └─TableFullScan_11 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "    └─TableReader_16 10000.00 root  data:TableFullScan_15",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   },
@@ -1882,7 +1911,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
       }
     ]
   },
@@ -2086,12 +2115,12 @@
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_2` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
       },
       {
         "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
         "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
-        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_2` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
@@ -2218,34 +2247,6 @@
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOff",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "TableReader_7 2048.00 root  data:Selection_6",
-          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOn",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }

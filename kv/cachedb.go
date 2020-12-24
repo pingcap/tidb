@@ -28,7 +28,7 @@ type (
 	MemManager interface {
 		Set(tableID int64, key Key, value []byte) error
 		Get(ctx context.Context, tableID int64, key Key) []byte
-		Release()
+		Delete(tableID int64)
 	}
 )
 
@@ -62,13 +62,13 @@ func (c *cachedb) Get(ctx context.Context, tableID int64, key Key) []byte {
 	return nil
 }
 
-// Release release memory for DDL unlock table and remove in cache tables
-func (c *cachedb) Release() {
+// Delete delete and reset table from tables in memory by tableID
+func (c *cachedb) Delete(tableID int64) {
 	c.mu.Lock()
-	for _, v := range c.memTables {
-		v.Reset()
+	if k, ok := c.memTables[tableID]; ok {
+		k.Reset()
+		delete(c.memTables, tableID)
 	}
-	c.memTables = make(map[int64]*memdb)
 	c.mu.Unlock()
 }
 

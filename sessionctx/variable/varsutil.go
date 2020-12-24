@@ -72,6 +72,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetDDLReorgRowFormat sets ddlReorgRowFormat version.
+func SetDDLReorgRowFormat(format int64) {
+	atomic.StoreInt64(&ddlReorgRowFormat, format)
+}
+
+// GetDDLReorgRowFormat gets ddlReorgRowFormat version.
+func GetDDLReorgRowFormat() int64 {
+	return atomic.LoadInt64(&ddlReorgRowFormat)
+}
+
 // SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
 func SetMaxDeltaSchemaCount(cnt int64) {
 	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
@@ -112,6 +122,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
 	case TiDBLastTxnInfo:
 		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
 		if err != nil {
 			return "", true, err
 		}
@@ -157,6 +173,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
@@ -269,12 +287,11 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBStreamAggConcurrency:
+		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply:
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	}
 }

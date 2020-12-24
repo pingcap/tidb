@@ -183,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowStatsTopN:
+		return e.fetchShowStatsTopN()
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
@@ -292,9 +294,7 @@ func (e *ShowExec) fetchShowEngines() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, row := range rows {
-		e.result.AppendRow(row)
-	}
+	e.result.AppendRows(rows)
 	return nil
 }
 
@@ -462,7 +462,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
@@ -660,6 +660,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if variable.FilterImplicitFeatureSwitch(v) {
+					continue
+				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
 				if err != nil {
 					return errors.Trace(err)
@@ -674,6 +677,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 
 	. "github.com/pingcap/check"
@@ -89,29 +90,34 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
-	tkRoot.MustQuery("select * from t1;")
-	tkRootProcess = tkRoot.Se.ShowProcess()
-	ps = []*util.ProcessInfo{tkRootProcess}
-	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(len(rows[0]), Equals, 9)
-	buf := bytes.NewBuffer(nil)
-	for i, row := range rows {
-		if i > 0 {
-			buf.WriteString("\n")
-		}
-		for j, v := range row {
-			if j > 0 {
-				buf.WriteString(" ")
+	check := func() {
+		tkRootProcess = tkRoot.Se.ShowProcess()
+		ps = []*util.ProcessInfo{tkRootProcess}
+		tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+		tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+		c.Assert(len(rows), Equals, 2)
+		c.Assert(len(rows[0]), Equals, 9)
+		buf := bytes.NewBuffer(nil)
+		for i, row := range rows {
+			if i > 0 {
+				buf.WriteString("\n")
 			}
-			buf.WriteString(fmt.Sprintf("%v", v))
+			for j, v := range row {
+				if j > 0 {
+					buf.WriteString(" ")
+				}
+				buf.WriteString(fmt.Sprintf("%v", v))
+			}
 		}
+		c.Assert(buf.String(), Matches, ""+
+			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
 	}
-	c.Assert(buf.String(), Matches, ""+
-		"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*, copr_cache_hit_ratio: 0.00} data:TableFullScan_4 N/A N/A\n"+
-		"└─TableFullScan_4 10000.00 0 cop.* table:t1 time:.*, loops:0, tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
+	tkRoot.MustQuery("select * from t1;")
+	check()
+	tkRoot.MustQuery("explain analyze select * from t1;")
+	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
 	err = tkUser.ExecToErr("explain for connection 42")
@@ -454,15 +460,10 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	// t2 should use PointGet.
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"Projection_7 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
-		"└─IndexMergeJoin_19 1.00 root  inner join, inner:TableReader_14, outer key:test.t2.a, inner key:test.t1.a",
-		"  ├─Selection_41(Build) 0.80 root  not(isnull(test.t2.a))",
-		"  │ └─Point_Get_40 1.00 root table:t2, index:idx_a(a) ",
-		"  └─TableReader_14(Probe) 0.00 root  data:Selection_13",
-		"    └─Selection_13 0.00 cop[tikv]  eq(test.t1.a, 1)",
-		"      └─TableRangeScan_12 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:true, stats:pseudo",
-	))
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][0]), "Point_Get"), IsTrue)
+	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][3]), "table:t2"), IsTrue)
+
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
@@ -471,15 +472,9 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	// t2 should use PointGet, range is changed to [2,2].
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"Projection_7 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
-		"└─IndexMergeJoin_19 1.00 root  inner join, inner:TableReader_14, outer key:test.t2.a, inner key:test.t1.a",
-		"  ├─Selection_41(Build) 0.80 root  not(isnull(test.t2.a))",
-		"  │ └─Point_Get_40 1.00 root table:t2, index:idx_a(a) ",
-		"  └─TableReader_14(Probe) 0.00 root  data:Selection_13",
-		"    └─Selection_13 0.00 cop[tikv]  eq(test.t1.a, 2)",
-		"      └─TableRangeScan_12 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:true, stats:pseudo",
-	))
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][0]), "Point_Get"), IsTrue)
+	c.Assert(strings.Contains(fmt.Sprintf("%v", rows[3][3]), "table:t2"), IsTrue)
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
