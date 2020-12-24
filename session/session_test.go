@@ -3321,7 +3321,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, oracle.GlobalTxnScope)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with global scope
 	result = tk.MustQuery("select * from t1")
@@ -3345,7 +3345,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100")
@@ -3363,7 +3363,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
 	c.Assert(txn.Valid(), IsTrue)
@@ -3803,4 +3803,10 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
+}
+
+func (s *testSessionSerialSuite) TestIssue21944(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk1.Exec("set @@tidb_current_ts=1;")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
 }
