@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1719,7 +1719,8 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
 			return nil
 		}
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr:
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
+		*ast.TimeUnitExpr:
 		return nil
 	}
 	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
