@@ -6512,6 +6512,8 @@ func (s *testSuite) TestTxnRetry(c *C) {
 func issue20975Prepare(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
 	tk1 := testkit.NewTestKit(c, store)
 	tk2 := testkit.NewTestKit(c, store)
+	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 0")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 0")
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t1, t2")
 	tk2.MustExec("use test")
@@ -6641,6 +6643,8 @@ func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGet(c *C) {
 func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
 	tk1 := testkit.NewTestKit(c, store)
 	tk2 := testkit.NewTestKit(c, store)
+	tk1.MustExec("set tidb_enable_amend_pessimistic_txn = 0")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 0")
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t1, t2")
 	tk2.MustExec("use test")
