@@ -163,7 +163,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, nil)
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, &col.StatsVer)
 	}
 
 	for _, idx := range tbl.Indices {
@@ -208,7 +208,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, 0, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -278,6 +278,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
+			// If the statistics is loaded from a JSON without stats version,
+			// we set it to 1.
+			statsVer := int64(statistics.Version1)
+			if jsonCol.StatsVer != nil {
+				statsVer = *jsonCol.StatsVer
+			}
 			col := &statistics.Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
@@ -286,6 +292,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				Info:       colInfo,
 				Count:      count,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				StatsVer:   statsVer,
 			}
 			tbl.Columns[col.ID] = col
 		}
