@@ -65,7 +65,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 // IsExpired returns whether lockTS+TTL is expired, both are ms. It uses `lastTS`
 // to compare, may return false negative result temporarily.
 func (o *pdOracle) IsExpired(lockTS, TTL uint64, opt *oracle.Option) bool {
-	lastTS, _, exist := o.getLastTS(opt.TxnScope)
+	lastTS, exist := o.getLastTS(opt.TxnScope)
 	if !exist {
 		return true
 	}
@@ -178,19 +178,26 @@ func (o *pdOracle) setLastArrivalTS(ts uint64, txnScope string) {
 	}
 }
 
-func (o *pdOracle) getLastTS(txnScope string) (uint64, uint64, bool) {
+func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}
 	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
 	if !ok {
-		return 0, 0, false
+		return 0, false
+	}
+	return atomic.LoadUint64(lastTSInterface.(*uint64)), true
+}
+
+func (o *pdOracle) getLastArrivalTS(txnScope string) (uint64, bool) {
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
 	}
 	lastArrivalTSInterface, ok := o.lastArrivalTSMap.Load(txnScope)
 	if !ok {
-		return 0, 0, false
+		return 0, false
 	}
-	return atomic.LoadUint64(lastTSInterface.(*uint64)), atomic.LoadUint64(lastArrivalTSInterface.(*uint64)), true
+	return atomic.LoadUint64(lastArrivalTSInterface.(*uint64)), true
 }
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
@@ -218,7 +225,7 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 
 // UntilExpired implement oracle.Oracle interface.
 func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64, opt *oracle.Option) int64 {
-	lastTS, _, ok := o.getLastTS(opt.TxnScope)
+	lastTS, ok := o.getLastTS(opt.TxnScope)
 	if !ok {
 		return 0
 	}
@@ -242,7 +249,7 @@ func (f lowResolutionTsFuture) Wait() (uint64, error) {
 
 // GetLowResolutionTimestamp gets a new increasing time.
 func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context, opt *oracle.Option) (uint64, error) {
-	lastTS, _, ok := o.getLastTS(opt.TxnScope)
+	lastTS, ok := o.getLastTS(opt.TxnScope)
 	if !ok {
 		return 0, errors.Errorf("get low resolution timestamp fail, invalid txnScope = %s", opt.TxnScope)
 	}
@@ -250,7 +257,7 @@ func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context, opt *oracle.Op
 }
 
 func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
-	lastTS, _, ok := o.getLastTS(opt.TxnScope)
+	lastTS, ok := o.getLastTS(opt.TxnScope)
 	if !ok {
 		return lowResolutionTsFuture{
 			ts:  0,
@@ -264,9 +271,13 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 }
 
 func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, error) {
-	ts, arrivalTS, ok := o.getLastTS(txnScope)
+	ts, ok := o.getLastTS(txnScope)
 	if !ok {
 		return 0, errors.Errorf("get stale timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+	}
+	arrivalTS, ok := o.getLastArrivalTS(txnScope)
+	if !ok {
+		return 0, errors.Errorf("get stale arrival timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
 	physicalTime := oracle.GetTimeFromTS(ts)
