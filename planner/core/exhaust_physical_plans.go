@@ -1912,11 +1912,7 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	allTaskTypes := []property.TaskType{prop.TaskTp}
-	// TODO: only for TiFlash now, support push down projection in TiKV later
-	_, tikv := p.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
-	if prop.TaskTp == property.RootTaskType && !tikv {
-		allTaskTypes = prop.GetAllPossibleChildTaskTypes()
-	}
+	// TODO: support push down the top projection in MPP later
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		newProp, ok := p.TryToGetChildProp(prop)
@@ -1942,6 +1938,9 @@ func (lt *LogicalTopN) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := lt.children[0].(*DataSource)
+	if lt.SCtx().GetSessionVars().AllowBCJ {
+		ok = true
+	}
 	return ok
 }
 
@@ -2107,8 +2106,12 @@ func (la *LogicalAggregation) canPushToCop() bool {
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := la.children[0].(*DataSource)
-	return ok && !la.noCopPushDown
+	if la.SCtx().GetSessionVars().AllowBCJ {
+		return !la.noCopPushDown
+	} else {
+		_, ok := la.children[0].(*DataSource)
+		return ok && !la.noCopPushDown
+	}
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2238,9 +2241,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
-	if prop.IsFlashProp() && !la.canPushToCop() {
-		return nil
-	}
+
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
@@ -2336,6 +2337,10 @@ func (p *LogicalLimit) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := p.children[0].(*DataSource)
+	// allow push down projection for tiflash
+	if p.SCtx().GetSessionVars().AllowBCJ {
+		ok = true
+	}
 	return ok
 }
 
@@ -2343,7 +2348,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-	// allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+
 	if p.limitHints.preferLimitToCop {
 		if !p.canPushToCop() {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
