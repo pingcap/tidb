@@ -570,15 +570,8 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
 	if detail := crs.scanDetail; detail != nil {
-		crs.writeField(buf, "total_keys", detail.TotalKeys)
-		crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
-		buf.WriteString(", rocksdb: {")
-		crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
-		crs.writeField(buf, "key_skipped_count", int64(detail.RocksdbKeySkippedCount))
-		crs.writeField(buf, "block_cache_hit_count", int64(detail.RocksdbBlockCacheHitCount))
-		crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
-		crs.writeFieldValue(buf, "block_read", memory.FormatBytes(int64(detail.RocksdbBlockReadByte)))
-		buf.WriteByte('}')
+		buf.WriteString(", ")
+		buf.WriteString(detail.String())
 	}
 	return buf.String()
 }
