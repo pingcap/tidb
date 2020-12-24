@@ -97,10 +97,11 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 			builder.WriteString(expr.String())
 		case *Constant:
 			v := expr.String()
-			if len(v) < 16 {
+			length := 64
+			if len(v) < length {
 				builder.WriteString(v)
 			} else {
-				builder.WriteString(fmt.Sprintf("%s(len:%d)", v[:16], len(v)))
+				builder.WriteString(fmt.Sprintf("%s(len:%d)", v[:length], len(v)))
 			}
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].String())
