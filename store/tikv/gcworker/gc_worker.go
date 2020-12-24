@@ -348,7 +348,11 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
 	se := createSession(w.store)
 	defer se.Close()
-	concurrencyStr, _ := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCConcurrency)
+	concurrencyStr, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCConcurrency)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] could not fetch tikv_gc_concurrency")
+		return 2, nil
+	}
 	concurrency, err := strconv.ParseInt(concurrencyStr, 10, 32)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] could not convert TiKVGCConcurrency!",

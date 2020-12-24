@@ -318,7 +318,8 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	concurrency := int(i64)
 	c.Assert(concurrency, Equals, -1) // variable.TiKVGCConcurrency default
-	autoConcurrencyFinalValue, err := s.gcWorker.getGCConcurrency(ctx)
+	autoConcurrencyFinalValue, err1 := s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err1, IsNil)
 	c.Assert(autoConcurrencyFinalValue > 0, Equals, true)
 
 	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, "1") // set to the min non auto value.
@@ -424,7 +425,8 @@ func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
+	concurrency, err1 := s.gcWorker.getGCConcurrency(ctx)
+	c.Assert(err1, IsNil)
 	c.Assert(concurrency, Equals, len(s.cluster.GetAllStores()))
 }
 
@@ -478,6 +480,7 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	err = se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, "invalid_mode")
 	c.Assert(err, NotNil) // won't change the value
 	str, err = se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCMode)
+	c.Assert(err, IsNil)
 	c.Assert(str, Equals, "DISTRIBUTED") // keeps previous value.
 
 }
