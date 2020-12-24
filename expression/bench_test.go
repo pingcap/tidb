@@ -711,7 +711,7 @@ func (g *randHexStrGener) gen() interface{} {
 	return string(buf)
 }
 
-// dateTimeGener is used to generate a dataTime
+// dateTimeGener is used to generate a dateTime
 type dateTimeGener struct {
 	Fsp     int
 	Year    int
@@ -740,7 +740,7 @@ func (g *dateTimeGener) gen() interface{} {
 	return t
 }
 
-// dateTimeStrGener is used to generate strings which are dataTime format
+// dateTimeStrGener is used to generate strings which are dateTime format
 type dateTimeStrGener struct {
 	Fsp     int
 	Year    int
@@ -762,14 +762,14 @@ func (g *dateTimeStrGener) gen() interface{} {
 	hour := g.randGen.Intn(12)
 	minute := g.randGen.Intn(60)
 	second := g.randGen.Intn(60)
-	dataTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
+	dateTimeStr := fmt.Sprintf("%d-%d-%d %d:%d:%d",
 		g.Year, g.Month, g.Day, hour, minute, second)
 	if g.Fsp > 0 && g.Fsp <= 6 {
 		microFmt := fmt.Sprintf(".%%0%dd", g.Fsp)
-		return dataTimeStr + fmt.Sprintf(microFmt, g.randGen.Int()%(10^g.Fsp))
+		return dateTimeStr + fmt.Sprintf(microFmt, g.randGen.Int()%(10^g.Fsp))
 	}
 
-	return dataTimeStr
+	return dateTimeStr
 }
 
 // dateStrGener is used to generate strings which are date format
