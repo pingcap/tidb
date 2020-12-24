@@ -505,6 +505,22 @@ create table log_message_1 (
 				"partition p1 values less than ('G'));",
 			ddl.ErrRangeNotIncreasing,
 		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((!c0)) PARTITIONS 2;",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((NOT c0)) (partition p0 values in (0), partition p1 values in (1));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((!c0)) (partition p0 values in (0), partition p1 values in (1));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
