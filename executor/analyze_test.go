@@ -688,7 +688,7 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
 	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
-	c.Assert(len(colStats.TopN.TopN), Equals, 1)
+	c.Assert(len(colStats.TopN.TopN), Equals, 10)
 	item := colStats.TopN.TopN[0]
 	c.Assert(item.Count, Equals, uint64(11))
 	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
@@ -697,6 +697,15 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	c.Assert(idxItem.Count, Equals, uint64(11))
 	// The columns are: DBName, table name, column name, is index, value, count.
 	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11",
+		"test t  b 0 1 1",
+		"test t  b 0 2 1",
+		"test t  b 0 3 1",
+		"test t  b 0 4 1",
+		"test t  b 0 5 1",
+		"test t  b 0 6 1",
+		"test t  b 0 7 1",
+		"test t  b 0 8 1",
+		"test t  b 0 9 1",
 		"test t  index_b 1 0 11",
 		"test t  index_b 1 1 1",
 		"test t  index_b 1 2 1",
