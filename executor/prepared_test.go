@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -48,6 +49,16 @@ func (s *testSuite1) TestPreparedDDL(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("prepare stmt from 'create table t (id int, KEY id (id))'")
+}
+
+// TestUnsupportedStmtForPrepare is related to https://github.com/pingcap/tidb/issues/17412
+func (s *testSuite1) TestUnsupportedStmtForPrepare(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`prepare stmt0 from "create table t0(a int primary key)"`)
+	tk.MustGetErrCode(`prepare stmt1 from "execute stmt0"`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt2 from "deallocate prepare stmt0"`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, mysql.ErrUnsupportedPs)
 }
 
 func (s *testSuite1) TestIgnorePlanCache(c *C) {
