@@ -6515,8 +6515,8 @@ func issue20975Prepare(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestK
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t1, t2")
 	tk2.MustExec("use test")
-	tk1.MustExec("create table t1(id int primary key, c int)")
-	tk1.MustExec("insert into t1 values(1, 10), (2, 20)")
+	tk1.MustExec("create table t1(id int primary key, c int, d int unique)")
+	tk1.MustExec("insert into t1 values(1, 10, 100), (2, 20, 200)")
 	return tk1, tk2
 }
 
@@ -6552,6 +6552,36 @@ func (s *testSuite) TestIssue20975SelectForUpdatePointGet(c *C) {
 	tk1.MustExec("select * from t1 where id=1 for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id=5 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=5 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where d=100 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d=100 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where d=1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d=1 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
 }
 
 func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGet(c *C) {
@@ -6565,6 +6595,47 @@ func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGet(c *C) {
 	tk1.MustExec("select * from t1 where id in (1, 2) for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (3, 4) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id in (3, 4) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where d in (100, 200) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where d in (100, 200) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where c in (30, 40) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where c in (30, 40) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where c in (30, 100) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where c in (30, 100) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
 }
 
 func issue20975PreparePartitionTable(c *C, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {

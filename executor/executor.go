@@ -905,7 +905,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	hasKeys := false
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -921,9 +920,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 
 				for _, col := range cols {
-					if !hasKeys {
-						hasKeys = true
-					}
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, row.GetInt64(col.Index)))
 				}
 			}
@@ -936,7 +932,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	err = doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
-	if err == nil && hasKeys {
+	if err == nil && len(e.keys) > 0 {
 		// Just update table delta when there really has keys locked.
 		if len(e.tblID2Handle) > 0 {
 			for id := range e.tblID2Handle {
