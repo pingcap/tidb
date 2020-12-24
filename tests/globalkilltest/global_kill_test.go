@@ -117,8 +117,13 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 		fmt.Sprintf("--path=%s/mocktikv", *tmpPath),
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
+<<<<<<< HEAD
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
 		fmt.Sprintf("--config=%s", "./config.toml")
+=======
+		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", "./config.toml"))
+>>>>>>> 01b8cdc6e... test: fix globalkilltest (#21987)
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
@@ -135,8 +140,13 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 		fmt.Sprintf("--path=%s", pdPath),
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
+<<<<<<< HEAD
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
 		fmt.Sprintf("--config=%s", "./config.toml")
+=======
+		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port),
+		fmt.Sprintf("--config=%s", "./config.toml"))
+>>>>>>> 01b8cdc6e... test: fix globalkilltest (#21987)
 	log.Infof("starting tidb: %v", cmd)
 	err = cmd.Start()
 	if err != nil {
