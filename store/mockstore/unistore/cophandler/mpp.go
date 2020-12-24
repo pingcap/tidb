@@ -15,6 +15,7 @@ package cophandler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -46,7 +47,8 @@ const (
 // MPPTaskHandler exists in a single store.
 type MPPTaskHandler struct {
 	// When a connect request comes, it contains server task (source) and client task (target), Exchanger dataCh set will find dataCh by client task.
-	TunnelSet map[int64]*ExchangerTunnel
+	tunnelSetLock sync.Mutex
+	TunnelSet     map[int64]*ExchangerTunnel
 
 	Meta      *mpp.TaskMeta
 	RPCClient client.Client
@@ -99,7 +101,10 @@ func (h *MPPTaskHandler) run(ctx context.Context, addr string, req *tikvrpc.Requ
 func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, error) {
 	meta := req.ReceiverMeta
 	for i := 0; i < 10; i++ {
-		if tunnel, ok := h.TunnelSet[meta.TaskId]; ok {
+		h.tunnelSetLock.Lock()
+		tunnel, ok := h.TunnelSet[meta.TaskId]
+		h.tunnelSetLock.Unlock()
+		if ok {
 			return tunnel, nil
 		}
 		time.Sleep(time.Second)
@@ -109,6 +114,8 @@ func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.Establi
 
 func (h *MPPTaskHandler) registerTunnel(tunnel *ExchangerTunnel) error {
 	taskID := tunnel.targetTask.TaskId
+	h.tunnelSetLock.Lock()
+	defer h.tunnelSetLock.Unlock()
 	_, ok := h.TunnelSet[taskID]
 	if ok {
 		return errors.Errorf("task id %d has been registered", taskID)

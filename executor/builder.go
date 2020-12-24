@@ -1712,7 +1712,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
-			useCache:     true,
+			useCache:     v.CanUseCache,
 		}
 	}
 	return serialExec
@@ -2020,7 +2020,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts: opts,
+		opts:       opts,
+		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -3337,16 +3338,11 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		if meta != nil && meta.IsCommonHandle {
-			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, kvRange...)
-		} else {
-			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
-			ret = append(ret, kvRange...)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, kvRange...)
 	}
 	return ret, nil
 }
@@ -3363,6 +3359,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err

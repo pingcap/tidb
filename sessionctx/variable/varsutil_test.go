@@ -94,7 +94,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaTopn, Equals, int64(DefTiDBMemQuotaTopn))
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
-	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.MemQuotaApplyCache, Equals, int64(DefTiDBMemQuotaApplyCache))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
@@ -246,7 +246,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
-	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrIncorrectScope), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
@@ -466,18 +466,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "ON")
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_cache' is a read only variable")
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBFoundInBinding)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(v.systems[TiDBFoundInBinding], Equals, "ON")
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_binding' is a read only variable")
 
 	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
