@@ -127,16 +127,17 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-		})
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
 				HintName: model.NewCIStr(HintReadFromStorage),
 				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
+			})
+		} else {
+			res = append(res, &ast.TableOptimizerHint{
+				QBName:   qbName,
+				HintName: model.NewCIStr(HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
 		}
