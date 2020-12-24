@@ -1045,10 +1045,6 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	if cop, ok := tasks[0].(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 {
 			cop = attachPlan2Task(p, cop).(*copTask)
-			projConcurrency := p.ctx.GetSessionVars().DistSQLScanConcurrency()
-			if projConcurrency <= 0 {
-				projConcurrency = 1
-			}
 			cop.addCost(p.GetCost(tasks[0].count()))
 			return cop
 		}
