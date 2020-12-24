@@ -46,7 +46,7 @@ func (s *Store) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transactio
 }
 
 // BeginWithExactStaleness implements kv.Storage interface
-func (s *Store) BeginWithExactStaleness(prevSec uint64) (kv.Transaction, error) {
+func (s *Store) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
 	return s.Begin()
 }
 

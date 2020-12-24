@@ -163,7 +163,7 @@ func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transac
 }
 
 // BeginWithExactStaleness begins transaction with given exact staleness
-func (s *mockStorage) BeginWithExactStaleness(prevSec uint64) (Transaction, error) {
+func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error) {
 	return s.Begin()
 }
 

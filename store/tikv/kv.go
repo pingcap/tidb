@@ -345,8 +345,8 @@ func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transa
 	return txn, nil
 }
 
-func (s *tikvStore) BeginWithExactStaleness(prevSec uint64) (kv.Transaction, error) {
-	txn, err := newTiKVTxnWithExactStaleness(s, prevSec)
+func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -430,9 +430,9 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint6
 	}
 }
 
-func (s *tikvStore) getStalenessTimestamp(bo *Backoffer, prevSec uint64) (uint64, error) {
+func (s *tikvStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
 	for {
-		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, prevSec)
+		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, txnScope, prevSec)
 		if err == nil {
 			return startTS, nil
 		}

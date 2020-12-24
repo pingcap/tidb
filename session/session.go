@@ -2462,7 +2462,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithExactStaleness(option.PrevSec)
+		txn, err = s.store.BeginWithExactStaleness(s.GetSessionVars().TxnScope, option.PrevSec)
 		if err != nil {
 			return err
 		}
