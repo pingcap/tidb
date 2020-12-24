@@ -386,6 +386,17 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	c.Assert(commitTS2, Less, commitTS1)
 }
 
+// TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
+func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
+	localTxn := s.beginAsyncCommit(c)
+	localTxn.SetOption(kv.TxnScope, "bj")
+	c.Assert(localTxn.committer.checkAsyncCommit(), Equals, false)
+
+	globalTxn := s.beginAsyncCommit(c)
+	globalTxn.SetOption(kv.TxnScope, "global")
+	c.Assert(globalTxn.committer.checkAsyncCommit(), Equals, true)
+}
+
 type mockResolveClient struct {
 	inner              Client
 	onResolveLock      func(*kvrpcpb.ResolveLockRequest) (*tikvrpc.Response, error)
