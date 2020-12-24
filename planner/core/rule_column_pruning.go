@@ -219,6 +219,8 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -428,6 +430,16 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 		parentUsedCols = append(parentUsedCols, by.Col)
 	}
 	return parentUsedCols
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
+	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
+		return nil
+	}
+
+	p.inlineProjection(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 func (*columnPruner) name() string {

@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -56,6 +58,16 @@ func (s *testSuite3) TestDo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, @a:=1")
 	tk.MustQuery("select @a").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("do @a := (select * from t where i = 1)")
+	tk2.MustExec("insert into t values (2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
 func (s *testSuite3) TestSetRoleAllCorner(c *C) {
@@ -502,10 +514,43 @@ func (s *testSuite3) TestSetPwd(c *C) {
 func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	sm := &mockSessionManager{
+		serverID: 0,
+	}
+	tk.Se.SetSessionManager(sm)
 	tk.MustExec("kill 1")
-
 	result := tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg)
+
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// truncated
+	sm.SetServerID(1)
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+
+	// local kill
+	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	config.StoreGlobalConfig(originCfg)
+	// remote kill is tested in `tests/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {
@@ -599,17 +644,10 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 		testkit.Rows("0 16"))
 	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
 		testkit.Rows("1", "2"))
-	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
-		testkit.Rows("1 0",
-			"1 1",
-			"1 2",
-			"1 3",
-			"2 0",
-			"2 1",
-			"2 2",
-			"2 3"))
-	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
-		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+	ret := tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
+	ret = tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID)
+	c.Assert(len(ret.Rows()) > 0, IsTrue)
 
 	tk.MustExec("drop stats t")
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
@@ -734,6 +772,8 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
+	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")

@@ -13,9 +13,12 @@
 
 package placement
 
-// RuleDefaultGroupID is the default GroupID for all placement rules, to
-//  indicate that it is from TiDB_DDL statements.
-const RuleDefaultGroupID = "TiDB_DDL"
+const (
+	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
+	BundleIDPrefix = "TiDB_DDL_"
+	// PDBundleID is the bundle name of pd, the default bundle for all regions.
+	PDBundleID = "pd"
+)
 
 const (
 	// RuleIndexDefault is the default index for a rule, check Rule.Index.
@@ -29,3 +32,7 @@ const (
 	// RuleIndexIndex is the index for a rule of index.
 	RuleIndexIndex
 )
+
+// DCLabelKey indicates the key of label which represents the dc for Store.
+// FIXME: currently we assumes "zone" is the dcLabel key in Store
+const DCLabelKey = "zone"

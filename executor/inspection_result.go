@@ -241,6 +241,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		// TiKV
 		"server.addr",
 		"server.advertise-addr",
+		"server.advertise-status-addr",
 		"server.status-addr",
 		"log-file",
 		"raftstore.raftdb-path",
@@ -298,22 +299,34 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration in reason.
 	cases := []struct {
+		table  string
 		tp     string
 		key    string
-		value  string
+		expect string
+		cond   string
 		detail string
 	}{
 		{
-			tp:     "tidb",
+			table:  "cluster_config",
 			key:    "log.slow-threshold",
-			value:  "0",
+			expect: "> 0",
+			cond:   "type = 'tidb' and `key` = 'log.slow-threshold' and value = '0'",
 			detail: "slow-threshold = 0 will record every query to slow log, it may affect performance",
 		},
 		{
-			tp:     "tikv",
+
+			table:  "cluster_config",
 			key:    "raftstore.sync-log",
-			value:  "false",
+			expect: "true",
+			cond:   "type = 'tikv' and `key` = 'raftstore.sync-log' and value = 'false'",
 			detail: "sync-log should be true to avoid recover region when the machine breaks down",
+		},
+		{
+			table:  "cluster_systeminfo",
+			key:    "transparent_hugepage_enabled",
+			expect: "always madvise [never]",
+			cond:   "system_name = 'kernel' and name = 'transparent_hugepage_enabled' and value not like '%[never]%'",
+			detail: "Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
 		},
 	}
 
@@ -322,8 +335,8 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		if !filter.enable(cas.key) {
 			continue
 		}
-		sql := fmt.Sprintf("select instance from information_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
-			cas.tp, cas.key, cas.value)
+		sql := fmt.Sprintf("select type,instance,value from information_schema.%s where %s",
+			cas.table, cas.cond)
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
@@ -331,11 +344,11 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 
 		for _, row := range rows {
 			results = append(results, inspectionResult{
-				tp:       cas.tp,
-				instance: row.GetString(0),
+				tp:       row.GetString(0),
+				instance: row.GetString(1),
 				item:     cas.key,
-				actual:   cas.value,
-				expected: "not " + cas.value,
+				actual:   row.GetString(2),
+				expected: cas.expect,
 				severity: "warning",
 				detail:   cas.detail,
 			})

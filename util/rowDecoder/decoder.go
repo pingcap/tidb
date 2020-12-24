@@ -17,6 +17,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -57,7 +58,14 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
-		tps[col.Offset] = &col.FieldType
+		if col.ChangeStateInfo == nil {
+			tps[col.Offset] = &col.FieldType
+		} else {
+			// Since changing column in the mutRow will be set with relative column's old value in the process of column-type-change,
+			// we should set fieldType as the relative column does. Otherwise it may get a panic, take change json to int as an example,
+			// setting json value to a int type column in mutRow will panic because it lacks of offset array.
+			tps[col.Offset] = &cols[col.ChangeStateInfo.DependencyColumnOffset].FieldType
+		}
 	}
 	var pkCols []int64
 	switch {
@@ -65,6 +73,8 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		pkCols = tables.TryGetCommonPkColumnIds(tbl.Meta())
 	case tblInfo.PKIsHandle:
 		pkCols = []int64{tblInfo.GetPkColInfo().ID}
+	default: // support decoding _tidb_rowid.
+		pkCols = []int64{model.ExtraHandleID}
 	}
 	return &RowDecoder{
 		tbl:         tbl,
@@ -159,4 +169,10 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 		}
 	}
 	return decodeColMap
+}
+
+// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
+// Please make sure calling DecodeAndEvalRowWithMap first.
+func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
+	return rd.mutRow.ToRow()
 }

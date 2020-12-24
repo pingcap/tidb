@@ -237,7 +237,7 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	val, err := EncodeFeedback(q)
 	c.Assert(err, IsNil)
 	rq := &QueryFeedback{}
-	c.Assert(DecodeFeedback(val, rq, nil, hist.Tp), IsNil)
+	c.Assert(DecodeFeedback(val, rq, nil, nil, hist.Tp), IsNil)
 	for _, fb := range rq.Feedback {
 		fb.Lower.SetBytes(codec.EncodeInt(nil, fb.Lower.GetInt64()))
 		fb.Upper.SetBytes(codec.EncodeInt(nil, fb.Upper.GetInt64()))
@@ -252,7 +252,7 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	c.Assert(err, IsNil)
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
-	c.Assert(DecodeFeedback(val, rq, cms, hist.Tp), IsNil)
+	c.Assert(DecodeFeedback(val, rq, cms, nil, hist.Tp), IsNil)
 	c.Assert(cms.QueryBytes(codec.EncodeInt(nil, 0)), Equals, uint64(1))
 	q.Feedback = q.Feedback[:1]
 	c.Assert(q.Equal(rq), IsTrue)

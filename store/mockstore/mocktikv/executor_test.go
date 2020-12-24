@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -72,8 +73,8 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 
 	tk.MustExec("insert into t values (1, 1)")
 
-	oracle := s.store.GetOracle()
-	tso, err := oracle.GetTimestamp(context.Background())
+	o := s.store.GetOracle()
+	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))

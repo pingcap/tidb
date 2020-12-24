@@ -48,7 +48,10 @@ import (
 	"go.uber.org/zap"
 )
 
-//slowQueryRetriever is used to read slow log data.
+// ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
+var ParseSlowLogBatchSize = 64
+
+// slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
@@ -65,7 +68,7 @@ type slowQueryRetriever struct {
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !e.initialized {
-		err := e.initialize(sctx)
+		err := e.initialize(ctx, sctx)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +95,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 	return retRows, nil
 }
 
-func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
+func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
@@ -109,7 +112,7 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 		e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
 	}
 	e.initialized = true
-	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
+	e.files, err = e.getAllFiles(ctx, sctx, sctx.GetSessionVars().SlowQueryFile)
 	return err
 }
 
@@ -146,13 +149,13 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	defer close(e.parsedSlowLogCh)
 	file := e.getNextFile()
 	if file == nil {
+		close(e.parsedSlowLogCh)
 		return
 	}
 	reader := bufio.NewReader(file)
-	e.parseSlowLog(ctx, sctx, reader, 64)
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -240,12 +243,15 @@ type offset struct {
 	length int
 }
 
-func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([]string, error) {
 	var line string
 	log := make([]string, 0, num)
 	var err error
 	for i := 0; i < num; i++ {
 		for {
+			if isCtxDone(ctx) {
+				return nil, ctx.Err()
+			}
 			e.fileLine++
 			lineByte, err := getOneLine(reader)
 			if err != nil {
@@ -264,7 +270,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 			line = string(hack.String(lineByte))
 			log = append(log, line)
 			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 					continue
 				}
 				break
@@ -275,6 +281,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+	defer close(e.parsedSlowLogCh)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -286,9 +293,12 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	defer close(ch)
 	for {
 		startTime := time.Now()
-		log, err := e.getBatchLog(reader, &offset, logNum)
-		if err != nil || len(log) == 0 {
-			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
+		log, err := e.getBatchLog(ctx, reader, &offset, logNum)
+		if err != nil {
+			e.sendParsedSlowLogCh(ctx, parsedSlowLog{nil, err})
+			break
+		}
+		if len(log) == 0 {
 			break
 		}
 		if e.stats != nil {
@@ -299,18 +309,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		ch <- 1
 		go func() {
 			defer wg.Done()
-			result, err := e.parseLog(sctx, log, start)
-			if err != nil {
-				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
-			} else {
-				e.parsedSlowLogCh <- parsedSlowLog{result, err}
-			}
+			result, err := e.parseLog(ctx, sctx, log, start)
+			e.sendParsedSlowLogCh(ctx, parsedSlowLog{result, err})
 			<-ch
 		}()
-		// Read the next file, offset = 0
-		if e.fileIdx >= len(e.files) {
-			break
-		}
 		offset.offset = e.fileLine
 		offset.length = 0
 		select {
@@ -320,6 +322,14 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		}
 	}
 	wg.Wait()
+}
+
+func (e *slowQueryRetriever) sendParsedSlowLogCh(ctx context.Context, re parsedSlowLog) {
+	select {
+	case e.parsedSlowLogCh <- re:
+	case <-ctx.Done():
+		return
+	}
 }
 
 func getLineIndex(offset offset, index int) int {
@@ -332,7 +342,7 @@ func getLineIndex(offset offset, index int) int {
 	return fileLine
 }
 
-func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
@@ -348,15 +358,18 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 		}
 	})
 	var st *slowQueryTuple
-	tz := ctx.GetSessionVars().Location()
+	tz := sctx.GetSessionVars().Location()
 	startFlag := false
 	for index, line := range log {
+		if isCtxDone(ctx) {
+			return nil, ctx.Err()
+		}
 		fileLine := getLineIndex(offset, index)
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
 			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], fileLine, e.checker)
 			if err != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
 			}
 			if valid {
@@ -373,7 +386,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
 					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, fileLine, e.checker)
 					if err != nil {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
 					if !valid {
@@ -382,7 +395,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid, err := st.setFieldValue(tz, variable.SlowLogBackoffDetail, line, fileLine, e.checker)
 					if err != nil {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
 					if !valid {
@@ -397,7 +410,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 						}
 						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
 						if err != nil {
-							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+							sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 							continue
 						}
 						if !valid {
@@ -415,7 +428,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 				// Get the sql string, and mark the start flag to false.
 				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), fileLine, e.checker)
 				if err != nil {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
 				}
 				if e.checker.hasPrivilege(st.user) {
@@ -431,68 +444,74 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 }
 
 type slowQueryTuple struct {
-	time                   types.Time
-	txnStartTs             uint64
-	user                   string
-	host                   string
-	connID                 uint64
-	execRetryCount         uint64
-	execRetryTime          float64
-	queryTime              float64
-	parseTime              float64
-	compileTime            float64
-	rewriteTime            float64
-	preprocSubqueries      uint64
-	preprocSubQueryTime    float64
-	optimizeTime           float64
-	waitTSTime             float64
-	preWriteTime           float64
-	waitPrewriteBinlogTime float64
-	commitTime             float64
-	getCommitTSTime        float64
-	commitBackoffTime      float64
-	backoffTypes           string
-	resolveLockTime        float64
-	localLatchWaitTime     float64
-	writeKeys              uint64
-	writeSize              uint64
-	prewriteRegion         uint64
-	txnRetry               uint64
-	copTime                float64
-	processTime            float64
-	waitTime               float64
-	backOffTime            float64
-	lockKeysTime           float64
-	requestCount           uint64
-	totalKeys              uint64
-	processKeys            uint64
-	db                     string
-	indexIDs               string
-	digest                 string
-	statsInfo              string
-	avgProcessTime         float64
-	p90ProcessTime         float64
-	maxProcessTime         float64
-	maxProcessAddress      string
-	avgWaitTime            float64
-	p90WaitTime            float64
-	maxWaitTime            float64
-	maxWaitAddress         string
-	memMax                 int64
-	diskMax                int64
-	prevStmt               string
-	sql                    string
-	isInternal             bool
-	succ                   bool
-	planFromCache          bool
-	prepared               bool
-	kvTotal                float64
-	pdTotal                float64
-	backoffTotal           float64
-	writeSQLRespTotal      float64
-	plan                   string
-	planDigest             string
-	backoffDetail          string
+	time                      types.Time
+	txnStartTs                uint64
+	user                      string
+	host                      string
+	connID                    uint64
+	execRetryCount            uint64
+	execRetryTime             float64
+	queryTime                 float64
+	parseTime                 float64
+	compileTime               float64
+	rewriteTime               float64
+	preprocSubqueries         uint64
+	preprocSubQueryTime       float64
+	optimizeTime              float64
+	waitTSTime                float64
+	preWriteTime              float64
+	waitPrewriteBinlogTime    float64
+	commitTime                float64
+	getCommitTSTime           float64
+	commitBackoffTime         float64
+	backoffTypes              string
+	resolveLockTime           float64
+	localLatchWaitTime        float64
+	writeKeys                 uint64
+	writeSize                 uint64
+	prewriteRegion            uint64
+	txnRetry                  uint64
+	copTime                   float64
+	processTime               float64
+	waitTime                  float64
+	backOffTime               float64
+	lockKeysTime              float64
+	requestCount              uint64
+	totalKeys                 uint64
+	processKeys               uint64
+	db                        string
+	indexIDs                  string
+	digest                    string
+	statsInfo                 string
+	avgProcessTime            float64
+	p90ProcessTime            float64
+	maxProcessTime            float64
+	maxProcessAddress         string
+	avgWaitTime               float64
+	p90WaitTime               float64
+	maxWaitTime               float64
+	maxWaitAddress            string
+	memMax                    int64
+	diskMax                   int64
+	prevStmt                  string
+	sql                       string
+	isInternal                bool
+	succ                      bool
+	planFromCache             bool
+	planFromBinding           bool
+	prepared                  bool
+	kvTotal                   float64
+	pdTotal                   float64
+	backoffTotal              float64
+	writeSQLRespTotal         float64
+	plan                      string
+	planDigest                string
+	backoffDetail             string
+	rocksdbDeleteSkippedCount uint64
+	rocksdbKeySkippedCount    uint64
+	rocksdbBlockCacheCount    uint64
+	rocksdbBlockReadCount     uint64
+	rocksdbBlockReadByte      uint64
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -596,6 +615,16 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.totalKeys, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.ProcessKeysStr:
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbDeleteSkippedCountStr:
+		st.rocksdbDeleteSkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbKeySkippedCountStr:
+		st.rocksdbKeySkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockCacheHitCountStr:
+		st.rocksdbBlockCacheCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadCountStr:
+		st.rocksdbBlockReadCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadByteStr:
+		st.rocksdbBlockReadByte, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexNamesStr:
@@ -628,6 +657,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogPlanFromCache:
 		st.planFromCache, err = strconv.ParseBool(value)
+	case variable.SlowLogPlanFromBinding:
+		st.planFromBinding, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
 	case variable.SlowLogPlanDigest:
@@ -702,6 +733,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.requestCount))
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
+	record = append(record, types.NewUintDatum(st.rocksdbDeleteSkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbKeySkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockCacheCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadByte))
 	record = append(record, types.NewStringDatum(st.db))
 	record = append(record, types.NewStringDatum(st.indexIDs))
 	record = append(record, types.NewDatum(st.isInternal))
@@ -733,6 +769,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 		record = append(record, types.NewIntDatum(0))
 	}
 	if st.planFromCache {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
+	if st.planFromBinding {
 		record = append(record, types.NewIntDatum(1))
 	} else {
 		record = append(record, types.NewIntDatum(0))
@@ -777,7 +818,7 @@ type logFile struct {
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
-func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
+func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
 	totalFileNum := 0
 	if e.stats != nil {
 		startTime := time.Now()
@@ -820,6 +861,9 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if !strings.HasPrefix(path, prefix) {
 			return nil
 		}
+		if isCtxDone(ctx) {
+			return ctx.Err()
+		}
 		totalFileNum++
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
@@ -832,7 +876,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			}
 		}()
 		// Get the file start time.
-		fileStartTime, err := e.getFileStartTime(file)
+		fileStartTime, err := e.getFileStartTime(ctx, file)
 		if err != nil {
 			return handleErr(err)
 		}
@@ -842,7 +886,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		}
 
 		// Get the file end time.
-		fileEndTime, err := e.getFileEndTime(file)
+		fileEndTime, err := e.getFileEndTime(ctx, file)
 		if err != nil {
 			return handleErr(err)
 		}
@@ -875,7 +919,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	return logFiles, err
 }
 
-func (e *slowQueryRetriever) getFileStartTime(file *os.File) (time.Time, error) {
+func (e *slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File) (time.Time, error) {
 	var t time.Time
 	_, err := file.Seek(0, io.SeekStart)
 	if err != nil {
@@ -895,6 +939,9 @@ func (e *slowQueryRetriever) getFileStartTime(file *os.File) (time.Time, error) 
 		maxNum -= 1
 		if maxNum <= 0 {
 			break
+		}
+		if isCtxDone(ctx) {
+			return t, ctx.Err()
 		}
 	}
 	return t, errors.Errorf("malform slow query file %v", file.Name())
@@ -917,8 +964,9 @@ type slowQueryRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (s *slowQueryRuntimeStats) String() string {
 	return fmt.Sprintf("initialize: %s, read_file: %s, parse_log: {time:%s, concurrency:%v}, total_file: %v, read_file: %v, read_size: %s",
-		s.initialize, s.readFile, time.Duration(s.parseLog), s.concurrent,
-		s.totalFileNum, s.readFileNum, memory.BytesToString(s.readFileSize))
+		execdetails.FormatDuration(s.initialize), execdetails.FormatDuration(s.readFile),
+		execdetails.FormatDuration(time.Duration(s.parseLog)), s.concurrent,
+		s.totalFileNum, s.readFileNum, memory.FormatBytes(s.readFileSize))
 }
 
 // Merge implements the RuntimeStats interface.
@@ -946,7 +994,7 @@ func (s *slowQueryRuntimeStats) Tp() int {
 	return execdetails.TpSlowQueryRuntimeStat
 }
 
-func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
+func (e *slowQueryRetriever) getFileEndTime(ctx context.Context, file *os.File) (time.Time, error) {
 	var t time.Time
 	var tried int
 	stat, err := file.Stat()
@@ -956,7 +1004,7 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	endCursor := stat.Size()
 	maxLineNum := 128
 	for {
-		lines, readBytes, err := readLastLines(file, endCursor)
+		lines, readBytes, err := readLastLines(ctx, file, endCursor)
 		if err != nil {
 			return t, err
 		}
@@ -974,24 +1022,31 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 		if tried >= maxLineNum {
 			break
 		}
+		if isCtxDone(ctx) {
+			return t, ctx.Err()
+		}
 	}
 	return t, errors.Errorf("invalid slow query file %v", file.Name())
 }
 
+const maxReadCacheSize = 1024 * 1024 * 64
+
 // Read lines from the end of a file
 // endCursor initial value should be the filesize
-func readLastLines(file *os.File, endCursor int64) ([]string, int, error) {
+func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]string, int, error) {
 	var lines []byte
 	var firstNonNewlinePos int
 	var cursor = endCursor
+	var size int64 = 2048
 	for {
 		// stop if we are at the beginning
 		// check it in the start to avoid read beyond the size
 		if cursor <= 0 {
 			break
 		}
-
-		var size int64 = 4096
+		if size < maxReadCacheSize {
+			size = size * 2
+		}
 		if cursor < size {
 			size = cursor
 		}
@@ -1022,6 +1077,9 @@ func readLastLines(file *os.File, endCursor int64) ([]string, int, error) {
 		}
 		if firstNonNewlinePos > 0 {
 			break
+		}
+		if isCtxDone(ctx) {
+			return nil, 0, ctx.Err()
 		}
 	}
 	finalStr := string(lines[firstNonNewlinePos:])

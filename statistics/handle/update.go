@@ -208,6 +208,118 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
+// IndexUsageInformation is the data struct to store index usage information.
+type IndexUsageInformation struct {
+	QueryCount   int64
+	RowsSelected int64
+	LastUsedAt   string
+}
+
+// GlobalIndexID is the key type for indexUsageMap.
+type GlobalIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
+type indexUsageMap map[GlobalIndexID]IndexUsageInformation
+
+// SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
+type SessionIndexUsageCollector struct {
+	sync.Mutex
+
+	mapper  indexUsageMap
+	next    *SessionIndexUsageCollector
+	deleted bool
+}
+
+func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
+	item := m[id]
+	item.QueryCount += value.QueryCount
+	item.RowsSelected += value.RowsSelected
+	if item.LastUsedAt < value.LastUsedAt {
+		item.LastUsedAt = value.LastUsedAt
+	}
+	m[id] = item
+}
+
+func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
+	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
+	m.updateByKey(id, value)
+}
+
+func (m indexUsageMap) merge(destMap indexUsageMap) {
+	for id, item := range destMap {
+		m.updateByKey(id, &item)
+	}
+}
+
+// Update updates the mapper in SessionIndexUsageCollector.
+func (s *SessionIndexUsageCollector) Update(tableID int64, indexID int64, value *IndexUsageInformation) {
+	value.LastUsedAt = time.Now().Format(types.TimeFSPFormat)
+	s.Lock()
+	defer s.Unlock()
+	s.mapper.update(tableID, indexID, value)
+}
+
+// Delete will set s.deleted to true which means it can be deleted from linked list.
+func (s *SessionIndexUsageCollector) Delete() {
+	s.Lock()
+	defer s.Unlock()
+	s.deleted = true
+}
+
+// NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
+// idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
+// points to new item. It's helpful to sweepIdxUsageList.
+func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
+	h.idxUsageListHead.Lock()
+	defer h.idxUsageListHead.Unlock()
+	newCollector := &SessionIndexUsageCollector{
+		mapper: make(indexUsageMap),
+		next:   h.idxUsageListHead.next,
+	}
+	h.idxUsageListHead.next = newCollector
+	return newCollector
+}
+
+// sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
+// and remove closed session's collector.
+// For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
+func (h *Handle) sweepIdxUsageList() indexUsageMap {
+	prev := h.idxUsageListHead
+	prev.Lock()
+	mapper := make(indexUsageMap)
+	for curr := prev.next; curr != nil; curr = curr.next {
+		curr.Lock()
+		mapper.merge(curr.mapper)
+		if curr.deleted {
+			prev.next = curr.next
+			curr.Unlock()
+		} else {
+			prev.Unlock()
+			curr.mapper = make(indexUsageMap)
+			prev = curr
+		}
+	}
+	prev.Unlock()
+	return mapper
+}
+
+// DumpIndexUsageToKV will dump in-memory index usage information to KV.
+func (h *Handle) DumpIndexUsageToKV() error {
+	mapper := h.sweepIdxUsageList()
+	for id, value := range mapper {
+		sql := fmt.Sprintf(
+			`insert into mysql.SCHEMA_INDEX_USAGE values (%d, %d, %d, %d, "%s") on duplicate key update query_count=query_count+%d, rows_selected=rows_selected+%d, last_used_at=greatest(last_used_at, "%s")`,
+			id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
+		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
@@ -445,7 +557,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
+				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+				if idx.StatsVer >= statistics.Version2 {
+					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+				}
+				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
@@ -588,12 +704,16 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
+	var topN *statistics.TopN
+	var statsVer int64 = statistics.Version1
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
+		statsVer = idx.StatsVer
 		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.Copy()
+			topN = idx.TopN.Copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
@@ -608,12 +728,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, hist.Tp)
+		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
 	return errors.Trace(err)
 }
 
@@ -632,9 +752,9 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q)
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -789,7 +909,10 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
+	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
+	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
+	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -867,7 +990,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		if err != nil {
 			continue
 		}
-		equalityCount := idx.CMSketch.QueryBytes(bytes)
+		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
@@ -1048,7 +1171,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		return nil
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	if idx.CMSketch == nil || idx.StatsVer != statistics.Version1 {
+	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
 	ranges, err := q.DecodeToRanges(true)
@@ -1068,7 +1191,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
 			continue
 		}
-		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
+		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},

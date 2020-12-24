@@ -34,9 +34,6 @@ token-limit = 1000
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
 
-# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
-nested-loop-join-cache-capacity = 20971520
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
@@ -54,9 +51,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 
@@ -67,6 +61,10 @@ lower-case-table-names = 2
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
+# Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
+# The health check will fail immediately but the server will not start shutting down until the time has elapsed.
+graceful-wait-before-shutdown = 0
+
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 check-mb4-value-in-utf8 = true
 
@@ -75,6 +73,9 @@ treat-old-version-utf8-as-utf8mb4 = true
 
 # max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
 max-index-length = 3072
+
+# index-limit is used to deal with compatibility issues. It can only be in [64, 64*8].
+index-limit = 64
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
@@ -122,6 +123,16 @@ enable-telemetry = true
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
+
+# txn-scope indicates the default value for the `txn_scope` session variable.
+txn-scope = "global"
+
+# enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
+# According to MySQL 8.0 Refman:
+# The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
+# where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+# See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+enable-enum-length-limit = true
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -222,6 +233,14 @@ max-procs = 0
 # Memory size quota for tidb server, 0 means unlimited
 server-memory-quota = 0
 
+# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
+# and less than or equal to 1. The default value is 0.8.
+# If this configuration is set to 0 or 1, it'll disable the alarm.
+# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
+# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
+# `memory-usage-alarm-ratio * server-memory-quota`; otherwise, it'll be `memory-usage-alarm-ratio * system memory size`.
+memory-usage-alarm-ratio = 0.8
+
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -238,7 +257,7 @@ stats-lease = "3s"
 run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.05
+feedback-probability = 0.0
 
 # The max number of query feedback that cache in memory.
 query-feedback-limit = 512
@@ -277,6 +296,16 @@ max-txn-ttl = 3600000
 # the interval duration between two memory profile into global tracker
 mem-profile-interval = "1m"
 
+# Index usage sync lease duration, which influences the time of dump index usage information to KV.
+# Here we set to 0 to not dump index usage information to KV,
+# because we have not completed GC and other functions.
+index-usage-sync-lease = "0s"
+
+# The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
+# If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
+# If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
+gogc = 100
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -286,7 +315,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = false
+enabled = true
 capacity = 100
 memory-guard-ratio = 0.1
 
@@ -388,8 +417,6 @@ store-liveness-timeout = "5s"
 ttl-refreshed-txn-size = 33554432
 
 [tikv-client.async-commit]
-# Whether to enable the async commit feature. This feature reduces the latency of the two-phase commit.
-enable = false
 # The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
 # will be committed with normal 2PC way.
 keys-limit = 256
@@ -405,6 +432,8 @@ enable = true
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
@@ -455,6 +484,10 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
+# enable global kill.
+enable-global-kill = false
 
 # server level isolation read by engines and labels
 [isolation-read]

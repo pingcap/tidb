@@ -740,16 +740,17 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return hist
 }
 
-// UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, eqFeedbacks []Feedback) *CMSketch {
+// UpdateCMSketchAndTopN updates the CMSketch and TopN by feedback.
+func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
 	if c == nil || len(eqFeedbacks) == 0 {
-		return c
+		return c, t
 	}
 	newCMSketch := c.Copy()
+	newTopN := t.Copy()
 	for _, fb := range eqFeedbacks {
-		newCMSketch.updateValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
+		updateValueBytes(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
 	}
-	return newCMSketch
+	return newCMSketch, newTopN
 }
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
@@ -853,7 +854,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	return buf.Bytes(), errors.Trace(err)
 }
 
-func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
+func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch, t *TopN) {
 	q.Tp = IndexType
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
@@ -864,17 +865,13 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		if len(pb.HashValues) > 0 {
-			// It needs raw values to update the top n, so just skip it here.
-			if len(c.topN) > 0 {
-				return
-			}
 			for i := 0; i < len(pb.HashValues); i += 2 {
 				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
 			}
 			return
 		}
 		for i := 0; i < len(pb.IndexPoints); i++ {
-			c.updateValueBytes(pb.IndexPoints[i], uint64(pb.Counts[start+i]))
+			updateValueBytes(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
@@ -936,7 +933,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.Fiel
 }
 
 // DecodeFeedback decodes a byte slice to feedback.
-func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldType) error {
+func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *types.FieldType) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -945,7 +942,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 		return errors.Trace(err)
 	}
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
-		decodeFeedbackForIndex(q, pb, c)
+		decodeFeedbackForIndex(q, pb, c, t)
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
@@ -966,6 +963,21 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 		}
 	}
 	return eqFB, ranFB
+}
+
+// CleanRangeFeedbackByTopN will not update the part containing the TopN.
+func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
+	for i := len(feedbacks) - 1; i >= 0; i-- {
+		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
+		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
+		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
+		// we can indicate that no top-n overlaps the feedback's ranges.
+		if lIdx == rIdx && !lMatch {
+			continue
+		}
+		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
+	}
+	return feedbacks
 }
 
 // setNextValue sets the next value for the given datum. For types like float,

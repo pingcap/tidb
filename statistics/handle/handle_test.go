@@ -52,6 +52,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
+	tk.MustExec("delete from mysql.schema_index_usage")
 	do.StatsHandle().Clear()
 }
 
@@ -112,13 +113,10 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.Pseudo, IsTrue)
-	testKit.MustExec("analyze table t")
-
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.Pseudo, IsTrue)
 
+	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -144,7 +142,6 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
@@ -155,7 +152,6 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
@@ -535,7 +531,8 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
 	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
-	c.Assert(cms.TotalCount(), Greater, uint64(0))
+	topN := stat.Indices[tableInfo.Indices[0].ID].TopN
+	c.Assert(cms.TotalCount()+topN.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Equals, 0)
 	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
@@ -646,9 +643,23 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	err := tk.ExecToErr("create statistics s1(correlation) on t(b,c)")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	err = tk.ExecToErr("drop statistics s1")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	err = tk.ExecToErr("admin reload statistics")
+	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+}
+
 func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	err := tk.ExecToErr("drop statistics s1")
 	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
 	tk.MustExec("use test")
@@ -706,6 +717,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
 	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
@@ -748,6 +760,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")
@@ -795,4 +808,44 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+}
+
+func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
+	))
+	tk.MustExec("insert into t_idx values(1, 0)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+	))
+	tk.MustQuery("select b from t_idx where b=0")
+	tk.MustQuery("select b from t_idx where b=0")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+		"test t_idx idx_b 2 2",
+	))
 }

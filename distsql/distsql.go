@@ -28,6 +28,31 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// DispatchMPPTasks dispathes all tasks and returns an iterator.
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return nil, err
+	}
+
+	encodeType := tipb.EncodeType_TypeDefault
+	if canUseChunkRPC(sctx) {
+		encodeType = tipb.EncodeType_TypeChunk
+	}
+	// TODO: Add metric label and set open tracing.
+	return &selectResult{
+		label:      "mpp",
+		resp:       resp,
+		rowLen:     len(fieldTypes),
+		fieldTypes: fieldTypes,
+		ctx:        sctx,
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		encodeType: encodeType,
+	}, nil
+
+}
+
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
@@ -45,7 +70,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker)
+	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
@@ -106,7 +132,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
 	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker)
+	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -128,7 +154,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil)
+	resp := client.Send(ctx, kvReq, vars, nil, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

@@ -119,6 +119,9 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 
 	nKeys := 0
 	for _, r := range rows {
+		if r.ignored {
+			continue
+		}
 		if r.handleKey != nil {
 			nKeys++
 		}
@@ -126,6 +129,9 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	}
 	batchKeys := make([]kv.Key, 0, nKeys)
 	for _, r := range rows {
+		if r.ignored {
+			continue
+		}
 		if r.handleKey != nil {
 			batchKeys = append(batchKeys, r.handleKey.newKey)
 		}
@@ -392,7 +398,7 @@ func (e *InsertExec) setMessage() {
 				numDuplicates = stmtCtx.UpdatedRows()
 			}
 		}
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo], numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }

@@ -264,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, errors.Trace(err)
+		return val, overflow(str, tp)
 	}
 	return val + round, nil
 }
@@ -353,7 +353,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
+		return ZeroDuration, errors.Trace(ErrTruncatedWrongVal.GenWithStackByArgs(TimeStr, strconv.FormatInt(number, 10)))
 	}
 	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
@@ -543,8 +543,13 @@ func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (floa
 	return f, errors.Trace(err)
 }
 
-// ConvertJSONToInt casts JSON into int64.
-func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
+// ConvertJSONToInt64 casts JSON into int64.
+func ConvertJSONToInt64(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool) (int64, error) {
+	return ConvertJSONToInt(sc, j, unsigned, mysql.TypeLonglong)
+}
+
+// ConvertJSONToInt casts JSON into int by type.
+func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case json.TypeCodeObject, json.TypeCodeArray:
 		return 0, nil
@@ -555,18 +560,39 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		default:
 			return 1, nil
 		}
-	case json.TypeCodeInt64, json.TypeCodeUint64:
-		return j.GetInt64(), nil
+	case json.TypeCodeInt64:
+		i := j.GetInt64()
+		if unsigned {
+			uBound := IntergerUnsignedUpperBound(tp)
+			u, err := ConvertIntToUint(sc, i, uBound, tp)
+			return int64(u), sc.HandleOverflow(err, err)
+		}
+
+		lBound := IntergerSignedLowerBound(tp)
+		uBound := IntergerSignedUpperBound(tp)
+		i, err := ConvertIntToInt(i, lBound, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
+	case json.TypeCodeUint64:
+		u := j.GetUint64()
+		if unsigned {
+			uBound := IntergerUnsignedUpperBound(tp)
+			u, err := ConvertUintToUint(u, uBound, tp)
+			return int64(u), sc.HandleOverflow(err, err)
+		}
+
+		uBound := IntergerSignedUpperBound(tp)
+		i, err := ConvertUintToInt(u, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
 	case json.TypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
-			lBound := IntergerSignedLowerBound(mysql.TypeLonglong)
-			uBound := IntergerSignedUpperBound(mysql.TypeLonglong)
-			u, e := ConvertFloatToInt(f, lBound, uBound, mysql.TypeLonglong)
+			lBound := IntergerSignedLowerBound(tp)
+			uBound := IntergerSignedUpperBound(tp)
+			u, e := ConvertFloatToInt(f, lBound, uBound, tp)
 			return u, sc.HandleOverflow(e, e)
 		}
-		bound := IntergerUnsignedUpperBound(mysql.TypeLonglong)
-		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeLonglong)
+		bound := IntergerUnsignedUpperBound(tp)
+		u, err := ConvertFloatToUint(sc, f, bound, tp)
 		return int64(u), sc.HandleOverflow(err, err)
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
@@ -607,16 +633,31 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 
 // ConvertJSONToDecimal casts JSON into decimal.
 func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+	var err error = nil
 	res := new(MyDecimal)
-	if j.TypeCode != json.TypeCodeString {
-		f64, err := ConvertJSONToFloat(sc, j)
-		if err != nil {
-			return res, errors.Trace(err)
+	switch j.TypeCode {
+	case json.TypeCodeObject, json.TypeCodeArray:
+		res = res.FromInt(0)
+	case json.TypeCodeLiteral:
+		switch j.Value[0] {
+		case json.LiteralNil, json.LiteralFalse:
+			res = res.FromInt(0)
+		default:
+			res = res.FromInt(1)
 		}
-		err = res.FromFloat64(f64)
+	case json.TypeCodeInt64:
+		res = res.FromInt(j.GetInt64())
+	case json.TypeCodeUint64:
+		res = res.FromUint(j.GetUint64())
+	case json.TypeCodeFloat64:
+		err = res.FromFloat64(j.GetFloat64())
+	case json.TypeCodeString:
+		err = res.FromString(j.GetString())
+	}
+	err = sc.HandleTruncate(err)
+	if err != nil {
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 

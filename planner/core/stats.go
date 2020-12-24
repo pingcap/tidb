@@ -174,14 +174,19 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
-		idxCols := make([]int64, len(tbl.Idx2ColumnIDs[idxID]))
+		colsLen := len(tbl.Idx2ColumnIDs[idxID])
+		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		if colsLen != len(idx.Info.Columns) {
+			continue
+		}
+		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
 		sort.Slice(idxCols, func(i, j int) bool {
 			return idxCols[i] < idxCols[j]
 		})
 		for _, g := range colGroups {
 			// We only want those exact matches.
-			if len(g) != len(idxCols) {
+			if len(g) != colsLen {
 				continue
 			}
 			match := true
@@ -307,10 +312,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
-	for i := 1; i < len(ds.possibleAccessPaths); i++ {
-		if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-			needConsiderIndexMerge = false
-			break
+	if len(ds.indexMergeHints) == 0 {
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+				needConsiderIndexMerge = false
+				break
+			}
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
@@ -419,7 +426,13 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
-			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{sf}, nil)
+
+			accessConds := make([]expression.Expression, 0, len(partialPaths))
+			for _, p := range partialPaths {
+				accessConds = append(accessConds, p.AccessConds...)
+			}
+			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
+			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
@@ -468,12 +481,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-				// Now these conditions are too strict.
-				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-				// TODO: solve the above case
+			if len(path.AccessConds) == 0 {
+				// If AccessConds is empty, we ignore the access path.
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -497,12 +506,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-				// Now these conditions are too strict.
-				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-				// TODO: solve the above case
+			if len(path.AccessConds) == 0 {
+				// If AccessConds is empty, we ignore the access path.
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -549,6 +554,11 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	for _, path := range partialPaths {
+		if len(path.TableFilters) > 0 {
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+		}
+	}
 	return indexMergePath
 }
 
@@ -608,17 +618,44 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, selfSchema 
 	return lt.stats, nil
 }
 
-// getCardinality will return the Cardinality of a couple of columns. We simply return the max one, because we cannot know
-// the Cardinality for multi-dimension attributes properly. This is a simple and naive scheme of Cardinality estimation.
+func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *property.GroupNDV {
+	if len(cols) == 0 || len(stats.GroupNDVs) == 0 {
+		return nil
+	}
+	cols = expression.SortColumns(cols)
+	for _, groupNDV := range stats.GroupNDVs {
+		if len(cols) != len(groupNDV.Cols) {
+			continue
+		}
+		match := true
+		for i, col := range groupNDV.Cols {
+			if col != cols[i].UniqueID {
+				match = false
+				break
+			}
+		}
+		if match {
+			return &groupNDV
+		}
+	}
+	return nil
+}
+
+// getCardinality returns the Cardinality of a couple of columns.
+// If the columns match any GroupNDV maintained by child operator, we can get an accurate cardinality.
+// Otherwise, we simply return the max cardinality among the columns, which is a lower bound.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	cardinality := 1.0
+	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
+		return math.Max(groupNDV.NDV, cardinality)
+	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return cardinality
 	}
 	for _, idx := range indices {
-		// It is a very elementary estimation.
+		// It is a very naive estimation.
 		col := schema.Columns[idx]
 		cardinality = math.Max(cardinality, profile.Cardinality[col.UniqueID])
 	}
@@ -712,31 +749,19 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 	return extracted
 }
 
-func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema, gbyCols []*expression.Column) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
+	if len(colGroups) == 0 {
 		return nil
 	}
 	// Check if the child profile provides GroupNDV for the GROUP BY columns.
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
 	// but we have no other approaches for the cardinality estimation of these cases
 	// except for using the independent assumption, unless we can use stats of expression index.
-	gbyCols = expression.SortColumns(gbyCols)
-	for _, groupNDV := range childProfile.GroupNDVs {
-		if len(gbyCols) != len(groupNDV.Cols) {
-			continue
-		}
-		match := true
-		for i, col := range groupNDV.Cols {
-			if col != gbyCols[i].UniqueID {
-				match = false
-				break
-			}
-		}
-		if match {
-			return []property.GroupNDV{groupNDV}
-		}
+	groupNDV := getGroupNDV4Cols(gbyCols, childProfile)
+	if groupNDV == nil {
+		return nil
 	}
-	return nil
+	return []property.GroupNDV{*groupNDV}
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -749,7 +774,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	if la.stats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, selfSchema, gbyCols)
+		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 		return la.stats, nil
 	}
 	cardinality := getCardinality(gbyCols, childSchema[0], childProfile)
@@ -762,7 +787,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.stats.Cardinality[col.UniqueID] = cardinality
 	}
 	la.inputCount = childProfile.RowCount
-	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, selfSchema, gbyCols)
+	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
 	return la.stats, nil
 }
 
@@ -778,7 +803,7 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	if len(gbyCols) > 0 {
+	if len(gbyCols) > 1 {
 		return [][]*expression.Column{expression.SortColumns(gbyCols)}
 	}
 	return nil

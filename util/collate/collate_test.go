@@ -126,7 +126,6 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x0, 0x46, 0x0, 0x4f, 0x0, 0x4f, 0x0, 0x20, 0x0, 0xa9, 0x0, 0x20, 0x0,
 			0x42, 0x0, 0x41, 0x0, 0x52, 0x0, 0x20, 0xff, 0xfd, 0x0, 0x20, 0x0, 0x42, 0x0, 0x41, 0x0, 0x5a, 0x0, 0x20, 0x26,
 			0x3, 0x0, 0x20, 0x0, 0x51, 0x0, 0x55, 0x0, 0x58}},
-		{string([]byte{0x88, 0xe6}), []byte{0xff, 0xfd, 0xff, 0xfd}},
 		{"a ", []byte{0x0, 0x41}},
 		{"a", []byte{0x0, 0x41}},
 	}
@@ -199,6 +198,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"), FitsTypeOf, &zhPinyinTiDBASCSCollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binPaddingCollator{})
@@ -207,6 +207,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollatorByID(224), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollatorByID(192), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollatorByID(2048), FitsTypeOf, &zhPinyinTiDBASCSCollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
 
 	SetNewCollationEnabledForTest(false)
@@ -217,6 +218,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binCollator{})
@@ -225,5 +227,6 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(224), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(192), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(2048), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binCollator{})
 }

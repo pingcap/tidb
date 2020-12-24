@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -140,7 +141,7 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) AccessIndex {
+func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 	l := uint32(r.accessStoreNum(TiKvOnly))
 	if l <= 1 {
 		return r.workTiKVIdx
@@ -152,7 +153,7 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 			followerIdx++
 		}
 		storeIdx, s := r.accessStore(TiKvOnly, followerIdx)
-		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) && r.filterStoreCandidate(followerIdx, op) {
 			return followerIdx
 		}
 		seed++
@@ -161,20 +162,28 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 }
 
 // return next leader or follower store's index
-func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
+func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
 	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
 		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
 			continue
 		}
 		candidates = append(candidates, AccessIndex(i))
 	}
-
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
-	return candidates[int32(seed)%int32(len(candidates))]
+	return candidates[seed%uint32(len(candidates))]
+}
+
+func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
+	_, s := r.accessStore(TiKvOnly, aidx)
+	// filter label unmatched store
+	if !s.IsLabelsMatch(op.labels) {
+		return false
+	}
+	return true
 }
 
 // init initializes region after constructed.
@@ -286,7 +295,8 @@ func NewRegionCache(pdClient pd.Client) *RegionCache {
 	c.storeMu.stores = make(map[uint64]*Store)
 	c.notifyCheckCh = make(chan struct{}, 1)
 	c.closeCh = make(chan struct{})
-	go c.asyncCheckAndResolveLoop()
+	interval := config.GetGlobalConfig().StoresRefreshInterval
+	go c.asyncCheckAndResolveLoop(time.Duration(interval) * time.Second)
 	return c
 }
 
@@ -296,7 +306,9 @@ func (c *RegionCache) Close() {
 }
 
 // asyncCheckAndResolveLoop with
-func (c *RegionCache) asyncCheckAndResolveLoop() {
+func (c *RegionCache) asyncCheckAndResolveLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	var needCheckStores []*Store
 	for {
 		select {
@@ -305,6 +317,18 @@ func (c *RegionCache) asyncCheckAndResolveLoop() {
 		case <-c.notifyCheckCh:
 			needCheckStores = needCheckStores[:0]
 			c.checkAndResolve(needCheckStores)
+		case <-ticker.C:
+			// refresh store once a minute to update labels
+			var stores []*Store
+			c.storeMu.RLock()
+			stores = make([]*Store, 0, len(c.storeMu.stores))
+			for _, s := range c.storeMu.stores {
+				stores = append(stores, s)
+			}
+			c.storeMu.RUnlock()
+			for _, store := range stores {
+				store.reResolve(c)
+			}
 		}
 	}
 }
@@ -355,9 +379,23 @@ func (c *RPCContext) String() string {
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessIdx, c.AccessMode, runStoreType)
 }
 
+type storeSelectorOp struct {
+	labels []*metapb.StoreLabel
+}
+
+// StoreSelectorOption configures storeSelectorOp.
+type StoreSelectorOption func(*storeSelectorOp)
+
+// WithMatchLabels indicates selecting stores with matched labels
+func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		op.labels = labels
+	}
+}
+
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -376,11 +414,15 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		storeIdx  int
 		accessIdx AccessIndex
 	)
+	options := &storeSelectorOp{}
+	for _, op := range opts {
+		op(options)
+	}
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
 	case kv.ReplicaReadMixed:
-		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
+		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed, options)
 	default:
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -679,24 +721,24 @@ type groupedMutations struct {
 	mutations CommitterMutations
 }
 
-// GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func (c *RegionCache) groupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
 	)
 	lastUpperBound := 0
-	for i := range m.keys {
-		if lastLoc == nil || !lastLoc.Contains(m.keys[i]) {
+	for i := 0; i < m.Len(); i++ {
+		if lastLoc == nil || !lastLoc.Contains(m.GetKey(i)) {
 			if lastLoc != nil {
 				groups = append(groups, groupedMutations{
 					region:    lastLoc.Region,
-					mutations: m.subRange(lastUpperBound, i),
+					mutations: m.Slice(lastUpperBound, i),
 				})
 				lastUpperBound = i
 			}
 			var err error
-			lastLoc, err = c.LocateKey(bo, m.keys[i])
+			lastLoc, err = c.LocateKey(bo, m.GetKey(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -705,7 +747,7 @@ func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMut
 	if lastLoc != nil {
 		groups = append(groups, groupedMutations{
 			region:    lastLoc.Region,
-			mutations: m.subRange(lastUpperBound, m.len()),
+			mutations: m.Slice(lastUpperBound, m.Len()),
 		})
 	}
 	return groups, nil
@@ -1130,6 +1172,18 @@ func (c *RegionCache) getStoreByStoreID(storeID uint64) (store *Store) {
 	return
 }
 
+func (c *RegionCache) getStoresByLabels(labels []*metapb.StoreLabel) []*Store {
+	c.storeMu.RLock()
+	defer c.storeMu.RUnlock()
+	s := make([]*Store, 0)
+	for _, store := range c.storeMu.stores {
+		if store.IsLabelsMatch(labels) {
+			s = append(s, store)
+		}
+	}
+	return s
+}
+
 // OnRegionEpochNotMatch removes the old region and inserts new regions into the cache.
 func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, currentRegions []*metapb.Region) error {
 	// Find whether the region epoch in `ctx` is ahead of TiKV's. If so, backoff.
@@ -1251,13 +1305,13 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed))
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed, op))
 }
 
 // AnyStorePeer returns a leader or follower store with the associated peer.
-func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed))
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed, op))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1385,14 +1439,15 @@ func (r *Region) ContainsByEnd(key []byte) bool {
 
 // Store contains a kv process's address.
 type Store struct {
-	addr         string        // loaded store address
-	saddr        string        // loaded store status address
-	storeID      uint64        // store's id
-	state        uint64        // unsafe store storeState
-	resolveMutex sync.Mutex    // protect pd from concurrent init requests
-	epoch        uint32        // store fail epoch, see RegionStore.storeEpochs
-	storeType    kv.StoreType  // type of the store
-	tokenCount   atomic2.Int64 // used store token count
+	addr         string               // loaded store address
+	saddr        string               // loaded store status address
+	storeID      uint64               // store's id
+	state        uint64               // unsafe store storeState
+	labels       []*metapb.StoreLabel // stored store labels
+	resolveMutex sync.Mutex           // protect pd from concurrent init requests
+	epoch        uint32               // store fail epoch, see RegionStore.storeEpochs
+	storeType    kv.StoreType         // type of the store
+	tokenCount   atomic2.Int64        // used store token count
 }
 
 type resolveState uint64
@@ -1439,6 +1494,7 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 		s.addr = addr
 		s.saddr = store.GetStatusAddress()
 		s.storeType = GetStoreTypeByMeta(store)
+		s.labels = store.GetLabels()
 	retry:
 		state = s.getResolveState()
 		if state != unresolved {
@@ -1491,9 +1547,9 @@ func (s *Store) reResolve(c *RegionCache) {
 
 	storeType := GetStoreTypeByMeta(store)
 	addr = store.GetAddress()
-	if s.addr != addr {
+	if s.addr != addr || !s.IsSameLabels(store.GetLabels()) {
 		state := resolved
-		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType}
+		newStore := &Store{storeID: s.storeID, addr: addr, saddr: store.GetStatusAddress(), storeType: storeType, labels: store.GetLabels()}
 		newStore.state = *(*uint64)(&state)
 		c.storeMu.Lock()
 		c.storeMu.stores[newStore.storeID] = newStore
@@ -1547,7 +1603,34 @@ retry:
 	case notifyCheckCh <- struct{}{}:
 	default:
 	}
+}
 
+// IsSameLabels returns whether the store have the same labels with target labels
+func (s *Store) IsSameLabels(labels []*metapb.StoreLabel) bool {
+	if len(s.labels) != len(labels) {
+		return false
+	}
+	return s.IsLabelsMatch(labels)
+}
+
+// IsLabelsMatch return whether the store's labels match the target labels
+func (s *Store) IsLabelsMatch(labels []*metapb.StoreLabel) bool {
+	if len(labels) < 1 {
+		return true
+	}
+	for _, targetLabel := range labels {
+		match := false
+		for _, label := range s.labels {
+			if targetLabel.Key == label.Key && targetLabel.Value == label.Value {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
 }
 
 type livenessState uint32

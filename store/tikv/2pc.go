@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"strings"
 	"sync"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -59,6 +59,8 @@ var (
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 	tikvAsyncCommitTxnCounterOk                    = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
 	tikvAsyncCommitTxnCounterError                 = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("err")
+	tikvOnePCTxnCounterOk                          = metrics.TiKVOnePCTxnCounter.WithLabelValues("ok")
+	tikvOnePCTxnCounterError                       = metrics.TiKVOnePCTxnCounter.WithLabelValues("err")
 )
 
 // Global variable set by config file.
@@ -76,7 +78,7 @@ type twoPhaseCommitter struct {
 	store               *tikvStore
 	txn                 *tikvTxn
 	startTS             uint64
-	mutations           CommitterMutations
+	mutations           *memBufferMutations
 	lockTTL             uint64
 	commitTS            uint64
 	priority            pb.CommandPri
@@ -112,21 +114,97 @@ type twoPhaseCommitter struct {
 		noFallBack           bool
 	}
 
-	useAsyncCommit uint32
-	minCommitTS    uint64
+	useAsyncCommit    uint32
+	minCommitTS       uint64
+	maxCommitTS       uint64
+	prewriteStarted   bool
+	prewriteCancelled uint32
+	useOnePC          uint32
+	onePCCommitTS     uint64
+
+	// doingAmend means the amend prewrite is ongoing.
+	doingAmend bool
 }
 
-// CommitterMutations contains transaction operations.
-type CommitterMutations struct {
+type memBufferMutations struct {
+	storage kv.MemBuffer
+	handles []kv.MemKeyHandle
+}
+
+func newMemBufferMutations(sizeHint int, storage kv.MemBuffer) *memBufferMutations {
+	return &memBufferMutations{
+		handles: make([]kv.MemKeyHandle, 0, sizeHint),
+		storage: storage,
+	}
+}
+
+func (m *memBufferMutations) Len() int {
+	return len(m.handles)
+}
+
+func (m *memBufferMutations) GetKey(i int) []byte {
+	return m.storage.GetKeyByHandle(m.handles[i])
+}
+
+func (m *memBufferMutations) GetKeys() [][]byte {
+	ret := make([][]byte, m.Len())
+	for i := range ret {
+		ret[i] = m.GetKey(i)
+	}
+	return ret
+}
+
+func (m *memBufferMutations) GetValue(i int) []byte {
+	v, _ := m.storage.GetValueByHandle(m.handles[i])
+	return v
+}
+
+func (m *memBufferMutations) GetOp(i int) pb.Op {
+	return pb.Op(m.handles[i].UserData >> 1)
+}
+
+func (m *memBufferMutations) IsPessimisticLock(i int) bool {
+	return m.handles[i].UserData&1 != 0
+}
+
+func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
+	return &memBufferMutations{
+		handles: m.handles[from:to],
+		storage: m.storage,
+	}
+}
+
+func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle kv.MemKeyHandle) {
+	aux := uint16(op) << 1
+	if isPessimisticLock {
+		aux |= 1
+	}
+	handle.UserData = aux
+	m.handles = append(m.handles, handle)
+}
+
+// CommitterMutations contains the mutations to be submitted.
+type CommitterMutations interface {
+	Len() int
+	GetKey(i int) []byte
+	GetKeys() [][]byte
+	GetOp(i int) pb.Op
+	GetValue(i int) []byte
+	IsPessimisticLock(i int) bool
+	Slice(from, to int) CommitterMutations
+}
+
+// PlainMutations contains transaction operations.
+type PlainMutations struct {
 	ops               []pb.Op
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
 }
 
-// NewCommiterMutations creates a CommitterMutations object with sizeHint reserved.
-func NewCommiterMutations(sizeHint int) CommitterMutations {
-	return CommitterMutations{
+// NewPlainMutations creates a PlainMutations object with sizeHint reserved.
+func NewPlainMutations(sizeHint int) PlainMutations {
+	return PlainMutations{
 		ops:               make([]pb.Op, 0, sizeHint),
 		keys:              make([][]byte, 0, sizeHint),
 		values:            make([][]byte, 0, sizeHint),
@@ -134,8 +212,9 @@ func NewCommiterMutations(sizeHint int) CommitterMutations {
 	}
 }
 
-func (c *CommitterMutations) subRange(from, to int) CommitterMutations {
-	var res CommitterMutations
+// Slice return a sub mutations in range [from, to).
+func (c *PlainMutations) Slice(from, to int) CommitterMutations {
+	var res PlainMutations
 	res.keys = c.keys[from:to]
 	if c.ops != nil {
 		res.ops = c.ops[from:to]
@@ -146,47 +225,87 @@ func (c *CommitterMutations) subRange(from, to int) CommitterMutations {
 	if c.isPessimisticLock != nil {
 		res.isPessimisticLock = c.isPessimisticLock[from:to]
 	}
-	return res
+	return &res
 }
 
 // Push another mutation into mutations.
-func (c *CommitterMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
+func (c *PlainMutations) Push(op pb.Op, key []byte, value []byte, isPessimisticLock bool) {
 	c.ops = append(c.ops, op)
 	c.keys = append(c.keys, key)
 	c.values = append(c.values, value)
 	c.isPessimisticLock = append(c.isPessimisticLock, isPessimisticLock)
 }
 
-func (c *CommitterMutations) len() int {
+// Len returns the count of mutations.
+func (c *PlainMutations) Len() int {
 	return len(c.keys)
 }
 
+// GetKey returns the key at index.
+func (c *PlainMutations) GetKey(i int) []byte {
+	return c.keys[i]
+}
+
 // GetKeys returns the keys.
-func (c *CommitterMutations) GetKeys() [][]byte {
+func (c *PlainMutations) GetKeys() [][]byte {
 	return c.keys
 }
 
 // GetOps returns the key ops.
-func (c *CommitterMutations) GetOps() []pb.Op {
+func (c *PlainMutations) GetOps() []pb.Op {
 	return c.ops
 }
 
 // GetValues returns the key values.
-func (c *CommitterMutations) GetValues() [][]byte {
+func (c *PlainMutations) GetValues() [][]byte {
 	return c.values
 }
 
 // GetPessimisticFlags returns the key pessimistic flags.
-func (c *CommitterMutations) GetPessimisticFlags() []bool {
+func (c *PlainMutations) GetPessimisticFlags() []bool {
 	return c.isPessimisticLock
 }
 
+// GetOp returns the key op at index.
+func (c *PlainMutations) GetOp(i int) pb.Op {
+	return c.ops[i]
+}
+
+// GetValue returns the key value at index.
+func (c *PlainMutations) GetValue(i int) []byte {
+	if len(c.values) <= i {
+		return nil
+	}
+	return c.values[i]
+}
+
+// IsPessimisticLock returns the key pessimistic flag at index.
+func (c *PlainMutations) IsPessimisticLock(i int) bool {
+	return c.isPessimisticLock[i]
+}
+
+// PlainMutation represents a single transaction operation.
+type PlainMutation struct {
+	KeyOp             pb.Op
+	Key               []byte
+	Value             []byte
+	IsPessimisticLock bool
+}
+
 // MergeMutations append input mutations into current mutations.
-func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
+func (c *PlainMutations) MergeMutations(mutations PlainMutations) {
 	c.ops = append(c.ops, mutations.ops...)
 	c.keys = append(c.keys, mutations.keys...)
 	c.values = append(c.values, mutations.values...)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+}
+
+// AppendMutation merges a single Mutation into the current mutations.
+func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
+	c.ops = append(c.ops, mutation.KeyOp)
+	c.keys = append(c.keys, mutation.Key)
+	c.values = append(c.values, mutation.Value)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -339,7 +458,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	txn := c.txn
 	memBuf := txn.GetMemBuffer()
 	sizeHint := txn.us.GetMemBuffer().Len()
-	mutations := NewCommiterMutations(sizeHint)
+	c.mutations = newMemBufferMutations(sizeHint, memBuf)
 	c.isPessimistic = txn.IsPessimistic()
 
 	var err error
@@ -360,13 +479,18 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			value = it.Value()
 			if len(value) > 0 {
 				if tablecodec.IsUntouchedIndexKValue(key, value) {
-					continue
+					if !flags.HasLocked() {
+						continue
+					}
+					op = pb.Op_Lock
+					lockCnt++
+				} else {
+					op = pb.Op_Put
+					if flags.HasPresumeKeyNotExists() {
+						op = pb.Op_Insert
+					}
+					putCnt++
 				}
-				op = pb.Op_Put
-				if flags.HasPresumeKeyNotExists() {
-					op = pb.Op_Insert
-				}
-				putCnt++
 			} else {
 				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
@@ -387,7 +511,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		if flags.HasLocked() {
 			isPessimistic = c.isPessimistic
 		}
-		mutations.Push(op, key, value, isPessimistic)
+		c.mutations.Push(op, isPessimistic, it.Handle())
 		size += len(key) + len(value)
 
 		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
@@ -395,7 +519,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 	}
 
-	if mutations.len() == 0 {
+	if c.mutations.Len() == 0 {
 		return nil
 	}
 	c.txnSize = size
@@ -405,13 +529,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	}
 	const logEntryCount = 10000
 	const logSize = 4 * 1024 * 1024 // 4MB
-	if mutations.len() > logEntryCount || size > logSize {
-		tableID := tablecodec.DecodeTableID(mutations.keys[0])
+	if c.mutations.Len() > logEntryCount || size > logSize {
+		tableID := tablecodec.DecodeTableID(c.mutations.GetKey(0))
 		logutil.BgLogger().Info("[BIG_TXN]",
 			zap.Uint64("con", c.connID),
 			zap.Int64("table ID", tableID),
 			zap.Int("size", size),
-			zap.Int("keys", mutations.len()),
+			zap.Int("keys", c.mutations.Len()),
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
@@ -428,11 +552,10 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return errors.Trace(err)
 	}
 
-	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: mutations.len()}
+	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0
-	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
 	c.syncLog = getTxnSyncLog(txn)
@@ -442,16 +565,17 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 
 func (c *twoPhaseCommitter) primary() []byte {
 	if len(c.primaryKey) == 0 {
-		return c.mutations.keys[0]
+		return c.mutations.GetKey(0)
 	}
 	return c.primaryKey
 }
 
 // asyncSecondaries returns all keys that must be checked in the recovery phase of an async commit.
 func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
-	secondaries := make([][]byte, 0, len(c.mutations.keys))
-	for i, k := range c.mutations.keys {
-		if bytes.Equal(k, c.primary()) || c.mutations.ops[i] == pb.Op_CheckNotExists {
+	secondaries := make([][]byte, 0, c.mutations.Len())
+	for i := 0; i < c.mutations.Len(); i++ {
+		k := c.mutations.GetKey(i)
+		if bytes.Equal(k, c.primary()) || c.mutations.GetOp(i) == pb.Op_CheckNotExists {
 			continue
 		}
 		secondaries = append(secondaries, k)
@@ -492,7 +616,7 @@ var preSplitSizeThreshold uint32 = 32 << 20
 // it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
 // is done in background goroutine.
 func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCommitAction, mutations CommitterMutations) error {
-	if mutations.len() == 0 {
+	if mutations.Len() == 0 {
 		return nil
 	}
 	groups, err := c.groupMutations(bo, mutations)
@@ -500,12 +624,16 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		return errors.Trace(err)
 	}
 
+	// This is redundant since `doActionOnGroupMutations` will still split groups into batches and
+	// check the number of batches. However we don't want the check fail after any code changes.
+	c.checkOnePCFallBack(action, len(groups))
+
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
 func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
-	groups, err := c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+	groups, err := c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -515,10 +643,10 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 	var didPreSplit bool
 	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
 	for _, group := range groups {
-		if uint32(group.mutations.len()) >= preSplitDetectThresholdVal {
+		if uint32(group.mutations.Len()) >= preSplitDetectThresholdVal {
 			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
 				zap.Uint64("region", group.region.GetID()),
-				zap.Int("mutations count", group.mutations.len()))
+				zap.Int("mutations count", group.mutations.Len()))
 			// Use context.Background, this time should not add up to Backoffer.
 			if c.store.preSplitRegion(context.Background(), group) {
 				didPreSplit = true
@@ -527,7 +655,7 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 	}
 	// Reload region cache again.
 	if didPreSplit {
-		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+		groups, err = c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -548,7 +676,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
-				c.regionTxnSize[group.region.id] = group.mutations.len()
+				c.regionTxnSize[group.region.id] = group.mutations.Len()
 			}
 		}
 		sizeFunc = c.keyValueSize
@@ -568,6 +696,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	actionCommit, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+
+	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
@@ -717,7 +847,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 			bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
-			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
@@ -793,7 +923,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, primary, keyErr.Abort)
+			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
 		return cmdResp.GetLockTtl(), nil
 	}
@@ -801,15 +931,17 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
+	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
-	if c.connID > 0 && asyncCommitCfg.Enable &&
-		uint(len(c.mutations.keys)) <= asyncCommitCfg.KeysLimit &&
+	if c.connID > 0 && enableAsyncCommit &&
+		uint(c.mutations.Len()) <= asyncCommitCfg.KeysLimit &&
 		!c.shouldWriteBinlog() {
 		totalKeySize := uint64(0)
-		for _, key := range c.mutations.keys {
-			totalKeySize += uint64(len(key))
+		for i := 0; i < c.mutations.Len(); i++ {
+			totalKeySize += uint64(len(c.mutations.GetKey(i)))
 			if totalKeySize > asyncCommitCfg.TotalKeySizeLimit {
 				return false
 			}
@@ -817,6 +949,17 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 		return true
 	}
 	return false
+}
+
+// checkOnePC checks if 1PC protocol is available for current transaction.
+func (c *twoPhaseCommitter) checkOnePC() bool {
+	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
+	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
+}
+
+func (c *twoPhaseCommitter) needExternalConsistency() bool {
+	guaranteeExternalConsistencyOption := c.txn.us.GetOption(kv.GuaranteeExternalConsistency)
+	return guaranteeExternalConsistencyOption != nil && guaranteeExternalConsistencyOption.(bool)
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
@@ -828,6 +971,26 @@ func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
 		atomic.StoreUint32(&c.useAsyncCommit, 1)
 	} else {
 		atomic.StoreUint32(&c.useAsyncCommit, 0)
+	}
+}
+
+func (c *twoPhaseCommitter) isOnePC() bool {
+	return atomic.LoadUint32(&c.useOnePC) > 0
+}
+
+func (c *twoPhaseCommitter) setOnePC(val bool) {
+	if val {
+		atomic.StoreUint32(&c.useOnePC, 1)
+	} else {
+		atomic.StoreUint32(&c.useOnePC, 0)
+	}
+}
+
+func (c *twoPhaseCommitter) checkOnePCFallBack(action twoPhaseCommitAction, batchCount int) {
+	if _, ok := action.(actionPrewrite); ok {
+		if batchCount > 1 {
+			c.setOnePC(false)
+		}
 	}
 }
 
@@ -853,7 +1016,24 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
 	defer func() {
-		if !c.isAsyncCommit() {
+		if c.isOnePC() {
+			// The error means the 1PC transaction failed.
+			if err != nil {
+				tikvOnePCTxnCounterError.Inc()
+			} else {
+				tikvOnePCTxnCounterOk.Inc()
+			}
+		} else if c.isAsyncCommit() {
+			// The error means the async commit should not succeed.
+			if err != nil {
+				if c.getUndeterminedErr() == nil {
+					c.cleanup(ctx)
+				}
+				tikvAsyncCommitTxnCounterError.Inc()
+			} else {
+				tikvAsyncCommitTxnCounterOk.Inc()
+			}
+		} else {
 			// Always clean up all written keys if the txn does not commit.
 			c.mu.RLock()
 			committed := c.mu.committed
@@ -872,24 +1052,44 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
 				}
 			}
-		} else {
-			// The error means the async commit should not succeed.
-			if err != nil {
-				if c.getUndeterminedErr() == nil {
-					c.cleanup(ctx)
-				}
-				tikvAsyncCommitTxnCounterError.Inc()
-			} else {
-				tikvAsyncCommitTxnCounterOk.Inc()
-			}
 		}
 	}()
 
+	commitTSMayBeCalculated := false
 	// Check async commit is available or not.
 	if c.checkAsyncCommit() {
+		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
 	}
+	// Check if 1PC is enabled.
+	if c.checkOnePC() {
+		commitTSMayBeCalculated = true
+		c.setOnePC(true)
+	}
+	// If we want to use async commit or 1PC and also want external consistency across
+	// all nodes, we have to make sure the commit TS of this transaction is greater
+	// than the snapshot TS of all existent readers. So we get a new timestamp
+	// from PD as our MinCommitTS.
+	if commitTSMayBeCalculated && c.needExternalConsistency() {
+		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		// If we fail to get a timestamp from PD, we just propagate the failure
+		// instead of falling back to the normal 2PC because a normal 2PC will
+		// also be likely to fail due to the same timestamp issue.
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.minCommitTS = minCommitTS
+	}
+	// Calculate maxCommitTS if necessary
+	if commitTSMayBeCalculated {
+		if err = c.calculateMaxCommitTS(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
+	failpoint.Inject("beforePrewrite", nil)
+
+	c.prewriteStarted = true
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
@@ -939,6 +1139,25 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	c.stripNoNeedCommitKeys()
 
 	var commitTS uint64
+
+	if c.isOnePC() {
+		if c.onePCCommitTS == 0 {
+			err = errors.Errorf("conn %d invalid onePCCommitTS for 1PC protocol after prewrite, startTS=%v", c.connID, c.startTS)
+			return errors.Trace(err)
+		}
+		c.commitTS = c.onePCCommitTS
+		c.txn.commitTS = c.commitTS
+		logutil.Logger(ctx).Info("1PC protocol is used to commit this txn",
+			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
+			zap.Uint64("connID", c.connID))
+		return nil
+	}
+
+	if c.onePCCommitTS != 0 {
+		logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
+			zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+	}
+
 	if c.isAsyncCommit() {
 		if c.minCommitTS == 0 {
 			err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
@@ -948,7 +1167,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	} else {
 		start = time.Now()
 		logutil.Event(ctx, "start get commit ts")
-		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 		if err != nil {
 			logutil.Logger(ctx).Warn("2PC get commitTS failed",
 				zap.Error(err),
@@ -962,19 +1181,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeSchemaCheck", func() {
+			c.ttlManager.close()
 			failpoint.Return()
 		})
 	}
 
-	if c.isAsyncCommit() {
-		schemaVerIsTheSame, err := checkSchemaVersionForAsyncCommit(ctx, c.startTS, commitTS, c.store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !schemaVerIsTheSame {
-			return errors.Trace(errors.Errorf("Schema changed for async commit startTS=%v commitTS=%v", c.startTS, commitTS))
-		}
-	} else {
+	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.connID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
 			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
@@ -995,6 +1207,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				// If schema check failed between commitTS and newCommitTs, report schema change error.
 				_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
 				if err != nil {
+					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
+						zap.Uint64("startTS", c.startTS),
+						zap.Uint64("amendTS", c.commitTS),
+						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
+						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)
 				}
 				commitTS = newCommitTS
@@ -1003,7 +1220,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	c.commitTS = commitTS
 
-	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
@@ -1020,10 +1237,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("connID", c.connID))
 		go func() {
+			defer c.ttlManager.close()
 			failpoint.Inject("asyncCommitDoNothing", func() {
 				failpoint.Return()
 			})
-			defer c.ttlManager.close()
 			commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
@@ -1037,7 +1254,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 }
 
 func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
-	c.mutations.values = nil
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
@@ -1075,27 +1291,18 @@ func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
 	if !c.hasNoNeedCommitKeys {
 		return
 	}
-	m := &c.mutations
+	m := c.mutations
 	var newIdx int
-	for oldIdx := range m.keys {
-		key := m.keys[oldIdx]
+	for oldIdx := range m.handles {
+		key := m.GetKey(oldIdx)
 		flags, err := c.txn.GetMemBuffer().GetFlags(key)
 		if err == nil && flags.HasPrewriteOnly() {
 			continue
 		}
-		m.keys[newIdx] = key
-		if m.ops != nil {
-			m.ops[newIdx] = m.ops[oldIdx]
-		}
-		if m.values != nil {
-			m.values[newIdx] = m.values[oldIdx]
-		}
-		if m.isPessimisticLock != nil {
-			m.isPessimisticLock[newIdx] = m.isPessimisticLock[oldIdx]
-		}
+		m.handles[newIdx] = m.handles[oldIdx]
 		newIdx++
 	}
-	c.mutations = m.subRange(0, newIdx)
+	c.mutations.handles = c.mutations.handles[:newIdx]
 }
 
 // SchemaVer is the infoSchema which will return the schema version.
@@ -1118,21 +1325,100 @@ type RelatedSchemaChange struct {
 	Amendable        bool
 }
 
+func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutations CommitterMutations) error {
+	keysNeedToLock := NewPlainMutations(addMutations.Len())
+	for i := 0; i < addMutations.Len(); i++ {
+		if addMutations.IsPessimisticLock(i) {
+			keysNeedToLock.Push(addMutations.GetOp(i), addMutations.GetKey(i), addMutations.GetValue(i), addMutations.IsPessimisticLock(i))
+		}
+	}
+	// For unique index amend, we need to pessimistic lock the generated new index keys first.
+	// Set doingAmend to true to force the pessimistic lock do the exist check for these keys.
+	c.doingAmend = true
+	defer func() { c.doingAmend = false }()
+	if keysNeedToLock.Len() > 0 {
+		lCtx := &kv.LockCtx{
+			Killed:        c.lockCtx.Killed,
+			ForUpdateTS:   c.forUpdateTS,
+			LockWaitTime:  c.lockCtx.LockWaitTime,
+			WaitStartTime: time.Now(),
+		}
+		tryTimes := uint(0)
+		retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+		var err error
+		for tryTimes < retryLimit {
+			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+			if err != nil {
+				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+				if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+					newForUpdateTSVer, err := c.store.CurrentVersion(oracle.GlobalTxnScope)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+					c.forUpdateTS = newForUpdateTSVer.Ver
+					logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+						zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+						zap.Uint64("newForUpdateTS", c.forUpdateTS))
+					tryTimes++
+					continue
+				}
+				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return err
+			}
+			logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.Len()))
+			break
+		}
+		if err != nil {
+			logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+				zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange) (bool, error) {
 	addMutations, err := c.txn.schemaAmender.AmendTxn(ctx, startInfoSchema, change, c.mutations)
 	if err != nil {
 		return false, err
 	}
-	// Prewrite new mutations.
-	if addMutations != nil && len(addMutations.keys) > 0 {
-		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
-		err = c.prewriteMutations(prewriteBo, *addMutations)
+	// Add new mutations to the mutation list or prewrite them if prewrite already starts.
+	if addMutations != nil && addMutations.Len() > 0 {
+		err = c.amendPessimisticLock(ctx, addMutations)
 		if err != nil {
-			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+			logutil.Logger(ctx).Info("amendPessimisticLock has failed", zap.Error(err))
 			return false, err
 		}
-		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
-		return true, nil
+		if c.prewriteStarted {
+			prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+			err = c.prewriteMutations(prewriteBo, addMutations)
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return false, err
+			}
+			logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
+			return true, nil
+		}
+		memBuf := c.txn.GetMemBuffer()
+		for i := 0; i < addMutations.Len(); i++ {
+			key := addMutations.GetKey(i)
+			op := addMutations.GetOp(i)
+			var err error
+			if op == pb.Op_Del {
+				err = memBuf.Delete(key)
+			} else {
+				err = memBuf.Set(key, addMutations.GetValue(i))
+			}
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend mutations has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return false, err
+			}
+			handle := c.txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
+			c.mutations.Push(op, addMutations.IsPessimisticLock(i), handle)
+		}
 	}
 	return false, nil
 }
@@ -1140,7 +1426,7 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execdetails.CommitDetails) (uint64, error) {
 	start := time.Now()
 	logutil.Event(ctx, "start get commit ts")
-	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+	commitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 	if err != nil {
 		logutil.Logger(ctx).Warn("2PC get commitTS failed",
 			zap.Error(err),
@@ -1184,7 +1470,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 					zap.Uint64("startTS", c.startTS), zap.Error(amendErr))
 				return nil, false, err
 			}
-			logutil.Logger(ctx).Info("amend txn successfully for pessimistic commit",
+			logutil.Logger(ctx).Info("amend txn successfully",
 				zap.Uint64("connID", c.connID), zap.Uint64("txn startTS", c.startTS), zap.Bool("memAmended", memAmended),
 				zap.Uint64("checkTS", checkTS), zap.Int64("startInfoSchemaVer", startInfoSchema.SchemaMetaVersion()),
 				zap.Int64s("table ids", relatedChanges.PhyTblIDS), zap.Uint64s("action types", relatedChanges.ActionTypes))
@@ -1193,6 +1479,29 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		return nil, false, errors.Trace(err)
 	}
 	return nil, false, nil
+}
+
+func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
+	// Amend txn with current time first, then we can make sure we have another SafeWindow time to commit
+	currentTS := oracle.EncodeTSO(int64(time.Since(c.txn.startTime)/time.Millisecond)) + c.startTS
+	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.txnInfoSchema, true)
+	if err != nil {
+		logutil.Logger(ctx).Error("Schema changed for async commit txn",
+			zap.Error(err),
+			zap.Uint64("startTS", c.startTS))
+		return errors.Trace(err)
+	}
+
+	safeWindow := config.GetGlobalConfig().TiKVClient.AsyncCommit.SafeWindow
+	maxCommitTS := oracle.EncodeTSO(int64(safeWindow/time.Millisecond)) + currentTS
+	logutil.BgLogger().Debug("calculate MaxCommitTS",
+		zap.Time("startTime", c.txn.startTime),
+		zap.Duration("safeWindow", safeWindow),
+		zap.Uint64("startTS", c.startTS),
+		zap.Uint64("maxCommitTS", maxCommitTS))
+
+	c.maxCommitTS = maxCommitTS
+	return nil
 }
 
 func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo.WriteResult {
@@ -1284,14 +1593,12 @@ func newBatched(primaryKey []byte) *batched {
 // sure each batch's size does not exceed the limit.
 func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
 	var start, end int
-	for start = 0; start < mutations.len(); start = end {
+	for start = 0; start < mutations.Len(); start = end {
 		var size int
-		for end = start; end < mutations.len() && size < limit; end++ {
+		for end = start; end < mutations.Len() && size < limit; end++ {
 			var k, v []byte
-			k = mutations.keys[end]
-			if end < len(mutations.values) {
-				v = mutations.values[end]
-			}
+			k = mutations.GetKey(end)
+			v = mutations.GetValue(end)
 			size += sizeFn(k, v)
 			if b.primaryIdx < 0 && bytes.Equal(k, b.primaryKey) {
 				b.primaryIdx = len(b.batches)
@@ -1299,7 +1606,7 @@ func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations Commi
 		}
 		b.batches = append(b.batches, batchMutations{
 			region:    region,
-			mutations: mutations.subRange(start, end),
+			mutations: mutations.Slice(start, end),
 		})
 	}
 }
@@ -1414,10 +1721,9 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
-		backoffer, cancel = batchExe.backoffer.Fork()
+		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
 	// concurrently do the work for each batch.
@@ -1427,17 +1733,18 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
+			logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
+				logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))
+				atomic.StoreUint32(&batchExe.committer.prewriteCancelled, 1)
 				cancel()
 			}
 			if err == nil {
@@ -1493,42 +1800,4 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
-}
-
-// checkSchemaVersionForAsyncCommit is used to check schema version change for async commit transactions
-// only. For async commit protocol, we need to make sure the check result is the same during common execution
-// path and the recovery path. As the schema lease checker has a limited size of cached schema diff version, it's
-// possible the schema cache is changed and the schema lease checker can't decide if the related table has
-// schema version change. So we just check the version from meta snapshot, it's much stricter.
-func checkSchemaVersionForAsyncCommit(ctx context.Context, startTS uint64, commitTS uint64, store Storage) (bool, error) {
-	if commitTS > 0 {
-		snapshotAtStart, err := store.GetSnapshot(kv.NewVersion(startTS))
-		if err != nil {
-			logutil.Logger(ctx).Error("get snapshot failed for resolve async startTS",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS))
-			return false, errors.Trace(err)
-		}
-		snapShotAtCommit, err := store.GetSnapshot(kv.NewVersion(commitTS))
-		if err != nil {
-			logutil.Logger(ctx).Error("get snapshot failed for resolve async commitTS",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS))
-			return false, errors.Trace(err)
-		}
-		schemaVerAtStart, err := meta.NewSnapshotMeta(snapshotAtStart).GetSchemaVersion()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		schemaVerAtCommit, err := meta.NewSnapshotMeta(snapShotAtCommit).GetSchemaVersion()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if schemaVerAtStart != schemaVerAtCommit {
-			logutil.Logger(ctx).Info("async commit txn need to rollback since schema version has changed",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS),
-				zap.Int64("schema version at start", schemaVerAtStart),
-				zap.Int64("schema version at commit", schemaVerAtCommit))
-			return false, nil
-		}
-	}
-	return true, nil
 }

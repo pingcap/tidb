@@ -89,7 +89,7 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/FailPlacement", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,17 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
 
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	// Test for acquireServerID & refreshServerIDTTL
+	err = dom.acquireServerID(goCtx)
+	if err != nil || dom.ServerID() == 0 {
+		t.Fatalf("dom.acquireServerID err %v, serverID %v", err, dom.ServerID())
+	}
+	err = dom.refreshServerIDTTL(goCtx)
+	if err != nil {
+		t.Fatalf("dom.refreshServerIDTTL err %v", err)
+	}
+
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +259,13 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
+func (msm *mockSessionManager) KillAllConnections() {}
+
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
@@ -325,7 +341,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -338,7 +354,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -475,4 +491,8 @@ func (*testSuite) TestSessionPool(c *C) {
 func (*testSuite) TestErrorCode(c *C) {
 	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
 	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
+}
+
+func (*testSuite) TestServerIDConstant(c *C) {
+	c.Assert(lostConnectionToPDTimeout, Less, serverIDTTL)
 }
