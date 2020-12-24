@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -4822,6 +4823,30 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
+func (s *testSuite) TestSummaryFailedUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int as(-a))")
+	tk.MustExec("insert into t(a) values(1), (3), (7)")
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=1")
+	err := tk.ExecToErr("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
+	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update t set t . a = t . a - ? where t . a in ( select a from t where a < ? )'").Check(testkit.Rows("Update"))
+}
+
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6457,4 +6482,32 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustExec("update t0 set c0=0 where t0.c0 like 0")
 	// the update should not affect c0
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
+}
+
+func (s *testSuite) TestTxnRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
+
+	tk2.MustExec("update t set a=2")
+
+	tk.MustExec("update t set a=3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+
+	// Check retry will activate the txn immediately.
+	tk.MustExec("set @var=10")
+	tk.MustExec("update t set a=@var")
+	tk2.MustExec("update t set a=2")
+	tk.MustExec("set @var=7")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }
