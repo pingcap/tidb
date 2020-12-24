@@ -195,6 +195,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			// If the new handle exists, this will avoid to remove the record.
 			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
 			if err != nil {
+				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+					return false, nil
+				}
 				return false, err
 			}
 		}

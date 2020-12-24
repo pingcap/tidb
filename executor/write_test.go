@@ -1450,6 +1450,11 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("insert ignore into t values (1);")
 	tk.MustExec("update ignore t set a=2 where a=1;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int key) partition by list (a) (partition p0 values in (0,1));")
+	tk.MustExec("insert ignore into t values (1);")
+	tk.MustExec("update ignore t set a=2 where a=1;")
+	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
