@@ -48,7 +48,15 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Replicas:    3,
 				Constraints: `["+zone=sh", "+zone=sh"]`,
 			}},
-			err: ".*duplicated constraint.*",
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
 		},
 
 		{
@@ -58,7 +66,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Replicas:    3,
 				Constraints: `["+zone=sh", "-zone=sh"]`,
 			}},
-			err: ".*no instance can meet the constraint.*",
+			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -68,7 +76,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Replicas:    3,
 				Constraints: `["+zone=sh", "+zone=bj"]`,
 			}},
-			err: ".*no instance can meet the constraint.*",
+			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -77,7 +85,22 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Tp:          ast.PlacementAdd,
 				Constraints: `{"+zone=sh,+zone=sh": 2, "+zone=sh": 1}`,
 			}},
-			err: ".*duplicated constraint.*",
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 1,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+				{
+					Role:  placement.Voter,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
 		},
 
 		{
@@ -86,7 +109,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Tp:          ast.PlacementAdd,
 				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
 			}},
-			err: ".*no instance can meet the constraint.*",
+			err: ".*conflicting constraints.*",
 		},
 
 		{
@@ -95,7 +118,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Tp:          ast.PlacementAdd,
 				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
 			}},
-			err: ".*no instance can meet the constraint.*",
+			err: ".*conflicting constraints.*",
 		},
 
 		{
