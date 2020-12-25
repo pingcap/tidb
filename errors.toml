@@ -1246,6 +1246,16 @@ error = '''
 TiKV server reports stale command
 '''
 
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
+'''
+
 ["types:1074"]
 error = '''
 Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead
