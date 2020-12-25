@@ -144,7 +144,7 @@ type LogicalJoin struct {
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
 	redundantSchema *expression.Schema
 	redundantNames  types.NameSlice
 
@@ -313,6 +313,10 @@ type LogicalAggregation struct {
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+
+	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	noCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -500,7 +504,7 @@ type DataSource struct {
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	//handleCol *expression.Column
+	// handleCol *expression.Column
 	handleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
@@ -515,6 +519,7 @@ type DataSource struct {
 	preferStoreType int
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
+	SampleInfo       *TableSampleInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

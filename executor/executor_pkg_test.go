@@ -246,6 +246,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 		FieldsInfo: &ast.FieldsClause{
 			Enclosed:   '"',
 			Terminated: ",",
+			Escaped:    '\\',
 		},
 	}
 
@@ -257,6 +258,33 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
 	c.Assert(err, IsNil)
+}
+
+func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
+	tests := []struct {
+		input      string
+		escapeChar byte
+		expected   []string
+	}{
+		{
+			`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`,
+			byte(0), // escaped by ''
+			[]string{`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`},
+		},
+	}
+
+	for _, test := range tests {
+		ldInfo := LoadDataInfo{
+			FieldsInfo: &ast.FieldsClause{
+				Enclosed:   '"',
+				Terminated: ",",
+				Escaped:    test.escapeChar,
+			},
+		}
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {

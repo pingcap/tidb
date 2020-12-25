@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -93,9 +94,9 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncPercentRank:
 		return buildPercenRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
-		return buildLead(windowFuncDesc, ordinal)
+		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
-		return buildLag(windowFuncDesc, ordinal)
+		return buildLag(ctx, windowFuncDesc, ordinal)
 	case ast.AggFuncMax:
 		// The max/min aggFunc using in the window function will using the sliding window algo.
 		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
@@ -247,6 +248,11 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 			ordinal: ordinal,
 		},
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -275,6 +281,15 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if len(base.args) == 2 {
+		frac = base.args[1].GetType().Decimal
+	}
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
+
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -319,6 +334,11 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
@@ -368,6 +388,11 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		},
 		isMax: isMax,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
@@ -667,7 +692,7 @@ func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 }
 
-func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
+func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
 		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
@@ -676,6 +701,13 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	defaultExpr = expression.NewNull()
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
+		switch et := defaultExpr.(type) {
+		case *expression.Constant:
+			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			if err1 == nil {
+				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			}
+		}
 	}
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
@@ -685,10 +717,10 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
-func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lead{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLead(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lead{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }
 
-func buildLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lag{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lag{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }

@@ -312,10 +312,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
-	for i := 1; i < len(ds.possibleAccessPaths); i++ {
-		if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-			needConsiderIndexMerge = false
-			break
+	if len(ds.indexMergeHints) == 0 {
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+				needConsiderIndexMerge = false
+				break
+			}
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
@@ -424,7 +426,13 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
-			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{sf}, nil)
+
+			accessConds := make([]expression.Expression, 0, len(partialPaths))
+			for _, p := range partialPaths {
+				accessConds = append(accessConds, p.AccessConds...)
+			}
+			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
+			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
@@ -473,12 +481,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-				// Now these conditions are too strict.
-				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-				// TODO: solve the above case
+			if len(path.AccessConds) == 0 {
+				// If AccessConds is empty, we ignore the access path.
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -502,12 +506,8 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
-				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
-				// Now these conditions are too strict.
-				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
-				// on a and b separately. we can generate a `IndexMergePath` with table filter `a > 1 or (b < 2 and c > 3)`.
-				// TODO: solve the above case
+			if len(path.AccessConds) == 0 {
+				// If AccessConds is empty, we ignore the access path.
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
@@ -554,6 +554,11 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	for _, path := range partialPaths {
+		if len(path.TableFilters) > 0 {
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
+		}
+	}
 	return indexMergePath
 }
 
