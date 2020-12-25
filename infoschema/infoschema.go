@@ -432,6 +432,11 @@ func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
 	is.ruleBundleMap[bundle.ID] = bundle
 }
 
+func (is *infoSchema) deleteBundle(id string) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+}
+
 // GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
 // If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
 // If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
