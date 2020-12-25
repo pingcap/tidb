@@ -80,6 +80,7 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -147,6 +148,7 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            string
 	encodedPlan           string
+	planHint              string
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -236,6 +238,16 @@ func (sc *StatementContext) GetEncodedPlan() string {
 // SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
 func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 	sc.encodedPlan = encodedPlan
+}
+
+// GetPlanHint gets the hint string generated from the plan.
+func (sc *StatementContext) GetPlanHint() string {
+	return sc.planHint
+}
+
+// SetPlanHint sets the hint for the plan.
+func (sc *StatementContext) SetPlanHint(hint string) {
+	sc.planHint = hint
 }
 
 // TableEntry presents table in db.
@@ -699,7 +711,7 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 

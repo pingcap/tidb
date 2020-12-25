@@ -522,8 +522,8 @@ func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 
 		{"floor(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"floor(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
-		{"floor(c_bigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},  // TODO: Flen should be 17
-		{"floor(c_ubigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
+		{"floor(c_bigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},                       // TODO: Flen should be 17
+		{"floor(c_ubigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
 		{"floor(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"floor(c_udecimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
 		{"floor(c_double_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
@@ -535,13 +535,13 @@ func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"floor(c_time_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"floor(c_enum)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"floor(c_text_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
-		{"floor(18446744073709551615)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"floor(18446744073709551615)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 20, 0},
 		{"floor(18446744073709551615.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 
 		{"ceil(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"ceil(c_uint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
-		{"ceil(c_bigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},  // TODO: Flen should be 17
-		{"ceil(c_ubigint_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
+		{"ceil(c_bigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},                       // TODO: Flen should be 17
+		{"ceil(c_ubigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 20, 0}, // TODO: Flen should be 17
 		{"ceil(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 6, 0},
 		{"floor(c_udecimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 10, 0},
 		{"ceil(c_double_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
@@ -553,7 +553,7 @@ func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"ceil(c_time_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"ceil(c_enum)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"ceil(c_text_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
-		{"ceil(18446744073709551615)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"ceil(18446744073709551615)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 20, 0},
 		{"ceil(18446744073709551615.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 
 		{"ceiling(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
@@ -564,7 +564,7 @@ func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 		{"ceiling(c_time_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"ceiling(c_enum)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
 		{"ceiling(c_text_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, 0},
-		{"ceiling(18446744073709551615)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
+		{"ceiling(18446744073709551615)", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, 20, 0},
 		{"ceiling(18446744073709551615.1)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 0},
 
 		{"conv(c_char, c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
@@ -1017,9 +1017,9 @@ func (s *testInferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"nullif(c_float_d    , 123)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
 		{"nullif(c_double_d   , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"nullif(c_decimal    , 123)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
-		{"nullif(c_datetime   , 123)", mysql.TypeDatetime, charset.CharsetUTF8MB4, mysql.BinaryFlag, 22, 2},
-		{"nullif(c_time_d     , 123)", mysql.TypeDuration, charset.CharsetUTF8MB4, mysql.BinaryFlag, 10, 0},
-		{"nullif(c_timestamp_d, 123)", mysql.TypeTimestamp, charset.CharsetUTF8MB4, mysql.BinaryFlag, 19, 0},
+		{"nullif(c_datetime   , 123)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"nullif(c_time_d     , 123)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"nullif(c_timestamp_d, 123)", mysql.TypeTimestamp, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"nullif(c_char       , 123)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"nullif(c_varchar    , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},            // TODO: tp should be TypeVarString
 		{"nullif(c_text_d     , 123)", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, types.UnspecifiedLength},            // TODO: tp should be TypeMediumBlob

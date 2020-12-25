@@ -15,16 +15,21 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -127,6 +132,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+	}
+	if err := e.verifyTxnScope(); err != nil {
+		return err
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
@@ -350,24 +358,57 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
-		cacheDB := e.ctx.GetStore().GetMemCache()
-		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
-		// key does not exist then get from snapshot and set to cache
-		if val == nil {
-			val, err = e.snapshot.Get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
+		if e.ctx.GetSessionVars().EnablePointGetCache {
+			cacheDB := e.ctx.GetStore().GetMemCache()
+			val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+			// key does not exist then get from snapshot and set to cache
+			if val == nil {
+				val, err = e.snapshot.Get(ctx, key)
+				if err != nil {
+					return nil, err
+				}
 
-			err := cacheDB.Set(e.tblInfo.ID, key, val)
-			if err != nil {
-				return nil, err
+				err = cacheDB.Set(e.tblInfo.ID, key, val)
+				if err != nil {
+					return nil, err
+				}
 			}
+			return val, nil
 		}
-		return val, nil
 	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
+}
+
+func (e *PointGetExecutor) verifyTxnScope() error {
+	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return nil
+	}
+	var tblID int64
+	var tblName string
+	var partName string
+	is := infoschema.GetInfoSchema(e.ctx)
+	if e.partInfo != nil {
+		tblID = e.partInfo.ID
+		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+		partName = partInfo.Name.String()
+	} else {
+		tblID = e.tblInfo.ID
+		tblInfo, _ := is.TableByID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+	}
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
+	if valid {
+		return nil
+	}
+	if len(partName) > 0 {
+		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+	}
+	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
@@ -466,20 +507,20 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
 			if col.ID == hid {
-				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

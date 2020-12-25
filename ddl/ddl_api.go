@@ -1111,7 +1111,7 @@ func checkTooLongColumn(cols []*model.ColumnInfo) error {
 }
 
 func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
-	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(len(colDefs)) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -2315,6 +2315,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
+		if !ctx.GetSessionVars().EnableChangeMultiSchema {
+			return errRunMultiSchemaChanges
+		}
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
@@ -2427,7 +2430,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableAlterPartition:
-			err = d.AlterTablePartition(ctx, ident, spec)
+			if ctx.GetSessionVars().EnableAlterPlacement {
+				err = d.AlterTableAlterPartition(ctx, ident, spec)
+			} else {
+				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
+			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -4806,6 +4813,9 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
+	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+		return nil, ErrUnsupportedExpressionIndex
+	}
 	return hiddenCols, nil
 }
 
@@ -5782,7 +5792,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 	return bundle, nil
 }
 
-func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -5798,14 +5808,9 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	pid := placement.GroupID(partitionID)
+	oldBundle := infoschema.GetBundle(d.infoHandle.Get(), []int64{partitionID, meta.ID, schema.ID})
 
-	oldBundle, ok := d.infoHandle.Get().BundleByName(pid)
-	if !ok {
-		oldBundle = &placement.Bundle{ID: pid}
-	} else {
-		oldBundle = oldBundle.Clone()
-	}
+	oldBundle.ID = placement.GroupID(partitionID)
 
 	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
 	if err != nil {
@@ -5832,15 +5837,16 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		if cnt <= 0 {
 			continue
 		}
-		bundle.Rules = append(newRules, &placement.Rule{
+		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
-			ID:          "default",
+			ID:          string(role),
 			Role:        role,
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
 		})
 	}
+	bundle.Rules = newRules
 	if len(bundle.Rules) == 0 {
 		bundle.Index = 0
 		bundle.Override = false

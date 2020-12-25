@@ -18,7 +18,8 @@
       "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
       "select a, b from ((select a, b from t) union all(select c as a, d as b from t)) as t1 where a > 1",
       "select a, b from (select a, b, min(a) over(partition by b) as min_a from t)as tt where a < 10 and b > 10 and b = min_a",
-      "select b, c from (select b, c from t where b > 1 and c > 1) as t1 where b > 2 and c > 2"
+      "select b, c from (select b, c from t where b > 1 and c > 1) as t1 where b > 2 and c > 2",
+      "select * from t t1 join t t2 on t1.a = t2.a and t1.a > 2"
     ]
   },
   {
