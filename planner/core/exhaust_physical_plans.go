@@ -1911,24 +1911,17 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	allTaskTypes := []property.TaskType{prop.TaskTp}
-	// TODO: support push down the top projection in MPP later
-	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
-	for _, tp := range allTaskTypes {
-		newProp, ok := p.TryToGetChildProp(prop)
-		if !ok {
-			break
-		}
-		newProp.TaskTp = tp
-		proj := PhysicalProjection{
-			Exprs:                p.Exprs,
-			CalculateNoDelay:     p.CalculateNoDelay,
-			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
-		proj.SetSchema(p.schema)
-		ret = append(ret, proj)
+	newProp, ok := p.TryToGetChildProp(prop)
+	if !ok {
+		return nil, false
 	}
-	return ret, true
+	proj := PhysicalProjection{
+		Exprs:                p.Exprs,
+		CalculateNoDelay:     p.CalculateNoDelay,
+		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+	proj.SetSchema(p.schema)
+	return []PhysicalPlan{proj}, true
 }
 
 func (lt *LogicalTopN) canPushToCop() bool {
