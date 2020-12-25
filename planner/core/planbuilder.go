@@ -785,6 +785,10 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 
 	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
 	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
 		return nil, err
 	}

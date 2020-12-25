@@ -277,6 +277,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
 			return x.Stmt, "", ""
 		}
@@ -316,6 +321,11 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (a
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
 			return x, "", ""
 		}
