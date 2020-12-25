@@ -474,10 +474,12 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 	is := b.is
-	oldIS.ForEachBundle(func(v *placement.Bundle) error {
+	if err := oldIS.ForEachBundle(func(v *placement.Bundle) error {
 		is.SetBundle(v)
 		return nil
-	})
+	}); err != nil {
+		return
+	}
 }
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
