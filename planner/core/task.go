@@ -1472,48 +1472,34 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		if mpp.partTp == property.HashType {
-			if receiver, ok := mpp.p.(*PhysicalExchangeReceiver); !ok {
-				/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
-				/// only push down the original agg
-				p.self.SetChildren(mpp.p)
-				mpp.p = p.self
-				mpp.addCost(p.GetCost(inputRows, false))
-				return mpp
-			} else {
-				if p.statsInfo().RowCount < 30 {
-					/// TODO: how to evaluate this?
-					/// 1-phase agg when its cardinality is large
-					/// only push down the original agg
-					p.self.SetChildren(mpp.p)
-					mpp.p = p.self
-					mpp.addCost(p.GetCost(inputRows, false))
-					return mpp
+			/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+			/// only push down the original agg
+			p.self.SetChildren(mpp.p)
+			mpp.p = p.self
+			mpp.addCost(p.GetCost(inputRows, false))
+			return mpp
+		} else if mpp.partTp == property.AnyType {
+			/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
+			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+			if partialAgg == nil {
+				return invalidTask
+			}
+			partitionCols := make([]*expression.Column, 0, len(p.GroupByItems))
+			for _, item := range finalAgg.(*PhysicalHashAgg).GroupByItems {
+				if col, ok := item.(*expression.Column); ok {
+					partitionCols = append(partitionCols, col)
 				} else {
-					/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
-					// TODO: add collected partition agg
-					partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
-					if partialAgg == nil {
-						finalAgg.SetChildren(mpp.p)
-						mpp.p = finalAgg
-						mpp.addCost(p.GetCost(inputRows, false))
-						return mpp
-					}
-					if _, ook := receiver.children[0].(*PhysicalExchangeSender); ook {
-						// NOTE: new a mpp task and set partial and final agg
-						oldMpp := mpp.oldMppTask.copy().(*mppTask)
-						partialAgg.SetChildren(oldMpp.p)
-						oldMpp.p = partialAgg
-						newMpp := oldMpp.enforceExchangerImpl(mpp.oldProp)
-						finalAgg.SetChildren(newMpp.p)
-						newMpp.p = finalAgg
-						newMpp.addCost(p.GetCost(inputRows, false))
-						return newMpp
-					} else {
-						// must not occur unless bugs
-						return nil
-					}
+					return invalidTask
 				}
 			}
+			partialAgg.SetChildren(mpp.p)
+			mpp.p = partialAgg
+			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, Enforced: true}
+			newMpp := mpp.enforceExchangerImpl(prop)
+			finalAgg.SetChildren(newMpp.p)
+			newMpp.p = finalAgg
+			newMpp.addCost(p.GetCost(inputRows, false))
+			return newMpp
 		} else {
 			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 			if partialAgg != nil {
