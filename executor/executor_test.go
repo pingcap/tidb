@@ -2175,14 +2175,14 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
-	_, err = tk.Exec("insert t values (null)")
-	c.Check(err, NotNil)
+	tk.MustExec("insert t values (null)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert ignore t values (null)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t select null")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
@@ -2892,7 +2892,7 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	_, err = tk.Exec("set @@tidb_current_ts = '1'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
@@ -2946,7 +2946,7 @@ func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
 	c.Assert(strings.Contains(err.Error(), rows7[0][1].(string)), IsTrue)
 
 	_, err = tk.Exec("set @@tidb_last_txn_info = '{}'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestTiDBLastQueryInfo(c *C) {
