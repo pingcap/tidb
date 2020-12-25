@@ -1128,8 +1128,16 @@ func onOffToTrueFalse(str string) string {
 // to read from mysql.tidb for backwards compatibility.
 func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 	switch name {
+	case variable.TiKVGCConcurrency:
+		// Check if autoconcurrency is set
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, "tikv_gc_auto_concurrency")
+		autoConcurrencyVal, err := s.getExecRet(s, sql)
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+		fallthrough
 	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime,
-		variable.TiKVGCConcurrency, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
+		variable.TiKVGCMode, variable.TiKVGCScanLockMode:
 		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, name)
 		tblValue, err := s.getExecRet(s, sql)
 		if err != nil {
