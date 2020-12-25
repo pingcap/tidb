@@ -1006,15 +1006,15 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 
 	s.cleanBindingEnv(tk)
 	// Simulate existing bindings with upper case default_db.
-	tk.MustExec("insert into mysql.bind_info values('select * from t', 'select * from t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from spm . t', 'select * from spm . t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
-	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
-		"select * from t SPM",
+	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from spm . t'").Check(testkit.Rows(
+		"select * from spm . t SPM",
 	))
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from spm . t")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustExec("drop global binding for select * from t")
@@ -1024,10 +1024,10 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 
 	s.cleanBindingEnv(tk)
 	// Simulate existing bindings with upper case default_db.
-	tk.MustExec("insert into mysql.bind_info values('select * from t', 'select * from t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from spm . t', 'select * from spm . t', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
-	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
-		"select * from t SPM",
+	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from spm . t'").Check(testkit.Rows(
+		"select * from spm . t SPM",
 	))
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -1038,11 +1038,11 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	tk.MustExec("create global binding for select * from t using select * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from spm . t")
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
-	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from t'").Check(testkit.Rows(
-		"select * from t spm using",
+	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from spm . t'").Check(testkit.Rows(
+		"select * from spm . t spm using",
 	))
 }
 
@@ -1859,16 +1859,16 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from test . t")
 	c.Assert(rows[0][3], Equals, "using")
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from t using",
+		"select * from test . t using",
 	))
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][0], Equals, "select * from test . t")
 	c.Assert(rows[0][3], Equals, "using")
 }
 
@@ -1923,12 +1923,12 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `t1` SET `b`=1 WHERE `b`=2 AND (`a` IN (SELECT `a` FROM `t2` WHERE `b`=1) OR `c` IN (SELECT `a` FROM `t2` WHERE `b`=1))"
+	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b`=2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b`=1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b`=1))"
 	c.Assert(rows[0][1], Equals, bindSQL)
 	tk.MustExec(bindSQL)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 }
-  
+
 func (s *testSuite) TestIssue20417(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
