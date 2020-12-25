@@ -291,7 +291,7 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set to false.
+			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
 			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
 			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
 			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
@@ -463,7 +463,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
-		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set to false.
+		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
 		// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
 		// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
 		if lowCut || ReachPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail]) {
