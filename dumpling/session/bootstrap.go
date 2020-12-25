@@ -444,6 +444,9 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version58
 )
 
 var (
