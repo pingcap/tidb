@@ -129,10 +129,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDelete
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
+		p.checkIntoOutfileOptionForSelect(node)
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
+		p.flag |= disallowSelectIntoOption
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -145,8 +147,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= disallowSelectIntoOption
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
-	case *ast.InsertStmt:
-		p.flag |= disallowSelectIntoOption
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -243,8 +243,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkGroupBy(node)
 	case *ast.SubqueryExpr:
 		p.flag |= disallowSelectIntoOption
-	case *ast.SelectStmt:
-		p.checkIntoOutfileOptionForSelect(node)
 	case *ast.SetOprStmt:
 		p.checkIntoOutfileOptionForSetOpr(node)
 	default:
