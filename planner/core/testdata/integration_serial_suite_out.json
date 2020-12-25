@@ -20,25 +20,11 @@
       },
       {
         "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
-        "Plan": [
-          "Projection_18 2.00 root  test.t.a, test.t.b",
-          "└─TopN_8 2.00 root  Column#3, offset:0, count:2",
-          "  └─Projection_19 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
-          "    └─TableReader_14 2.00 root  data:TopN_13",
-          "      └─TopN_13 2.00 cop[tiflash]  cast(test.t.b), offset:0, count:2",
-          "        └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
-          "          └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
+        "Plan": null
       },
       {
-        "SQL": "explain select * from t where b > 'a' order by b limit 2",
-        "Plan": [
-          "TopN_8 2.00 root  test.t.b, offset:0, count:2",
-          "└─TableReader_17 2.00 root  data:TopN_16",
-          "  └─TopN_16 2.00 cop[tiflash]  test.t.b, offset:0, count:2",
-          "    └─Selection_15 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
-          "      └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
+        "SQL": "",
+        "Plan": null
       }
     ]
   },
@@ -537,6 +523,7 @@
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_20 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_21 1.00 root  data:HashAgg_8",
           "  └─HashAgg_8 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -545,11 +532,22 @@
           "      │ └─TableFullScan_18 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_17(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_16 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_24 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_25 1.00 root  data:HashAgg_10",
+          "  └─HashAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_15 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_20 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_40 1.00 root  funcs:count(Column#18)->Column#17",
           "└─TableReader_41 1.00 root  data:HashAgg_12",
           "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#18",
@@ -564,11 +562,28 @@
           "          │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "          └─Selection_37(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "            └─TableFullScan_36 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_44 1.00 root  funcs:count(Column#18)->Column#17",
+          "└─TableReader_45 1.00 root  data:HashAgg_14",
+          "  └─HashAgg_14 1.00 cop[tiflash]  funcs:count(1)->Column#18",
+          "    └─BroadcastJoin_19 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_43(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_42 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_33(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_28 2.00 cop[tiflash] table:d2_t keep order:false, global read",
+          "        └─BroadcastJoin_37(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_26 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_41(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_40 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_15 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_16 1.00 root  data:HashAgg_8",
           "  └─HashAgg_8 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -577,11 +592,22 @@
           "      │ └─TableFullScan_13 2.00 cop[tiflash] table:d1_t keep order:false",
           "      └─Selection_12(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_11 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+=======
+          "HashAgg_19 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_20 1.00 root  data:HashAgg_10",
+          "  └─HashAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_14 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_18(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_17 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_16(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_15 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_26 1.00 root  funcs:count(Column#18)->Column#17",
           "└─TableReader_27 1.00 root  data:HashAgg_12",
           "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#18",
@@ -596,11 +622,28 @@
           "          │ └─TableFullScan_20 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "          └─Selection_19(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "            └─TableFullScan_18 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+=======
+          "HashAgg_30 1.00 root  funcs:count(Column#18)->Column#17",
+          "└─TableReader_31 1.00 root  data:HashAgg_14",
+          "  └─HashAgg_14 1.00 cop[tiflash]  funcs:count(1)->Column#18",
+          "    └─BroadcastJoin_18 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_28 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_19(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_26 2.00 cop[tiflash] table:d2_t keep order:false",
+          "        └─BroadcastJoin_20(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_25(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_24 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_23(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_22 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -608,11 +651,21 @@
           "      ├─Selection_12(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "      │ └─TableFullScan_11 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─TableFullScan_10(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  left outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_16(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_15 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -620,11 +673,21 @@
           "      ├─TableFullScan_12(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
           "      └─Selection_11(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_10 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  right outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─TableFullScan_16(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_15(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_19 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_20 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -633,11 +696,22 @@
           "      │ └─TableFullScan_17 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_16(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_15 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_23 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_24 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_14 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─Selection_22(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │ └─TableFullScan_21 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_20(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_19 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -645,11 +719,21 @@
           "      ├─Selection_12(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "      │ └─TableFullScan_11 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─TableFullScan_10(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  left outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, left cond:[gt(test.fact_t.col1, 10)]",
+          "      ├─Selection_16(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_15 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -657,11 +741,21 @@
           "      ├─Selection_12(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
           "      │ └─TableFullScan_11 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─TableFullScan_10(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  left outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, left cond:[gt(test.fact_t.col2, 10)], other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─Selection_16(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │ └─TableFullScan_15 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -669,11 +763,21 @@
           "      ├─TableFullScan_12(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
           "      └─Selection_11(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_10 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  right outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, right cond:gt(test.d1_t.value, 10)",
+          "      ├─TableFullScan_16(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_15(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_13 1.00 root  funcs:count(Column#12)->Column#11",
           "└─TableReader_14 1.00 root  data:HashAgg_7",
           "  └─HashAgg_7 1.00 cop[tiflash]  funcs:count(1)->Column#12",
@@ -681,11 +785,21 @@
           "      ├─Selection_11(Build) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "      │ └─TableFullScan_10 8.00 cop[tiflash] table:fact_t keep order:false, global read",
           "      └─TableFullScan_12(Probe) 2.00 cop[tiflash] table:d1_t keep order:false"
+=======
+          "HashAgg_17 1.00 root  funcs:count(Column#12)->Column#11",
+          "└─TableReader_18 1.00 root  data:HashAgg_9",
+          "  └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#12",
+          "    └─BroadcastJoin_13 8.00 cop[tiflash]  right outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, right cond:gt(test.d1_t.value, 10), other cond:gt(test.fact_t.col1, test.d1_t.value)",
+          "      ├─Selection_15(Build) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "      │ └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false, global read",
+          "      └─TableFullScan_16(Probe) 2.00 cop[tiflash] table:d1_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_10 1.00 root  funcs:count(1)->Column#12",
           "└─HashJoin_13 6.40 root  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "  ├─TableReader_23(Build) 2.00 root  data:Selection_22",
@@ -694,11 +808,22 @@
           "  └─TableReader_20(Probe) 8.00 root  data:Selection_19",
           "    └─Selection_19 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "      └─TableFullScan_18 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_21 1.00 root  funcs:count(Column#13)->Column#12",
+          "└─TableReader_22 1.00 root  data:HashAgg_12",
+          "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#13",
+          "    └─BroadcastJoin_16 6.40 cop[tiflash]  semi join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_20(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_19 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_18(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_17 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_24 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader_25 1.00 root  data:HashAgg_10",
           "  └─HashAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#13",
@@ -707,28 +832,56 @@
           "      │ └─TableFullScan_16 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_15(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_21 1.00 root  funcs:count(Column#13)->Column#12",
+          "└─TableReader_22 1.00 root  data:HashAgg_12",
+          "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#13",
+          "    └─BroadcastJoin_16 6.40 cop[tiflash]  semi join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─Selection_20(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │ └─TableFullScan_19 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_18(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_17 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_10 1.00 root  funcs:count(1)->Column#12",
           "└─HashJoin_13 6.40 root  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "  ├─TableReader_19(Build) 2.00 root  data:TableFullScan_18",
           "  │ └─TableFullScan_18 2.00 cop[tiflash] table:d1_t keep order:false",
           "  └─TableReader_17(Probe) 8.00 root  data:TableFullScan_16",
           "    └─TableFullScan_16 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_19 1.00 root  funcs:count(Column#13)->Column#12",
+          "└─TableReader_20 1.00 root  data:HashAgg_12",
+          "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#13",
+          "    └─BroadcastJoin_16 6.40 cop[tiflash]  anti semi join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─TableFullScan_18(Build) 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_17(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       },
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
+<<<<<<< HEAD
           "HashAgg_20 1.00 root  funcs:count(Column#13)->Column#12",
           "└─TableReader_21 1.00 root  data:HashAgg_10",
           "  └─HashAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#13",
           "    └─HashJoin_12 6.40 cop[tiflash]  anti semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
           "      ├─TableFullScan_15(Build) 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+=======
+          "HashAgg_19 1.00 root  funcs:count(Column#13)->Column#12",
+          "└─TableReader_20 1.00 root  data:HashAgg_12",
+          "  └─HashAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#13",
+          "    └─BroadcastJoin_16 6.40 cop[tiflash]  anti semi join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k, other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─TableFullScan_18(Build) 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_17(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> update tests
         ]
       }
     ]
@@ -741,8 +894,9 @@
         "Plan": [
           "StreamAgg_24 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader_25 1.00 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan_22 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(Column#10)->Column#7, funcs:sum(Column#10)->Column#8",
+          "    └─Projection_32 10000.00 cop[tiflash]  cast(test.t.a, decimal(15,4) BINARY)->Column#9, Column#9",
+          "      └─TableFullScan_22 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -751,8 +905,9 @@
         "Plan": [
           "StreamAgg_16 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
           "└─TableReader_17 1.00 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(Column#10)->Column#7, funcs:sum(Column#10)->Column#8",
+          "    └─Projection_20 10000.00 cop[tiflash]  cast(test.t.a, decimal(15,4) BINARY)->Column#9, Column#9",
+          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -761,8 +916,9 @@
         "Plan": [
           "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader_17 1.00 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection_20 10000.00 cop[tiflash]  cast(test.t.a, decimal(32,0) BINARY)->Column#7",
+          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -771,8 +927,9 @@
         "Plan": [
           "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader_17 1.00 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(plus(test.t.a, 1))->Column#6",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection_20 10000.00 cop[tiflash]  cast(plus(test.t.a, 1), decimal(41,0) BINARY)->Column#7",
+          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -781,8 +938,9 @@
         "Plan": [
           "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader_17 1.00 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(isnull(test.t.a))->Column#6",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(Column#7)->Column#6",
+          "    └─Projection_20 10000.00 cop[tiflash]  cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#7",
+          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1079,6 +1237,80 @@
           "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
           "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
           "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushDownProjectionForTiFlash",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader_13 1.00 root  data:HashAgg_8",
+          "  └─HashAgg_8 1.00 cop[tiflash]  funcs:count(Column#4)->Column#7",
+          "    └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "      └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader_13 1.00 root  data:HashAgg_6",
+          "  └─HashAgg_6 1.00 cop[tiflash]  funcs:count(1)->Column#6",
+          "    └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─TableReader_13 1.00 root  data:HashAgg_8",
+          "  └─HashAgg_8 1.00 cop[tiflash]  funcs:sum(Column#8)->Column#7",
+          "    └─Projection_19 10000.00 cop[tiflash]  cast(Column#4, decimal(41,0) BINARY)->Column#8",
+          "      └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+        "Plan": [
+          "TableReader_19 10000.00 root  data:BroadcastJoin_9",
+          "└─BroadcastJoin_9 10000.00 cop[tiflash]  inner join, left key:Column#4, right key:Column#8",
+          "  ├─Projection_13(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "  │ └─Selection_15 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │   └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─Projection_16(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "    └─Selection_18 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "      └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_23 10000.00 root  data:BroadcastJoin_9",
+          "└─BroadcastJoin_9 10000.00 cop[tiflash]  inner join, left key:test.t.id, right key:Column#7",
+          "  ├─Projection_20(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "  │ └─Selection_22 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │   └─TableFullScan_21 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─Selection_19(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    └─TableFullScan_18 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+        "Plan": [
+          "Projection_8 10000.00 root  Column#8, Column#4",
+          "└─TableReader_19 10000.00 root  data:BroadcastJoin_9",
+          "  └─BroadcastJoin_9 10000.00 cop[tiflash]  inner join, left key:Column#4, right key:Column#8",
+          "    ├─Projection_13(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "    │ └─Selection_15 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │   └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "    └─Projection_16(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "      └─Selection_18 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "        └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

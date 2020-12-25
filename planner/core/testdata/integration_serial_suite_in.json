@@ -128,5 +128,16 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
     ]
+  },
+  {
+    "name": "TestPushDownProjectionForTiFlash",
+    "cases": [
+      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc select * from t join (select id-2 as b from t) A on A.b=t.id",
+      "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b"
+    ]
   }
 ]
