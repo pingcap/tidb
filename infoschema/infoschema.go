@@ -435,6 +435,7 @@ func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
 func (is *infoSchema) deleteBundle(id string) {
 	is.ruleBundleMutex.Lock()
 	defer is.ruleBundleMutex.Unlock()
+	delete(is.ruleBundleMap, id)
 }
 
 // GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
