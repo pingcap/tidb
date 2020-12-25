@@ -444,6 +444,9 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version58
 )
 
 var (
@@ -1421,7 +1424,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
