@@ -440,6 +440,14 @@ const (
 	version56 = 56
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
+<<<<<<< HEAD
+=======
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version58
+>>>>>>> 4fdc99b8d... session: fix didn't change current version in #21856 (#22011)
 )
 
 var (
