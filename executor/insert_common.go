@@ -419,10 +419,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-	if !sessVars.StrictSQLMode {
-		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
-		sessVars.StmtCtx.BadNullAsWarning = true
-	}
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
 	memUsageOfRows := int64(0)
@@ -596,7 +592,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
-		if e.handleErr(gCol, &val, 0, err) != nil {
+		if e.ctx.GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
@@ -970,6 +966,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
+		if r.ignored {
+			continue
+		}
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)

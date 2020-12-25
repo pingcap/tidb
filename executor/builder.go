@@ -2020,7 +2020,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts: opts,
+		opts:       opts,
+		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -3358,6 +3359,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err

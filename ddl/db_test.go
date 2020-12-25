@@ -2079,7 +2079,6 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				forceReloadDomain(tk.Se)
 				n := rand.Intn(num)
 				tk.MustExec("begin")
 				tk.MustExec("delete from t2 where c1 = ?", n)
@@ -4217,7 +4216,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -4718,7 +4717,6 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(tk, c, "drop table t_mcc;")
 
-	forceReloadDomain(tk.Se)
 	result := tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
@@ -5970,6 +5968,7 @@ func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
 func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	// Prepare work.
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")
 	tk.MustExec("use test_db")
@@ -6041,7 +6040,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			false,
 			model.StateNone},
 		// Test unique index
-		/* TODO unique index is not supported now.
 		{[]string{"insert into t1 values(3, 30, 300)",
 			"insert into t1 values(4, 40, 400)",
 			"insert into t2 values(11, 11, 11)",
@@ -6085,7 +6083,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 				{"1 10 100", "2 20 200"}},
 			true,
 			model.StateWriteOnly},
-		*/
 	}
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
 
