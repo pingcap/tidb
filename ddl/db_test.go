@@ -6492,18 +6492,35 @@ func (s *testDBSuite4) TestUnsupportedAlterTableOption(c *C) {
 
 func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+
+	checkType := func(db, table, field string) {
+		ctx := tk.Se.(sessionctx.Context)
+		is := domain.GetDomain(ctx).InfoSchema()
+		tableInfo, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+		c.Assert(err, IsNil)
+		tblInfo := tableInfo.Meta()
+		for _, col := range tblInfo.Columns {
+			if col.Name.L == field {
+				c.Assert(col.Flen, Equals, 10)
+			}
+		}
+	}
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt(d decimal(0, 0))")
+	checkType("test", "tt", "d")
 
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
-	c.Assert(err, IsNil)
-	tblInfo := tableInfo.Meta()
-	for _, col := range tblInfo.Columns {
-		if col.Name.L == "d" {
-			c.Assert(col.Flen, Equals, 10)
-		}
-	}
+	tk.MustExec("drop table tt")
+	tk.MustExec("create table tt(a int)")
+	tk.MustExec("alter table tt add column d decimal(0, 0)")
+	checkType("test", "tt", "d")
+
+	/*
+		Currently not support change column to decimal
+		tk.MustExec("drop table tt")
+		tk.MustExec("create table tt(d int)")
+		tk.MustExec("alter table tt change column d d decimal(0, 0)")
+		checkType("test", "tt", "d")
+	*/
 }
