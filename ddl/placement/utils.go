@@ -94,7 +94,7 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 					if err != nil {
 						s2 = err.Error()
 					}
-					return constraints, errors.Errorf("no instance can meet the constraint %s <=> %s", s1, s2)
+					return constraints, errors.Errorf("conflicting constraints '%s' and '%s', s1, s2)
 				}
 			}
 		}
