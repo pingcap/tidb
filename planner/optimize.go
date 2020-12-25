@@ -86,6 +86,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
 	}
+
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {

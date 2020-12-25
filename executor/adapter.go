@@ -747,7 +747,6 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
-
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

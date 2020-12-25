@@ -151,8 +151,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
-	//memory usage decreases
+
 	e.memTracker.Consume(-e.memTracker.BytesConsumed())
+	e.memTracker = nil
 
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
@@ -265,8 +266,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	err = FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
 		e.schema, e.columns, e.ctx, req)
-
-	e.memTracker.Consume(req.MemoryUsage())
 	if err != nil {
 		return err
 	}

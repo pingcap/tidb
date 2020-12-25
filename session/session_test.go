@@ -3151,22 +3151,23 @@ func (s *testSessionSuite2) TestPointGetMemoryTracking(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int primary key);")
-	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
 	tk.MustExec("insert into t1 values (1);")
-	tk.MustExec("select * from t1 where a = 1;")
+	tk.MustQuery("select * from t1 where a = 1;").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select * from t1 where a = 1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-	err = tk.ExecToErr("update t1 set a = a + 10 where a in (1,2,3);")
+	err = tk.QueryToErr("select * from t1 where a in (1,2,3);")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustExec("set tidb_mem_quota_query=1024;")
 	tk.MustQuery("select * from t1 where a = 1;").Check(testkit.Rows("1"))
-	err = tk.ExecToErr("update t1 set a = a + 10 where a in (1,2,3);")
+	err = tk.QueryToErr("select * from t1 where a = 1;")
+	c.Check(err, IsNil)
+	err = tk.QueryToErr("select * from t1 where a in (1,2,3);")
 	c.Check(err, IsNil)
 }
 
