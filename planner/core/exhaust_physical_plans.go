@@ -1931,9 +1931,6 @@ func (lt *LogicalTopN) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := lt.children[0].(*DataSource)
-	if lt.SCtx().GetSessionVars().AllowBCJ {
-		ok = true
-	}
 	return ok
 }
 
@@ -2330,10 +2327,6 @@ func (p *LogicalLimit) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := p.children[0].(*DataSource)
-	// allow push down projection for tiflash
-	if p.SCtx().GetSessionVars().AllowBCJ {
-		ok = true
-	}
 	return ok
 }
 
