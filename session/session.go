@@ -1226,11 +1226,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
-
-	vars := s.GetSessionVars()
-	if vars.TxnCtx.IsStaleness && !planner.IsReadOnly(stmtNode, vars) {
-		s.rollbackOnError(ctx)
-		return nil, errors.New("only support read only statement during read only time-bounded transaction./session")
+	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
+		s.RollbackTxn(ctx)
+		return nil, err
 	}
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -1268,6 +1266,25 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	return recordSet, nil
+}
+
+func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if !vars.TxnCtx.IsStaleness {
+		return nil
+	}
+	_, ok := stmtNode.(*ast.CommitStmt)
+	if ok {
+		return nil
+	}
+	_, ok = stmtNode.(*ast.RollbackStmt)
+	if ok {
+		return nil
+	}
+	if !planner.IsReadOnly(stmtNode, vars) {
+		return errors.New("only support read only statement during read only time-bounded transaction.")
+	}
+	return nil
 }
 
 // querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
