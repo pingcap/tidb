@@ -1347,9 +1347,6 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
-			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = variable.BoolOn
-			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
