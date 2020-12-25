@@ -152,8 +152,8 @@ func BuildPlacementDropBundle(partitionID int64) *Bundle {
 func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
 	for _, rule := range newBundle.Rules {
 		rule.GroupID = newBundle.ID
 		rule.StartKeyHex = startKey

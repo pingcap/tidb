@@ -420,8 +420,8 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 				ID: placement.GroupID(1),
 				Rules: []*placement.Rule{{
 					GroupID:     placement.GroupID(1),
-					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1))),
-					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(1))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2))),
 				}},
 			},
 		},
@@ -431,8 +431,8 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 				ID: placement.GroupID(2),
 				Rules: []*placement.Rule{{
 					GroupID:     placement.GroupID(2),
-					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
-					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3))),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(2))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(3))),
 				}},
 			},
 		},
