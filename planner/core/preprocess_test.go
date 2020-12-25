@@ -300,16 +300,17 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from t union ((select * from t into outfile 'x') union select * from t)", false, core.ErrMisplacedIntoOutfile},
 		{"trace select * from t union ((select * from t into outfile 'x') union select * from t)", false, core.ErrMisplacedIntoOutfile},
 		{"explain select * from t union ((select * from t into outfile 'x') union select * from t)", false, core.ErrMisplacedIntoOutfile},
-		{"create binding for select * from t union ((select * from t into outfile 'x') union select * from t)", false, core.ErrMisplacedIntoOutfile},
-		{"create view a as select * from t1 into outfile 'x';", false, core.ErrMisplacedIntoOutfile},
-		{"create view a as (select * from t1 into outfile 'x');", false, core.ErrMisplacedIntoOutfile},
-		{"create table a as select * from t1 into outfile 'x';", false, core.ErrMisplacedIntoOutfile},
+		{"create view a as select * from t1 into outfile 'x';", false, ddl.ErrViewSelectClause},
+		{"create view a as (select * from t1 into outfile 'x');", false, ddl.ErrViewSelectClause},
+		{"create table a as select * from t1 into outfile 'x';", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 		{"insert into t select * from t into outfile 'x';", false, core.ErrMisplacedIntoOutfile},
 		{"insert into t (a) select a from t into outfile 'x';", false, core.ErrMisplacedIntoOutfile},
 		{"select * from (select * from t into outfile 'x') as t;", false, core.ErrMisplacedIntoOutfile},
 		{"select * from t where (select a from t into outfile 'x') > 1;", false, core.ErrMisplacedIntoOutfile},
 		{"select * from t union (select * from t into outfile '/tmp/result.txt');", false, nil},
 		{"select * from t union select * from t into outfile '/tmp/result.txt';", false, nil},
+		// TODO(tangenta): the following statement should throw error.
+		{"create binding for (select * from t union ((select * from t into outfile 'x') union select * from t)) using (select * from t union ((select * from t into outfile 'x') union select * from t));", false, nil},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
