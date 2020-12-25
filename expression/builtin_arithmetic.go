@@ -234,7 +234,7 @@ func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (va
 	}
 
 	if uint64(a) > math.MaxUint64-uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("UU: BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return a + b, true, types.ErrOverflow.GenWithStackByArgs("UU: BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
 	}
 
 	return a + b, false, nil
@@ -245,7 +245,7 @@ type builtinArithmeticPlusIntUnsignedSignedSig struct {
 }
 
 func (s *builtinArithmeticPlusIntUnsignedSignedSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig := &builtinArithmeticPlusIntUnsignedSignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
@@ -277,7 +277,7 @@ type builtinArithmeticPlusIntSignedSignedSig struct {
 }
 
 func (s *builtinArithmeticPlusIntSignedSignedSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig := &builtinArithmeticPlusIntSignedSignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
@@ -306,7 +306,7 @@ type builtinArithmeticPlusIntSignedUnsignedSig struct {
 }
 
 func (s *builtinArithmeticPlusIntSignedUnsignedSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticPlusIntUnsignedUnsignedSig{}
+	newSig := &builtinArithmeticPlusIntSignedUnsignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
