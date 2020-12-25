@@ -43,8 +43,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	ts, err := o.GetStaleTimestamp(context.Background(), 10)
+	ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 10)
 	if err != nil {
 		t.Errorf("%v\n", err)
 	}
@@ -54,7 +53,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 		t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", 10, duration)
 	}
 
-	_, err = o.GetStaleTimestamp(context.Background(), 1e12)
+	_, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 1e12)
 	if err == nil {
 		t.Errorf("expect exceed err but get nil")
 	}
@@ -62,8 +61,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	for i := uint64(3); i < 1e9; i += i/100 + 1 {
 		start = time.Now()
 		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-		oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-		ts, err = o.GetStaleTimestamp(context.Background(), i)
+		ts, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, i)
 		if err != nil {
 			t.Errorf("%v\n", err)
 		}
