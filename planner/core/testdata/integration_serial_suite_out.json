@@ -593,5 +593,91 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPushDownAggForMPP",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_8 1.00 root  funcs:count(Column#4)->Column#5",
+          "└─Projection_10 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "  └─TableReader_14 10000.00 root  data:TableFullScan_13",
+          "    └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
+        "Plan": [
+          "HashAgg_19 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─TableReader_21 1.00 root  data:ExchangeSender_20",
+          "  └─ExchangeSender_20 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_9 1.00 cop[tiflash]  funcs:count(1)->Column#7",
+          "      └─TableFullScan_18 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_8 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─Projection_15 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
+          "  └─Projection_10 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "    └─TableReader_14 10000.00 root  data:TableFullScan_13",
+          "      └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select count(*) from t",
+        "Plan": [
+          "HashAgg_20 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader_22 1.00 root  data:ExchangeSender_21",
+          "  └─ExchangeSender_21 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:count(1)->Column#6",
+          "      └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select count(*), id from t group by id",
+        "Plan": [
+          "TableReader_28 8000.00 root  data:ExchangeSender_27",
+          "└─ExchangeSender_27 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashAgg_24 8000.00 cop[tiflash]  group by:test.t.id, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─ExchangeReceiver_26 8000.00 cop[tiflash]  ",
+          "      └─ExchangeSender_25 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "        └─HashAgg_9 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(1)->Column#7",
+          "          └─TableFullScan_23 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+        "Plan": [
+          "TableReader_47 9990.00 root  data:ExchangeSender_46",
+          "└─ExchangeSender_46 9990.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_9 9990.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "    ├─HashAgg_22(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─ExchangeReceiver_24 7992.00 cop[tiflash]  ",
+          "    │   └─ExchangeSender_23 7992.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "    │     └─HashAgg_14 7992.00 cop[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
+          "    │       └─Selection_21 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    │         └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Selection_13(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
+        "Plan": [
+          "HashJoin_10 1.25 root  inner join, equal:[eq(test.t.id, Column#7)]",
+          "├─HashAgg_49(Build) 1.00 root  funcs:sum(Column#13)->Column#7",
+          "│ └─TableReader_51 1.00 root  data:ExchangeSender_50",
+          "│   └─ExchangeSender_50 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "│     └─HashAgg_40 1.00 cop[tiflash]  funcs:count(1)->Column#13",
+          "│       └─TableFullScan_18 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_36(Probe) 9990.00 root  data:Selection_35",
+          "  └─Selection_35 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    └─TableFullScan_34 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

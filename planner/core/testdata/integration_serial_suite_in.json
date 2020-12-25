@@ -89,5 +89,17 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
     ]
+  },
+  {
+    "name": "TestPushDownAggForMPP",
+    "cases": [
+      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
+      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select count(*) from t",
+      "desc select count(*), id from t group by id",
+      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id"
+    ]
   }
 ]

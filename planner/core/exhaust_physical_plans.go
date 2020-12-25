@@ -2216,10 +2216,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-	// TODO: We haven't supported the agg algo with repartition.
-	if la.ctx.GetSessionVars().AllowMPPExecution {
-		taskTypes = append(taskTypes, property.MppTaskType)
-	}
+
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
@@ -2233,35 +2230,35 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
 	for _, taskTp := range taskTypes {
-		if taskTp == property.MppTaskType && la.checkCanPushDownToMPP() {
-			groupByCols := la.GetGroupByCols()
-			if len(groupByCols) == 0 {
-				// TODO: push down scalar agg later after introducing collected exchange
-				childProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		agg.SetSchema(la.schema.Clone())
+		hashAggs = append(hashAggs, agg)
+	}
+	// TODO: We haven't supported the agg algo with repartition.
+	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
+		groupByCols := la.GetGroupByCols()
+		if len(groupByCols) == 0 {
+			// TODO: push down scalar agg later after introducing merge exchange
+			childProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.MppTaskType}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			hashAggs = append(hashAggs, agg)
+		} else {
+			// 1-phase
+			// TODO: enum more subsets of partition columns
+			if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
+				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols, Enforced: true}
 				agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-				agg.SetSchema(la.schema.Clone())
-				hashAggs = append(hashAggs, agg)
-			} else {
-				// 1-phase
-				// TODO: enum more subsets of partition columns
-				if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
-					childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols, Enforced: true}
-					agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-					agg.SetSchema(la.schema.Clone())
-					hashAggs = append(hashAggs, agg)
-				}
-				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols, Enforced: true}
-				agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-				agg.SetSchema(la.schema.Clone())
-				hashAggs = append(hashAggs, agg)
-				// 2-phase
-				childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType, PartitionCols: groupByCols}
-				agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 				agg.SetSchema(la.schema.Clone())
 				hashAggs = append(hashAggs, agg)
 			}
-		} else {
-			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols, Enforced: true}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			hashAggs = append(hashAggs, agg)
+			// 2-phase
+			childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType, PartitionCols: groupByCols}
+			agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			hashAggs = append(hashAggs, agg)
 		}
