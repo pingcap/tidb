@@ -474,7 +474,7 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 	is := b.is
-	oldIS.ForEachBundle(func (v *placement.Bundle) error {
+	oldIS.ForEachBundle(func(v *placement.Bundle) error {
 		is.SetBundle(v)
 		return nil
 	})

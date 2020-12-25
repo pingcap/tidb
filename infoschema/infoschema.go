@@ -99,7 +99,7 @@ const bucketCount = 512
 type infoSchema struct {
 	// ruleBundleMap stores all placement rules
 	ruleBundleMutex sync.RWMutex
-	ruleBundleMap map[string]*placement.Bundle
+	ruleBundleMap   map[string]*placement.Bundle
 
 	schemaMap map[string]*schemaTables
 

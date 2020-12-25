@@ -1820,7 +1820,7 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 	checker := privilege.GetPrivilegeManager(ctx)
 	is := infoschema.GetInfoSchema(ctx)
 	var rows [][]types.Datum
-	if err := is.ForEachBundle(func (bundle *placement.Bundle) error {
+	if err := is.ForEachBundle(func(bundle *placement.Bundle) error {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
 		if err != nil {
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
