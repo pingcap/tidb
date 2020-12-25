@@ -162,11 +162,13 @@ type TransactionContext struct {
 	StatementCount int
 	CouldRetry     bool
 	IsPessimistic  bool
-	// IsStaleness indicates the whether the txn is read only staleness txn.
+	// IsStaleness indicates whether the txn is read only staleness txn.
 	IsStaleness bool
-	Isolation   string
-	LockExpire  uint32
-	ForUpdate   uint32
+	// IsLastStaleness indicates whether the last txn is read only staleness txn.
+	IsLastStaleness bool
+	Isolation       string
+	LockExpire      uint32
+	ForUpdate       uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
@@ -270,6 +272,10 @@ func (tc *TransactionContext) Cleanup() {
 	tc.TableDeltaMap = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	if tc.IsStaleness {
+		tc.IsStaleness = false
+		tc.IsLastStaleness = true
+	}
 }
 
 // ClearDelta clears the delta map.
