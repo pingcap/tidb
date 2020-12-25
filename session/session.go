@@ -95,6 +95,16 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 )
 
+var gcVariableComments = map[string]string{
+	variable.TiKVGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiKVGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiKVGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiKVGCEnable:       "Current GC enable status",
+	variable.TiKVGCMode:         "Mode of GC, \"central\" or \"distributed\"",
+	"tikv_gc_auto_concurrency":  "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	variable.TiKVGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
@@ -998,7 +1008,9 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
-		ret[k] = v
+		if v, err = s.GetTiKVGlobalSysVar(k, v); err != nil {
+			ret[k] = v
+		}
 	}
 	return ret, nil
 }
@@ -1025,7 +1037,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		}
 		return "", err
 	}
-	return sysVar, nil
+	// Update mysql.tidb values if required
+	return s.GetTiKVGlobalSysVar(name, sysVar)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1052,11 +1065,101 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+	// update mysql.tidb if required.
+	if err = s.SetTiKVGlobalSysVar(name, sVal); err != nil {
+		return err
+	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+// SetTiKVGlobalSysVar handles tikv_* sysvars which need to update mysql.tidb
+// for backwards compatibility. Validation has already been performed.
+func (s *session) SetTiKVGlobalSysVar(name, val string) error {
+	switch name {
+	case variable.TiKVGCConcurrency:
+		autoConcurrency := "false"
+		if val == "-1" {
+			autoConcurrency = "true"
+		}
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%s', '%s', '%s')
+			ON DUPLICATE KEY UPDATE variable_value = '%s'`, "tikv_gc_auto_concurrency", autoConcurrency, gcVariableComments[name], autoConcurrency)
+		_, _, err := s.ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+		fallthrough
+	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
+		val = onOffToTrueFalse(val)
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%s', '%s', '%s')
+			ON DUPLICATE KEY UPDATE variable_value = '%s'`, name, val, gcVariableComments[name], val)
+		_, _, err := s.ExecRestrictedSQL(sql)
+		return err
+	}
+	return nil // not a TiKV sysVar
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return variable.BoolOn
+	} else if strings.EqualFold("false", str) {
+		return variable.BoolOff
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
+// GetTiKVGlobalSysVar handles tikv_* sysvars which need
+// to read from mysql.tidb for backwards compatibility.
+func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
+	switch name {
+	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime,
+		variable.TiKVGCConcurrency, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, name)
+		tblValue, err := s.getExecRet(s, sql)
+		if err != nil {
+			return val, nil // mysql.tidb value does not exist.
+		}
+		// Run validation on the tblValue. This will return an error if it can't be validated,
+		// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
+		tblValue = trueFalseToOnOff(tblValue)
+		validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+		if err != nil {
+			logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
+				zap.Error(err),
+				zap.String("name", name),
+				zap.String("tblValue", tblValue),
+				zap.String("restoredValue", val))
+			sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
+			VALUES ('%s', '%s', '%s')`, name, val, gcVariableComments[name])
+			_, _, err = s.ExecRestrictedSQL(sql)
+			return val, err
+		}
+		if validatedVal != val {
+			// The sysvar value is out of sync.
+			sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+				mysql.SystemDB, mysql.GlobalVariablesTable, name, validatedVal)
+			_, _, err = s.ExecRestrictedSQL(sql)
+			return validatedVal, err
+		}
+		return validatedVal, nil
+	}
+	return val, nil // not a TiKV sysVar
 }
 
 func (s *session) ensureFullGlobalStats() error {

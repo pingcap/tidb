@@ -270,6 +270,27 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	return doGC, safePoint, errors.Trace(err)
 }
 
+func (w *GCWorker) initTableValues() error {
+
+	// This is a static set of data observed in TiDB on a default install *prior* to moving tikv values to sysVars.
+	// It is no longer needed, but some examples in the wild and in manual pages use "UPDATE".
+	// This requires a row to exist for the operation to succeed. Because the ON DUPLICATE KEY UPDATE
+	// action is UPDATE variable_name = variable_name, it is a noop if the row already exists.
+
+	stmt := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES
+	('tikv_gc_enable', 'true', 'Current GC enable status'),
+	('tikv_gc_run_interval', '10m0s', 'GC run interval, at least 10m, in Go format.'),
+	('tikv_gc_life_time', '10m0s', 'All versions within life time will not be collected by GC, at least 10m, in Go format.')
+	ON DUPLICATE KEY
+	UPDATE variable_name = variable_name`
+
+	se := createSession(w.store)
+	defer se.Close()
+	_, err := se.Execute(context.Background(), stmt)
+	return err
+
+}
+
 func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	se := createSession(w.store)
 	defer se.Close()
@@ -277,6 +298,12 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
+
+	if err := w.initTableValues(); err != nil { // preserve consistency
+		logutil.Logger(ctx).Warn("[gc worker] could not initialize mysql.tidb values.")
+		return false, 0, err
+	}
+
 	if !variable.TiDBOptOn(enable) {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
