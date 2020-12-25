@@ -992,6 +992,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
+
+		if tp.Decimal == 0 && tp.Flen == 0 {
+			tp.Flen = 10
+		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
 			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
