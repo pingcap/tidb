@@ -7369,3 +7369,27 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 	}
 }
+
+//func (s *testSuite) TestValidateReadOnly(c *C) {
+//	testcases := []struct {
+//		name       string
+//		sql        string
+//		IsReadOnly bool
+//	}{
+//		{
+//			name:       "TimestampBoundReadTimestamp",
+//			sql:        `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+//			IsReadOnly: true,
+//		},
+//		{
+//			name:       "TimestampBoundExactStaleness",
+//			sql:        `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
+//			IsReadOnly: true,
+//		},
+//		{
+//			name:       "begin",
+//			sql:        "begin",
+//			IsReadOnly: false,
+//		},
+//	}
+//}

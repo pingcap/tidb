@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"sort"
 	"time"
@@ -138,6 +139,9 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	logutil.BgLogger().Info("Next", zap.String("sql txn", e.sqlText),
+		zap.Bool("readonly", planner.IsReadOnly(stmt, vars)))
 
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
