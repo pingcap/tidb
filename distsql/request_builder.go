@@ -271,7 +271,11 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
 		builder.txnScope = oracle.GlobalTxnScope
 	}
+<<<<<<< HEAD
 	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
+=======
+	if builder.txnScope == oracle.GlobalTxnScope {
+>>>>>>> ddl: introduce new rule cache api
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -284,9 +288,14 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		}
 	}
 
+<<<<<<< HEAD
 	bundles := builder.is.RuleBundles()
 	for phyTableID := range visitPhysicalTableID {
 		valid := VerifyTxnScope(builder.txnScope, phyTableID, bundles)
+=======
+	for tableID := range visitTableID {
+		valid := VerifyTxnScope(builder.txnScope, tableID, builder.is)
+>>>>>>> ddl: introduce new rule cache api
 		if !valid {
 			var tblName string
 			var partName string
@@ -527,11 +536,11 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 }
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
-func VerifyTxnScope(txnScope string, physicalTableID int64, bundles map[string]*placement.Bundle) bool {
+func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := bundles[placement.GroupID(physicalTableID)]
+	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 	if !ok {
 		return true
 	}

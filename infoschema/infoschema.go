@@ -16,6 +16,7 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/parser/model"
@@ -56,10 +57,12 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
-	// RuleBundles returns all placement rule bundles.
-	RuleBundles() map[string]*placement.Bundle
-	// MockBundles is only used for TEST.
-	MockBundles(map[string]*placement.Bundle)
+	// ForEachBundle will iterate all placement rule bundles. If visitor
+	// return a non-nil value, the iteration will stop and the error will
+	// be returned to the caller.
+	ForEachBundle(visitor func(*placement.Bundle) error) error
+	// SetBundle is only used for TEST
+	SetBundle(*placement.Bundle)
 }
 
 type sortedTables []table.Table
@@ -95,6 +98,7 @@ const bucketCount = 512
 
 type infoSchema struct {
 	// ruleBundleMap stores all placement rules
+	ruleBundleMutex sync.RWMutex
 	ruleBundleMap map[string]*placement.Bundle
 
 	schemaMap map[string]*schemaTables
@@ -405,16 +409,27 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
 	t, r := is.ruleBundleMap[name]
 	return t, r
 }
 
-func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
-	return is.ruleBundleMap
+func (is *infoSchema) ForEachBundle(visitor func(*placement.Bundle) error) error {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	for _, bundle := range is.ruleBundleMap {
+		if err := visitor(bundle); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
-	is.ruleBundleMap = ruleBundleMap
+func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	is.ruleBundleMap[bundle.ID] = bundle
 }
 
 // GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.

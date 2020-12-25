@@ -320,12 +320,10 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	}()
 
 	initTable := func() []string {
-		bundles := make(map[string]*placement.Bundle)
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("create table t1(id int) partition by hash(id) partitions 2")
 
 		is := s.dom.InfoSchema()
-		is.MockBundles(bundles)
 
 		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 		c.Assert(err, IsNil)
@@ -334,10 +332,10 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 		rows := []string{}
 		for k, v := range partDefs {
 			ptID := placement.GroupID(v.ID)
-			bundles[ptID] = &placement.Bundle{
+			is.SetBundle(&placement.Bundle{
 				ID:    ptID,
 				Rules: []*placement.Rule{{Count: k}},
-			}
+			})
 			rows = append(rows, fmt.Sprintf("%s 0  test t1 %s <nil>  %d ", ptID, v.Name.L, k))
 		}
 		return rows
@@ -374,9 +372,7 @@ PARTITION BY RANGE (c) (
 	PARTITION p3 VALUES LESS THAN (21)
 );`)
 
-	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
-	is.MockBundles(bundles)
 
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -385,7 +381,7 @@ PARTITION BY RANGE (c) (
 	for _, def := range partDefs {
 		if def.Name.String() == "p0" {
 			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
+			is.SetBundle(&placement.Bundle{
 				ID: groupID,
 				Rules: []*placement.Rule{
 					{
@@ -401,10 +397,10 @@ PARTITION BY RANGE (c) (
 						},
 					},
 				},
-			}
+			})
 		} else if def.Name.String() == "p2" {
 			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
+			is.SetBundle(&placement.Bundle{
 				ID: groupID,
 				Rules: []*placement.Rule{
 					{
@@ -420,8 +416,7 @@ PARTITION BY RANGE (c) (
 						},
 					},
 				},
-			}
-
+			})
 		}
 	}
 
@@ -582,16 +577,14 @@ PARTITION BY RANGE (c) (
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
-	is.MockBundles(bundles)
 
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
 	c.Assert(err, IsNil)
 	groupID := placement.GroupID(pid)
-	bundles[groupID] = &placement.Bundle{
+	is.SetBundle(&placement.Bundle{
 		ID: groupID,
 		Rules: []*placement.Rule{
 			{
@@ -607,7 +600,7 @@ PARTITION BY RANGE (c) (
 				},
 			},
 		},
-	}
+	})
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error

@@ -352,9 +352,6 @@ func (*testSuite) TestGetBundle(c *C) {
 
 	is := handle.Get()
 
-	bundles := make(map[string]*placement.Bundle)
-	is.MockBundles(bundles)
-
 	bundle := &placement.Bundle{
 		ID: placement.PDBundleID,
 		Rules: []*placement.Rule{
@@ -366,7 +363,7 @@ func (*testSuite) TestGetBundle(c *C) {
 			},
 		},
 	}
-	bundles[placement.PDBundleID] = bundle
+	is.SetBundle(bundle)
 
 	b := infoschema.GetBundle(is, []int64{})
 	c.Assert(b.Rules, DeepEquals, bundle.Rules)
@@ -387,7 +384,7 @@ func (*testSuite) TestGetBundle(c *C) {
 			},
 		},
 	}
-	bundles[ptID] = bundle
+	is.SetBundle(bundle)
 
 	b = infoschema.GetBundle(is, []int64{2, 3})
 	c.Assert(b, DeepEquals, bundle)
@@ -408,7 +405,7 @@ func (*testSuite) TestGetBundle(c *C) {
 			},
 		},
 	}
-	bundles[ptID] = bundle
+	is.SetBundle(bundle)
 
 	b = infoschema.GetBundle(is, []int64{1, 2, 3})
 	c.Assert(b, DeepEquals, bundle)
