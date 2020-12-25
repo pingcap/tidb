@@ -89,3 +89,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/yisaer/parser v0.0.0-20201225101659-8cc752e43486
