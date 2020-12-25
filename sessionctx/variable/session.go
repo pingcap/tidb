@@ -275,6 +275,8 @@ func (tc *TransactionContext) Cleanup() {
 	if tc.IsStaleness {
 		tc.IsStaleness = false
 		tc.IsLastStaleness = true
+	} else {
+		tc.IsLastStaleness = false
 	}
 }
 
