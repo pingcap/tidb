@@ -2095,13 +2095,8 @@ func (la *LogicalAggregation) canPushToCop() bool {
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	if la.SCtx().GetSessionVars().AllowBCJ {
-		return !la.noCopPushDown
-	} else {
-		_, ok := la.children[0].(*DataSource)
-		return ok && !la.noCopPushDown
-	}
+	_, ok := la.children[0].(*DataSource)
+	return ok && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2231,7 +2226,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
-
+	if prop.IsFlashProp() && !la.canPushToCop() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
