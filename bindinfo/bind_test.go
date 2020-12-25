@@ -174,7 +174,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindHandle.Size(), Equals, 1)
 
 	sql, hash := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t")
 	bind := bindData.Bindings[0]
@@ -382,7 +382,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 		sql, hash := normalizeWithDefaultDB(c, testSQL.querySQL, "test")
 
-		bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+		bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test", false)
 		c.Check(bindData, NotNil)
 		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
 		bind := bindData.Bindings[0]
@@ -415,7 +415,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(err, IsNil)
 		c.Check(bindHandle.Size(), Equals, 1)
 
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
+		bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 		c.Check(bindData, NotNil)
 		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
 		bind = bindData.Bindings[0]
@@ -429,7 +429,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		c.Check(err, IsNil)
-		bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+		bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test", false)
 		c.Check(bindData, IsNil)
 
 		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
@@ -443,7 +443,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(err, IsNil)
 		c.Check(bindHandle.Size(), Equals, 0)
 
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
+		bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 		c.Check(bindData, IsNil)
 
 		rs, err = tk.Exec("show global bindings")
@@ -639,7 +639,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test", false)
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select a , b from test . t where a = ? limit ...")
 	bind := bindData.Bindings[0]
@@ -727,7 +727,7 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
 	sql, hash := normalizeWithDefaultDB(c, "select a, b from t where a = 1 limit 0, 1", "test")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select a , b from test . t where a = ? limit ...")
 	bind := bindData.Bindings[0]
@@ -759,7 +759,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
 	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where i > ?")
 	bind := bindData.Bindings[0]
@@ -1500,7 +1500,7 @@ func (s *testSuite) TestHintsSetEvolveTask(c *C) {
 	bindHandle.SaveEvolveTasksToStore()
 	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
 	sql, hash := normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 2)
@@ -1520,7 +1520,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	bindHandle := s.domain.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
 	sql, hash := normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1529,7 +1529,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1538,7 +1538,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1547,7 +1547,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1556,7 +1556,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1567,7 +1567,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1756,7 +1756,7 @@ func (s *testSuite) TestBindingSource(c *C) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := s.domain.BindHandle()
 	sql, hash := normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1768,7 +1768,7 @@ func (s *testSuite) TestBindingSource(c *C) {
 	tk.MustQuery("select * from t where a > 10")
 	bindHandle.SaveEvolveTasksToStore()
 	sql, hash = normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 2)
@@ -1789,7 +1789,7 @@ func (s *testSuite) TestBindingSource(c *C) {
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
 	sql, hash = normalizeWithDefaultDB(c, "select * from t where a < ?", "test")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
+	bindData = bindHandle.GetBindRecord(hash, sql, "test", false)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from test . t where a < ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
@@ -1953,8 +1953,8 @@ func (s *testSuite) TestIssue20417(c *C) {
 	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
 
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541")
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
 
 	// Test for capture baseline
 	s.cleanBindingEnv(tk)
@@ -1995,4 +1995,12 @@ func (s *testSuite) TestIssue20417(c *C) {
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+
+	// Compatibility test
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("insert into mysql.bind_info values('select * from t where b = ? and c = ?', 'select /*+ use_index(@sel_1 test.t idxb)*/ * from t where b = ? and c = ?', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" + bindinfo.Manual + "')")
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
 }

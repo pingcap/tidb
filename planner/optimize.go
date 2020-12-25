@@ -274,7 +274,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (ast.StmtNode, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string, restore bool) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -288,7 +288,12 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (a
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			var normalizeExplainSQL string
+			if restore {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			} else {
+				normalizeExplainSQL = parser.Normalize(x.Text())
+			}
 			idx := int(0)
 			switch n := x.Stmt.(type) {
 			case *ast.SelectStmt:
@@ -309,7 +314,12 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (a
 			return x.Stmt, normalizeSQL, hash
 		case *ast.SetOprStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			var normalizeExplainSQL string
+			if restore {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			} else {
+				normalizeExplainSQL = parser.Normalize(x.Text())
+			}
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
@@ -329,7 +339,12 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (a
 		if len(x.Text()) == 0 {
 			return x, "", ""
 		}
-		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, defaultDB))
+		var normalizedSQL, hash string
+		if restore {
+			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, defaultDB))
+		} else {
+			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
+		}
 		return x, normalizedSQL, hash
 	}
 	return nil, "", ""
@@ -340,7 +355,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
 	if stmtNode == nil {
 		return nil, ""
 	}
@@ -359,9 +374,18 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, ""
 	}
-	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB, false)
 	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
+		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "", false)
+	}
+	// Here is the compatibility code.
+	// There may be some bindings that did not contain the DB name in the original SQL, so we need to use the previous matching method.
+	if bindRecord == nil {
+		stmtNode, normalizedSQL, hash = extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, false)
+		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB, true)
+		if bindRecord == nil {
+			bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "", true)
+		}
 	}
 	return bindRecord, metrics.ScopeGlobal
 }
