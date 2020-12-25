@@ -45,6 +45,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	}
 	aggExec := &tipb.Aggregation{
 		GroupBy: groupByExprs,
+		Mode:    tipb.AggFunctionMode(p.AggFuncs[0].Mode),
 	}
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
