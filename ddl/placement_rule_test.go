@@ -331,6 +331,25 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			},
 			err: ".*no rule of role 'learner' to drop.*",
 		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `['+  zone=sh', '-zone = bj']`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
 	}
 	for i, t := range tests {
 		var bundle *placement.Bundle

@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -5664,7 +5664,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 
 		constraints := []string{}
 
-		err = json.Unmarshal([]byte(cnstr), &constraints)
+		err = yaml.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
 			return rules, err
 		}
@@ -5680,7 +5680,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		})
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
 		constraints := map[string]int{}
-		err = json.Unmarshal([]byte(cnstr), &constraints)
+		err = yaml.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
 			return rules, err
 		}
