@@ -444,8 +444,9 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
-	// version59 moves TIKV gc settings to sysvars.
-	version59 = 59
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version58
 )
 
 var (
@@ -508,7 +509,6 @@ var (
 		upgradeToVer56,
 		upgradeToVer57,
 		upgradeToVer58,
-		upgradeToVer59,
 	}
 )
 
@@ -1267,74 +1267,6 @@ func upgradeToVer58(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
-func upgradeToVer59(s Session, ver int64) {
-	if ver >= version59 {
-		return
-	}
-
-	inList := "('tikv_gc_enable', 'tikv_gc_run_interval', 'tikv_gc_life_time', 'tikv_gc_concurrency', 'tikv_gc_mode', 'tikv_gc_scan_lock_mode', 'tikv_gc_auto_concurrency')"
-	selectSQL := fmt.Sprintf(`SELECT HIGH_PRIORITY VARIABLE_NAME, VARIABLE_VALUE FROM mysql.tidb WHERE variable_name IN %s ORDER BY variable_name DESC`, inList)
-	ctx := context.Background()
-	rs, err := s.Execute(ctx, selectSQL)
-	terror.MustNil(err)
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
-	for err == nil && req.NumRows() != 0 {
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			n := strings.ToLower(row.GetString(0))
-			v := row.GetString(1)
-			switch n {
-			case "tikv_gc_enable":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, boolVal(v)); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_run_interval":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCRunInterval, v); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_life_time":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCLifetime, v); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_concurrency":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, v); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_mode":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCMode, v); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_scan_lock_mode":
-				if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCScanLockMode, v); e != nil {
-					logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-				}
-			case "tikv_gc_auto_concurrency": // handled last, overwrites tikv_gc_concurrency
-				if strings.EqualFold(v, "true") {
-					if e := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCConcurrency, "-1"); e != nil {
-						logutil.BgLogger().Warn("could not upgrade sysvar", zap.Error(e))
-					}
-				}
-			}
-		}
-		err = r.Next(ctx, req)
-	}
-	terror.MustNil(err)
-	// Remove from the status table.
-	updateSQL := fmt.Sprintf("DELETE FROM mysql.tidb WHERE variable_name IN %s", inList)
-	mustExecute(s, updateSQL)
-
-}
-
-func boolVal(str string) string {
-	if strings.EqualFold(str, "false") {
-		return "OFF"
-	}
-	return "ON"
-}
-
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
@@ -1492,7 +1424,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
