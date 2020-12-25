@@ -25,6 +25,7 @@ type conditionChecker struct {
 	colUniqueID   int64
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
+	isFullLength  bool
 }
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
@@ -34,6 +35,9 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.Column:
 		if x.RetType.EvalType() == types.ETString {
 			return false
+		}
+		if !c.isFullLength {
+			c.shouldReserve = true
 		}
 		return c.checkColumn(x)
 	case *expression.Constant:
@@ -48,31 +52,57 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
-		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
+		if constVal, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType().Collate, collation) {
 					return false
 				}
-				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
+				if c.isFullLength {
+					return true
+				}
+				constLen := constVal.GetLengthOfPrefixableConstant()
+				if scalar.FuncName.L == ast.NE {
+					return constLen != -1 && constLen < c.length
+				}
+				if constLen == -1 || constLen >= c.length {
+					c.shouldReserve = true
+				}
+				return true
 			}
 		}
-		if _, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
+		if constVal, ok := scalar.GetArgs()[1].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType().EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
 					return false
 				}
-				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
+				if c.isFullLength {
+					return true
+				}
+				constLen := constVal.GetLengthOfPrefixableConstant()
+				if scalar.FuncName.L == ast.NE {
+					return constLen != -1 && constLen < c.length
+				}
+				if constLen == -1 || constLen >= c.length {
+					c.shouldReserve = true
+				}
+				return true
 			}
 		}
 	case ast.IsNull:
+		if !c.isFullLength {
+			c.shouldReserve = true
+		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.IsTruthWithoutNull, ast.IsFalsity, ast.IsTruthWithNull:
 		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
 			if s.RetType.EvalType() == types.ETString {
 				return false
 			}
+		}
+		if !c.isFullLength {
+			c.shouldReserve = true
 		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
@@ -94,12 +124,22 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			return false
 		}
 		for _, v := range scalar.GetArgs()[1:] {
-			if _, ok := v.(*expression.Constant); !ok {
+			if constVal, ok := v.(*expression.Constant); ok {
+				if !c.isFullLength {
+					constLen := constVal.GetLengthOfPrefixableConstant()
+					if constLen == -1 || constLen >= c.length {
+						c.shouldReserve = true
+					}
+				}
+			} else {
 				return false
 			}
 		}
 		return true
 	case ast.Like:
+		if !c.isFullLength {
+			c.shouldReserve = true
+		}
 		return c.checkLikeFunc(scalar)
 	case ast.GetParam:
 		return true

@@ -54,7 +54,7 @@ func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.
 		accessConditions = append(accessConditions, cond)
 		if checker.shouldReserve {
 			filterConditions = append(filterConditions, cond)
-			checker.shouldReserve = checker.length != types.UnspecifiedLength
+			checker.shouldReserve = false
 		}
 	}
 	return accessConditions, filterConditions
@@ -84,7 +84,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
 				hasResidualConditions = true
-				checker.shouldReserve = checker.length != types.UnspecifiedLength
+				checker.shouldReserve = false
 			}
 		} else {
 			return nil, true
@@ -278,9 +278,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	checker := &conditionChecker{
-		colUniqueID:   d.cols[eqOrInCount].UniqueID,
-		length:        d.lengths[eqOrInCount],
-		shouldReserve: d.lengths[eqOrInCount] != types.UnspecifiedLength,
+		colUniqueID:  d.cols[eqOrInCount].UniqueID,
+		length:       d.lengths[eqOrInCount],
+		isFullLength: d.lengths[eqOrInCount] == types.UnspecifiedLength || d.lengths[eqOrInCount] == d.cols[eqOrInCount].GetType().Flen,
 	}
 	if considerDNF {
 		pointRes, offset, err := extractIndexPointRangesForCNF(d.sctx, conditions, d.cols, d.lengths)
@@ -445,6 +445,33 @@ func allEqOrIn(expr expression.Expression) bool {
 	}
 	return false
 }
+// accessCondShouldReserve checks whether access condition should be reserved to filter condition.
+// NOTE: access must be EQ/IN function or LogicOr of EQ/IN functions
+func accessCondShouldReserve(access expression.Expression, length int) bool {
+	f, _ := access.(*expression.ScalarFunction)
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		return accessCondShouldReserve(f.GetArgs()[0], length) || accessCondShouldReserve(f.GetArgs()[0], length)
+	case ast.EQ, ast.NullEQ:
+		var c *expression.Constant
+		var ok bool
+		if c, ok = f.GetArgs()[0].(*expression.Constant); !ok {
+			c, _ = f.GetArgs()[1].(*expression.Constant)
+		}
+		constLen := c.GetLengthOfPrefixableConstant()
+		return constLen == -1 || constLen >= length
+	case ast.In:
+		for _, v := range f.GetArgs()[1:] {
+			c, _ := v.(*expression.Constant)
+			constLen := c.GetLengthOfPrefixableConstant()
+			if constLen == -1 || constLen >= length {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
 
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
@@ -517,7 +544,13 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses = accesses[:i]
 			break
 		}
-		if lengths[i] != types.UnspecifiedLength {
+		var shouldReserve bool
+		if lengths[i] == types.UnspecifiedLength && lengths[i] == cols[i].GetType().Flen {
+			shouldReserve = false
+		} else {
+			shouldReserve = accessCondShouldReserve(cond, lengths[i])
+		}
+		if shouldReserve {
 			filters = append(filters, cond)
 		}
 	}
@@ -531,9 +564,9 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) ([]*Range, []expression.Expression, bool, error) {
 	sc := d.sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
-		colUniqueID:   d.cols[0].UniqueID,
-		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
-		length:        d.lengths[0],
+		colUniqueID:  d.cols[0].UniqueID,
+		length:       d.lengths[0],
+		isFullLength: d.lengths[0] == types.UnspecifiedLength || d.lengths[0] == d.cols[0].GetType().Flen,
 	}
 	rb := builder{sc: sc}
 	dnfItems := expression.FlattenDNFConditions(condition)
@@ -562,7 +595,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 		} else if firstColumnChecker.check(item) {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
-				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
+				firstColumnChecker.shouldReserve = false
 			}
 			points := rb.build(item)
 			ranges, err := points2Ranges(sc, points, newTpSlice[0])
@@ -685,8 +718,9 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 // we don't need to return the remained filter conditions, it is much simpler than DetachCondsForColumn.
 func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID int64) []expression.Expression {
 	checker := conditionChecker{
-		colUniqueID: uniqueID,
-		length:      types.UnspecifiedLength,
+		colUniqueID:  uniqueID,
+		length:       types.UnspecifiedLength,
+		isFullLength: true,
 	}
 	accessConds := make([]expression.Expression, 0, 8)
 	return expression.Filter(accessConds, conds, checker.check)
@@ -695,8 +729,9 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID in
 // DetachCondsForColumn detaches access conditions for specified column from other filter conditions.
 func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessConditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
-		colUniqueID: col.UniqueID,
-		length:      types.UnspecifiedLength,
+		colUniqueID:  col.UniqueID,
+		length:       types.UnspecifiedLength,
+		isFullLength: true,
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
 }
@@ -717,8 +752,9 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 
 		uniqueID := cols[0].UniqueID
 		checker := &conditionChecker{
-			colUniqueID: uniqueID,
-			length:      types.UnspecifiedLength,
+			colUniqueID:  uniqueID,
+			length:       types.UnspecifiedLength,
+			isFullLength: true,
 		}
 		// If we can't use this condition to build range, we can't merge it.
 		// Currently, we assume if every condition in a DNF expression can pass this check, then `Selectivity` must be able to

@@ -15,7 +15,9 @@ package expression
 
 import (
 	"fmt"
+	"unicode/utf8"
 
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -413,4 +415,22 @@ func (c *Constant) Coercibility() Coercibility {
 
 	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
+}
+
+// GetLengthOfPrefixableConstant returns length of characters if constant is bytes or string type and returns -1 otherwise.
+func (c *Constant) GetLengthOfPrefixableConstant() int {
+	constLen := -1
+	if c != nil {
+		val, err := c.Eval(chunk.Row{})
+		if err == nil && (val.Kind() == types.KindBytes || val.Kind() == types.KindString) {
+			colCharset := c.GetType().Charset
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			if isUTF8Charset {
+				constLen = utf8.RuneCount(val.GetBytes())
+			} else {
+				constLen = len(val.GetBytes())
+			}
+		}
+	}
+	return constLen
 }

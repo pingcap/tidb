@@ -1626,3 +1626,159 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
+
+func (s *testRangerSuite) TestPrefixIndexRange(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+create table t(
+	a varchar(50),
+	b varchar(50),
+	c text(50),
+	d varchar(50) collate utf8mb4_general_ci,
+	index idx_a(a(2)),
+	index idx_b(b(2)),
+	index idx_ab(a(2), b(2)),
+	index idx_c(c(2)),
+	index idx_d(d(2))
+)`)
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     "a >= 'a' and a <= 'b'",
+			accessConds: "[ge(test.t.a, a) le(test.t.a, b)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"b\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a > 'ab'",
+			accessConds: "[ge(test.t.a, ab)]",
+			filterConds: "[gt(test.t.a, ab)]",
+			resultStr:   "[[\"ab\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a >= 'abcd'",
+			accessConds: "[ge(test.t.a, ab)]",
+			filterConds: "[ge(test.t.a, abcd)]",
+			resultStr:   "[[\"ab\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a in ('a', 'b', 'c')",
+			accessConds: "[in(test.t.a, a, b, c)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"a\"] [\"b\",\"b\"] [\"c\",\"c\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a in ('a', 'bbb', 'c')",
+			accessConds: "[in(test.t.a, a, bb, c)]",
+			filterConds: "[in(test.t.a, a, bbb, c)]",
+			resultStr:   "[[\"a\",\"a\"] [\"bb\",\"bb\"] [\"c\",\"c\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a != 'a'",
+			accessConds: "[ne(test.t.a, a)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"a\") (\"a\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a != 'aaa'",
+			accessConds: "[]",
+			filterConds: "[ne(test.t.a, aaa)]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'a' and b < 'b'",
+			accessConds: "[eq(test.t.a a) lt(test.t.b b)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\" -inf,\"a\" \"b\")]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'aa' and b < 'bb'",
+			accessConds: "[eq(test.t.a aa) lt(test.t.b bb)]",
+			filterConds: "[eq(test.t.a aa) lt(test.t.b bb)]",
+			resultStr:   "[[\"aa\" -inf,\"aa\" \"bb\")]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c > 'c'",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c > 'cc'",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     `d > "你"`,
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     `d > "你好啊"`,
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+	defer func() { collate.SetNewCollationEnabledForTest(false) }()
+	ctx := context.Background()
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
+		}
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		c.Assert(cols, NotNil)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+		c.Assert(err, IsNil)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}

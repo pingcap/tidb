@@ -15,11 +15,9 @@ package core
 
 import (
 	"math"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -939,19 +937,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 }
 
 func indexCoveringCol(col *expression.Column, constVal *expression.Constant, indexCols []*expression.Column, idxColLens []int) bool {
-	constLen := -1
-	if constVal != nil {
-		val, err := constVal.Eval(chunk.Row{})
-		if err == nil && (val.Kind() == types.KindBytes || val.Kind() == types.KindString) {
-			colCharset := col.GetType().Collate
-			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-			if isUTF8Charset {
-				constLen = utf8.RuneCount(val.GetBytes())
-			} else {
-				constLen = len(val.GetBytes())
-			}
-		}
-	}
+	constLen := constVal.GetLengthOfPrefixableConstant()
 	for i, indexCol := range indexCols {
 		if indexCol != nil && col.Equal(nil, indexCol) {
 			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
@@ -981,8 +967,8 @@ func (ds *DataSource) indexCanHandleCond(expr expression.Expression, indexColumn
 		return ds.indexCanHandleCol(v, nil, indexColumns, idxColLens, tblInfo)
 	case *expression.ScalarFunction:
 		_, collation := expr.CharsetAndCollation(v.GetCtx())
-		op := v.FuncName.L
-		if op == ast.GE || op == ast.LE || op == ast.EQ || op == ast.NE || op == ast.LT || op == ast.GT {
+		switch v.FuncName.L {
+		case ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.NullEQ:
 			if col, ok := v.GetArgs()[0].(*expression.Column); ok && types.IsTypePrefixable(col.RetType.Tp) && collate.CompatibleCollate(col.GetType().Collate, collation) {
 				if constVal, ok := v.GetArgs()[1].(*expression.Constant); ok {
 					return ds.indexCanHandleCol(col, constVal, indexColumns, idxColLens, tblInfo)
