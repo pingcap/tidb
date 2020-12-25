@@ -5764,7 +5764,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 			if spec.Tp == ast.PlacementDrop {
 				// error if no rules will be dropped
 				if len(bundle.Rules) == origLen {
-					err = errors.Errorf("there is no rule to drop")
+					err = errors.Errorf("no rule of role '%s' to drop", role)
 					break
 				}
 				continue
