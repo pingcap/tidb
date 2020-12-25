@@ -399,7 +399,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 
 	globalTxn := s.beginAsyncCommit(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
-	globalTxn.SetOption(kv.TxnScope, "global")
+	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)

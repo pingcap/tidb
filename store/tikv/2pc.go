@@ -933,7 +933,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// Disable async commit in local transactions
 	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
-	if txnScopeOption == nil || txnScopeOption.(string) != "global" {
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
 		return false
 	}
 
