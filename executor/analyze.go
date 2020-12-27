@@ -199,7 +199,9 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		switch task.taskType {
 		case colTask:
 			task.colExec.job = task.job
-			resultCh <- analyzeColumnsPushdown(task.colExec)
+			for _, result := range analyzeColumnsPushdown(task.colExec) {
+				resultCh <- result
+			}
 		case idxTask:
 			task.idxExec.job = task.job
 			resultCh <- analyzeIndexPushdown(task.idxExec)
@@ -400,7 +402,7 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 	return hist, cms, topN, nil
 }
 
-func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
+func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	var ranges []*ranger.Range
 	if hc := colExec.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -413,7 +415,31 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 	}
 	hists, cms, topNs, extStats, err := colExec.buildStats(ranges, true)
 	if err != nil {
-		return analyzeResult{Err: err, job: colExec.job}
+		return []analyzeResult{{Err: err, job: colExec.job}}
+	}
+
+	if hasPkHist(colExec.handleCols) {
+		PKresult := analyzeResult{
+			TableID:  colExec.tableID,
+			Hist:     hists[:1],
+			Cms:      cms[:1],
+			TopNs:    topNs[:1],
+			ExtStats: nil,
+			job:      nil,
+			StatsVer: statistics.Version1,
+		}
+		PKresult.Count = int64(PKresult.Hist[0].TotalRowCount())
+		restResult := analyzeResult{
+			TableID:  colExec.tableID,
+			Hist:     hists[1:],
+			Cms:      cms[1:],
+			TopNs:    topNs[1:],
+			ExtStats: extStats,
+			job:      colExec.job,
+			StatsVer: colExec.analyzeVer,
+		}
+		restResult.Count = PKresult.Count
+		return []analyzeResult{PKresult, restResult}
 	}
 	result := analyzeResult{
 		TableID:  colExec.tableID,
@@ -422,14 +448,13 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		TopNs:    topNs,
 		ExtStats: extStats,
 		job:      colExec.job,
-		StatsVer: colExec.ctx.GetSessionVars().AnalyzeVersion,
+		StatsVer: colExec.analyzeVer,
 	}
-	hist := hists[0]
-	result.Count = hist.NullCount
-	if hist.Len() > 0 {
-		result.Count += hist.Buckets[hist.Len()-1].Count
+	result.Count = int64(result.Hist[0].TotalRowCount())
+	if result.StatsVer == statistics.Version2 {
+		result.Count += int64(topNs[0].TotalCount())
 	}
-	return result
+	return []analyzeResult{result}
 }
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -444,6 +469,7 @@ type AnalyzeColumnsExec struct {
 	resultHandler *tableResultHandler
 	opts          map[ast.AnalyzeOptionType]uint64
 	job           *statistics.AnalyzeJob
+	analyzeVer    int
 }
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
@@ -555,11 +581,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		topNs = append(topNs, nil)
 	}
 	for i, col := range e.colsInfo {
-		err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
-		if err != nil {
-			return nil, nil, nil, nil, err
+		if e.analyzeVer < 2 {
+			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
+			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			topNs = append(topNs, collectors[i].TopN)
 		}
-		topNs = append(topNs, collectors[i].TopN)
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
@@ -572,7 +601,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
+		var hg *statistics.Histogram
+		var err error
+		var topn *statistics.TopN
+		if e.analyzeVer < 2 {
+			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
+		} else {
+			hg, topn, err = statistics.BuildColumnHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType)
+			topNs = append(topNs, topn)
+		}
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
