@@ -699,7 +699,9 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		// As return warning when load data meet no partition error
 		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
+		cli.checkRows(c, rows, 
+			"Warning 1526 Table has no partition for value from column_list",
+			"Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
