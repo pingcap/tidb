@@ -666,10 +666,11 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
 	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
-		ExtraHandleCol:   t.extraHandleCol,
-		CommonHandleCols: t.commonHandleCols,
+		tablePlan:         t.tablePlan,
+		indexPlan:         t.indexPlan,
+		ExtraHandleCol:    t.extraHandleCol,
+		CommonHandleCols:  t.commonHandleCols,
+		CanReorderHandles: true,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
@@ -859,20 +860,20 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		// For double read which requires order being kept, the limit cannot be pushed down to the table side,
 		// because handles would be reordered before being sent to table scan.
-		if (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0 {
-			// When limit is pushed down, we should remove its offset.
-			newCount := p.Offset + p.Count
-			childProfile := cop.plan().statsInfo()
-			// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
-			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
-			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
-			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
-			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
-			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
-		}
+		canReorderHandles := (!cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil) && len(cop.rootTaskConds) == 0
+		// When limit is pushed down, we should remove its offset.
+		newCount := p.Offset + p.Count
+		childProfile := cop.plan().statsInfo()
+		// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
+		// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
+		stats := deriveLimitStats(childProfile, float64(newCount))
+		pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
+		cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+		// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
+
 		t = cop.convertToRootTask(p.ctx)
-		sunk = p.sinkIntoIndexLookUp(t)
+		sunk = p.sinkIntoIndexLookUp(t, canReorderHandles)
 	}
 	if sunk {
 		return t
@@ -880,7 +881,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	return attachPlan2Task(p, t)
 }
 
-func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
+func (p *PhysicalLimit) sinkIntoIndexLookUp(t task, canReorderHandles bool) bool {
 	root := t.(*rootTask)
 	reader, isDoubleRead := root.p.(*PhysicalIndexLookUpReader)
 	proj, isProj := root.p.(*PhysicalProjection)
@@ -893,6 +894,7 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 			return false
 		}
 	}
+	reader.CanReorderHandles = canReorderHandles
 	// We can sink Limit into IndexLookUpReader only if tablePlan contains no Selection.
 	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
 	if !isTableScan {

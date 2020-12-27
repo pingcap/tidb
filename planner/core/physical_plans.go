@@ -254,6 +254,8 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 
 	ExtraHandleCol *expression.Column
+	// CanReorderHandles indicates if the handles can be reordered for TableScan
+	CanReorderHandles bool
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
 
@@ -289,6 +291,7 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
+	cloned.CanReorderHandles = p.CanReorderHandles
 	return cloned, nil
 }
 
