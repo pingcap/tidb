@@ -973,6 +973,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if r.ignored {
 			continue
 		}
+		// As it should append warning when data meet no partition for incompatible mysql
+		if r.noPartitionErr != nil {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.noPartitionErr)
+			continue
+		}
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)

@@ -43,8 +43,9 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.Table
-	ignored bool
+	t              table.Table
+	ignored        bool
+	noPartitionErr error
 }
 
 // encodeNewRow encodes a new row to value.
@@ -109,7 +110,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				result = append(result, toBeCheckedRow{ignored: true})
 				return result, nil
 			}
-			return nil, err
+			// As it should return toBeCheckedRow with err if no partition with value, but err
+			result = append(result, toBeCheckedRow{noPartitionErr: err})
+			return result, nil
 		}
 	}
 
