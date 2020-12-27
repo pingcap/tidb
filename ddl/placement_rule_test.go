@@ -198,7 +198,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			err: ".*there is no rule to drop.*",
+			err: ".*no rule of role 'learner' to drop.*",
 		},
 	}
 	for i, t := range tests {
