@@ -1703,3 +1703,26 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
+	// #22040
+	defer testleak.AfterTest(c)()
+	// invalid case, column count doesn't match
+	{
+		sql := "select * from t where (a,b) in ((1,2),1)"
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is)
+		plan := TryFastPlan(s.ctx, stmt)
+		c.Assert(plan, IsNil)
+	}
+	{
+		sql := "select * from t where (a,b) in (1,2)"
+		stmt, err := s.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil)
+		Preprocess(s.ctx, stmt, s.is)
+		plan := TryFastPlan(s.ctx, stmt)
+		c.Assert(plan, IsNil)
+	}
+
+}
