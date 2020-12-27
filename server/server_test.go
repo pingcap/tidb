@@ -649,7 +649,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		// As return warning when load data meet no partition error
 		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		rows = dbt.mustQuery("select id,name from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
@@ -691,15 +691,17 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition error.
 		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		// As return warning when load data meet no partition error
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
-		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		// As return warning when load data meet no partition error
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
 }
 
