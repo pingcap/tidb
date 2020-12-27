@@ -1484,7 +1484,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			if partialAgg == nil {
 				return invalidTask
 			}
-			groupByItems := partialAgg.(*PhysicalHashAgg).GroupByItems
+			groupByItems := finalAgg.(*PhysicalHashAgg).GroupByItems
 			partitionCols := make([]*expression.Column, 0, len(groupByItems))
 			for _, item := range groupByItems {
 				if col, ok := item.(*expression.Column); ok {
