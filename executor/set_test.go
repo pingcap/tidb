@@ -755,10 +755,10 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("7"))
 
 	_, err = tk.Exec("set @@error_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@warning_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set time_zone='SySTeM'")
 	result = tk.MustQuery("select @@time_zone;")

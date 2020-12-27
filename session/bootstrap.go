@@ -444,6 +444,9 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version58
 )
 
 var (
@@ -1361,9 +1364,6 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
-			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = variable.BoolOn
-			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
@@ -1421,7 +1421,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
