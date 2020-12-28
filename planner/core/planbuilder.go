@@ -3005,6 +3005,9 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 		if err != nil {
 			return nil, err
 		}
+		if convertedDatum.IsNull() {
+			return nil, ErrBadNull.GenWithStackByArgs(handleColInfos[i].Name.O)
+		}
 		data = append(data, convertedDatum)
 	}
 	return data, nil
