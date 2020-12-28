@@ -864,14 +864,16 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, "HashPartition")
 		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
 	}
-	fmt.Fprintf(buffer, ", tasks: [")
-	for idx, task := range p.Tasks {
-		if idx != 0 {
-			fmt.Fprintf(buffer, ", ")
+	if len(p.Tasks) > 0 {
+		fmt.Fprintf(buffer, ", tasks: [")
+		for idx, task := range p.Tasks {
+			if idx != 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "%v", task.ID)
 		}
-		fmt.Fprintf(buffer, "%v", task.ID)
+		fmt.Fprintf(buffer, "]")
 	}
-	fmt.Fprintf(buffer, "]")
 	return buffer.String()
 }
 

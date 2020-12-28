@@ -415,6 +415,42 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+type basicCopRuntimeStats struct {
+	BasicRuntimeStats
+	// concurrency
+	concurrency int32
+}
+
+// String implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) String() string {
+	return fmt.Sprintf("time:%v, loops:%d, concurrency:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.concurrency)
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Clone() RuntimeStats {
+	return &basicCopRuntimeStats{
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
+		concurrency:       e.concurrency,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
+	tmp, ok := rs.(*basicCopRuntimeStats)
+	if !ok {
+		return
+	}
+	e.loop += tmp.loop
+	e.consume += tmp.consume
+	e.rows += tmp.rows
+	e.concurrency += tmp.concurrency
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Tp() int {
+	return TpBasicCopRunTimeStats
+}
+
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
 	sync.Mutex
@@ -424,7 +460,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string][]*BasicRuntimeStats
+	stats      map[string][]*basicCopRuntimeStats
 	copDetails *CopDetails
 }
 
@@ -440,9 +476,9 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
-			consume:     int64(*summary.TimeProcessedNs),
-			rows:        int64(*summary.NumProducedRows),
+		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
+			consume: int64(*summary.TimeProcessedNs),
+			rows:    int64(*summary.NumProducedRows)},
 			concurrency: maxInt32(1, int32(summary.GetConcurrency()))})
 }
 
@@ -541,6 +577,8 @@ const (
 	TpHashAggRuntimeStat
 	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
 	TpIndexMergeRunTimeStats
+	// TpBasicCopRunTimeStats is the tp for TpBasicCopRunTimeStats
+	TpBasicCopRunTimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -559,8 +597,6 @@ type BasicRuntimeStats struct {
 	consume int64
 	// executor return row count.
 	rows int64
-	// concurrency
-	concurrency int32
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
@@ -571,10 +607,9 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	return &BasicRuntimeStats{
-		loop:        e.loop,
-		consume:     e.consume,
-		rows:        e.rows,
-		concurrency: e.concurrency,
+		loop:    e.loop,
+		consume: e.consume,
+		rows:    e.rows,
 	}
 }
 
@@ -587,7 +622,6 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.loop += tmp.loop
 	e.consume += tmp.consume
 	e.rows += tmp.rows
-	e.concurrency += tmp.concurrency
 }
 
 // Tp implements the RuntimeStats interface.
@@ -660,7 +694,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d, concurrency:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.concurrency)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
 
 // GetTime get the int64 total time
@@ -729,7 +763,7 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		copStats = &CopRuntimeStats{stats: make(map[string][]*basicCopRuntimeStats)}
 		e.copStats[planID] = copStats
 	}
 	return copStats
