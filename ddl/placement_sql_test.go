@@ -54,7 +54,7 @@ PARTITION BY RANGE (c) (
 	p0ID := placement.GroupID(partDefs[0].ID)
 	bundles[p0ID] = &placement.Bundle{
 		ID:    p0ID,
-		Rules: []*placement.Rule{{Role: placement.Leader, Count: 3}},
+		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
 	}
 
 	// normal cases
