@@ -2473,6 +2473,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	txn.SetVars(s.sessionVars.KVVars)
 	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
