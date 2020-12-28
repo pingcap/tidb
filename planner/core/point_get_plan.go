@@ -619,11 +619,19 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
+			// if any item is `ValueExpr` type, `Expr` should contain only one column,
+			// otherwise column count doesn't match and no plan can be built.
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
@@ -719,14 +727,6 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 				return nil
 			}
 			whereColNames = append(whereColNames, c.Name.Name.L)
-		}
-		// check invalid case: select * from t where (a,b) in (1,2) (#22040)
-		// if it is the case, return nil from the `TryFastPath`
-		// the stmt will be reprocess in `BuildLogicPath`
-		for _, item := range in.List {
-			if _, ok := item.(*ast.RowExpr); !ok {
-				return nil
-			}
 		}
 	default:
 		return nil

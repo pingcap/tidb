@@ -1707,22 +1707,41 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 	// #22040
 	defer testleak.AfterTest(c)()
-	// invalid case, column count doesn't match
-	{
-		sql := "select * from t where (a,b) in ((1,2),1)"
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
-		Preprocess(s.ctx, stmt, s.is)
-		plan := TryFastPlan(s.ctx, stmt)
-		c.Assert(plan, IsNil)
+	tt := []struct {
+		sql      string
+		fastPlan bool
+	}{
+		{
+			// column count doesn't match, not use idx
+			sql:      "select * from t where (a,b) in ((1,2),1)",
+			fastPlan: false,
+		},
+		{
+			// column count doesn't match, not use idx
+			sql:      "select * from t where (a,b) in (1,2)",
+			fastPlan: false,
+		},
+		{
+			// column count doesn't match, use idx
+			sql:      "select * from t where (f,g) in ((1,2),1)",
+			fastPlan: false,
+		},
+		{
+			// column count doesn't match, use idx
+			sql:      "select * from t where (f,g) in (1,2)",
+			fastPlan: false,
+		},
 	}
-	{
-		sql := "select * from t where (a,b) in (1,2)"
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
-		Preprocess(s.ctx, stmt, s.is)
+	for i, tc := range tt {
+		comment := Commentf("case:%v sql:%s", i, tc.sql)
+		stmt, err := s.ParseOneStmt(tc.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		c.Assert(Preprocess(s.ctx, stmt, s.is), IsNil, comment)
 		plan := TryFastPlan(s.ctx, stmt)
-		c.Assert(plan, IsNil)
+		if tc.fastPlan {
+			c.Assert(plan, NotNil)
+		} else {
+			c.Assert(plan, IsNil)
+		}
 	}
-
 }
