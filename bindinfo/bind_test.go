@@ -1943,9 +1943,20 @@ func (s *testSuite) TestIssue20417(c *C) {
 		 INDEX idxc(c)
 		)`)
 
-	// Test for create binding
-	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
+	// Compatibility test
 	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsFalse)
+	tk.MustExec("insert into mysql.bind_info values('select * from t where b = ? and c = ?', 'select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', 'utf8', 'utf8_general_ci','manual')")
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+
+	// Test for create binding
+	s.cleanBindingEnv(tk)
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
+	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from test . t")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(t idxb)*/ * FROM test.t")
@@ -1995,15 +2006,4 @@ func (s *testSuite) TestIssue20417(c *C) {
 	status := rows[1][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
-
-	// Compatibility test
-	s.cleanBindingEnv(tk)
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 0)
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsFalse)
-	tk.MustExec("insert into mysql.bind_info values('select * from t where b = ? and c = ?', 'select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" + bindinfo.Manual + "')")
-	tk.MustExec("admin reload bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541;", "idxb(b)"), IsTrue)
 }
