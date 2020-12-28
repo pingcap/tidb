@@ -393,6 +393,7 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
@@ -567,6 +568,7 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(id varchar(20) primary key)")
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
