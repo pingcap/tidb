@@ -355,6 +355,8 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 
 	// Fix create partition table using extract() function as partition key.
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
+	tk.MustExec("create table t3 (a int, b int) partition by hash(ceiling(a-b)) partitions 10")
+	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -502,6 +504,22 @@ create table log_message_1 (
 				"partition p0 values less than ('a'), " +
 				"partition p1 values less than ('G'));",
 			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((!c0)) PARTITIONS 2;",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((NOT c0)) (partition p0 values in (0), partition p1 values in (1));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((!c0)) (partition p0 values in (0), partition p1 values in (1));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
 	}
 	for i, t := range cases {

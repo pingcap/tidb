@@ -41,10 +41,26 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
+	resultTasks := make([]kv.MPPTaskMeta, 0)
+	c.store.regionCache.storeMu.RLock()
+	for _, st := range c.store.regionCache.storeMu.stores {
+		if st.storeType == kv.TiFlash {
+			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
+			resultTasks = append(resultTasks, task)
+		}
+	}
+	c.store.regionCache.storeMu.RUnlock()
+	return resultTasks
+}
+
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+	if req.KeyRanges == nil {
+		return c.selectAllTiFlashStore(), nil
+	}
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -134,7 +150,6 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	defer func() {
 		m.wg.Done()
 	}()
-	sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask := req.Meta.(*batchCopTask)
 	for _, task := range originalTask.copTasks {
@@ -164,18 +179,27 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	wrappedReq.StoreTp = kv.TiFlash
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
-	rpcResp, _, _, err := sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
+	var rpcResp *tikvrpc.Response
+	var err error
+	// If copTasks is not empty, we should send request according to region distribution.
+	// Or else it's the task without region, which always happens in high layer task without table.
+	// In that case
+	if len(originalTask.copTasks) != 0 {
+		sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
+		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
+		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
+		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
+		// That's a hard job but we can try it in the future.
+		if sender.rpcError != nil {
+			m.sendError(sender.rpcError)
+			return
+		}
+	} else {
+		rpcResp, err = m.store.client.SendRequest(ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutMedium)
+	}
 
 	if err != nil {
 		m.sendError(err)
-		return
-	}
-
-	// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
-	// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
-	// That's a hard job but we can try it in the future.
-	if sender.rpcError != nil {
-		m.sendError(sender.rpcError)
 		return
 	}
 

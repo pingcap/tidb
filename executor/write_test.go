@@ -574,6 +574,10 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
 	testSQL = `select * from badnull`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
+
+	tk.MustExec("create table tp (id int) partition by range (id) (partition p0 values less than (1), partition p1 values less than(2))")
+	tk.MustExec("insert ignore into tp values (1), (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
 func (s *testSuite8) TestInsertOnDup(c *C) {
@@ -736,8 +740,8 @@ commit;`
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 
 	tk.MustExec(`SET sql_mode='';`)
-	_, err = tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
-	c.Assert(err, NotNil)
+	tk.MustExec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
@@ -1076,6 +1080,14 @@ func (s *testSuite2) TestGeneratedColumnForInsert(c *C) {
 	tk.MustExec(`insert into t (k) values (1), (2)`)
 	tk.MustExec(`replace into t (k) values (1), (2)`)
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2 3 1", "3 4 2"))
+
+	// For issue 14340
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(f1 json, f2 real as (cast(f1 as decimal(2,1))))`)
+	tk.MustGetErrMsg(`INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))`, "[types:1690]DECIMAL value is out of range in '(2, 1)'")
+	tk.MustExec(`set @@sql_mode = ''`)
+	tk.MustExec(`INSERT INTO t1 (f1) VALUES (CAST(1000 AS JSON))`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1000 9.9"))
 }
 
 func (s *testSuite4) TestPartitionedTableReplace(c *C) {
