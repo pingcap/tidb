@@ -309,8 +309,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from t where (select a from t into outfile 'x') > 1;", false, core.ErrMisplacedIntoOutfile},
 		{"select * from t union (select * from t into outfile '/tmp/result.txt');", false, nil},
 		{"select * from t union select * from t into outfile '/tmp/result.txt';", false, nil},
-		// TODO(tangenta): the following statement should throw error.
-		{"create binding for (select * from t union ((select * from t into outfile 'x') union select * from t)) using (select * from t union ((select * from t into outfile 'x') union select * from t));", false, nil},
+		{"create binding for select 1 into outfile '1.txt' using select 1 into outfile '1.txt'", false, nil},
+		{"(((((select 1 into outfile '1.txt')))))", false, nil},
+		// TODO(tangenta): the following statement should cause an error.
+		{"create binding for (select * from t union ((select * from t into outfile 'x') union " +
+			"select * from t)) using (select * from t union ((select * from t into outfile 'x') union select * from t));", false, nil},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
