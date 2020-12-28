@@ -399,7 +399,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			}
 		} else {
 			for _, vs := range clause.Values {
-				if err := checkPartitionValuesIsInt(ctx, def, vs); err != nil {
+				if err := checkPartitionValuesIsInt(ctx, def, vs, tbInfo); err != nil {
 					return nil, err
 				}
 			}
@@ -460,7 +460,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 				return nil, err
 			}
 		} else {
-			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs); err != nil {
+			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs, tbInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -490,7 +490,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	return definitions, nil
 }
 
-func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode) error {
+func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	if isRangePartitionColUnsignedBigint(tbInfo.Columns, tbInfo.Partition) {
+		tp.Flag |= mysql.UnsignedFlag
+	}
 	for _, exp := range exprs {
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
 			continue
@@ -503,6 +507,10 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		case types.KindInt64, types.KindUint64, types.KindNull:
 		default:
 			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+		}
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+		if err != nil {
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 
