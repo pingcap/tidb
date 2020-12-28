@@ -422,7 +422,7 @@ var defaultSysVars = []*SysVar{
 		_, err := parseTimeZone(normalizedValue)
 		return normalizedValue, err
 	}},
-	{Scope: ScopeNone, Name: "system_time_zone", Value: "CST"},
+	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: BoolOff, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if TiDBOptOn(normalizedValue) {
 			// TiDB does not yet support foreign keys.
@@ -434,10 +434,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeNone, Name: "hostname", Value: ServerHostname},
-	{Scope: ScopeSession, Name: "timestamp", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterValid(normalizedValue, "character_set_filesystem")
+	{Scope: ScopeNone, Name: Hostname, Value: ServerHostname},
+	{Scope: ScopeSession, Name: Timestamp, Value: ""},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharacterSetFilesystem)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
@@ -447,11 +447,11 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementOffset, Value: strconv.FormatInt(DefAutoIncrementOffset, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterValid(normalizedValue, "character_set_client")
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetClient, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharacterSetClient)
 	}},
 	{Scope: ScopeNone, Name: Port, Value: "4000"},
-	{Scope: ScopeNone, Name: "lower_case_table_names", Value: "2"},
+	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
 	{Scope: ScopeNone, Name: LogBin, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "" {
@@ -459,7 +459,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return checkCharacterValid(normalizedValue, "")
 	}},
-	{Scope: ScopeNone, Name: "version_comment", Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
+	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
 			if skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck); err != nil {
@@ -488,16 +488,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeNone, Name: "version", Value: mysql.ServerVersion},
+	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: BoolOn, Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterValid(normalizedValue, "character_set_database")
+	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharsetDatabase)
 	}},
-
 	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionReadOnly, Value: "0"},
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576, AutoConvertOutOfRange: true},
-	{Scope: ScopeNone, Name: "datadir", Value: "/usr/local/mysql/data/"},
+	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 31536000, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbLockWaitTimeout, Value: strconv.FormatInt(DefInnodbLockWaitTimeout, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 1073741824, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: GroupConcatMaxLen, Value: "1024", AutoConvertOutOfRange: true, IsHintUpdatable: true, Type: TypeUnsigned, MinValue: 4, MaxValue: math.MaxUint64, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -515,9 +514,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeNone, Name: "socket", Value: "/tmp/myssock"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterValid(normalizedValue, "character_set_connection")
+	{Scope: ScopeNone, Name: Socket, Value: "/tmp/myssock"},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharacterSetConnection)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetServer)
@@ -584,7 +583,6 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInitChunkSize, Value: strconv.Itoa(DefInitChunkSize), Type: TypeUnsigned, MinValue: 1, MaxValue: initChunkSizeUpperBound},
-
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TIDBMemQuotaQuery, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
@@ -596,7 +594,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TIDBMemQuotaIndexLookupJoin, Value: strconv.FormatInt(DefTiDBMemQuotaIndexLookupJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolOn, Type: TypeBool},
-
 	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO"}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true},
@@ -621,7 +618,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableVectorizedExpression, Value: BoolToOnOff(DefEnableVectorizedExpression), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(DefTiDBSkipIsolationLevelCheck), Type: TypeBool},
-
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRateLimitAction, Value: BoolToOnOff(DefTiDBEnableRateLimitAction), Type: TypeBool},
 	/* The following variable is defined as session scope but is actually server scope. */
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
@@ -778,6 +774,8 @@ const (
 	DelayKeyWrite = "delay_key_write"
 	// EndMarkersInJSON is the name for 'end_markers_in_json' system variable.
 	EndMarkersInJSON = "end_markers_in_json"
+	// Hostname is the name for 'hostname' system variable.
+	Hostname = "hostname"
 	// InnodbCommitConcurrency is the name for 'innodb_commit_concurrency' system variable.
 	InnodbCommitConcurrency = "innodb_commit_concurrency"
 	// InnodbFastShutdown is the name for 'innodb_fast_shutdown' system variable.
@@ -804,6 +802,8 @@ const (
 	PseudoSlaveMode = "pseudo_slave_mode"
 	// LowPriorityUpdates is the name for 'low_priority_updates' system variable.
 	LowPriorityUpdates = "low_priority_updates"
+	// LowerCaseTableNames is the name for 'lower_case_table_names' system variable.
+	LowerCaseTableNames = "lower_case_table_names"
 	// SessionTrackGtids is the name for 'session_track_gtids' system variable.
 	SessionTrackGtids = "session_track_gtids"
 	// OldPasswords is the name for 'old_passwords' system variable.
@@ -828,6 +828,8 @@ const (
 	TableDefinitionCache = "table_definition_cache"
 	// TmpTableSize is the name for 'tmp_table_size' system variable.
 	TmpTableSize = "tmp_table_size"
+	// Timestamp is the name for 'timestamp' system variable.
+	Timestamp = "timestamp"
 	// ConnectTimeout is the name for 'connect_timeout' system variable.
 	ConnectTimeout = "connect_timeout"
 	// SyncBinlog is the name for 'sync_binlog' system variable.
@@ -840,6 +842,10 @@ const (
 	ValidatePasswordNumberCount = "validate_password_number_count"
 	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
 	ValidatePasswordLength = "validate_password_length"
+	// Version is the name of 'version' system variable.
+	Version = "version"
+	// VersionComment is the name of 'version_comment' system variable.
+	VersionComment = "version_comment"
 	// PluginDir is the name of 'plugin_dir' system variable.
 	PluginDir = "plugin_dir"
 	// PluginLoad is the name of 'plugin_load' system variable.
@@ -962,7 +968,6 @@ const (
 	InnodbTableLocks = "innodb_table_locks"
 	// InnodbStatusOutput is the name for 'innodb_status_output' system variable.
 	InnodbStatusOutput = "innodb_status_output"
-
 	// NetBufferLength is the name for 'net_buffer_length' system variable.
 	NetBufferLength = "net_buffer_length"
 	// QueryCacheSize is the name of 'query_cache_size' system variable.
@@ -989,6 +994,8 @@ const (
 	WindowingUseHighPrecision = "windowing_use_high_precision"
 	// OptimizerSwitch is the name of 'optimizer_switch' system variable.
 	OptimizerSwitch = "optimizer_switch"
+	// SystemTimeZone is the name of 'system_time_zone' system variable.
+	SystemTimeZone = "system_time_zone"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
