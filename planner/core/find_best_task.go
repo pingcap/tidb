@@ -267,9 +267,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			bestTask = curTask
 			break
 		}
-
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		if curTask.normalizedCost() < bestTask.normalizedCost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	}

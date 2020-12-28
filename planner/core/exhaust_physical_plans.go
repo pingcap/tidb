@@ -2250,7 +2250,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
-	if !la.canPushToCop() {
+	if !la.canPushToCop() && !la.ctx.GetSessionVars().AllowMPPExecution && !la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
