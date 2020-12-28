@@ -885,7 +885,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		sql = FormatSQL(a.Text, sessVars.PreparedParams)
 	}
 
-	var tableIDs, indexNames string
+	var indexNames string
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
 		// remove duplicate index.
 		idxMap := make(map[string]struct{})
@@ -965,6 +965,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
 		}
+		var tableIDs string
 		if len(sessVars.StmtCtx.TableIDs) > 0 {
 			tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
 		}
