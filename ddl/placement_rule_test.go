@@ -177,6 +177,25 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
+			},
+			bundle: &placement.Bundle{Rules: []*placement.Rule{
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+			}},
+			output: []*placement.Rule{
+				{Role: placement.Voter},
+				{Role: placement.Voter},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role: ast.PlacementRoleLearner,
+					Tp:   ast.PlacementDrop,
+				},
 				{
 					Role: ast.PlacementRoleVoter,
 					Tp:   ast.PlacementDrop,
