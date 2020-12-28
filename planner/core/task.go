@@ -1042,15 +1042,23 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 }
 
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
-	if cop, ok := tasks[0].(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 {
-			cop = attachPlan2Task(p, cop).(*copTask)
-			cop.addCost(p.GetCost(tasks[0].count()))
-			return cop
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
+		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+			copTask := attachPlan2Task(p, cop)
+			copTask.addCost(p.GetCost(t.count()))
+			return copTask
+		}
+	} else if mpp, ok := t.(*mppTask); ok {
+		if expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), kv.TiFlash) {
+			p.SetChildren(mpp.p)
+			mpp.p = p
+			mpp.addCost(p.GetCost(t.count()))
+			return mpp
 		}
 	}
-	// TODO: support projection push down.
-	var t task = tasks[0].convertToRootTask(p.ctx)
+	// TODO: support projection push down for TiKV.
+	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
 	return t

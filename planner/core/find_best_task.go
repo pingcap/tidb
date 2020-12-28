@@ -244,16 +244,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
-			curTask = curTask.convertToRootTask(p.ctx)
-		}
-
 		// An optimal task could not satisfy the property, so it should be converted here.
-		if prop.TaskTp == property.RootTaskType {
-			_, ok := curTask.(*rootTask)
-			if !ok {
-				curTask = finishCopTask(p.ctx, curTask)
-			}
+		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {
+			curTask = curTask.convertToRootTask(p.ctx)
 		}
 
 		// Enforce curTask property
