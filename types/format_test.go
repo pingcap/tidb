@@ -84,6 +84,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		format string
 		expect types.CoreTime
 	}{
+		{`2004420`, `%x%v%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
@@ -119,6 +120,11 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
 		{`200442 Monday`, `%X%V %W`, types.FromDate(2004, 10, 18, 0, 0, 0, 0)},
+		{`2004420`, `%X%V%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`2004423`, `%X%V%w`, types.FromDate(2004, 10, 20, 0, 0, 0, 0)},
+		{`200442 Sunday`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)}, // %U,%u should be used with %Y and not %X or %x
+		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},   // %U,%u should be used with %Y and not %X or %x
 	}
 	for i, tt := range tests {
 		var t types.Time
@@ -140,6 +146,11 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
+		{`2004427`, `%X%V%w`}, // %w range 0-6, here is 7
+		{"2004421", "%x%V%w"}, // %x should be used with %v
+		{"2004421", "%X%v%w"}, // %X should be used with %V
+		{"2004421", "%X%U%w"}, // %U,%u should be used with %Y and not %X or %x
+		{`2004663`, `%X%V%w`}, // %V out of range [0, 53]
 	}
 	for i, tt := range errTests {
 		var t types.Time
