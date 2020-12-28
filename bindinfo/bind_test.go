@@ -1998,9 +1998,12 @@ func (s *testSuite) TestIssue20417(c *C) {
 
 	// Compatibility test
 	s.cleanBindingEnv(tk)
-	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
-	tk.MustExec("insert into mysql.bind_info values('select * from t where b = ? and c = ?', 'select /*+ use_index(@sel_1 test.t idxb)*/ * from t where b = ? and c = ?', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" + bindinfo.Manual + "')")
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsFalse)
+	tk.MustExec("insert into mysql.bind_info values('select * from t where b = ? and c = ?', 'select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" + bindinfo.Manual + "')")
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541;", "idxb(b)"), IsTrue)
 }
