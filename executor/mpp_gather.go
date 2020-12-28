@@ -90,10 +90,10 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 	return nil
 }
 
-func CollectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
+func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 	ids = append(ids, plan.ID())
 	for _, child := range plan.Children() {
-		ids = CollectPlanIDS(child, ids)
+		ids = collectPlanIDS(child, ids)
 	}
 	return ids
 }
@@ -103,7 +103,7 @@ func CollectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
-	planIDs := CollectPlanIDS(e.originalPlan, nil)
+	planIDs := collectPlanIDS(e.originalPlan, nil)
 	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID)
 	if err != nil {
 		return errors.Trace(err)
