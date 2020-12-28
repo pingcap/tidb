@@ -180,8 +180,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "thread_cache_size", Value: "9"},
 	{Scope: ScopeGlobal, Name: LogSlowAdminStatements, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_checksums", Type: TypeBool, Value: BoolOn},
-	{Scope: ScopeNone, Name: "hostname", Value: ServerHostname},
-	{Scope: ScopeGlobal | ScopeSession, Name: "auto_increment_offset", Value: "1"},
 	{Scope: ScopeNone, Name: "ft_stopword_file", Value: "(built-in)"},
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct_lwm", Value: "0"},
 	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: BoolOff, Type: TypeBool},

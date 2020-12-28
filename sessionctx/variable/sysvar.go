@@ -434,6 +434,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
+	{Scope: ScopeNone, Name: "hostname", Value: ServerHostname},
 	{Scope: ScopeSession, Name: "timestamp", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, "character_set_filesystem")
