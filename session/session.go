@@ -2528,22 +2528,43 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		is := infoschema.GetInfoSchema(s)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
+			var tableName string
+			var partitionName string
+			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
+			if tblInfo != nil && partInfo != nil {
+				tableName = tblInfo.Meta().Name.String()
+				partitionName = partInfo.Name.String()
+			} else {
+				tblInfo, _ := is.TableByID(physicalTableID)
+				tableName = tblInfo.Meta().Name.String()
+			}
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v don't have placement policies with txn_scope %v",
-						physicalTableID, txnScope))
+				errMsg := fmt.Sprintf("table %v don't have placement policies with txn_scope %v",
+					tableName, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partiton %v don't have placement policies with txn_scope %v",
+						tableName, partitionName, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader placement policy is not defined", physicalTableID))
+				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			if dcLocation != txnScope {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
+				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
+						tableName, partitionName, dcLocation, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
@@ -2555,7 +2576,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("Partition %s of table %s can not be written by local transactions when its placement policy is being altered",
+						fmt.Sprintf("partiton %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
 				}
