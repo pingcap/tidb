@@ -1891,3 +1891,23 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
 }
+
+func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b))")
+	tk.MustExec("create table t2(a int, b int)")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
+	tk.MustExec("update t1 set b = 1 where b = 2 and (a in (select a from t2 where b = 1) or c in (select a from t2 where b = 1))")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	bindSQL := "UPDATE /*+ use_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`), use_index(@`sel_2` `test`.`t2` )*/ `t1` SET `b`=1 WHERE `b`=2 AND (`a` IN (SELECT `a` FROM `t2` WHERE `b`=1) OR `c` IN (SELECT `a` FROM `t2` WHERE `b`=1))"
+	c.Assert(rows[0][1], Equals, bindSQL)
+	tk.MustExec(bindSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+}
