@@ -903,7 +903,11 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		return v.GetString(), false, nil
+		res, err := v.ToString()
+		if err != nil {
+			return "", true, err
+		}
+		return res, false, nil
 	}
 	return "", true, nil
 }

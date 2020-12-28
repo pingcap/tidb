@@ -4453,6 +4453,13 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
 }
 
+func (s *testIntegrationSuite) TestUserDefinedVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("set @b = now()")
+	c.Check(tk.MustQuery(`select @b`).Rows()[0][0] != "", IsTrue)
+}
+
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
 	// for issue #6661
 	tk := testkit.NewTestKit(c, s.store)
