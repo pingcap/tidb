@@ -106,13 +106,15 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				result = append(result, toBeCheckedRow{ignored: true})
+				result = append(result, toBeCheckedRow{ignored: true, noPartitionErr: err})
 				return result, nil
 			}
-			// As it should return toBeCheckedRow with err if no partition with value, but err
-			result = append(result, toBeCheckedRow{noPartitionErr: err})
-			return result, nil
+			// load data need return warning and replace into return err when data meet no partition
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				result = append(result, toBeCheckedRow{ignored: true, noPartitionErr: err})
+				return result, nil
+			}
+			return nil, err
 		}
 	}
 
