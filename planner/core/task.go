@@ -1001,7 +1001,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   newCount,
-	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
+	}.Init(p.ctx, stats, p.blockOffset)
 	topN.SetChildren(childPlan)
 	return topN
 }
