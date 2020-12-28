@@ -7397,6 +7397,5 @@ func (s *testSuite) TestValidateReadOnly(c *C) {
 	tk.MustExec("create table t (id int);")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		tk.QueryToErr(testcase.sql)
 	}
 }
