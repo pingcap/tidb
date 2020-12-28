@@ -237,7 +237,8 @@
   {
     "name": "TestConditionPushDownToIndexScanForPrefixIndex",
     "cases": [
-      "explain select * from t where a between 'a' and 'b' and b = 'b'"
+      "explain select * from t where a between 'a' and 'b' and b = 'b'",
+      "explain select * from t where a = 'a' and b < 'b'"
     ]
   },
   {

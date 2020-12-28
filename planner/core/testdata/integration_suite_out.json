@@ -1323,6 +1323,14 @@
           "│ └─IndexRangeScan_8 250.00 cop[tikv] table:t, index:a_b(a, b) range:[\"a\",\"b\"], keep order:false, stats:pseudo",
           "└─TableRowIDScan_9(Probe) 0.25 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select * from t where a = 'a' and b < 'b'",
+        "Plan": [
+          "IndexLookUp_10 33.23 root  ",
+          "├─IndexRangeScan_8(Build) 33.23 cop[tikv] table:t, index:a_b(a, b) range:[\"a\" -inf,\"a\" \"b\"), keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 33.23 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },  

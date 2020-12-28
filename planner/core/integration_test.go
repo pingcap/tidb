@@ -1333,11 +1333,10 @@ func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk.MustExec("create table t(a int,b char(100),key(a),key(b(10)))")
 	tk.MustQuery("explain select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
 		"Projection_4 19.99 root  test.t.a, test.t.b",
-		"└─IndexMerge_9 19.99 root  ",
+		"└─IndexMerge_8 19.99 root  ",
 		"  ├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.01 cop[tikv]  eq(test.t.b, \"x\")",
-		"  │ └─IndexRangeScan_6 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_8(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"  ├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_7(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1, 'xx')")
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows())

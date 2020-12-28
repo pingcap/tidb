@@ -214,7 +214,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			ranges:          "[[1 NULL \"a\",1 NULL \"a\"] [2 NULL \"a\",2 NULL \"a\"] [3 NULL \"a\",3 NULL \"a\"] [1 NULL \"b\",1 NULL \"b\"] [2 NULL \"b\",2 NULL \"b\"] [3 NULL \"b\",3 NULL \"b\"] [1 NULL \"c\",1 NULL \"c\"] [2 NULL \"c\",2 NULL \"c\"] [3 NULL \"c\",3 NULL \"c\"]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1]",
 			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c)]",
-			remained:        "[in(Column#3, a, b, c)]",
+			remained:        "[]",
 			compareFilters:  "<nil>",
 		},
 		// Can generate correct ranges for in functions with correlated filters..
@@ -225,7 +225,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			ranges:          "[[1 NULL \"a\" NULL,1 NULL \"a\" NULL] [2 NULL \"a\" NULL,2 NULL \"a\" NULL] [3 NULL \"a\" NULL,3 NULL \"a\" NULL] [1 NULL \"b\" NULL,1 NULL \"b\" NULL] [2 NULL \"b\" NULL,2 NULL \"b\" NULL] [3 NULL \"b\" NULL,3 NULL \"b\" NULL] [1 NULL \"c\" NULL,1 NULL \"c\" NULL] [2 NULL \"c\" NULL,2 NULL \"c\" NULL] [3 NULL \"c\" NULL,3 NULL \"c\" NULL]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1]",
 			accesses:        "[in(Column#1, 1, 2, 3) in(Column#3, a, b, c) gt(Column#4, Column#8) lt(Column#4, plus(Column#8, 100))]",
-			remained:        "[in(Column#3, a, b, c)]",
+			remained:        "[]",
 			compareFilters:  "gt(Column#4, Column#8) lt(Column#4, plus(Column#8, 100))",
 		},
 		// Join keys are not continuous and the pushed key connect the key but not eq/in functions.

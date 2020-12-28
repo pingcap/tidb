@@ -1629,7 +1629,6 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	}
 }
 
-
 // For https://github.com/pingcap/tidb/issues/22032
 func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
 	defer testleak.AfterTest(c)()
@@ -1717,9 +1716,8 @@ create table t(
 	a varchar(50),
 	b varchar(50),
 	c text(50),
-	d varchar(50) collate utf8mb4_general_ci,
+	d binary(50),
 	index idx_a(a(2)),
-	index idx_b(b(2)),
 	index idx_ab(a(2), b(2)),
 	index idx_c(c(2)),
 	index idx_d(d(2))
@@ -1742,14 +1740,21 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "a > 'ab'",
-			accessConds: "[ge(test.t.a, ab)]",
+			accessConds: "[gt(test.t.a, ab)]",
 			filterConds: "[gt(test.t.a, ab)]",
 			resultStr:   "[[\"ab\",+inf]]",
 		},
 		{
 			indexPos:    0,
+			exprStr:     "a < 'ab'",
+			accessConds: "[lt(test.t.a, ab)]",
+			filterConds: "[lt(test.t.a, ab)]",
+			resultStr:   "[[-inf,\"ab\")]",
+		},
+		{
+			indexPos:    0,
 			exprStr:     "a >= 'abcd'",
-			accessConds: "[ge(test.t.a, ab)]",
+			accessConds: "[ge(test.t.a, abcd)]",
 			filterConds: "[ge(test.t.a, abcd)]",
 			resultStr:   "[[\"ab\",+inf]]",
 		},
@@ -1763,7 +1768,7 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "a in ('a', 'bbb', 'c')",
-			accessConds: "[in(test.t.a, a, bb, c)]",
+			accessConds: "[in(test.t.a, a, bbb, c)]",
 			filterConds: "[in(test.t.a, a, bbb, c)]",
 			resultStr:   "[[\"a\",\"a\"] [\"bb\",\"bb\"] [\"c\",\"c\"]]",
 		},
@@ -1779,49 +1784,63 @@ create table t(
 			exprStr:     "a != 'aaa'",
 			accessConds: "[]",
 			filterConds: "[ne(test.t.a, aaa)]",
-			resultStr:   "[[-inf,+inf]]",
+			resultStr:   "[[NULL,+inf]]",
 		},
 		{
 			indexPos:    1,
 			exprStr:     "a = 'a' and b < 'b'",
-			accessConds: "[eq(test.t.a a) lt(test.t.b b)]",
+			accessConds: "[eq(test.t.a, a) lt(test.t.b, b)]",
 			filterConds: "[]",
 			resultStr:   "[[\"a\" -inf,\"a\" \"b\")]",
 		},
 		{
 			indexPos:    1,
 			exprStr:     "a = 'aa' and b < 'bb'",
-			accessConds: "[eq(test.t.a aa) lt(test.t.b bb)]",
-			filterConds: "[eq(test.t.a aa) lt(test.t.b bb)]",
+			accessConds: "[eq(test.t.a, aa) lt(test.t.b, bb)]",
+			filterConds: "[eq(test.t.a, aa) lt(test.t.b, bb)]",
 			resultStr:   "[[\"aa\" -inf,\"aa\" \"bb\")]",
 		},
 		{
-			indexPos:    2,
-			exprStr:     "c > 'c'",
-			accessConds: "[]",
-			filterConds: "[]",
-			resultStr:   "[]",
+			indexPos:    1,
+			exprStr:     "a = 'a' and b > 'bb'",
+			accessConds: "[eq(test.t.a, a) gt(test.t.b, bb)]",
+			filterConds: "[gt(test.t.b, bb)]",
+			resultStr:   "[[\"a\" \"bb\",\"a\" +inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'aa' and b > 'b'",
+			accessConds: "[eq(test.t.a, aa) gt(test.t.b, b)]",
+			filterConds: "[eq(test.t.a, aa)]",
+			resultStr:   "[(\"aa\" \"b\",\"aa\" +inf]]",
 		},
 		{
 			indexPos:    2,
-			exprStr:     "c > 'cc'",
-			accessConds: "[]",
+			exprStr:     "c > '你'",
+			accessConds: "[gt(test.t.c, 你)]",
 			filterConds: "[]",
-			resultStr:   "[]",
+			resultStr:   "[(\"你\",+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     "c > '你好啊'",
+			accessConds: "[gt(test.t.c, 你好啊)]",
+			filterConds: "[gt(test.t.c, 你好啊)]",
+			resultStr:   "[[\"你好\",+inf]]",
 		},
 		{
 			indexPos:    3,
-			exprStr:     `d > "你"`,
-			accessConds: "[]",
+			exprStr:     "d > 'd'",
+			accessConds: "[gt(test.t.d, d)]",
 			filterConds: "[]",
-			resultStr:   "[]",
+			resultStr:   "[(0x64,+inf]]",
 		},
 		{
 			indexPos:    3,
-			exprStr:     `d > "你好啊"`,
-			accessConds: "[]",
-			filterConds: "[]",
-			resultStr:   "[]",
+			exprStr:     "d > 'ddd'",
+			accessConds: "[gt(test.t.d, ddd)]",
+			filterConds: "[gt(test.t.d, ddd)]",
+			resultStr:   "[[0x6464,+inf]]",
 		},
 	}
 

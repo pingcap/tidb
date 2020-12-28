@@ -445,6 +445,7 @@ func allEqOrIn(expr expression.Expression) bool {
 	}
 	return false
 }
+
 // accessCondShouldReserve checks whether access condition should be reserved to filter condition.
 // NOTE: access must be EQ/IN function or LogicOr of EQ/IN functions
 func accessCondShouldReserve(access expression.Expression, length int) bool {
@@ -545,7 +546,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			break
 		}
 		var shouldReserve bool
-		if lengths[i] == types.UnspecifiedLength && lengths[i] == cols[i].GetType().Flen {
+		if lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType().Flen {
 			shouldReserve = false
 		} else {
 			shouldReserve = accessCondShouldReserve(cond, lengths[i])
