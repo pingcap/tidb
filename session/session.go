@@ -2478,14 +2478,15 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 	}
 	var txn kv.Transaction
 	var err error
+	txnScope := s.GetSessionVars().TxnScope
 	switch option.Mode {
 	case ast.TimestampBoundReadTimestamp:
-		txn, err = s.store.BeginWithStartTS(oracle.GlobalTxnScope, option.StartTS)
+		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
 		if err != nil {
 			return err
 		}
 	case ast.TimestampBoundExactStaleness:
-		txn, err = s.store.BeginWithExactStaleness(s.GetSessionVars().TxnScope, option.PrevSec)
+		txn, err = s.store.BeginWithExactStaleness(txnScope, option.PrevSec)
 		if err != nil {
 			return err
 		}
@@ -2504,6 +2505,7 @@ func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionc
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 		IsStaleness:   true,
+		TxnScope:      txnScope,
 	}
 	return nil
 }

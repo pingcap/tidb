@@ -7365,8 +7365,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(testcase.sql)
-		tk.MustExec("commit")
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
+		tk.MustExec("commit")
 	}
 }
 
