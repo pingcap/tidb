@@ -1227,6 +1227,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
+		// TODO: Do we need to rollback txn?
 		s.RollbackTxn(ctx)
 		return nil, err
 	}
@@ -1289,9 +1290,12 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	if ok {
 		return nil
 	}
-	// For the case executing `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...` twice.
-	beginStmt, ok := stmtNode.(*ast.BeginStmt)
-	if ok && beginStmt.ReadOnly && beginStmt.Bound != nil {
+	// For the case executing:
+	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
+	// `...`
+	// `begin` or `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
+	_, ok = stmtNode.(*ast.BeginStmt)
+	if ok {
 		return nil
 	}
 	if !planner.IsReadOnly(stmtNode, vars) {
