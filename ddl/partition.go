@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/tikv/pd/pkg/slice"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/pd/pkg/slice"
 	"go.uber.org/zap"
 )
 
