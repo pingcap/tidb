@@ -114,8 +114,9 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
-	// Replace into need return no partition err and abort when data meet no partition
+	// Replace into need return no partition err and append wanring, then abort when data meet no partition
 	if r.ignored && r.noPartitionErr != nil {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.noPartitionErr)
 		return r.noPartitionErr
 	}
 
