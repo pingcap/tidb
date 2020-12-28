@@ -521,6 +521,14 @@ create table log_message_1 (
 			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((!c0)) (partition p0 values in (0), partition p1 values in (1));",
 			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
+		{
+			"CREATE TABLE t1 (a TIME, b DATE) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
+			ddl.ErrWrongExprInPartitionFunc,
+		},
+		{
+			"CREATE TABLE t1 (a DATE, b VARCHAR(10)) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
+			ddl.ErrWrongExprInPartitionFunc,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/tikv/pd/pkg/slice"
 	"strconv"
 	"strings"
 	"time"
@@ -609,11 +610,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 // checkResultOK derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
-func checkResultOK(ok bool, err error) error {
-	if err != nil {
-		return err
-	}
-
+func checkResultOK(ok bool) error {
 	if !ok {
 		return errors.Trace(ErrWrongExprInPartitionFunc)
 	}
@@ -1731,36 +1728,39 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	if !ok {
 		return nil
 	}
+	argsType, err := collectArgsType(tblInfo, expr)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	switch expr.FnName.L {
 	case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
 		ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
-		return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasDateArgs(argsType...)))
 	case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
-		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasTimeArgs(argsType...)))
 	case ast.UnixTimestamp:
-		return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasTimestampArgs(argsType...)))
 	case ast.FromDays:
-		if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasDateArgs(argsType...) || hasTimeArgs(argsType...)))
 	case ast.Extract:
 		switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
 		case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
-			return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasDateArgs(argsType...)))
 		case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
-			return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasDatetimeArgs(argsType...)))
 		case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
 			ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
-			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasTimeArgs(argsType...)))
 		default:
 			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
-	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
-		has, err := hasTimestampArgs(tblInfo, expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	case ast.DateDiff:
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
+			return hasDateArgs(argsType[i])
+		})))
+
+	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
+		has := hasTimestampArgs(argsType...)
 		if has {
 			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
@@ -1768,23 +1768,8 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	return nil
 }
 
-func hasDateArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDate, mysql.TypeDatetime)
-}
-
-func hasTimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDuration, mysql.TypeDatetime)
-}
-
-func hasTimestampArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeTimestamp)
-}
-
-func hasDatetimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDatetime)
-}
-
-func hasSpecifyArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr, ts ...byte) (bool, error) {
+func collectArgsType(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) ([]byte, error) {
+	ts := make([]byte, 0, len(expr.Args))
 	for _, arg := range expr.Args {
 		col, ok := arg.(*ast.ColumnNameExpr)
 		if !ok {
@@ -1792,13 +1777,34 @@ func hasSpecifyArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr, ts ...byte
 		}
 		columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
 		if columnInfo == nil {
-			return false, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
+			return nil, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
-		for _, t := range ts {
-			if columnInfo.Tp == t {
-				return true, nil
-			}
-		}
+		ts = append(ts, columnInfo.Tp)
 	}
-	return false, nil
+
+	return ts, nil
+}
+
+func hasDateArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	})
+}
+
+func hasTimeArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	})
+}
+
+func hasTimestampArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeTimestamp
+	})
+}
+
+func hasDatetimeArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDatetime
+	})
 }
