@@ -1273,12 +1273,25 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	if !vars.TxnCtx.IsStaleness {
 		return nil
 	}
+	// For the case executing:
+	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
+	// `...`
+	// `commit`
 	_, ok := stmtNode.(*ast.CommitStmt)
 	if ok {
 		return nil
 	}
+	// For the case executing:
+	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
+	// `...`
+	// `rollback`
 	_, ok = stmtNode.(*ast.RollbackStmt)
 	if ok {
+		return nil
+	}
+	// For the case executing `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...` twice.
+	beginStmt, ok := stmtNode.(*ast.BeginStmt)
+	if ok && beginStmt.ReadOnly && beginStmt.Bound != nil {
 		return nil
 	}
 	if !planner.IsReadOnly(stmtNode, vars) {

@@ -7370,32 +7370,48 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	}
 }
 
-func (s *testSuite) TestValidateReadOnly(c *C) {
+func (s *testSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	testcases := []struct {
 		name       string
 		sql        string
 		IsReadOnly bool
 	}{
 		{
-			name:       "TimestampBoundReadTimestamp",
-			sql:        `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			name:       "normal select",
+			sql:        `select * from t;`,
 			IsReadOnly: true,
 		},
 		{
-			name:       "TimestampBoundExactStaleness",
-			sql:        `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
+			name:       "insert",
+			sql:        `insert into t (id) values (1);`,
+			IsReadOnly: false,
+		},
+		{
+			name:       "prepare",
+			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
 			IsReadOnly: true,
 		},
 		{
-			name:       "begin",
-			sql:        "begin",
+			name:       "prepare execute",
+			sql:        `EXECUTE stmt1 USING @a;`,
 			IsReadOnly: false,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
+	tk.MustExec("set @a=5;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		if testcase.IsReadOnly {
+			_, err := tk.Exec(testcase.sql)
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+		} else {
+			err := tk.ExecToErr(testcase.sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, `.*only support read only statement during read only time-bounded transaction.*`)
+		}
 	}
 }
