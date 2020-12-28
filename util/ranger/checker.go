@@ -14,9 +14,13 @@
 package ranger
 
 import (
+	"unicode/utf8"
+
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
 
@@ -61,7 +65,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				if c.isFullLength {
 					return true
 				}
-				constLen := constVal.GetLengthOfPrefixableConstant()
+				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[1].GetType())
 				if scalar.FuncName.L == ast.NE {
 					return constLen != -1 && constLen < c.length
 				}
@@ -80,7 +84,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				if c.isFullLength {
 					return true
 				}
-				constLen := constVal.GetLengthOfPrefixableConstant()
+				constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
 				if scalar.FuncName.L == ast.NE {
 					return constLen != -1 && constLen < c.length
 				}
@@ -126,7 +130,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		for _, v := range scalar.GetArgs()[1:] {
 			if constVal, ok := v.(*expression.Constant); ok {
 				if !c.isFullLength {
-					constLen := constVal.GetLengthOfPrefixableConstant()
+					constLen := GetLengthOfPrefixableConstant(constVal, scalar.GetArgs()[0].GetType())
 					if constLen == -1 || constLen >= c.length {
 						c.shouldReserve = true
 					}
@@ -202,4 +206,21 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 		return false
 	}
 	return c.colUniqueID == col.UniqueID
+}
+
+// GetLengthOfPrefixableConstant returns length of characters if constant is bytes or string type and returns -1 otherwise.
+func GetLengthOfPrefixableConstant(c *expression.Constant, tp *types.FieldType) int {
+	if c == nil {
+		return -1
+	}
+	val, err := c.Eval(chunk.Row{})
+	if err != nil || (val.Kind() != types.KindBytes && val.Kind() != types.KindString) {
+		return -1
+	}
+	colCharset := tp.Charset
+	isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+	if isUTF8Charset {
+		return utf8.RuneCount(val.GetBytes())
+	}
+	return len(val.GetBytes())
 }

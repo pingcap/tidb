@@ -937,7 +937,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 }
 
 func indexCoveringCol(col *expression.Column, constVal *expression.Constant, indexCols []*expression.Column, idxColLens []int) bool {
-	constLen := constVal.GetLengthOfPrefixableConstant()
+	constLen := ranger.GetLengthOfPrefixableConstant(constVal, col.GetType())
 	for i, indexCol := range indexCols {
 		if indexCol != nil && col.Equal(nil, indexCol) {
 			isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen

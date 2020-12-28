@@ -452,19 +452,22 @@ func accessCondShouldReserve(access expression.Expression, length int) bool {
 	f, _ := access.(*expression.ScalarFunction)
 	switch f.FuncName.L {
 	case ast.LogicOr:
-		return accessCondShouldReserve(f.GetArgs()[0], length) || accessCondShouldReserve(f.GetArgs()[0], length)
+		return accessCondShouldReserve(f.GetArgs()[0], length) || accessCondShouldReserve(f.GetArgs()[1], length)
 	case ast.EQ, ast.NullEQ:
 		var c *expression.Constant
 		var ok bool
-		if c, ok = f.GetArgs()[0].(*expression.Constant); !ok {
+		var constLen int
+		if c, ok = f.GetArgs()[0].(*expression.Constant); ok {
+			constLen = GetLengthOfPrefixableConstant(c, f.GetArgs()[1].GetType())
+		} else {
 			c, _ = f.GetArgs()[1].(*expression.Constant)
+			constLen = GetLengthOfPrefixableConstant(c, f.GetArgs()[0].GetType())
 		}
-		constLen := c.GetLengthOfPrefixableConstant()
 		return constLen == -1 || constLen >= length
 	case ast.In:
 		for _, v := range f.GetArgs()[1:] {
 			c, _ := v.(*expression.Constant)
-			constLen := c.GetLengthOfPrefixableConstant()
+			constLen := GetLengthOfPrefixableConstant(c, f.GetArgs()[0].GetType())
 			if constLen == -1 || constLen >= length {
 				return true
 			}

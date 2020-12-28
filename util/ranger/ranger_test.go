@@ -1716,7 +1716,7 @@ create table t(
 	a varchar(50),
 	b varchar(50),
 	c text(50),
-	d binary(50),
+	d varbinary(50),
 	index idx_a(a(2)),
 	index idx_ab(a(2), b(2)),
 	index idx_c(c(2)),
@@ -1841,6 +1841,13 @@ create table t(
 			accessConds: "[gt(test.t.d, ddd)]",
 			filterConds: "[gt(test.t.d, ddd)]",
 			resultStr:   "[[0x6464,+inf]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     "d = '你'",
+			accessConds: "[eq(test.t.d, 你)]",
+			filterConds: "[eq(test.t.d, 你)]",
+			resultStr:   "[[0xE4BD,0xE4BD]]",
 		},
 	}
 
