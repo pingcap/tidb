@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -885,11 +886,24 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 
 	var tableIDs, indexNames string
-	if len(sessVars.StmtCtx.TableIDs) > 0 {
-		tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
-	}
 	if len(sessVars.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.IndexNames), " ", ",", -1)
+		// remove duplicate index.
+		idxMap := make(map[string]struct{})
+		buf := bytes.NewBuffer(make([]byte, 0, 4))
+		buf.WriteByte('[')
+		for _, idx := range sessVars.StmtCtx.IndexNames {
+			_, ok := idxMap[idx]
+			if ok {
+				continue
+			}
+			idxMap[idx] = struct{}{}
+			if buf.Len() > 1 {
+				buf.WriteByte(',')
+			}
+			buf.WriteString(idx)
+		}
+		buf.WriteByte(']')
+		indexNames = buf.String()
 	}
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
@@ -950,6 +964,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
+		}
+		if len(sessVars.StmtCtx.TableIDs) > 0 {
+			tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
