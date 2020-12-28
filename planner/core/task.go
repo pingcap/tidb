@@ -45,7 +45,6 @@ type task interface {
 	count() float64
 	addCost(cost float64)
 	cost() float64
-	normalizedCost() float64
 	copy() task
 	plan() PhysicalPlan
 	invalid() bool
@@ -104,10 +103,6 @@ func (t *copTask) addCost(cst float64) {
 
 func (t *copTask) cost() float64 {
 	return t.cst
-}
-
-func (t *copTask) normalizedCost() float64 {
-	return t.cst / 15
 }
 
 func (t *copTask) copy() task {
@@ -854,10 +849,6 @@ func (t *rootTask) cost() float64 {
 	return t.cst
 }
 
-func (t *rootTask) normalizedCost() float64 {
-	return t.cst
-}
-
 func (t *rootTask) plan() PhysicalPlan {
 	return t.p
 }
@@ -1594,10 +1585,6 @@ func (t *mppTask) addCost(cst float64) {
 
 func (t *mppTask) cost() float64 {
 	return t.cst
-}
-
-func (t *mppTask) normalizedCost() float64 {
-	return t.cst / 20
 }
 
 func (t *mppTask) copy() task {
