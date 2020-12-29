@@ -5832,7 +5832,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			continue
 		}
 		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-			Op: NotIn,
+			Op: placement.NotIn,
 			Key: "engine",
 			Values: []string{"tiflash"},
 		})

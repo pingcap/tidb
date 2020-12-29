@@ -64,6 +64,26 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
 				Replicas:    3,
+				Constraints: `["+zone=sh", "+engine=tiflash"]`,
+			}},
+			err: ".*unsupported label constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "+engine=TiFlash"]`,
+			}},
+			err: ".*unsupported label constraint.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
 				Constraints: "",
 			}},
 			output: []*placement.Rule{{
