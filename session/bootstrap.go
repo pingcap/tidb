@@ -447,6 +447,9 @@ const (
 	version58 = 58
 	// version59 add column ndv for mysql.stats_buckets.
 	version59 = 59
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version59
 )
 
 var (
@@ -1371,9 +1374,6 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-			}
-			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = variable.BoolOn
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)

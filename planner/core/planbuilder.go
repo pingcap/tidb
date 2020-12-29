@@ -1276,7 +1276,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}
@@ -2975,6 +2975,9 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
 		if err != nil {
 			return nil, err
+		}
+		if convertedDatum.IsNull() {
+			return nil, ErrBadNull.GenWithStackByArgs(handleColInfos[i].Name.O)
 		}
 		data = append(data, convertedDatum)
 	}

@@ -56,7 +56,7 @@ func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore
 
 // HandleCopRequestWithMPPCtx handles coprocessor request, actually, this is the updated version for
 // HandleCopRequest(after mpp test is supported), however, go does not support function overloading,
-// I have to rename it to HandleCopRequestWithMPPCtx, once unistore is updated, HandleCopRequest will be deleted.
+// I have to rename it to HandleCopRequestWithMPPCtx.
 func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
 	switch req.Tp {
 	case kv.ReqTypeDAG:
