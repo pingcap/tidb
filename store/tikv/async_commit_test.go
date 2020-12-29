@@ -406,25 +406,6 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	c.Assert(globalTxn.committer.isAsyncCommit(), IsTrue)
 }
 
-func (s *testAsyncCommitSuite) Test1PCWithMultiDC(c *C) {
-	localTxn := s.begin1PC(c)
-	err := localTxn.Set([]byte("a"), []byte("a1"))
-	localTxn.SetOption(kv.TxnScope, "bj")
-	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
-	err = localTxn.Commit(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(localTxn.committer.isOnePC(), IsFalse)
-
-	globalTxn := s.begin1PC(c)
-	err = globalTxn.Set([]byte("b"), []byte("b1"))
-	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	err = globalTxn.Commit(ctx)
-	c.Assert(err, IsNil)
-	c.Assert(globalTxn.committer.isOnePC(), IsTrue)
-}
-
 type mockResolveClient struct {
 	inner              Client
 	onResolveLock      func(*kvrpcpb.ResolveLockRequest) (*tikvrpc.Response, error)
