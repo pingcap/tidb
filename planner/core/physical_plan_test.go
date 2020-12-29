@@ -580,7 +580,6 @@ func (s *testPlanSuite) TestMergeJoinUnionScan(c *C) {
 	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (11, 'keen williamson'), (10, 'gracious hermann')")
 	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (10, 'gracious hermann')")
 
-
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		tk.MustExec("begin")

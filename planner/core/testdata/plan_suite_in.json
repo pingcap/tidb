@@ -519,7 +519,7 @@
       [
         "insert into t2 values (11, 'amazing merkle')",
         "insert into t2 values (12, 'amazing merkle')",
-        // Test Index Join + UnionScan + TableScan.
+        // Test Merge Join + UnionScan + TableScan.
         "explain select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
       ]
     ]
