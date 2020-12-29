@@ -3358,7 +3358,7 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows("dc-1"))
 
-	// test local txn
+	// test local txn auto commit
 	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
 	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
 	c.Assert(len(result.Rows()), Equals, 3)
@@ -3391,11 +3391,9 @@ PARTITION BY RANGE (c) (
 	result = tk.MustQuery("select * from t1 where c < 100")
 	c.Assert(len(result.Rows()), Equals, 4)
 
-	// test wrong scope local txn
+	// test wrong scope local txn auto commit
 	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
-	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
-	c.Assert(len(result.Rows()), Equals, 4)
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 
@@ -3408,9 +3406,15 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	tk.MustExec("insert into t1 (c) values (99)")           // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(txn.Valid(), IsTrue)
 	_, err = tk.Exec("commit")
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	// Won't read the value 99 because the previous commit failed
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 4)
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
