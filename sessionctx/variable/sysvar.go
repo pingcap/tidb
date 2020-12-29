@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -66,6 +67,8 @@ const (
 	BoolOff = "OFF"
 	// BoolOn is the canonical string representation of a boolean true.
 	BoolOn = "ON"
+	// Nightly indicate the nightly version.
+	Nightly = "NIGHTLY"
 )
 
 // SysVar is for system variable.
@@ -106,7 +109,7 @@ type SysVar struct {
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Some sysvars are read-only. Attempting to set should always fail.
 	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrReadOnly.GenWithStackByArgs(sv.Name)
+		return value, ErrIncorrectScope.GenWithStackByArgs(sv.Name, "read only")
 	}
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
@@ -387,6 +390,17 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
+func checkCharacterValid(normalizedValue string, argName string) (string, error) {
+	if normalizedValue == "" {
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+	}
+	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	if err != nil {
+		return normalizedValue, errors.Trace(err)
+	}
+	return cht, nil
+}
+
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "gtid_mode", Value: BoolOff, Type: TypeBool},
@@ -582,7 +596,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: "timestamp", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_filesystem")
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
 			return normalizedValue, errors.Trace(err)
@@ -610,7 +626,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
 	{Scope: ScopeNone, Name: "have_profiling", Value: "NO"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_client")
+	}},
 	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "ndb_distribution", Value: ""},
@@ -681,7 +699,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLBigSelects, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "" {
+			return normalizedValue, nil
+		}
+		return checkCharacterValid(normalizedValue, "")
+	}},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag_delay", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_schema", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity_max", Value: "2000"},
@@ -811,7 +834,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_database")
+	}},
 	{Scope: ScopeNone, Name: "have_symlink", Value: "YES"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "storage_engine", Value: "InnoDB"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "sql_log_off", Value: "0"},
@@ -901,10 +926,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: Flush, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "200", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, "character_set_connection")
+	}},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterValid(normalizedValue, CharacterSetServer)
+	}},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_instances", Value: "402"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndbinfo_show_hidden", Value: ""},
@@ -943,6 +972,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBTxnScope, Value: config.GetGlobalConfig().TxnScope},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdSize, Value: strconv.Itoa(DefBroadcastJoinThresholdSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: ""},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToOnOff(DefOptBCJ), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -985,8 +1016,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBBatchDelete, Value: BoolToOnOff(DefBatchDelete), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBBatchCommit, Value: BoolToOnOff(DefBatchCommit), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDMLBatchSize, Value: strconv.Itoa(DefDMLBatchSize), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
-	{Scope: ScopeSession, Name: TiDBCurrentTS, Value: strconv.Itoa(DefCurretTS)},
-	{Scope: ScopeSession, Name: TiDBLastTxnInfo, Value: strconv.Itoa(DefCurretTS)},
+	{Scope: ScopeSession, Name: TiDBCurrentTS, Value: strconv.Itoa(DefCurretTS), ReadOnly: true},
+	{Scope: ScopeSession, Name: TiDBLastTxnInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true},
+	{Scope: ScopeSession, Name: TiDBLastQueryInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize), Type: TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowBatchCop, Value: strconv.Itoa(DefTiDBAllowBatchCop), Type: TypeInt, MinValue: 0, MaxValue: 2, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "0" && vars.AllowBCJ {
@@ -1009,7 +1041,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolOn, Type: TypeBool},
 
 	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO"}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO", Nightly}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBProjectionConcurrency, Value: strconv.Itoa(DefTiDBProjectionConcurrency), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashAggPartialConcurrency, Value: strconv.Itoa(DefTiDBHashAggPartialConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AllowAutoValue: true},
@@ -1038,7 +1070,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
-	{Scope: ScopeSession, Name: TiDBConfig, Value: ""},
+	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
@@ -1047,6 +1079,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBForcePriority, Value: mysql.Priority2Str[DefTiDBForcePriority]},
 	{Scope: ScopeSession, Name: TiDBEnableRadixJoin, Value: BoolToOnOff(DefTiDBUseRadixJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: 63},
@@ -1102,8 +1135,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBFoundInBinding, Value: BoolToOnOff(DefTiDBFoundInBinding), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool, ReadOnly: true},
+	{Scope: ScopeSession, Name: TiDBFoundInBinding, Value: BoolToOnOff(DefTiDBFoundInBinding), Type: TypeBool, ReadOnly: true},
 	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: BoolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: BoolToOnOff(DefTiDBEnableClusteredIndex), Type: TypeBool},
@@ -1159,6 +1192,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnable1PC, Value: BoolToOnOff(DefTiDBEnable1PC), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGuaranteeExternalConsistency, Value: BoolToOnOff(DefTiDBGuaranteeExternalConsistency), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
 }
 

@@ -1348,11 +1348,11 @@ func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	sql += ");"
 	tk.MustGetErrCode(sql, errno.ErrTooManyFields)
 
-	originLimit := atomic.LoadUint32(&ddl.TableColumnCountLimit)
-	atomic.StoreUint32(&ddl.TableColumnCountLimit, uint32(cnt*4))
+	originLimit := config.GetGlobalConfig().TableColumnCountLimit
+	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, uint32(cnt*4))
 	_, err := tk.Exec(sql)
 	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
+	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, originLimit)
 }
 
 func (s *testIntegrationSuite8) TestCreateTableTooManyIndexes(c *C) {
@@ -1472,7 +1472,7 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
+	count := int(atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
@@ -2216,6 +2216,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 		conf.Experimental.AllowsExpressionIndex = false
 	})
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
+	tk.MustGetErrMsg("create table t(a int, key ((a+1)));", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
