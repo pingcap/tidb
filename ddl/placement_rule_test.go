@@ -276,6 +276,25 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
+			},
+			bundle: &placement.Bundle{Rules: []*placement.Rule{
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+			}},
+			output: []*placement.Rule{
+				{Role: placement.Voter},
+				{Role: placement.Voter},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role: ast.PlacementRoleLearner,
+					Tp:   ast.PlacementDrop,
+				},
 				{
 					Role: ast.PlacementRoleVoter,
 					Tp:   ast.PlacementDrop,
@@ -293,26 +312,11 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 		{
 			input: []*ast.PlacementSpec{
 				{
-					Role:        ast.PlacementRoleLearner,
-					Tp:          ast.PlacementAdd,
-					Replicas:    3,
-					Constraints: `["+  zone=sh", "-zone = bj"]`,
-				},
-				{
-					Role: ast.PlacementRoleVoter,
+					Role: ast.PlacementRoleLearner,
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			output: []*placement.Rule{
-				{
-					Role:  placement.Learner,
-					Count: 3,
-					LabelConstraints: []placement.LabelConstraint{
-						{Key: "zone", Op: "in", Values: []string{"sh"}},
-						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
-					},
-				},
-			},
+			err: ".*no rule of role 'learner' to drop.*",
 		},
 	}
 	for i, t := range tests {

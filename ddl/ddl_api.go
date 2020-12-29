@@ -5749,6 +5749,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		}
 
 		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
+			origLen := len(bundle.Rules)
 			newRules := bundle.Rules[:0]
 			for _, r := range bundle.Rules {
 				if r.Role != role {
@@ -5759,6 +5760,11 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 
 			// alter == drop + add new rules
 			if spec.Tp == ast.PlacementDrop {
+				// error if no rules will be dropped
+				if len(bundle.Rules) == origLen {
+					err = errors.Errorf("no rule of role '%s' to drop", role)
+					break
+				}
 				continue
 			}
 		}
