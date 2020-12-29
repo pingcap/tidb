@@ -46,6 +46,105 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Role:        ast.PlacementRoleVoter,
 				Tp:          ast.PlacementAdd,
 				Replicas:    3,
+				Constraints: `["+zone=sh", "+zone=sh"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "-zone=sh"]`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+zone=sh", "+zone=bj"]`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 1,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+				{
+					Role:  placement.Voter,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,-zone=sh": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Constraints: `{"+zone=sh,+zone=bj": 2, "+zone=sh": 1}`,
+			}},
+			err: ".*conflicting constraints.*",
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["-  zone=sh", "-zone = bj"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
 				Constraints: `["+  zone=sh", "-zone = bj"]`,
 			}},
 			output: []*placement.Rule{
