@@ -1710,7 +1710,7 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 	return nil
 }
 
-func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
+func checkPartitionExprAllowed(_ sessionctx.Context, tb *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
 	case *ast.FuncCallExpr:
 		if _, ok := expression.AllowedPartitionFuncMap[v.FnName.L]; ok {
@@ -1718,11 +1718,11 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 		}
 	case *ast.BinaryOperationExpr:
 		if _, ok := expression.AllowedPartition4BinaryOpMap[v.Op]; ok {
-			return nil
+			return errors.Trace(checkNoTimestampArgs(tb, v.L, v.R))
 		}
 	case *ast.UnaryOperationExpr:
 		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
-			return nil
+			return errors.Trace(checkNoTimestampArgs(tb, v.V))
 		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
 		*ast.TimeUnitExpr:
@@ -1736,7 +1736,7 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	if !ok {
 		return nil
 	}
-	argsType, err := collectArgsType(tblInfo, expr)
+	argsType, err := collectArgsType(tblInfo, expr.Args...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1776,9 +1776,9 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	return nil
 }
 
-func collectArgsType(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) ([]byte, error) {
-	ts := make([]byte, 0, len(expr.Args))
-	for _, arg := range expr.Args {
+func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, error) {
+	ts := make([]byte, 0, len(exprs))
+	for _, arg := range exprs {
 		col, ok := arg.(*ast.ColumnNameExpr)
 		if !ok {
 			continue
@@ -1815,4 +1815,15 @@ func hasDatetimeArgs(argsType ...byte) bool {
 	return slice.AnyOf(argsType, func(i int) bool {
 		return argsType[i] == mysql.TypeDatetime
 	})
+}
+
+func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error {
+	argsType, err := collectArgsType(tbInfo, exprs...)
+	if err != nil {
+		return err
+	}
+	if hasTimestampArgs(argsType...) {
+		return errors.Trace(ErrWrongExprInPartitionFunc)
+	}
+	return nil
 }

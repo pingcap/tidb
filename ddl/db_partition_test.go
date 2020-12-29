@@ -533,6 +533,14 @@ create table log_message_1 (
 			"create table t1 (a bigint unsigned) partition by list (a) (partition p0 values in (10, 20, 30, -1));",
 			ddl.ErrWrongTypeColumnValue,
 		},
+		{
+			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a % 2) (PARTITION p VALUES LESS THAN (20080819));",
+			ddl.ErrWrongExprInPartitionFunc,
+		},
+		{
+			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a+2) (PARTITION p VALUES LESS THAN (20080819));",
+			ddl.ErrWrongExprInPartitionFunc,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
