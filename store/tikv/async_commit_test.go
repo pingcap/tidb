@@ -388,6 +388,11 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 
 // TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
 func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
+	// It requires setting placement rules to run with TiKV
+	if *WithTiKV {
+		return
+	}
+
 	localTxn := s.beginAsyncCommit(c)
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")

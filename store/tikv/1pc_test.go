@@ -247,6 +247,11 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
+	// It requires setting placement rules to run with TiKV
+	if *WithTiKV {
+		return
+	}
+
 	localTxn := s.begin1PC(c)
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")
