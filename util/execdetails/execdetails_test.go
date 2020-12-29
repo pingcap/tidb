@@ -114,7 +114,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, total_keys: 15, "+
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2, concurrency:2}, total_keys: 15, "+
 		"processed_keys: 10, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 20, block_read: 100 Bytes}" {
 		t.Fatalf(cop.String())
 	}
@@ -172,7 +172,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2, concurrency:2}"+
 		", total_keys: 10, processed_keys: 10, rocksdb: {delete_skipped_count: 10, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 10, block_read: 100 Bytes}" {
 		t.Fatal(cop.String())
 	}

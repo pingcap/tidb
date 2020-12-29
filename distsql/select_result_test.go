@@ -47,5 +47,5 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
 	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String(), Equals, "tikv_task:{time:1ns, loops:1}")
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String(), Equals, "tikv_task:{time:1ns, loops:1, concurrency:1}")
 }
