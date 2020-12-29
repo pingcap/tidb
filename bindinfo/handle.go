@@ -179,6 +179,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
@@ -253,6 +254,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
@@ -328,6 +330,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
 func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (err error) {
+	db = strings.ToLower(db)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	h.sctx.Lock()
 	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN")
@@ -472,7 +475,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
-		Db:          row.GetString(2),
+		Db:          strings.ToLower(row.GetString(2)),
 		Bindings:    []Binding{hint},
 	}
 	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
@@ -566,7 +569,7 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	return fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s AND bind_sql=%s`,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND LOWER(default_db)=%s AND bind_sql=%s`,
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db),
 		expression.Quote(bindSQL),
@@ -588,7 +591,7 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 }
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE LOWER(original_sql)=%s and default_db=%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTs.String()),
 		expression.Quote(originalSQL),
