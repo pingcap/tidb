@@ -56,6 +56,10 @@ func checkLabelConstraint(label string) (LabelConstraint, error) {
 		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
+	if op == In && key == "engine" && strings.ToLower(val) == "tiflash" {
+		return r, errors.Errorf("unsupported label constraint '%s'", label)
+	}
+
 	r.Key = key
 	r.Op = op
 	r.Values = []string{val}

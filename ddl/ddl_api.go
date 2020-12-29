@@ -5831,6 +5831,11 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+			Op: NotIn,
+			Key: "engine",
+			Values: []string{"tiflash"},
+		})
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
