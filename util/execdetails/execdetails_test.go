@@ -124,12 +124,12 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1s, loops:2" {
+	if copStats[0].String() != "time:1s, loops:2, concurrency:1" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
-		t.Fatal("agg")
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, concurrency:2}" {
+		t.Fatalf("agg cop stats string is not expected, got: %v", stats.GetCopStats(aggID).String())
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
 	if rootStats == nil {
@@ -143,7 +143,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	cop.copDetails.RocksdbKeySkippedCount = 0
 	cop.copDetails.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
-	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, total_keys: 15, "+
+	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2, concurrency:2}, total_keys: 15, "+
 		"processed_keys: 0, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block_cache_hit_count: 10, block_read_count: 0, block_read: 100 Bytes}" {
 		t.Fatalf(cop.String())
 	}
@@ -182,12 +182,12 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1s, loops:2" {
+	if copStats[0].String() != "time:1s, loops:2, concurrency:1" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
-		t.Fatal("agg")
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, concurrency:2}" {
+		t.Fatalf("agg cop stats string is not expect, got: %v", stats.GetCopStats(aggID).String())
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
 	if rootStats == nil {
