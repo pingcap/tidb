@@ -155,7 +155,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc, e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
