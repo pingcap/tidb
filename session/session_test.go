@@ -3397,7 +3397,7 @@ PARTITION BY RANGE (c) (
 	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
 	c.Assert(err.Error(), Matches, ".*can not be read by.*")
 
-	// begin and commit with dc-1 txn scope
+	// begin and commit reading & writing the data in dc-2 with dc-1 txn scope
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
