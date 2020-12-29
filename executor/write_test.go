@@ -574,6 +574,10 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
 	testSQL = `select * from badnull`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
+
+	tk.MustExec("create table tp (id int) partition by range (id) (partition p0 values less than (1), partition p1 values less than(2))")
+	tk.MustExec("insert ignore into tp values (1), (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
 func (s *testSuite8) TestInsertOnDup(c *C) {
@@ -736,8 +740,8 @@ commit;`
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 
 	tk.MustExec(`SET sql_mode='';`)
-	_, err = tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
-	c.Assert(err, NotNil)
+	tk.MustExec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
@@ -2918,7 +2922,7 @@ from t order by c_str;`).Check(testkit.Rows("10"))
 func (s *testSuite4) TestWriteListPartitionTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -2966,7 +2970,7 @@ func (s *testSuite4) TestWriteListPartitionTable(c *C) {
 func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -3015,7 +3019,7 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 func (s *testSuite4) TestWriteListPartitionTable1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -3140,7 +3144,7 @@ func (s *testSuite4) TestWriteListPartitionTable1(c *C) {
 func (s *testSuite4) TestWriteListPartitionTable2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual)
       partition by list  (id*2 + b*b + b*b - b*b*2 - abs(id)) (
@@ -3265,7 +3269,7 @@ func (s *testSuite4) TestWriteListPartitionTable2(c *C) {
 func (s *testSuite4) TestWriteListColumnsPartitionTable1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -3390,7 +3394,7 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable1(c *C) {
 func (s *testSuite4) TestWriteListColumnsPartitionTable2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (location varchar(10), id int, a int) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
@@ -3539,7 +3543,7 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable2(c *C) {
 func (s *testSuite4) TestWriteListPartitionTableIssue21437(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a int) partition by list (a%10) (partition p0 values in (0,1));`)
 	_, err := tk.Exec("replace into t values  (null)")
@@ -3549,7 +3553,7 @@ func (s *testSuite4) TestWriteListPartitionTableIssue21437(c *C) {
 func (s *testSuite4) TestListPartitionWithAutoRandom(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a bigint key auto_random (3), b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
@@ -3572,7 +3576,7 @@ func (s *testSuite4) TestListPartitionWithAutoRandom(c *C) {
 func (s *testSuite4) TestListPartitionWithAutoIncrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (a bigint key auto_increment, b int) partition by list (a%5) (partition p0 values in (0,1,2), partition p1 values in (3,4));`)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
@@ -3595,7 +3599,7 @@ func (s *testSuite4) TestListPartitionWithAutoIncrement(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	// Test for generated column with bigint type.
 	tableDefs := []string{
 		// Test for virtual generated column for list partition
@@ -3640,7 +3644,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	// Test for generated column with year type.
 	tableDefs := []string{
 		// Test for virtual generated column for list partition
@@ -3708,7 +3712,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn1(c *C) {
 func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tableDefs := []string{
 		// Test for virtual generated column for datetime type in list partition.
 		`create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
@@ -3750,7 +3754,7 @@ func (s *testSuite4) TestListPartitionWithGeneratedColumn2(c *C) {
 func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	// Test for generated column with substr expression.
 	tableDefs := []string{
 		// Test for virtual generated column
@@ -3774,7 +3778,7 @@ func (s *testSuite4) TestListColumnsPartitionWithGeneratedColumn(c *C) {
 func (s *testSerialSuite2) TestListColumnsPartitionWithGlobalIndex(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	// Test generated column with global index
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()

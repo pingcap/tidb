@@ -377,14 +377,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[eq(test.t.a, abc)]",
+			accessConds: "[like(test.t.a, abc, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[eq(test.t.a, ab_c)]",
+			accessConds: "[like(test.t.a, ab\\_c, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -398,14 +398,14 @@ create table t(
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[eq(test.t.a, %a)]",
+			accessConds: "[like(test.t.a, \\%a, 92)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[eq(test.t.a, \\)]",
+			accessConds: "[like(test.t.a, \\, 92)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
@@ -582,7 +582,7 @@ create table t(
 			exprStr:     `d < "你好" || d > "你好"`,
 			accessConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
 			filterConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
-			resultStr:   "[[-inf,\"你好\") (\"你好\",+inf]]",
+			resultStr:   "[[-inf,+inf]]",
 		},
 		{
 			indexPos:    2,
@@ -654,7 +654,7 @@ create table t(
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
+func (s *testRangerSuite) TestIndexRangeForUnsignedAndOverflow(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -665,8 +665,21 @@ func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a smallint(5) unsigned,key (a) ,decimal_unsigned decimal unsigned,key (decimal_unsigned), float_unsigned float unsigned,key(float_unsigned), double_unsigned double unsigned,key(double_unsigned))")
-
+	testKit.MustExec(`
+create table t(
+	a smallint(5) unsigned,
+	decimal_unsigned decimal unsigned,
+	float_unsigned float unsigned,
+	double_unsigned double unsigned,
+	col_int bigint,
+	col_float float,
+	index idx_a(a),
+	index idx_decimal_unsigned(decimal_unsigned),
+	index idx_float_unsigned(float_unsigned),
+	index idx_double_unsigned(double_unsigned),
+	index idx_int(col_int),
+	index idx_float(col_float)
+)`)
 	tests := []struct {
 		indexPos    int
 		exprStr     string
@@ -762,6 +775,42 @@ func (s *testRangerSuite) TestIndexRangeForUnsigned(c *C) {
 			accessConds: "[gt(test.t.double_unsigned, -100)]",
 			filterConds: "[]",
 			resultStr:   "[[0,+inf]]",
+		},
+		// test for overflow value access index
+		{
+			indexPos:    4,
+			exprStr:     "col_int != 9223372036854775808",
+			accessConds: "[ne(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "col_int > 9223372036854775808",
+			accessConds: "[gt(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "col_int < 9223372036854775808",
+			accessConds: "[lt(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float > 1000000000000000000000000000000000000000",
+			accessConds: "[gt(test.t.col_float, 1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float < -1000000000000000000000000000000000000000",
+			accessConds: "[lt(test.t.col_float, -1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 	}
 
@@ -1290,6 +1339,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1323,6 +1373,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1545,6 +1596,77 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 2069)]",
 			filterConds: "[]",
 			resultStr:   "[[1970,2069]]",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
+		}
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		c.Assert(cols, NotNil)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+		c.Assert(err, IsNil)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
+}
+
+// For https://github.com/pingcap/tidb/issues/22032
+func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a varchar(50), b varchar(50), index idx_a(a(2)), index idx_ab(a(2), b(2)))")
+	testKit.MustExec("insert into t values ('aa', 'bb'), ('aaa', 'bbb')")
+	testKit.MustQuery("select * from t use index (idx_a) where a > 'aa'").Check(testkit.Rows("aaa bbb"))
+	testKit.MustQuery("select * from t use index (idx_ab) where a = 'aaa' and b > 'bb' and b < 'cc'").Check(testkit.Rows("aaa bbb"))
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     "a > 'aa'",
+			accessConds: "[gt(test.t.a, aa)]",
+			filterConds: "[gt(test.t.a, aa)]",
+			resultStr:   "[[\"aa\",+inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "a = 'aaa' and b > 'bb' and b < 'cc'",
+			accessConds: "[eq(test.t.a, aaa) gt(test.t.b, bb) lt(test.t.b, cc)]",
+			filterConds: "[eq(test.t.a, aaa) gt(test.t.b, bb) lt(test.t.b, cc)]",
+			resultStr:   "[[\"aa\" \"bb\",\"aa\" \"cc\")]",
 		},
 	}
 
