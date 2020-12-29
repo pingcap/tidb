@@ -79,6 +79,7 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -2497,7 +2498,7 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	case 1:
 		for _, p := range v.TablePlans {
 			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalBroadCastJoin:
+			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
 				e.batchCop = true
 			}
 		}
@@ -2580,6 +2581,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }

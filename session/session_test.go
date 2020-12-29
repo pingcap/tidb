@@ -2697,6 +2697,8 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 
 func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_table_partition=nightly")
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition NIGHTLY"))
 	tk.MustExec("set tidb_enable_table_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition OFF"))
 
@@ -3809,4 +3811,13 @@ func (s *testSessionSerialSuite) TestIssue21944(c *C) {
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	_, err := tk1.Exec("set @@tidb_current_ts=1;")
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
+}
+
+func (s *testSessionSerialSuite) TestIssue21943(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk.Exec("set @@last_plan_from_binding='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_binding' is a read only variable")
+
+	_, err = tk.Exec("set @@last_plan_from_cache='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
