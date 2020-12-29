@@ -653,8 +653,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 
-		// ***** 50% Skip committing secondary keys
-		if c.connID > 0 && rand.Float64() < 0.5 {
+		// ***** 20% Skip committing secondary keys
+		if c.connID > 0 && rand.Float64() < 0.2 {
 			logutil.Logger(bo.ctx).Info("injected skip committing secondaries", zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
 		} else {
 			go func() {
@@ -770,6 +770,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 }
 
 func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	// ***** 10% error on prewriting primary
+	if c.connID > 0 &&  batch.isPrimary && rand.Float64() < 0.1 {
+		logutil.Logger(bo.ctx).Info("injected error on prewriting primary batch", zap.Uint64("txnStartTS", c.startTS))
+		return errors.New("injected error on prewriting primary batch")
+	}
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
