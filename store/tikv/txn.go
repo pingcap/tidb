@@ -120,7 +120,7 @@ func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uin
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTiKVTxnWithStartTS(store, oracle.GlobalTxnScope, startTS, store.nextReplicaReadSeed())
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
 }
 
 type assertionPair struct {
