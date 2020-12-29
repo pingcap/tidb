@@ -420,8 +420,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		connID = v.(uint64)
 	}
 
-	// ***** 2% RPC error
-	if connID > 0 && rand.Float64() < 0.02 {
+	// ***** 0.1% RPC error
+	if connID > 0 && rand.Float64() < 0.001 {
 		// ***** Request has half possibility to be executed
 		if rand.Float64() < 0.5 {
 			logutil.Logger(ctx).Info("injected RPC error on send", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
