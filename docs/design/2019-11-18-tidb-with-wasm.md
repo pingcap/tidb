@@ -34,7 +34,7 @@ a corresponding assembly language, and an interface to interact with the hosting
 main goal is to enable applications with high performance requirements to run on web pages. Of course, 
 its instruction format is also designed to be able to run on other platforms.
 
-The WebAssembly virtual machine has better performance than JavaScript because WebAsembly's binary 
+The WebAssembly virtual machine has better performance than JavaScript because WebAssembly's binary 
 format file has a more compact instruction structure, similar to ELF files (the most commonly used 
 binary instruction format on Unix systems, which is parsed by the loader and loaded into memory for 
 execution). WebAssembly is compiled into memory for execution by a specific runtime. The most common 
@@ -100,13 +100,13 @@ the file name format is:
 - *_GOARCH
 - *_GOOS_GOARCH
 
-So the only thing we need do is to add *_wasm.go, and mock an implemention based on the implemention for other platforms.
+So the only thing we need do is to add *_wasm.go, and mock an implementation based on the implementation for other platforms.
 
 For case 2, the solution is same as case 1, because we can modify the third-party code directly.
 
 For case 3 and case 4, we can’t modify the code directly. There are 3 solutions:
 
-- Open issues for these repos, and ask their owners to support WebAseembly
+- Open issues for these repos, and ask their owners to support WebAssembly
   - Advantage: we don’t need to do it ourselves, and we can keep up with upstream
   - Disadvantage: some repos have been archived, and some are no longer maintained, nobody will reply our issue
 - Clone these repos to pingcap org and modify their code, then switch the reference of TiDB to the new repos.
