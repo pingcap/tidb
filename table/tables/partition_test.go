@@ -529,3 +529,14 @@ func (ts *testSuite) TestIssue21574(c *C) {
 	tk.MustExec("drop table t_21574")
 	tk.MustExec("create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));")
 }
+
+func (ts *testSuite) TestIssue21966(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_21966")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+	tk.MustExec("create table t_21966 (id int) partition by list (id) (partition p0 values in (3,5,6,9,17));")
+	_, err := tk.Exec("insert into t_21966 values(100);")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 1526 Table has no partition for value 100"))
+}
