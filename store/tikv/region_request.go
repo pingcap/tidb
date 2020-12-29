@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -412,7 +414,26 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer cancel()
 	}
 	start := time.Now()
-	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+
+	var connID uint64 = 1
+	if v := bo.ctx.Value(sessionctx.ConnID); v != nil {
+		connID = v.(uint64)
+	}
+
+	// ***** 5% RPC error
+	if connID > 0 && rand.Float64() < 0.05 {
+		// ***** Request has half possibility to be executed
+		if rand.Float64() < 0.5 {
+			logutil.Logger(ctx).Info("injected RPC error on send", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+		} else {
+			resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+			logutil.Logger(ctx).Info("injected RPC error on recv", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+		}
+		if err == nil {
+			err = errors.New("injected RPC error")
+		}
+	}
+
 	if s.Stats != nil {
 		recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 		failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
