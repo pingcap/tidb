@@ -395,7 +395,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(atomic.LoadUint32(&localTxn.committer.useAsyncCommit), Equals, uint32(0))
+	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
 
 	globalTxn := s.beginAsyncCommit(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
@@ -403,7 +403,26 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(atomic.LoadUint32(&globalTxn.committer.useAsyncCommit), Equals, uint32(1))
+	c.Assert(globalTxn.committer.isAsyncCommit(), IsTrue)
+}
+
+func (s *testAsyncCommitSuite) Test1PCWithMultiDC(c *C) {
+	localTxn := s.begin1PC(c)
+	err := localTxn.Set([]byte("a"), []byte("a1"))
+	localTxn.SetOption(kv.TxnScope, "bj")
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = localTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(localTxn.committer.isOnePC(), IsFalse)
+
+	globalTxn := s.begin1PC(c)
+	err = globalTxn.Set([]byte("b"), []byte("b1"))
+	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	err = globalTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(globalTxn.committer.isOnePC(), IsTrue)
 }
 
 type mockResolveClient struct {

@@ -959,6 +959,12 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
+	// Disable 1PC in local transactions
+	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+		return false
+	}
+
 	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
