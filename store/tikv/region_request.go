@@ -432,6 +432,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		if err == nil {
 			err = errors.New("injected RPC error")
 		}
+	} else {
+		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 	}
 
 	if s.Stats != nil {
