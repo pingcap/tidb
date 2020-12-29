@@ -17,10 +17,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 type testClusteredSuite struct{ *baseTestSuite }
+type testClusteredSerialSuite struct{ *testClusteredSuite }
 
 func (s *testClusteredSuite) SetUpTest(c *C) {
 }
@@ -182,9 +184,15 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
+}
 
-	// Test for union scan in prefixed clustered index table.
-	// See https://github.com/pingcap/tidb/issues/22069.
+// Test for union scan in prefixed clustered index table.
+// See https://github.com/pingcap/tidb/issues/22069.
+func (s *testClusteredSerialSuite) TestClusteredUnionScanOnPrefixingPrimaryKey(c *C) {
+	originCollate := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(originCollate)
+	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));")
 	tk.MustExec("insert into t values ('aaaaa', -38);")
