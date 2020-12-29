@@ -970,8 +970,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth {
+			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
+			if tp.Flen < tp.Decimal {
+				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
@@ -993,6 +996,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+		}
 		// If decimal and flen all equals 0, just set flen to default value.
 		if tp.Decimal == 0 && tp.Flen == 0 {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
