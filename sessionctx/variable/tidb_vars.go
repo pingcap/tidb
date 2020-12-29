@@ -145,8 +145,9 @@ const (
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
-	// The valid value include auto/on/off:
-	// on or auto: enable table partition if the partition type is implemented.
+	// The valid value include auto/on/off/nightly:
+	// on or auto: enable range/hash partition table.
+	// nightly: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
