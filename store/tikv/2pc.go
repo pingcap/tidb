@@ -1478,8 +1478,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
-		// ***** 10% Delay committing
-		if rand.Float64() < 0.10 {
+		// ***** 2% Delay committing
+		if rand.Float64() < 0.2 {
 			duration := time.Duration(rand.Int63n(int64(time.Second) * 10))
 			logutil.Logger(ctx).Info("injected delay at beforeCommit", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 			time.Sleep(duration)
