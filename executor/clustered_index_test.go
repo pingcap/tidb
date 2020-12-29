@@ -182,6 +182,22 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
+
+	// Test for union scan in prefixed clustered index table.
+	// See https://github.com/pingcap/tidb/issues/22069.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));")
+	tk.MustExec("insert into t values ('aaaaa', -38);")
+	tk.MustExec("insert into t values ('bbbbb', -48);")
+
+	tk.MustExec("begin PESSIMISTIC;")
+	tk.MustExec("update t set col_2 = 47 where col_1 in ('aaaaa') order by col_1,col_2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("aaaaa 47", "bbbbb -48"))
+	tk.MustGetErrCode("insert into t values ('bb', 0);", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('aa', 0);", errno.ErrDupEntry)
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("aaaaa 47", "bbbbb -48"))
+	tk.MustExec("admin check table t;")
 }
 
 func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
