@@ -993,8 +993,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
+		// If decimal and flen all equals 0, just set flen to default value.
 		if tp.Decimal == 0 && tp.Flen == 0 {
-			tp.Flen = 10
+			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
+			tp.Flen = defaultFlen
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
