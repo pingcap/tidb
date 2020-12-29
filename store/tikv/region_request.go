@@ -479,7 +479,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 
 		// ***** 50% No retry on RPC error
 		if connID > 0 && rand.Float64() < 0.5 {
-			return nil, false, nil
+			return nil, false, errors.Trace(err)
 		}
 		return nil, true, nil
 	}
