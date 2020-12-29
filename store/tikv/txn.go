@@ -574,8 +574,8 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 			}
 		})
 
-		// ***** 20% Skip pessimistic rollback
-		if txn.committer.connID > 0 && rand.Float64() < 0.2 {
+		// ***** 5% Skip pessimistic rollback
+		if txn.committer.connID > 0 && rand.Float64() < 0.05 {
 			logutil.Logger(ctx).Info("injected skip pessimistic lock", zap.Uint64("txnStartTS", txn.startTS), zap.ByteStrings("keys", keys))
 		} else {
 			err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), CommitterMutations{keys: keys})

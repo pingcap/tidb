@@ -653,8 +653,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 
-		// ***** 20% Skip committing secondary keys
-		if c.connID > 0 && rand.Float64() < 0.2 {
+		// ***** 10% Skip committing secondary keys
+		if c.connID > 0 && rand.Float64() < 0.1 {
 			logutil.Logger(bo.ctx).Info("injected skip committing secondaries", zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
 		} else {
 			go func() {
@@ -780,8 +780,8 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 }
 
 func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
-	// ***** 10% error on prewriting primary
-	if c.connID > 0 && batch.isPrimary && rand.Float64() < 0.1 {
+	// ***** 3% error on prewriting primary
+	if c.connID > 0 && batch.isPrimary && rand.Float64() < 0.03 {
 		logutil.Logger(bo.ctx).Info("injected error on prewriting primary batch", zap.Uint64("txnStartTS", c.startTS))
 		return errors.New("injected error on prewriting primary batch")
 	}
@@ -1479,12 +1479,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
 		// ***** 2% Delay committing
-		if rand.Float64() < 0.2 {
+		if rand.Float64() < 0.02 {
 			duration := time.Duration(rand.Int63n(int64(time.Second) * 10))
 			logutil.Logger(ctx).Info("injected delay at beforeCommit", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 			time.Sleep(duration)
 		}
-		// ***** 5% Failure before commit
+		// ***** 2% Failure before commit
 		if rand.Float64() < 0.05 {
 			logutil.Logger(ctx).Info("injected failure at beforeCommit", zap.Uint64("txnStartTS", c.startTS))
 			return errors.New("commit failed")
@@ -1771,8 +1771,8 @@ type batchMutations struct {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int, primaryIdx *int) []batchMutations {
-	// ***** 50% Request no batch
-	if c.connID > 0 && rand.Float64() < 0.5 {
+	// ***** 40% Request no batch
+	if c.connID > 0 && rand.Float64() < 0.4 {
 		limit = 1
 	}
 
