@@ -1292,6 +1292,34 @@
         ]
       },
       {
+        "SQL": "desc select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:count(Column#4)->Column#5",
+          "└─Projection_14 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "  └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "    └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_17 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader_18 1.00 root  data:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#6",
+          "    └─TableFullScan_16 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─Projection_25 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
+          "  └─Projection_14 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "    └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
           "TableReader_19 10000.00 root  data:HashJoin_9",
@@ -1317,6 +1345,28 @@
         ]
       },
       {
+        "SQL": "desc select * from t left join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_14 10000.00 root  data:HashJoin_7",
+          "└─HashJoin_7 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "  ├─Projection_11(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "  │ └─Selection_13 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │   └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─TableFullScan_10(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t right join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_14 12487.50 root  data:HashJoin_7",
+          "└─HashJoin_7 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "  ├─Selection_11(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "  │ └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─Projection_12(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
           "Projection_8 10000.00 root  Column#8, Column#4",
@@ -1328,6 +1378,185 @@
           "    └─Projection_16(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
           "      └─Selection_18 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "        └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select A.id from t as A where exists (select 1 from t where t.id=A.id)",
+        "Plan": [
+          "TableReader_15 7992.00 root  data:HashJoin_9",
+          "└─HashJoin_9 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  ├─Selection_14(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "  │ └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─Selection_12(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    └─TableFullScan_11 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+        "Plan": [
+          "TableReader_13 8000.00 root  data:HashJoin_9",
+          "└─HashJoin_9 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  ├─TableFullScan_12(Build) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
+          "  └─TableFullScan_11(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushDownProjectionForMPP",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader_14 1.00 root  data:ExchangeSender_13",
+          "  └─ExchangeSender_13 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:count(Column#4)->Column#7",
+          "      └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_15 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader_17 1.00 root  data:ExchangeSender_16",
+          "  └─ExchangeSender_16 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:count(1)->Column#7",
+          "      └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg_12 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─TableReader_14 1.00 root  data:ExchangeSender_13",
+          "  └─ExchangeSender_13 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:sum(Column#4)->Column#7",
+          "      └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
+          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:count(Column#4)->Column#5",
+          "└─Projection_14 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "  └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "    └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_17 1.00 root  funcs:count(Column#6)->Column#5",
+          "└─TableReader_18 1.00 root  data:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 cop[tiflash]  funcs:count(1)->Column#6",
+          "    └─TableFullScan_16 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:sum(Column#7)->Column#5",
+          "└─Projection_25 10000.00 root  cast(Column#4, decimal(41,0) BINARY)->Column#7",
+          "  └─Projection_14 10000.00 root  plus(test.t.id, 1)->Column#4",
+          "    └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "      └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+        "Plan": [
+          "TableReader_22 10000.00 root  data:ExchangeSender_21",
+          "└─ExchangeSender_21 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_9 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "    ├─Projection_12(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "    │ └─Selection_15 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │   └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection_18(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "      └─Selection_20 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "        └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_20 10000.00 root  data:ExchangeSender_19",
+          "└─ExchangeSender_19 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_8 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
+          "    ├─Projection_13(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    │ └─Selection_16 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │   └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Selection_12(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t left join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_18 10000.00 root  data:ExchangeSender_17",
+          "└─ExchangeSender_17 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_7 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "    ├─Projection_11(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    │ └─Selection_14 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "    │   └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_10(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t right join (select id-2 as b from t) A on A.b=t.id",
+        "Plan": [
+          "TableReader_17 12487.50 root  data:ExchangeSender_16",
+          "└─ExchangeSender_16 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_7 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "    ├─ExchangeReceiver_13(Build) 9990.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_12 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection_11 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    │     └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection_14(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "      └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+        "Plan": [
+          "Projection_8 10000.00 root  Column#8, Column#4",
+          "└─TableReader_22 10000.00 root  data:ExchangeSender_21",
+          "  └─ExchangeSender_21 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_9 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "      ├─Projection_12(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "      │ └─Selection_15 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "      │   └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─Projection_18(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "        └─Selection_20 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "          └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select id from t as A where exists (select 1 from t where t.id=A.id)",
+        "Plan": [
+          "TableReader_18 7992.00 root  data:ExchangeSender_17",
+          "└─ExchangeSender_17 7992.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_9 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "    ├─ExchangeReceiver_16(Build) 9990.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_15 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection_14 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    │     └─TableFullScan_13 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Selection_12(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan_11 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select id from t as A where not exists (select 1 from t where t.id=A.id)",
+        "Plan": [
+          "TableReader_16 8000.00 root  data:ExchangeSender_15",
+          "└─ExchangeSender_15 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_9 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "    ├─ExchangeReceiver_14(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_13 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_11(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
         ]
       }
     ]

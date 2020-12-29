@@ -135,9 +135,34 @@
       "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
       "desc select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
       "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
       "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc select * from t join (select id-2 as b from t) A on A.b=t.id",
-      "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b"
+      "desc select * from t left join (select id-2 as b from t) A on A.b=t.id",
+      "desc select * from t right join (select id-2 as b from t) A on A.b=t.id",
+      "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc select A.id from t as A where exists (select 1 from t where t.id=A.id)",
+      "desc select A.id from t as A where not exists  (select 1 from t where t.id=A.id)"
+    ]
+  },
+  {
+    "name": "TestPushDownProjectionForMPP",
+    "cases": [
+      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc select * from t join (select id-2 as b from t) A on A.b=t.id",
+      "desc select * from t left join (select id-2 as b from t) A on A.b=t.id",
+      "desc select * from t right join (select id-2 as b from t) A on A.b=t.id",
+      "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc select id from t as A where exists (select 1 from t where t.id=A.id)",
+      "desc select id from t as A where not exists (select 1 from t where t.id=A.id)"
     ]
   }
 ]
