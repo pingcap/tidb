@@ -541,6 +541,6 @@ func (ts *testSuite) TestIssue21966(c *C) {
 		(partition p0 values in(3,5,6,9,17))`)
 	_, err := tk.Exec("insert into t_21966 values(100)")
 	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 100")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 100"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 1526 Table has no partition for value 100"))
 	tk.MustExec("drop table t_21966")
 }

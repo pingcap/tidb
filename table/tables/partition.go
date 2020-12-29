@@ -846,7 +846,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	}
 	if err != nil {
 		if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.InInsertStmt && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
 		}
 		return 0, errors.Trace(err)
 	}
