@@ -1330,14 +1330,14 @@ func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations CommitterM
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
-	// ***** 10% Delay
-	if c.connID > 0 && rand.Float64() < 0.1 {
+	// ***** 5% Delay
+	if c.connID > 0 && rand.Float64() < 0.05 {
 		duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
 		logutil.Logger(bo.ctx).Info("injected delay at pessimistic lock", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 		time.Sleep(duration)
 	}
-	// ***** 5% Locking fail
-	if c.connID > 0 && rand.Float64() < 0.05 {
+	// ***** 3% Locking fail
+	if c.connID > 0 && rand.Float64() < 0.03 {
 		return errors.New("Injected failure at pessimistic lock")
 	}
 
@@ -1478,14 +1478,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
-		// ***** 15% Delay committing
-		if rand.Float64() < 0.15 {
+		// ***** 10% Delay committing
+		if rand.Float64() < 0.10 {
 			duration := time.Duration(rand.Int63n(int64(time.Second) * 10))
 			logutil.Logger(ctx).Info("injected delay at beforeCommit", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
 			time.Sleep(duration)
 		}
-		// ***** 10% Failure before commit
-		if rand.Float64() < 0.1 {
+		// ***** 5% Failure before commit
+		if rand.Float64() < 0.05 {
 			logutil.Logger(ctx).Info("injected failure at beforeCommit", zap.Uint64("txnStartTS", c.startTS))
 			return errors.New("commit failed")
 		}

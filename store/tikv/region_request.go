@@ -415,14 +415,14 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 	start := time.Now()
 
-	var connID uint64 = 1
+	var connID uint64
 	if v := bo.ctx.Value(sessionctx.ConnID); v != nil {
 		connID = v.(uint64)
 	}
 
 	injectedRpcError := false
-	// ***** 5% RPC error
-	if connID > 0 && rand.Float64() < 0.05 {
+	// ***** 2% RPC error
+	if connID > 0 && rand.Float64() < 0.02 {
 		injectedRpcError = true
 		// ***** Request has half possibility to be executed
 		if rand.Float64() < 0.5 {
