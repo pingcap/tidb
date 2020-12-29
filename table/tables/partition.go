@@ -845,8 +845,11 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		idx, err = t.locateListPartition(ctx, pi, r)
 	}
 	if err != nil {
-		if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.InInsertStmt && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-			ctx.GetSessionVars().StmtCtx.AppendError(err)
+		// append Error when insert data without ignore flag meet no partition for incompitable mysql5.7
+		if t.meta.Partition.Type == model.PartitionTypeList {
+			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.InInsertStmt && !ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				ctx.GetSessionVars().StmtCtx.AppendError(err)
+			}
 		}
 		return 0, errors.Trace(err)
 	}
