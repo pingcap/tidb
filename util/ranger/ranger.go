@@ -291,7 +291,10 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) {
+			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
+			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
+			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
 				ran.LowExclude = false
 			}
 			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
@@ -460,7 +463,10 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
-		if lowCut {
+		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
+		// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
+		// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+		if lowCut || ReachPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail]) {
 			ran.LowExclude = false
 		}
 		highTail := len(ran.HighVal) - 1
@@ -499,6 +505,20 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 			}
 			return true
 		}
+	}
+	return false
+}
+
+// ReachPrefixLen checks whether the length of v is equal to the prefix length.
+func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
+	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		colCharset := tp.Charset
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		}
+		return length != types.UnspecifiedLength && len(colValue) == length
 	}
 	return false
 }
