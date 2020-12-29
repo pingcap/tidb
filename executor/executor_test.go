@@ -7259,7 +7259,7 @@ func (s *testSuite) Test21618(c *C) {
 	timer := time.NewTimer(1 * time.Second)
 	select {
 	case <-fc:
-		c.Assert(true, IsTrue, Commentf("Should not finish transaction 2"))
+		c.Assert(false, IsTrue, Commentf("Should not finish transaction 2"))
 	case <-timer.C:
 	}
 	tk1.MustExec("commit")
@@ -7268,7 +7268,7 @@ func (s *testSuite) Test21618(c *C) {
 	select {
 	case <-fc:
 	case <-timer.C:
-		c.Assert(true, IsTrue, Commentf("Transaction 2 should be finished"))
+		c.Assert(false, IsTrue, Commentf("Transaction 2 should be finished"))
 	}
 }
 
