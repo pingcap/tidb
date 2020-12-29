@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -288,8 +289,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	var enable bool
-	// When tidb_enable_table_partition is 'on' or 'auto'.
-	if s.Tp == model.PartitionTypeRange {
+	switch s.Tp {
+	case model.PartitionTypeRange:
+		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
 			// Partition by range expression is enabled by default.
 			if s.ColumnNames == nil {
@@ -300,16 +302,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				enable = true
 			}
 		}
-	}
-	// Partition by hash is enabled by default.
-	// Note that linear hash is not enabled.
-	if s.Tp == model.PartitionTypeHash {
+	case model.PartitionTypeHash:
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
 		if !s.Linear && s.Sub == nil {
 			enable = true
 		}
-	}
-	if s.Tp == model.PartitionTypeList {
-		enable = true
+	case model.PartitionTypeList:
+		// Partition by list is enabled only when tidb_enable_table_partition is 'nightly'.
+		enable = strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, variable.Nightly)
 	}
 
 	if !enable {

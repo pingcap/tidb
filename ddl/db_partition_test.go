@@ -365,7 +365,7 @@ func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`
 create table log_message_1 (
     add_time datetime not null default '2000-01-01 00:00:00',
@@ -574,17 +574,19 @@ create table log_message_1 (
 func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 0")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (id int) partition by list  (id) (
+	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
+		tk.MustExec("set @@session.tidb_enable_table_partition = " + v)
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));`)
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl.Meta().Partition, IsNil)
-	_, err := tk.Exec(`alter table t add partition (
+		tbl := testGetTableByName(c, tk.Se, "test", "t")
+		c.Assert(tbl.Meta().Partition, IsNil)
+		_, err := tk.Exec(`alter table t add partition (
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
-	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
-	tk.MustExec("insert into t values (1),(3),(5),(100),(null)")
+		c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+		tk.MustExec("insert into t values (1),(3),(5),(100),(null)")
+	}
 }
 
 func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
@@ -603,7 +605,7 @@ func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
 func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -743,7 +745,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -941,6 +943,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1055,6 +1058,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1121,6 +1125,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1155,6 +1160,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1191,6 +1197,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1221,6 +1228,7 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -3310,6 +3318,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
 	tk.MustExec("insert into t_list1(a) values (20180203);")
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
@@ -3320,6 +3329,7 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustGetErrCode(`create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));`, mysql.ErrMultipleDefConstInListPart)
 	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
 	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
