@@ -2088,15 +2088,15 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 func (p *baseLogicalPlan) canChildPushDown() bool {
-	_, ok := p.children[0].(*DataSource)
-	// TiFlash support pushing down more operators
-	if !ok && (p.SCtx().GetSessionVars().AllowBCJ || p.SCtx().GetSessionVars().AllowMPPExecution) {
-		_, ok = p.children[0].(*LogicalProjection)
-		if !ok {
-			_, ok = p.children[0].(*LogicalJoin)
-		}
+	switch p.children[0].(type) {
+	case *DataSource:
+		return true
+	case *LogicalJoin, *LogicalProjection:
+		// TiFlash support pushing down more operators
+		return p.SCtx().GetSessionVars().AllowBCJ || p.SCtx().GetSessionVars().AllowMPPExecution
+	default:
+		return false
 	}
-	return ok
 }
 
 func (la *LogicalAggregation) canPushToCop() bool {
