@@ -420,10 +420,8 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		connID = v.(uint64)
 	}
 
-	injectedRpcError := false
 	// ***** 2% RPC error
 	if connID > 0 && rand.Float64() < 0.02 {
-		injectedRpcError = true
 		// ***** Request has half possibility to be executed
 		if rand.Float64() < 0.5 {
 			logutil.Logger(ctx).Info("injected RPC error on send", zap.Stringer("type", req.Type), zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
@@ -475,12 +473,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		if injectedRpcError {
-			return nil, false, errors.Trace(err)
-		}
-
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
+		}
+
+		// ***** 50% No retry on RPC error
+		if connID > 0 && rand.Float64() < 0.5 {
+			return nil, false, nil
 		}
 		return nil, true, nil
 	}
