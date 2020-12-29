@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"math"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -651,16 +652,22 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// potential data race in unit test since `CommitMaxBackoff` will be updated
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
-		go func() {
-			e := c.doActionOnBatches(secondaryBo, action, batches)
-			if e != nil {
-				logutil.BgLogger().Debug("2PC async doActionOnBatches",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Error(e))
-				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
-			}
-		}()
+
+		// ***** 50% Skip committing secondary keys
+		if c.connID > 0 && rand.Float64() < 0.5 {
+			logutil.Logger(bo.ctx).Info("injected skip committing secondaries", zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+		} else {
+			go func() {
+				e := c.doActionOnBatches(secondaryBo, action, batches)
+				if e != nil {
+					logutil.BgLogger().Debug("2PC async doActionOnBatches",
+						zap.Uint64("conn", c.connID),
+						zap.Stringer("action type", action),
+						zap.Error(e))
+					tikvSecondaryLockCleanupFailureCounterCommit.Inc()
+				}
+			}()
+		}
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
@@ -738,11 +745,22 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 	})
 
+	// ***** 5% lockTTL = 0
+	ttl := c.lockTTL
+	if c.connID > 0 && rand.Float64() < 0.05 {
+		ttl = 0
+		keys := make([]string, 0, len(mutations))
+		for _, m := range mutations {
+			keys = append(keys, hex.EncodeToString(m.Key))
+		}
+		logutil.BgLogger().Info("injected zero lock ttl on prewrite", zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+	}
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
-		LockTtl:           c.lockTTL,
+		LockTtl:           ttl,
 		IsPessimisticLock: m.isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
@@ -1294,6 +1312,17 @@ func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations CommitterM
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
+	// ***** 10% Delay
+	if c.connID > 0 && rand.Float64() < 0.1 {
+		duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+		logutil.Logger(bo.ctx).Info("injected delay at pessimistic lock", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+		time.Sleep(duration)
+	}
+	// ***** 5% Locking fail
+	if c.connID > 0 && rand.Float64() < 0.05 {
+		return errors.New("Injected failure at pessimistic lock")
+	}
+
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 
@@ -1312,20 +1341,25 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
-			go func() {
-				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-				err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
-				if err != nil {
-					tikvSecondaryLockCleanupFailureCounterRollback.Inc()
-					logutil.Logger(ctx).Info("2PC cleanup failed",
-						zap.Error(err),
-						zap.Uint64("txnStartTS", c.startTS))
-				} else {
-					logutil.Logger(ctx).Info("2PC clean up done",
-						zap.Uint64("txnStartTS", c.startTS))
-				}
-				c.cleanWg.Done()
-			}()
+			// ***** 50 % Skip cleanup on transaction failure
+			if c.connID > 0 && rand.Float64() < 0.5 {
+				logutil.Logger(ctx).Info("injected skip cleanup secondaries on failure", zap.Uint64("txnStartTS", c.startTS))
+			} else {
+				go func() {
+					cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+					err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+					if err != nil {
+						tikvSecondaryLockCleanupFailureCounterRollback.Inc()
+						logutil.Logger(ctx).Info("2PC cleanup failed",
+							zap.Error(err),
+							zap.Uint64("txnStartTS", c.startTS))
+					} else {
+						logutil.Logger(ctx).Info("2PC clean up done",
+							zap.Uint64("txnStartTS", c.startTS))
+					}
+					c.cleanWg.Done()
+				}()
+			}
 		}
 		c.txn.commitTS = c.commitTS
 		if binlogSkipped {
@@ -1426,6 +1460,17 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
+		// ***** 15% Delay committing
+		if rand.Float64() < 0.15 {
+			duration := time.Duration(rand.Int63n(int64(time.Second) * 10))
+			logutil.Logger(ctx).Info("injected delay at beforeCommit", zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+			time.Sleep(duration)
+		}
+		// ***** 10% Failure before commit
+		if rand.Float64() < 0.1 {
+			logutil.Logger(ctx).Info("injected failure at beforeCommit", zap.Uint64("txnStartTS", c.startTS))
+			return errors.New("commit failed")
+		}
 	}
 
 	start = time.Now()
@@ -1681,6 +1726,11 @@ type batchMutations struct {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int, primaryIdx *int) []batchMutations {
+	// ***** 50% Request no batch
+	if c.connID > 0 && rand.Float64() < 0.5 {
+		limit = 1
+	}
+
 	var start, end int
 	for start = 0; start < mutations.len(); start = end {
 		var size int
