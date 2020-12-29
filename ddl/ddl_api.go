@@ -5688,21 +5688,19 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
 			if cnt <= 0 {
-				err = errors.Errorf("count should be positive, but got %d", cnt)
-				break
+				return rules, errors.Errorf("count should be positive, but got %d", cnt)
 			}
 
 			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
-					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
-					break
+					return rules, errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
 				}
 			}
 
 			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
-				break
+				return rules, err
 			}
 			rules = append(rules, &placement.Rule{
 				Count:            cnt,
