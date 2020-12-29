@@ -7340,19 +7340,23 @@ func (s *testSuite) TestIssue15563(c *C) {
 
 func (s *testSuite) TestStalenessTransaction(c *C) {
 	testcases := []struct {
-		name        string
-		sql         string
-		IsStaleness bool
+		name             string
+		sql              string
+		IsStaleness      bool
+		expectPhysicalTS int64
+		preSec           int64
 	}{
 		{
-			name:        "TimestampBoundReadTimestamp",
-			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
-			IsStaleness: true,
+			name:             "TimestampBoundReadTimestamp",
+			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			IsStaleness:      true,
+			expectPhysicalTS: 1599321600000,
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
-			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:05';`,
+			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
+			preSec:      20,
 		},
 		{
 			name:        "begin",
@@ -7365,6 +7369,14 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(testcase.sql)
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
+		} else if testcase.preSec > 0 {
+			curSec := time.Now().Unix()
+			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
+			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
+			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
+		}
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
 	}
