@@ -76,6 +76,9 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 
 	stmt = &ShowStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
+
+	stmt = &PrepareStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
 }
 
 func (s *testCacheableSuite) TestUnionReadOnly(c *C) {
