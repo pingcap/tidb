@@ -274,7 +274,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string, restore bool) (ast.StmtNode, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -289,8 +289,8 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string, re
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
-			if restore {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			if specifiledDB != "" {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
 			} else {
 				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
@@ -315,8 +315,8 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string, re
 		case *ast.SetOprStmt:
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
-			if restore {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
+			if specifiledDB != "" {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
 			} else {
 				normalizeExplainSQL = parser.Normalize(x.Text())
 			}
@@ -340,8 +340,8 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string, re
 			return x, "", ""
 		}
 		var normalizedSQL, hash string
-		if restore {
-			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, defaultDB))
+		if specifiledDB != "" {
+			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
 		} else {
 			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
 		}
@@ -355,15 +355,12 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
 	if stmtNode == nil {
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
-	if bindRecord == nil {
-		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
-	}
+	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession
@@ -374,20 +371,17 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, ""
 	}
-	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB, false)
-	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "", false)
-	}
+	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
 	// Here is the compatibility code.
 	// There may be some bindings that did not contain the DB name in the original SQL, so we need to use the previous matching method.
 	if bindRecord == nil {
-		stmtNode, normalizedSQL, hash = extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, false)
+		stmtNode, normalizedSQL, hash = extractSelectAndNormalizeDigest(stmt, "")
 		if stmtNode == nil {
 			return nil, ""
 		}
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB, true)
+		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
 		if bindRecord == nil {
-			bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "", true)
+			bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
 		}
 	}
 	return bindRecord, metrics.ScopeGlobal

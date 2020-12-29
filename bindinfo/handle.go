@@ -243,7 +243,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	}
 
 	record.Db = strings.ToLower(record.Db)
-	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db, false)
+	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
@@ -447,9 +447,9 @@ func (h *BindHandle) Size() int {
 }
 
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
-func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string, matchDB bool) *BindRecord {
-	if matchDB {
-		return h.bindInfo.Load().(cache).getBindRecordWithDB(hash, normdOrigSQL, db)
+func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
+	if record := h.bindInfo.Load().(cache).getBindRecordWithDB(hash, normdOrigSQL, db); record != nil {
+		return record
 	}
 	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
 }
@@ -650,7 +650,7 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
-		if r := h.GetBindRecord(digest, normalizedSQL, dbName, false); r != nil && r.HasUsingBinding() {
+		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
