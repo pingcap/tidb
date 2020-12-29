@@ -3870,3 +3870,18 @@ func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) 
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
+
+// Test insert with ignore when data meet no partition
+func (ts *testSuite) TestIssue21966(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_21966")
+	tk.MustExec(`create table t_21966(
+		id int(11) default null)
+		partition by list(id)
+		(partition p0 values in(3,5,6,9,17))`)
+	_, err := tk.Exec("insert into t_21966 values(100);")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 100")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 1526 Table has no partition for value 100"))
+	tk.MustExec("drop table t_21966")
+}
