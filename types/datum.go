@@ -1432,7 +1432,7 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
 	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
 	if err != nil {
-		// This is to be compatible with the previous processing method.
+		// It cannot be converted to bit type, so we need to convert it to int type.
 		return BinaryLiteral(d.b).ToInt(sc)
 	}
 	return bitStr.ToInt(sc)

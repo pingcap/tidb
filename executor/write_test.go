@@ -2022,13 +2022,7 @@ func (s *testSuite4) TestIssue18681(c *C) {
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
 		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1));`
-	_, err := tk.Exec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
-	c.Assert(err, NotNil)
 	tk.MustExec(createSQL)
-	_, err = tk.Exec("load data infile '/tmp/nonexistence.csv' into table load_data_test")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("load data local infile '/tmp/nonexistence.csv' replace into table load_data_test")
-	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
 	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
@@ -2038,17 +2032,9 @@ func (s *testSuite4) TestIssue18681(c *C) {
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
-	// data1 = nil, data2 = nil, fields and lines is default
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(reachLimit, IsFalse)
-	err = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-	c.Assert(err, IsNil)
 	ld.SetMaxRowsInBatch(20000)
-	r := tk.MustQuery(selectSQL)
-	r.Check(nil)
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
@@ -2056,9 +2042,7 @@ func (s *testSuite4) TestIssue18681(c *C) {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
 	sc.IgnoreTruncate = false
-	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
-		// data1 = nil, data2 != nil
 		{nil, []byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
