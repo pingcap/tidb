@@ -128,7 +128,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -154,7 +154,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=follower
 	replicas=3,
 alter placement policy
@@ -172,7 +172,7 @@ drop placement policy
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=voter
 	replicas=3,
 drop placement policy
