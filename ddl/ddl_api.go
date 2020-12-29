@@ -1930,16 +1930,33 @@ func BuildTableInfoFromCreateViewAST(s *ast.CreateViewStmt) (*model.TableInfo, e
 		return nil, err
 	}
 
-	fmt.Println("[s.]", s)
-	cols := make([]*table.Column, len(s.Cols))
-	for i, v := range s.Cols {
-		cols[i] = table.ToColumn(&model.ColumnInfo{
-			Name: v,
-			ID: int64(i),
-			Offset: i,
-			State: model.StatePublic,
-		})
+	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
+	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
+	for i, v := range schemaCols {
+		viewInfo.Cols[i] = v.AsName
 	}
+
+	var cols = make([]*table.Column, len(schemaCols))
+	if s.Cols == nil {
+		for i, v := range schemaCols {
+			cols[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v.AsName,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	} else {
+		for i, v := range s.Cols {
+			cols[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	}
+	//s.Cols = make([]model.CIStr, len(schemaCols))
 	tblInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, mysql.DefaultCharset, "")
 	if err != nil {
 		return nil, err
