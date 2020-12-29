@@ -464,11 +464,13 @@ type CopRuntimeStats struct {
 	copDetails *CopDetails
 }
 
-func maxInt32(a int32, b int32) int32 {
-	if a > b {
-		return a
+func getConcurrency(summary *tipb.ExecutorExecutionSummary) int32 {
+	if summary.Concurrency != nil {
+		return int32(*summary.Concurrency)
 	}
-	return b
+	// tikv does not set this, just return 1 because tikv always handle
+	// cop request using 1 thread
+	return 1
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -479,7 +481,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)},
-			concurrency: maxInt32(1, int32(summary.GetConcurrency()))})
+			concurrency: getConcurrency(summary)})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
