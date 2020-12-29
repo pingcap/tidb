@@ -152,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -164,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName

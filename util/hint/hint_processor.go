@@ -262,19 +262,26 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 	hs := CollectHint(stmtNodes[0])
 	processor := &BlockHintProcessor{}
 	stmtNodes[0].Accept(processor)
-	hintNodeType := nodeType4Stmt(stmtNodes[0])
+	topNodeType := nodeType4Stmt(stmtNodes[0])
 	for i, tblHints := range hs.tableHints {
 		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))
+		curOffset := i + 1
+		if topNodeType == TypeDelete || topNodeType == TypeUpdate {
+			curOffset = curOffset - 1
+		}
 		for _, tblHint := range tblHints {
 			if tblHint.HintName.L == hintQBName {
 				continue
 			}
-			offset := processor.GetHintOffset(tblHint.QBName, hintNodeType, i+1)
-			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, hintNodeType) {
+			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
+			if offset < 0 || !processor.checkTableQBName(tblHint.Tables) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
 				return nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
 			}
-			tblHint.QBName = GenerateQBName(hintNodeType, offset)
+			tblHint.QBName, err = GenerateQBName(topNodeType, offset)
+			if err != nil {
+				return nil, nil, err
+			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
 					tblHint.Tables[i].DBName = model.NewCIStr(db)
@@ -401,9 +408,9 @@ func nodeType4Stmt(node ast.StmtNode) NodeType {
 	return TypeInvalid
 }
 
-// getBlockName finds the offset of query block name. It use 0 as offset for top level update or delete,
+// getBlockName finds the offset of query block name. It uses 0 as offset for top level update or delete,
 // -1 for invalid block name.
-func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType NodeType) int {
+func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr) int {
 	if p.QbNameMap != nil {
 		level, ok := p.QbNameMap[blockName.L]
 		if ok {
@@ -411,13 +418,10 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType Node
 		}
 	}
 	// Handle the default query block name.
-	if nodeType == TypeUpdate && blockName.L == defaultUpdateBlockName {
+	if blockName.L == defaultUpdateBlockName || blockName.L == defaultDeleteBlockName {
 		return 0
 	}
-	if nodeType == TypeDelete && blockName.L == defaultDeleteBlockName {
-		return 0
-	}
-	if nodeType == TypeSelect && strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
+	if strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
 		suffix := blockName.L[len(defaultSelectBlockPrefix):]
 		level, err := strconv.ParseInt(suffix, 10, 64)
 		if err != nil || level > int64(p.selectStmtOffset) {
@@ -429,16 +433,16 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr, nodeType Node
 }
 
 // GetHintOffset gets the offset of stmt that the hints take effects.
-func (p *BlockHintProcessor) GetHintOffset(qbName model.CIStr, nodeType NodeType, currentOffset int) int {
+func (p *BlockHintProcessor) GetHintOffset(qbName model.CIStr, currentOffset int) int {
 	if qbName.L != "" {
-		return p.getBlockOffset(qbName, nodeType)
+		return p.getBlockOffset(qbName)
 	}
 	return currentOffset
 }
 
-func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable, nodeType NodeType) bool {
+func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable) bool {
 	for _, table := range tables {
-		if table.QBName.L != "" && p.getBlockOffset(table.QBName, nodeType) < 0 {
+		if table.QBName.L != "" && p.getBlockOffset(table.QBName) < 0 {
 			return false
 		}
 	}
@@ -446,7 +450,7 @@ func (p *BlockHintProcessor) checkTableQBName(tables []ast.HintTable, nodeType N
 }
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
-func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, nodeType NodeType, currentOffset int) []*ast.TableOptimizerHint {
+func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
 	if p.QbHints == nil {
 		p.QbHints = make(map[int][]*ast.TableOptimizerHint)
 	}
@@ -454,8 +458,8 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		if hint.HintName.L == hintQBName {
 			continue
 		}
-		offset := p.GetHintOffset(hint.QBName, nodeType, currentOffset)
-		if offset < 0 || !p.checkTableQBName(hint.Tables, nodeType) {
+		offset := p.GetHintOffset(hint.QBName, currentOffset)
+		if offset < 0 || !p.checkTableQBName(hint.Tables) {
 			hintStr := RestoreTableOptimizerHint(hint)
 			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr)))
 			continue
@@ -466,11 +470,15 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, blockOffset int) model.CIStr {
-	if nodeType == TypeDelete && (blockOffset == 0 || blockOffset == 1) {
-		return model.NewCIStr(defaultDeleteBlockName)
-	} else if nodeType == TypeUpdate && (blockOffset == 0 || blockOffset == 1) {
-		return model.NewCIStr(defaultUpdateBlockName)
+func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
+	if blockOffset == 0 {
+		if nodeType == TypeDelete {
+			return model.NewCIStr(defaultDeleteBlockName), nil
+		}
+		if nodeType == TypeUpdate {
+			return model.NewCIStr(defaultUpdateBlockName), nil
+		}
+		return model.NewCIStr(""), errors.New(fmt.Sprintf("Unexpected NodeType %d when block offset is 0", nodeType))
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset))
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
 }
