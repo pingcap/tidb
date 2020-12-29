@@ -1929,9 +1929,7 @@ func (lt *LogicalTopN) canPushToCop() bool {
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := lt.children[0].(*DataSource)
-	return ok
+	return lt.canChildPushDown()
 }
 
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2089,14 +2087,24 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
+func (p *baseLogicalPlan) canChildPushDown() bool {
+	_, ok := p.children[0].(*DataSource)
+	// TiFlash support pushing down more operators
+	if !ok && (p.SCtx().GetSessionVars().AllowBCJ || p.SCtx().GetSessionVars().AllowMPPExecution) {
+		_, ok = p.children[0].(*LogicalProjection)
+		if !ok {
+			_, ok = p.children[0].(*LogicalJoin)
+		}
+	}
+	return ok
+}
 
 func (la *LogicalAggregation) canPushToCop() bool {
 	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
-	_, ok := la.children[0].(*DataSource)
-	return ok && !la.noCopPushDown
+	return la.canChildPushDown() && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2250,7 +2258,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
-	if !la.canPushToCop() && !la.ctx.GetSessionVars().AllowMPPExecution && !la.ctx.GetSessionVars().AllowBCJ {
+	if !la.canPushToCop() {
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
@@ -2322,9 +2330,7 @@ func (p *LogicalLimit) canPushToCop() bool {
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
-	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
-	_, ok := p.children[0].(*DataSource)
-	return ok
+	return p.canChildPushDown()
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
