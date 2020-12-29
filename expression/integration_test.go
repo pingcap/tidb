@@ -4748,10 +4748,17 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	}
 	// split table t by ('bbbb', 10, '2020-01-01');
 	data := []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewTimeDatum(getTime(2020, 1, 1, mysql.TypeDatetime))}
-	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", buildCommonKeyFromData(tbl.Meta().ID, data))
+	hexKey := buildCommonKeyFromData(tbl.Meta().ID, data)
+	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	result = tk.MustQuery(sql)
 	rs := fmt.Sprintf(`{"handle":{"a":"bbbb","b":"10","c":"2020-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
 	result.Check(testkit.Rows(rs))
+
+	// split table t by ('bbbb', 10, null);
+	data = []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewDatum(nil)}
+	hexKey = buildCommonKeyFromData(tbl.Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
@@ -4768,10 +4775,17 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	}
 	// split table t index idx by ('aaaaa', 100, '2000-01-01');
 	data = []types.Datum{types.NewStringDatum("aaaaa"), types.NewIntDatum(100), types.NewTimeDatum(getTime(2000, 1, 1, mysql.TypeDatetime))}
-	hexKey := buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
+	hexKey = buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	result = tk.MustQuery(sql)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":"aaaaa","b":"100","c":"2000-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
+	result.Check(testkit.Rows(rs))
+	// split table t index idx by (null, null, null);
+	data = []types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)}
+	hexKey = buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	result = tk.MustQuery(sql)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":null,"b":null,"c":null},"table_id":%d}`, tbl.Meta().ID)
 	result.Check(testkit.Rows(rs))
 }
 
