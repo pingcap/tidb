@@ -211,9 +211,7 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
-	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: 0})
-	hg.Bounds.AppendDatum(0, lower)
-	hg.Bounds.AppendDatum(0, upper)
+	hg.AppendBucketWithNDV(lower, upper, count, repeat, 0)
 }
 
 // AppendBucketWithNDV appends a bucket into `hg` and set value for field `NDV`.
