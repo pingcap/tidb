@@ -17,6 +17,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
