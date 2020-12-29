@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -843,6 +845,9 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		idx, err = t.locateListPartition(ctx, pi, r)
 	}
 	if err != nil {
+		if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.InInsertStmt && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
 		return 0, errors.Trace(err)
 	}
 	return pi.Definitions[idx].ID, nil
