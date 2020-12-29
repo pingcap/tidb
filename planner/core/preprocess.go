@@ -970,7 +970,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth {
+			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
 		}
