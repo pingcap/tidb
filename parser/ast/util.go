@@ -55,6 +55,8 @@ func IsReadOnly(node Node) bool {
 			}
 		}
 		return true
+	case *PrepareStmt:
+		return true
 	default:
 		return false
 	}
