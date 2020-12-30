@@ -350,7 +350,9 @@ add placement policy
 	c.Assert(err, ErrorMatches, ".*unsupported label.*")
 
 	// invalid partition
-	_, err = tk.Exec(`alter table t1 alter partition p9
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c int)")
+	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
