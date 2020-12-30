@@ -17,9 +17,9 @@ import (
 	"io/ioutil"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/mem"
-	"time"
 )
 
 // MemTotal returns the total amount of RAM on this system
