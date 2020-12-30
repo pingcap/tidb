@@ -187,8 +187,6 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID
 		child = exec.Limit.Child
 	case tipb.ExecType_TypeExchangeSender:
 		child = exec.ExchangeSender.Child
-	case tipb.ExecType_TypeExchangeReceiver:
-		child = nil
 	case tipb.ExecType_TypeJoin:
 		child = exec.Join.Children[1-exec.Join.InnerIdx]
 	default:

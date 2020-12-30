@@ -1272,7 +1272,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := cop.convertToRootTask(b.ctx)
+	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}

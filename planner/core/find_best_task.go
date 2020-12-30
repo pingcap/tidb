@@ -243,8 +243,10 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
-			curTask = curTask.convertToRootTask(p.ctx)
+		if prop.IsFlashProp() {
+			if _, ok := curTask.(*copTask); !ok {
+				continue
+			}
 		}
 
 		// Enforce curTask property
@@ -289,8 +291,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		return bestTask, 1, nil
 	}
 
-	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
-		// Currently all plan cannot totally push down to TiKV.
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+		// Currently all plan cannot totally push down.
 		p.storeTask(prop, invalidTask)
 		return invalidTask, 0, nil
 	}
@@ -300,6 +302,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.Clone()
+	newProp.Enforced = prop.Enforced
 	var plansFitsProp, plansNeedEnforce []PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
@@ -317,8 +320,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.PartitionCols = nil
-		newProp.PartitionTp = property.AnyType
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
 		if hintCanWork && !hintWorksWithProp {
@@ -332,7 +333,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 			// work anyway, we give up `plansNeedEnforce` for efficiency,
 			plansNeedEnforce = nil
 		}
-		newProp = prop
+		newProp.SortItems = prop.SortItems
+		newProp.ExpectedCnt = prop.ExpectedCnt
 	}
 
 	newProp.Enforced = false
@@ -616,7 +618,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	var cnt int64
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldProp := prop.Clone()
+	oldPropCols := prop.SortItems
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -632,16 +634,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		// Next, get the bestTask with enforced prop
 		prop.SortItems = []property.SortItem{}
-		prop.PartitionTp = property.AnyType
-	} else if prop.PartitionTp != property.AnyType {
-		return invalidTask, 0, nil
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
 		if prop.Enforced {
-			prop = oldProp
+			prop.SortItems = oldPropCols
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
@@ -827,7 +826,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
-	task = cop.convertToRootTask(ds.ctx)
+	task = finishCopTask(ds.ctx, cop)
 	return task, nil
 }
 
@@ -1044,7 +1043,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
 	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
-		task = task.convertToRootTask(ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1473,19 +1472,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
-	if prop.TaskTp == property.MppTaskType {
-		if prop.PartitionTp != property.AnyType {
-			return &mppTask{}, nil
-		}
-		mppTask := &mppTask{
-			p:      ts,
-			cst:    cost,
-			partTp: property.AnyType,
-			ts:     ts,
-		}
-		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats)
-		return mppTask, nil
-	}
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
@@ -1512,7 +1498,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
-		task = task.convertToRootTask(ds.ctx)
+		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1682,26 +1668,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 
 	rTsk.cst = cost
 	return rTsk
-}
-
-func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats *property.StatsInfo) *mppTask {
-	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
-	var newRootConds []expression.Expression
-	filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, filterCondition, ts.ctx.GetClient(), ts.StoreType)
-	rootTaskConds = append(rootTaskConds, newRootConds...)
-	if len(rootTaskConds) > 0 {
-		return &mppTask{}
-	}
-	ts.filterCondition = filterCondition
-	// Add filter condition to table plan now.
-	sessVars := ts.ctx.GetSessionVars()
-	if len(ts.filterCondition) > 0 {
-		mpp.cst += mpp.count() * sessVars.CopCPUFactor
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
-		sel.SetChildren(ts)
-		mpp.p = sel
-	}
-	return mpp
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {

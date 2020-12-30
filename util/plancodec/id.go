@@ -52,6 +52,8 @@ const (
 	TypeLimit = "Limit"
 	// TypeHashJoin is the type of hash join.
 	TypeHashJoin = "HashJoin"
+	// TypeBroadcastJoin is the type of broad cast join.
+	TypeBroadcastJoin = "BroadcastJoin"
 	// TypeExchangeSender is the type of mpp exchanger sender.
 	TypeExchangeSender = "ExchangeSender"
 	// TypeExchangeReceiver is the type of mpp exchanger receiver.
