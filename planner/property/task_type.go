@@ -38,9 +38,6 @@ const (
 	// type is CopTiFlashGlobalReadTaskType, all its children prop's task type is
 	// CopTiFlashGlobalReadTaskType
 	CopTiFlashGlobalReadTaskType
-
-	// MppTaskType stands for task that would run on Mpp nodes, currently meaning the tiflash node.
-	MppTaskType
 )
 
 // String implements fmt.Stringer interface.
@@ -56,8 +53,6 @@ func (t TaskType) String() string {
 		return "copTiFlashLocalReadTask"
 	case CopTiFlashGlobalReadTaskType:
 		return "copTiFlashGlobalReadTask"
-	case MppTaskType:
-		return "mppTask"
 	}
 	return "UnknownTaskType"
 }
