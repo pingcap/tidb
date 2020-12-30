@@ -56,6 +56,10 @@ func main() {
 		fmt.Printf("\nparse arguments failed: %+v\n", err)
 		os.Exit(1)
 	}
+	if pflag.NArg() > 0 {
+		fmt.Printf("\nmeet some unparsed arguments, please check again: %+v\n", pflag.Args())
+		os.Exit(1)
+	}
 
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
