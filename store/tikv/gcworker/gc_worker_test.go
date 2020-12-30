@@ -531,7 +531,7 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 		res, err = needsGCOperationForStore(newStore(state, true, ""))
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, needGC)
-		res, err = needsGCOperationForStore(newStore(state, true, kv.TiKV.Name()))
+		res, err = needsGCOperationForStore(newStore(state, true, placement.EngineLabelTiKV))
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, needGC)
 

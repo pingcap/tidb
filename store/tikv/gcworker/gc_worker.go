@@ -826,9 +826,8 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		// skip physical resolve locks for it.
 		return false, nil
 
-	case "":
+	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
-		// For now, TiKV node does not set any label
 		return true, nil
 
 	default:
