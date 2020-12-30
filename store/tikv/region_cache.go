@@ -1040,7 +1040,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-		reg, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
+		reg, err := c.pdClient.GetRegionByID(ctx, regionID)
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionByIDError.Inc()
 		} else {
