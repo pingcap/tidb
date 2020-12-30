@@ -129,7 +129,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 
 	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, concurrency:2}" {
-		t.Fatalf("agg cop stats string is not expected, got: %v", stats.GetCopStats(aggID).String())
+		t.Fatalf("agg cop stats string is not as expected, got: %v", stats.GetCopStats(aggID).String())
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
 	if rootStats == nil {
@@ -187,7 +187,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 
 	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, concurrency:2}" {
-		t.Fatalf("agg cop stats string is not expect, got: %v", stats.GetCopStats(aggID).String())
+		t.Fatalf("agg cop stats string is not as expected, got: %v", stats.GetCopStats(aggID).String())
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
 	if rootStats == nil {
