@@ -6106,6 +6106,7 @@ func (s *testClusterTableSuite) TestSlowQuerySensitiveQuery(c *C) {
 		))
 }
 
+<<<<<<< HEAD
 func (s *testClusterTableSuite) TestSlowQueryWithoutSlowLog(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
@@ -6121,6 +6122,34 @@ func (s *testClusterTableSuite) TestSlowQueryWithoutSlowLog(c *C) {
 }
 
 func (s *testClusterTableSuite) TestSlowQuery2(c *C) {
+=======
+func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+	err = logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int,index idx(a));")
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
+	tk.MustExec("set tidb_slow_log_threshold=300;")
+	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
+		"where query like 'select%union%' limit 1").
+		Check(testkit.Rows(
+			"[t:idx]",
+		))
+}
+
+func (s *testSlowQuery) TestSlowQuery(c *C) {
+>>>>>>> fb4426b67... executor: avoid log duplicate index name in slow-log (#22057)
 	tk := testkit.NewTestKit(c, s.store)
 
 	f, err := ioutil.TempFile("", "tidb-slow-*.log")
