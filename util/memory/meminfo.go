@@ -70,19 +70,19 @@ const (
 )
 
 type memInfoCache struct {
-	sync.RWMutex
+	*sync.RWMutex
 	mem        uint64
 	updateTime time.Time
 }
 
-func (c memInfoCache) get() (mem uint64, t time.Time) {
+func (c *memInfoCache) get() (mem uint64, t time.Time) {
 	c.RLock()
 	defer c.RUnlock()
 	mem, t = c.mem, c.updateTime
 	return
 }
 
-func (c memInfoCache) set(mem uint64, t time.Time) (uint64, time.Time) {
+func (c *memInfoCache) set(mem uint64, t time.Time) (uint64, time.Time) {
 	c.Lock()
 	defer c.Unlock()
 	if t.After(c.updateTime) {
@@ -93,10 +93,10 @@ func (c memInfoCache) set(mem uint64, t time.Time) (uint64, time.Time) {
 }
 
 // expiration time is 60s
-var memLimit memInfoCache
+var memLimit *memInfoCache
 
 // expiration time is 500ms
-var memUsage memInfoCache
+var memUsage *memInfoCache
 
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
@@ -147,13 +147,13 @@ func init() {
 	if err != nil {
 	}
 	curTime := time.Now()
-	memLimit = memInfoCache{
-		RWMutex:    sync.RWMutex{},
+	memLimit = &memInfoCache{
+		RWMutex:    &sync.RWMutex{},
 		mem:        limit,
 		updateTime: curTime,
 	}
-	memUsage = memInfoCache{
-		RWMutex:    sync.RWMutex{},
+	memUsage = &memInfoCache{
+		RWMutex:    &sync.RWMutex{},
 		mem:        usage,
 		updateTime: curTime,
 	}
