@@ -2540,10 +2540,10 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 			}
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
-				errMsg := fmt.Sprintf("table %v don't have placement policies with txn_scope %v",
+				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
 					tableName, txnScope)
 				if len(partitionName) > 0 {
-					errMsg = fmt.Sprintf("table %v's partiton %v don't have placement policies with txn_scope %v",
+					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
 						tableName, partitionName, txnScope)
 				}
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
@@ -2576,7 +2576,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("partiton %s of table %s can not be written by local transactions when its placement policy is being altered",
+						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
 				}

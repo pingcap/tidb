@@ -286,18 +286,18 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 
 	bundles := builder.is.RuleBundles()
 	for phyTableID := range visitPhysicalTableID {
-		var tblName string
-		var partName string
-		tblInfo, _, partInfo := builder.is.FindTableByPartitionID(phyTableID)
-		if tblInfo != nil && partInfo != nil {
-			tblName = tblInfo.Meta().Name.String()
-			partName = partInfo.Name.String()
-		} else {
-			tblInfo, _ = builder.is.TableByID(phyTableID)
-			tblName = tblInfo.Meta().Name.String()
-		}
 		valid := VerifyTxnScope(builder.txnScope, phyTableID, bundles)
 		if !valid {
+			var tblName string
+			var partName string
+			tblInfo, _, partInfo := builder.is.FindTableByPartitionID(phyTableID)
+			if tblInfo != nil && partInfo != nil {
+				tblName = tblInfo.Meta().Name.String()
+				partName = partInfo.Name.String()
+			} else {
+				tblInfo, _ = builder.is.TableByID(phyTableID)
+				tblName = tblInfo.Meta().Name.String()
+			}
 			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
