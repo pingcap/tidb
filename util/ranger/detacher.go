@@ -14,11 +14,14 @@
 package ranger
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -90,10 +93,11 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is constant and another is column or an
+// getPotentialEqOrInColOffset checks if the expression is a eq/le/ge/lt/gt function that one side is constant and another is column or an
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
-func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+// Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
+func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -104,7 +108,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getEqOrInColOffset(dnfItem, cols)
+			curOffset := getPotentialEqOrInColOffset(dnfItem, cols)
 			if curOffset == -1 {
 				return -1
 			}
@@ -114,9 +118,12 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			offset = curOffset
 		}
 		return offset
-	case ast.EQ, ast.NullEQ:
+	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
@@ -135,6 +142,9 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
+			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
@@ -345,6 +355,97 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	return res, nil
 }
 
+// excludeToIncludeForIntPoint converts `(i` to `[i+1` and `i)` to `i-1]` if `i` is integer.
+// For example, if p is `(3`, i.e., point { value: int(3), excl: true, start: true }, it is equal to `[4`, i.e., point { value: int(4), excl: false, start: true }.
+// Similarly, if p is `8)`, i.e., point { value: int(8), excl: true, start: false}, it is equal to `7]`, i.e., point { value: int(7), excl: false, start: false }.
+// If return value is nil, it means p is unsatisfiable. For example, `(MaxInt64` is unsatisfiable.
+func excludeToIncludeForIntPoint(p *point) *point {
+	if !p.excl {
+		return p
+	}
+	if p.value.Kind() == types.KindInt64 {
+		val := p.value.GetInt64()
+		if p.start {
+			if val == math.MaxInt64 {
+				return nil
+			}
+			p.value.SetInt64(val + 1)
+			p.excl = false
+		} else {
+			if val == math.MinInt64 {
+				return nil
+			}
+			p.value.SetInt64(val - 1)
+			p.excl = false
+		}
+	} else if p.value.Kind() == types.KindUint64 {
+		val := p.value.GetUint64()
+		if p.start {
+			if val == math.MaxUint64 {
+				return nil
+			}
+			p.value.SetUint64(val + 1)
+			p.excl = false
+		} else {
+			if val == 0 {
+				return nil
+			}
+			p.value.SetUint64(val - 1)
+			p.excl = false
+		}
+	}
+	return p
+}
+
+// If there exists an interval whose length is large than 0, return nil. Otherwise remove all unsatisfiable intervals
+// and return array of single point intervals.
+func allSinglePoints(sc *stmtctx.StatementContext, points []point) []point {
+	pos := 0
+	for i := 0; i < len(points); i += 2 {
+		// Remove unsatisfiable interval. For example, (MaxInt64, +inf) and (-inf, MinInt64) is unsatisfiable.
+		left := excludeToIncludeForIntPoint(&points[i])
+		if left == nil {
+			continue
+		}
+		right := excludeToIncludeForIntPoint(&points[i+1])
+		if right == nil {
+			continue
+		}
+		// If interval is not a single point, just return nil.
+		if !left.start || right.start || left.excl || right.excl {
+			return nil
+		}
+		cmp, err := left.value.CompareDatum(sc, &right.value)
+		if err != nil || cmp != 0 {
+			return nil
+		}
+		// If interval is a single point, add it back to array.
+		points[pos] = *left
+		points[pos+1] = *right
+		pos += 2
+	}
+	return points[:pos]
+}
+
+func allEqOrIn(expr expression.Expression) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		for _, arg := range f.GetArgs() {
+			if !allEqOrIn(arg) {
+				return false
+			}
+		}
+		return true
+	case ast.EQ, ast.NullEQ, ast.In:
+		return true
+	}
+	return false
+}
+
 // ExtractEqAndInCondition will split the given condition into three parts by the information of index columns and their lengths.
 // accesses: The condition will be used to build range.
 // filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
@@ -359,10 +460,11 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	points := make([][]point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
 	newConditions := make([]expression.Expression, 0, len(conditions))
-	for _, cond := range conditions {
-		offset := getEqOrInColOffset(cond, cols)
+	offsets := make([]int, len(conditions))
+	for i, cond := range conditions {
+		offset := getPotentialEqOrInColOffset(cond, cols)
+		offsets[i] = offset
 		if offset == -1 {
-			newConditions = append(newConditions, cond)
 			continue
 		}
 		if accesses[offset] == nil {
@@ -384,12 +486,31 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	for i, ma := range mergedAccesses {
 		if ma == nil {
 			if accesses[i] != nil {
-				newConditions = append(newConditions, accesses[i])
+				if allEqOrIn(accesses[i]) {
+					newConditions = append(newConditions, accesses[i])
+				} else {
+					accesses[i] = nil
+				}
 			}
 			continue
 		}
-		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
-		newConditions = append(newConditions, accesses[i])
+		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i])
+		if points[i] == nil {
+			// There exists an interval whose length is larger than 0
+			accesses[i] = nil
+		} else if len(points[i]) == 0 {
+			// Early termination if false expression found
+			return nil, nil, nil, true
+		} else {
+			// All Intervals are single points
+			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
+			newConditions = append(newConditions, accesses[i])
+		}
+	}
+	for i, offset := range offsets {
+		if offset == -1 || accesses[offset] == nil {
+			newConditions = append(newConditions, conditions[i])
+		}
 	}
 	for i, cond := range accesses {
 		if cond == nil {

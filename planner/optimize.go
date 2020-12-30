@@ -352,7 +352,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
+	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false)
 	if bindSQL == "" {
 		return
 	}

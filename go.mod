@@ -32,7 +32,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20201208082126-4766545aa5b5
+	github.com/ngaut/unistore v0.0.0-20201217024625-f53801ce8d4f
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
@@ -45,17 +45,17 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20201208043834-923c9609272c
+	github.com/pingcap/kvproto v0.0.0-20201215060142-f3dafca4c7fd
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20201208084550-88851d93d583
+	github.com/pingcap/parser v0.0.0-20201222091346-02c8ff27d0bc
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
 	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
+	github.com/pingcap/tipb v0.0.0-20201209065231-aa39b1b86217
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
-	github.com/shirou/gopsutil v2.20.3+incompatible
+	github.com/shirou/gopsutil v2.20.6+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/stretchr/testify v1.6.1 // indirect
@@ -82,7 +82,7 @@ require (
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.3.0 // indirect
-	honnef.co/go/tools v0.0.1-2020.1.6 // indirect
+	honnef.co/go/tools v0.1.0 // indirect
 	modernc.org/mathutil v1.1.1 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
