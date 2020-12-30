@@ -1898,9 +1898,9 @@ func loadDefOOMAction(se *session) (string, error) {
 	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
 	if err != nil {
 		if err == errResultIsEmpty {
-			return config.OOMActionCancel, nil
+			return config.GetGlobalConfig().OOMAction, nil
 		}
-		return config.OOMActionCancel, err
+		return config.GetGlobalConfig().OOMAction, err
 	}
 	if defOOMAction != config.OOMActionLog {
 		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
