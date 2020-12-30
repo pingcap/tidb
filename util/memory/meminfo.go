@@ -31,14 +31,36 @@ var MemUsed func() (uint64, error)
 
 // MemTotalNormal returns the total amount of RAM on this system in non-container environment.
 func MemTotalNormal() (uint64, error) {
+	total, t := memLimit.get()
+	if time.Since(t) < 60*time.Second {
+		return total, nil
+	}
 	v, err := mem.VirtualMemory()
-	return v.Total, err
+	if err != nil {
+		return v.Total, err
+	}
+	total, _ = memLimit.set(v.Total, time.Now())
+	if total != v.Total {
+		return total, nil
+	}
+	return v.Total, nil
 }
 
 // MemUsedNormal returns the total used amount of RAM on this system in non-container environment.
 func MemUsedNormal() (uint64, error) {
+	used, t := memLimit.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return used, nil
+	}
 	v, err := mem.VirtualMemory()
-	return v.Used, err
+	if err != nil {
+		return v.Used, err
+	}
+	used, _ = memUsage.set(v.Used, time.Now())
+	if used != v.Used {
+		return used, nil
+	}
+	return v.Used, nil
 }
 
 const (
@@ -47,51 +69,66 @@ const (
 	selfCGroupPath     = "/proc/self/cgroup"
 )
 
-type memInContainer struct {
+type memInfoCache struct {
 	sync.RWMutex
 	mem        uint64
 	updateTime time.Time
 }
 
+func (c memInfoCache) get() (mem uint64, t time.Time) {
+	c.RLock()
+	defer c.RUnlock()
+	mem, t = c.mem, c.updateTime
+	return
+}
+
+func (c memInfoCache) set(mem uint64, t time.Time) (uint64, time.Time) {
+	c.Lock()
+	defer c.Unlock()
+	if t.After(c.updateTime) {
+		c.mem, c.updateTime = mem, t
+		return mem, t
+	}
+	return c.mem, c.updateTime
+}
+
 // expiration time is 60s
-var memLimitCache memInContainer
+var memLimit memInfoCache
 
 // expiration time is 500ms
-var memUsageCache memInContainer
+var memUsage memInfoCache
 
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
-	memLimitCache.RLock()
-	if time.Since(memLimitCache.updateTime) < 60*time.Second {
-		memLimitCache.RUnlock()
-		return memLimitCache.mem, nil
+	mem, t := memLimit.get()
+	if time.Since(t) < 60*time.Second {
+		return mem, nil
 	}
-	memLimitCache.RUnlock()
 	mem, err := readUint(cGroupMemLimitPath)
 	if err != nil {
 		return mem, err
 	}
-	memLimitCache.Lock()
-	memLimitCache.mem, memLimitCache.updateTime = mem, time.Now()
-	memLimitCache.Unlock()
+	newMem, _ := memLimit.set(mem, time.Now())
+	if newMem != mem {
+		mem = newMem
+	}
 	return mem, nil
 }
 
 // MemUsedCGroup returns the total used amount of RAM on this system in container environment.
 func MemUsedCGroup() (uint64, error) {
-	memUsageCache.RLock()
-	if time.Since(memUsageCache.updateTime) < 500*time.Millisecond {
-		memUsageCache.RUnlock()
-		return memUsageCache.mem, nil
+	mem, t := memUsage.get()
+	if time.Since(t) < 500*time.Millisecond {
+		return mem, nil
 	}
-	memUsageCache.RUnlock()
 	mem, err := readUint(cGroupMemUsagePath)
 	if err != nil {
 		return mem, err
 	}
-	memUsageCache.Lock()
-	memUsageCache.mem, memUsageCache.updateTime = mem, time.Now()
-	memUsageCache.Unlock()
+	newMem, _ := memUsage.set(mem, time.Now())
+	if newMem != mem {
+		mem = newMem
+	}
 	return mem, nil
 }
 
@@ -99,26 +136,26 @@ func init() {
 	if inContainer() {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
-		limit, err := MemTotalCGroup()
-		if err != nil {
-		}
-		usage, err := MemUsedCGroup()
-		if err != nil {
-		}
-		curTime := time.Now()
-		memLimitCache = memInContainer{
-			RWMutex:    sync.RWMutex{},
-			mem:        limit,
-			updateTime: curTime,
-		}
-		memUsageCache = memInContainer{
-			RWMutex:    sync.RWMutex{},
-			mem:        usage,
-			updateTime: curTime,
-		}
 	} else {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal
+	}
+	limit, err := MemTotal()
+	if err != nil {
+	}
+	usage, err := MemUsed()
+	if err != nil {
+	}
+	curTime := time.Now()
+	memLimit = memInfoCache{
+		RWMutex:    sync.RWMutex{},
+		mem:        limit,
+		updateTime: curTime,
+	}
+	memUsage = memInfoCache{
+		RWMutex:    sync.RWMutex{},
+		mem:        usage,
+		updateTime: curTime,
 	}
 }
 
