@@ -601,7 +601,8 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
 		rows = dbt.mustQuery("select id,name from t order by id")
@@ -688,18 +689,21 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.checkRows(c, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows,
 			"Warning 1526 Table has no partition for value from column_list",
