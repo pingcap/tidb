@@ -343,6 +343,7 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 	req := r.NewChunk()
 	r.Next(ctx, req)
 	c.Assert(req.NumRows(), Equals, 0)
+	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionCancel)
 }
 
 func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
