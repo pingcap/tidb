@@ -5833,8 +5833,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		}
 		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
 			Op:     placement.NotIn,
-			Key:    "engine",
-			Values: []string{"tiflash"},
+			Key:    placement.EngineLabelKey,
+			Values: []string{placement.EngineLabelTiFlash},
 		})
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
@@ -5853,6 +5853,11 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
+			LabelConstraints: []placement.LabelConstraint{{
+				Op:     placement.NotIn,
+				Key:    placement.EngineLabelKey,
+				Values: []string{placement.EngineLabelTiFlash},
+			}},
 		})
 	}
 	bundle.Rules = newRules

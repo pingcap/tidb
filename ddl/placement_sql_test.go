@@ -341,10 +341,16 @@ add placement policy
 	replicas=0`)
 	c.Assert(err, ErrorMatches, ".*Invalid placement option REPLICAS, it is not allowed to be 0.*")
 
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c int)")
+	// ban tiflash
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='["+zone=sh", "+engine=tiflash"]'
+	role=follower
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*unsupported label.*")
 
-	_, err = tk.Exec(`alter table t1 alter partition p
+	// invalid partition
+	_, err = tk.Exec(`alter table t1 alter partition p9
 add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
