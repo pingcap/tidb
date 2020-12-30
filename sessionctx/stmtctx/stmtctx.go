@@ -533,7 +533,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 	}
 }
 
-// MergeScanDetail merges cop details into self.
+// MergeScanDetail merges scan details into self.
 func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
 	if scanDetail == nil {
