@@ -755,15 +755,15 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 	})
 
-	// ***** 5% lockTTL = 0
+	// ***** 5% lockTTL = 1
 	ttl := c.lockTTL
 	if c.connID > 0 && rand.Float64() < 0.05 {
-		ttl = 0
+		ttl = 1
 		keys := make([]string, 0, len(mutations))
 		for _, m := range mutations {
 			keys = append(keys, hex.EncodeToString(m.Key))
 		}
-		logutil.BgLogger().Info("injected zero lock ttl on prewrite", zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+		logutil.BgLogger().Info("injected lock ttl = 1 on prewrite", zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
 	}
 
 	req := &pb.PrewriteRequest{
