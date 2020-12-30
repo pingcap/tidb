@@ -7341,7 +7341,7 @@ func (s *testSuite) TestIssue15563(c *C) {
 func (s *testSuite) TestStalenessTransaction(c *C) {
 	testcases := []struct {
 		name             string
-		preSql           string
+		preSQL           string
 		sql              string
 		IsStaleness      bool
 		expectPhysicalTS int64
@@ -7349,28 +7349,28 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	}{
 		{
 			name:             "TimestampBoundReadTimestamp",
-			preSql:           "begin",
+			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
-			preSql:      "begin",
+			preSQL:      "begin",
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
-			preSql:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
 		},
 		{
 			name:        "begin",
-			preSql:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         "begin",
 			IsStaleness: false,
 		},
