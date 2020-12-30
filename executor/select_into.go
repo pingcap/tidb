@@ -170,7 +170,9 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				} else {
 					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 				}
-			case mysql.TypeFloat, mysql.TypeDouble:
+			case mysql.TypeFloat:
+				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, float64(row.GetFloat32(j)), col.RetType)
+			case mysql.TypeDouble:
 				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, row.GetFloat64(j), col.RetType)
 			case mysql.TypeNewDecimal:
 				s.fieldBuf = append(s.fieldBuf, row.GetMyDecimal(j).String()...)
