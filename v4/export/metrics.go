@@ -3,7 +3,10 @@
 package export
 
 import (
+	"math"
+
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 var (
@@ -20,6 +23,13 @@ var (
 			Subsystem: "dump",
 			Name:      "finished_rows",
 			Help:      "counter for dumpling finished rows",
+		}, []string{})
+	finishedTablesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "dumpling",
+			Subsystem: "dump",
+			Name:      "finished_tables",
+			Help:      "counter for dumpling finished tables",
 		}, []string{})
 	writeTimeHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -57,6 +67,7 @@ var (
 func RegisterMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(finishedSizeCounter)
 	registry.MustRegister(finishedRowsCounter)
+	registry.MustRegister(finishedTablesCounter)
 	registry.MustRegister(writeTimeHistogram)
 	registry.MustRegister(receiveWriteChunkTimeHistogram)
 	registry.MustRegister(errorCount)
@@ -67,8 +78,18 @@ func RegisterMetrics(registry *prometheus.Registry) {
 func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
 	finishedSizeCounter.Delete(labels)
 	finishedRowsCounter.Delete(labels)
+	finishedTablesCounter.Delete(labels)
 	writeTimeHistogram.Delete(labels)
 	receiveWriteChunkTimeHistogram.Delete(labels)
 	errorCount.Delete(labels)
 	taskChannelCapacity.Delete(labels)
+}
+
+// ReadCounter reports the current value of the counter.
+func ReadCounter(counter prometheus.Counter) float64 {
+	var metric dto.Metric
+	if err := counter.Write(&metric); err != nil {
+		return math.NaN()
+	}
+	return metric.Counter.GetValue()
 }

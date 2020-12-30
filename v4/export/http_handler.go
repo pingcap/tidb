@@ -35,7 +35,7 @@ func startHTTPServer(lis net.Listener) {
 	err := httpServer.Serve(lis)
 	err = errors.Cause(err)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
-		log.Error("http server return with error", zap.Error(err))
+		log.Warn("http server return with error", zap.Error(err))
 	}
 }
 

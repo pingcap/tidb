@@ -173,7 +173,7 @@ func DefaultConfig() *Config {
 func (conf *Config) String() string {
 	cfg, err := json.Marshal(conf)
 	if err != nil {
-		log.Error("marshal config to json", zap.Error(err))
+		log.Error("fail to marshal config to json", zap.Error(err))
 	}
 	return string(cfg)
 }
