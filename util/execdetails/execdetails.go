@@ -24,6 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/util/memory"
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -43,8 +48,6 @@ var (
 type ExecDetails struct {
 	CalleeAddress    string
 	CopTime          time.Duration
-	ProcessTime      time.Duration
-	WaitTime         time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	BackoffSleep     map[string]time.Duration
@@ -54,6 +57,11 @@ type ExecDetails struct {
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
+<<<<<<< HEAD
+=======
+	ScanDetail       *ScanDetail
+	TimeDetail       TimeDetail
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 }
 
 type stmtExecDetailKeyType struct{}
@@ -169,6 +177,123 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+<<<<<<< HEAD
+=======
+// TimeDetail contains coprocessor time detail information.
+type TimeDetail struct {
+	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
+	// other kind of waitings in series.
+	ProcessTime time.Duration
+	// Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
+	// include `wait_wall_time`.
+	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
+	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
+	// this field is called wall time instead of CPU time.
+	WaitTime time.Duration
+}
+
+// String implements the fmt.Stringer interface.
+func (td *TimeDetail) String() string {
+	if td == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if td.ProcessTime > 0 {
+		buf.WriteString("total_process_time: ")
+		buf.WriteString(FormatDuration(td.ProcessTime))
+	}
+	if td.WaitTime > 0 {
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("total_wait_time: ")
+		buf.WriteString(FormatDuration(td.WaitTime))
+	}
+	return buf.String()
+}
+
+// MergeFromTimeDetail merges time detail from pb into itself.
+func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
+	if timeDetail != nil {
+		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+	}
+}
+
+// ScanDetail contains coprocessor scan detail information.
+type ScanDetail struct {
+	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
+	// deleted versions, but does not include RocksDB tombstone keys.
+	TotalKeys int64
+	// ProcessedKeys is the number of user keys scanned from the storage.
+	// It does not include deleted version or RocksDB tombstone keys.
+	// For Coprocessor requests, it includes keys that has been filtered out by Selection.
+	ProcessedKeys int64
+	// RocksdbDeleteSkippedCount is the total number of deletes and single deletes skipped over during
+	// iteration, i.e. how many RocksDB tombstones are skipped.
+	RocksdbDeleteSkippedCount uint64
+	// RocksdbKeySkippedCount it the total number of internal keys skipped over during iteration.
+	RocksdbKeySkippedCount uint64
+	// RocksdbBlockCacheHitCount is the total number of RocksDB block cache hits.
+	RocksdbBlockCacheHitCount uint64
+	// RocksdbBlockReadCount is the total number of block reads (with IO).
+	RocksdbBlockReadCount uint64
+	// RocksdbBlockReadByte is the total number of bytes from block reads.
+	RocksdbBlockReadByte uint64
+}
+
+// Merge merges scan detail execution details into self.
+func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
+	atomic.AddInt64(&sd.TotalKeys, scanDetail.TotalKeys)
+	atomic.AddInt64(&sd.ProcessedKeys, scanDetail.ProcessedKeys)
+	atomic.AddUint64(&sd.RocksdbDeleteSkippedCount, scanDetail.RocksdbDeleteSkippedCount)
+	atomic.AddUint64(&sd.RocksdbKeySkippedCount, scanDetail.RocksdbKeySkippedCount)
+	atomic.AddUint64(&sd.RocksdbBlockCacheHitCount, scanDetail.RocksdbBlockCacheHitCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadCount, scanDetail.RocksdbBlockReadCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
+}
+
+// String implements the fmt.Stringer interface.
+func (sd *ScanDetail) String() string {
+	if sd == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString("scan_detail: {")
+	buf.WriteString("total_process_keys: ")
+	buf.WriteString(strconv.FormatInt(sd.ProcessedKeys, 10))
+	buf.WriteString(", total_keys: ")
+	buf.WriteString(strconv.FormatInt(sd.TotalKeys, 10))
+	buf.WriteString(", rocksdb: {")
+	buf.WriteString("delete_skipped_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
+	buf.WriteString(", key_skipped_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
+	buf.WriteString(", block: {")
+	buf.WriteString("cache_hit_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
+	buf.WriteString(", read_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
+	buf.WriteString(", read_byte: ")
+	buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
+	buf.WriteString("}}}")
+	return buf.String()
+}
+
+// MergeFromScanDetailV2 merges scan detail from pb into itself.
+func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
+	if scanDetail != nil {
+		sd.TotalKeys += int64(scanDetail.TotalVersions)
+		sd.ProcessedKeys += int64(scanDetail.ProcessedVersions)
+		sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
+		sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
+		sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
+		sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
+		sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
+	}
+}
+
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
@@ -218,11 +343,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.ProcessTime > 0 {
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.WaitTime > 0 {
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
@@ -283,6 +408,33 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
+<<<<<<< HEAD
+=======
+	scanDetail := d.ScanDetail
+	if scanDetail != nil {
+		if scanDetail.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(scanDetail.ProcessedKeys, 10))
+		}
+		if scanDetail.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
+		}
+		if scanDetail.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
+		}
+		if scanDetail.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
+		}
+		if scanDetail.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
+		}
+		if scanDetail.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
+		}
+		if scanDetail.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
+		}
+	}
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	return strings.Join(parts, " ")
 }
 
@@ -292,11 +444,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
@@ -304,11 +456,19 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
+<<<<<<< HEAD
 	if d.TotalKeys > 0 {
 		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
 	}
 	if d.ProcessedKeys > 0 {
 		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+=======
+	if d.ScanDetail != nil && d.ScanDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.ScanDetail.TotalKeys, 10)))
+	}
+	if d.ScanDetail != nil && d.ScanDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ScanDetail.ProcessedKeys, 10)))
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -363,7 +523,12 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
+<<<<<<< HEAD
 	stats map[string][]*BasicRuntimeStats
+=======
+	stats      map[string][]*BasicRuntimeStats
+	scanDetail *ScanDetail
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -412,6 +577,13 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
+<<<<<<< HEAD
+=======
+	if detail := crs.scanDetail; detail != nil {
+		buf.WriteString(", ")
+		buf.WriteString(detail.String())
+	}
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	return buf.String()
 }
 
@@ -624,7 +796,10 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		copStats = &CopRuntimeStats{
+			stats:      make(map[string][]*BasicRuntimeStats),
+			scanDetail: &ScanDetail{},
+		}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -651,6 +826,15 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	copStats.RecordOneCopTask(address, summary)
 }
 
+<<<<<<< HEAD
+=======
+// RecordScanDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, detail *ScanDetail) {
+	copStats := e.GetCopStats(planID)
+	copStats.scanDetail.Merge(detail)
+}
+
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 // ExistsRootStats checks if the planID exists in the rootStats collection.
 func (e *RuntimeStatsColl) ExistsRootStats(planID int) bool {
 	e.mu.Lock()

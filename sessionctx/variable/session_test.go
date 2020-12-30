@@ -136,12 +136,25 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
+<<<<<<< HEAD
 		ProcessTime:   time.Second * time.Duration(2),
 		WaitTime:      time.Minute,
 		BackoffTime:   time.Millisecond,
 		RequestCount:  2,
 		TotalKeys:     10000,
 		ProcessedKeys: 20001,
+=======
+		BackoffTime:  time.Millisecond,
+		RequestCount: 2,
+		ScanDetail: &execdetails.ScanDetail{
+			ProcessedKeys: 20001,
+			TotalKeys:     10000,
+		},
+		TimeDetail: execdetails.TimeDetail{
+			ProcessTime: time.Second * time.Duration(2),
+			WaitTime:    time.Minute,
+		},
+>>>>>>> 8144e1395... *:Adapt ScanDetailV2 in KvGet and KvBatchGet Response (#21562)
 	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
