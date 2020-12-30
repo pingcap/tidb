@@ -711,47 +711,47 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// TiKV
-	ssElement.sumProcessTime += sei.ExecDetail.ProcessTime
-	if sei.ExecDetail.ProcessTime > ssElement.maxProcessTime {
-		ssElement.maxProcessTime = sei.ExecDetail.ProcessTime
+	ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
+	if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
+		ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
 	}
-	ssElement.sumWaitTime += sei.ExecDetail.WaitTime
-	if sei.ExecDetail.WaitTime > ssElement.maxWaitTime {
-		ssElement.maxWaitTime = sei.ExecDetail.WaitTime
+	ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
+	if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
+		ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
 	}
 	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
 
-	if sei.ExecDetail.CopDetail != nil {
-		ssElement.sumTotalKeys += sei.ExecDetail.CopDetail.TotalKeys
-		if sei.ExecDetail.CopDetail.TotalKeys > ssElement.maxTotalKeys {
-			ssElement.maxTotalKeys = sei.ExecDetail.CopDetail.TotalKeys
+	if sei.ExecDetail.ScanDetail != nil {
+		ssElement.sumTotalKeys += sei.ExecDetail.ScanDetail.TotalKeys
+		if sei.ExecDetail.ScanDetail.TotalKeys > ssElement.maxTotalKeys {
+			ssElement.maxTotalKeys = sei.ExecDetail.ScanDetail.TotalKeys
 		}
-		ssElement.sumProcessedKeys += sei.ExecDetail.CopDetail.ProcessedKeys
-		if sei.ExecDetail.CopDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-			ssElement.maxProcessedKeys = sei.ExecDetail.CopDetail.ProcessedKeys
+		ssElement.sumProcessedKeys += sei.ExecDetail.ScanDetail.ProcessedKeys
+		if sei.ExecDetail.ScanDetail.ProcessedKeys > ssElement.maxProcessedKeys {
+			ssElement.maxProcessedKeys = sei.ExecDetail.ScanDetail.ProcessedKeys
 		}
-		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
-		if sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
-			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
+			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
 		}
-		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
-		if sei.ExecDetail.CopDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
-			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
+			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
 		}
-		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
-		if sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
-			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
+			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
 		}
-		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.CopDetail.RocksdbBlockReadCount
-		if sei.ExecDetail.CopDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
-			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
+			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
 		}
-		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.CopDetail.RocksdbBlockReadByte
-		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
-			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
+			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 	}
 
