@@ -1115,15 +1115,19 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
+	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		oldPi := s.ShowProcess()
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
+	}
+	// We set process info before building plan, so we extended execution time.
+	if oldPi != nil && oldPi.Info == pi.Info {
+		pi.Time = oldPi.Time
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
@@ -1226,6 +1230,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+
+	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
+	s.currentPlan = nil
+	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
