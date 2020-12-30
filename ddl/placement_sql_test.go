@@ -60,6 +60,12 @@ PARTITION BY RANGE (c) (
 	// normal cases
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
 	replicas=3`)
@@ -75,6 +81,20 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="{'+zone=sh': 1}"
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="['+zone=sh']"
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -141,7 +161,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -167,7 +187,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3,
 alter placement policy
@@ -185,7 +205,7 @@ drop placement policy
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=voter
 	replicas=3,
 drop placement policy
@@ -204,7 +224,7 @@ add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array, JSON object or empty.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -217,14 +237,14 @@ add placement policy
 	constraints='[,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
