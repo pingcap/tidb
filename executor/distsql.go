@@ -143,8 +143,8 @@ func handleIsExtra(col *expression.Column) bool {
 	return false
 }
 
-func splitRanges(ranges []*ranger.Range, keepOrder bool, desc bool) ([]*ranger.Range, []*ranger.Range) {
-	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
+func splitRanges(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
 	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
