@@ -968,7 +968,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			// As return warning when load data meet no partition or session ignore was set
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.noPartitionErr)
+			// e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.noPartitionErr)
 			continue
 		}
 		skip := false
