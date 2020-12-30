@@ -45,7 +45,7 @@ func MemTotalNormal() (uint64, error) {
 
 // MemUsedNormal returns the total used amount of RAM on this system in non-container environment.
 func MemUsedNormal() (uint64, error) {
-	used, t := memLimit.get()
+	used, t := memUsage.get()
 	if time.Since(t) < 500*time.Millisecond {
 		return used, nil
 	}
