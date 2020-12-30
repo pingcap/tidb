@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -269,6 +270,92 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(req.NumRows(), Equals, 1)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "False")
 	c.Assert(r.Close(), IsNil)
+}
+
+func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
+	ctx := context.Background()
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+
+	// test issue 20900, upgrade from v3.0 to v4.0.11+
+	seV3 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(51))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV3, "update mysql.tidb set variable_value='51' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
+	mustExecSQL(c, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(51))
+
+	domV4, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV4.Close()
+	seV4 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV4)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	req := r.NewChunk()
+	r.Next(ctx, req)
+	c.Assert(req.GetRow(0).GetString(0), Equals, "log")
+	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionLog)
+}
+
+func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
+	ctx := context.Background()
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+
+	// test issue 20900, upgrade from v4.0.11 to v4.0.11
+	seV3 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(52))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV3, "update mysql.tidb set variable_value=52 where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
+	mustExecSQL(c, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(52))
+
+	domV4, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV4.Close()
+	seV4 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV4)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	req := r.NewChunk()
+	r.Next(ctx, req)
+	c.Assert(req.NumRows(), Equals, 0)
+	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionCancel)
 }
 
 func (s *testBootstrapSuite) TestIssue20900_1(c *C) {

@@ -343,6 +343,9 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
+	// The variable name in mysql.tidb table and it records the default value of
+	// oom-action when upgrade from v3.0.x to v4.0.11+.
+	tidbDefOOMAction = "default_oom_action"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -406,6 +409,8 @@ const (
 	version50 = 50
 	// version51 restore all SQL bindings.
 	version51 = 51
+	// version52 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
+	version52 = 52
 )
 
 var (
@@ -460,6 +465,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1233,10 +1239,32 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	}
 }
 
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
 func writeMemoryQuotaQuery(s Session) {
-	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
+}
+
+func writeOOMAction(s Session) {
+	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog)
 	mustExecute(s, sql)
 }
 
