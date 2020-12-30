@@ -967,8 +967,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
-			// As return warning when load data meet no partition or session ignore was set
-			// e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.noPartitionErr)
 			continue
 		}
 		skip := false

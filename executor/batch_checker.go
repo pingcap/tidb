@@ -110,11 +110,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				result = append(result, toBeCheckedRow{ignored: true})
 				return result, nil
 			}
-			// load data need return warning and replace into return err when data meet no partition
-			// if terr, ok := errors.Cause(err).(*terror.Error); ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-			// 	result = append(result, toBeCheckedRow{ignored: true, noPartitionErr: err})
-			// 	return result, nil
-			// }
 			return nil, err
 		}
 	}
