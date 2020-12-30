@@ -273,6 +273,12 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 }
 
 func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)
@@ -310,6 +316,12 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 }
 
 func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
 	ctx := context.Background()
 	defer testleak.AfterTest(c)()
 	store, _ := newStoreWithBootstrap(c, s.dbName)

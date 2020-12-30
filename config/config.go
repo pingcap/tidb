@@ -853,8 +853,8 @@ func isAllDeprecatedConfigItems(items []string) bool {
 // is set by the user.
 var IsMemoryQuotaQuerySetByUser bool
 
-// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-action is
-// set by the user.
+// IsOOMActionSetByUser indicates whether the config item mem-action is set by
+// the user.
 var IsOOMActionSetByUser bool
 
 // InitializeConfig initialize the global config handler.

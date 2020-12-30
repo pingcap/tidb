@@ -1995,9 +1995,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 	if !config.IsOOMActionSetByUser {
-		newCfg := *(config.GetGlobalConfig())
-		newCfg.OOMAction = newOOMAction
-		config.StoreGlobalConfig(&newCfg)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = newOOMAction
+		})
 	}
 
 	dom := domain.GetDomain(se)
