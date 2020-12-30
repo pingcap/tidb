@@ -1894,6 +1894,21 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 	return 32 << 30, nil
 }
 
+func loadDefOOMAction(se *session) (string, error) {
+	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return config.OOMActionCancel, nil
+		}
+		return config.OOMActionCancel, err
+	}
+	if defOOMAction != config.OOMActionLog {
+		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
+			zap.String("value", defOOMAction))
+	}
+	return defOOMAction, nil
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 )
@@ -1974,6 +1989,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
 		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+	}
+	newOOMAction, err := loadDefOOMAction(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsOOMActionSetByUser {
+		newCfg := *(config.GetGlobalConfig())
+		newCfg.OOMAction = newOOMAction
+		config.StoreGlobalConfig(&newCfg)
 	}
 
 	dom := domain.GetDomain(se)
