@@ -124,22 +124,14 @@ func init() {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal
 	}
-	limit, err := MemTotal()
-	if err != nil {
-	}
-	usage, err := MemUsed()
-	if err != nil {
-	}
-	curTime := time.Now()
 	memLimit = &memInfoCache{
-		RWMutex:    &sync.RWMutex{},
-		mem:        limit,
-		updateTime: curTime,
+		RWMutex: &sync.RWMutex{},
 	}
-	memUsage = &memInfoCache{
-		RWMutex:    &sync.RWMutex{},
-		mem:        usage,
-		updateTime: curTime,
+	_, err := MemTotal()
+	if err != nil {
+	}
+	_, err = MemUsed()
+	if err != nil {
 	}
 }
 
