@@ -194,10 +194,8 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
 			}
 
-			switch col.GetType().Tp { // only string types need to be escaped
-			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
-				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
-				mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+			switch col.GetType().EvalType() {
+			case types.ETString, types.ETJson:
 				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
 			default:
 				s.lineBuf = append(s.lineBuf, s.fieldBuf...)
