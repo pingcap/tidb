@@ -174,7 +174,7 @@ func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableD
 		row                   = MakeRowReceiver(meta.ColumnTypes())
 		counter               uint64
 		lastCounter           uint64
-		escapeBackSlash       = cfg.EscapeBackslash
+		escapeBackslash       = cfg.EscapeBackslash
 		err                   error
 	)
 
@@ -199,10 +199,10 @@ func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableD
 			lastBfSize := bf.Len()
 			if selectedField != "" {
 				if err = fileRowIter.Decode(row); err != nil {
-					log.Error("scanning from sql.Row failed", zap.Error(err))
+					log.Error("fail to scan from sql.Row", zap.Error(err))
 					return errors.Trace(err)
 				}
-				row.WriteToBuffer(bf, escapeBackSlash)
+				row.WriteToBuffer(bf, escapeBackslash)
 			} else {
 				bf.WriteString("()")
 			}
@@ -243,9 +243,10 @@ func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableD
 			break
 		}
 	}
-	log.Debug("dumping table",
+	log.Debug("finish dumping table(chunk)",
+		zap.String("database", meta.DatabaseName()),
 		zap.String("table", meta.TableName()),
-		zap.Uint64("record counts", counter))
+		zap.Uint64("total rows", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}
@@ -295,7 +296,7 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 		row             = MakeRowReceiver(meta.ColumnTypes())
 		counter         uint64
 		lastCounter     uint64
-		escapeBackSlash = cfg.EscapeBackslash
+		escapeBackslash = cfg.EscapeBackslash
 		selectedFields  = meta.SelectedField()
 		err             error
 	)
@@ -303,7 +304,7 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
 		for i, col := range meta.ColumnNames() {
 			bf.Write(opt.delimiter)
-			escapeCSV([]byte(col), bf, escapeBackSlash, opt)
+			escapeCSV([]byte(col), bf, escapeBackslash, opt)
 			bf.Write(opt.delimiter)
 			if i != len(meta.ColumnTypes())-1 {
 				bf.Write(opt.separator)
@@ -317,10 +318,10 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 		lastBfSize := bf.Len()
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
-				log.Error("scanning from sql.Row failed", zap.Error(err))
+				log.Error("fail to scan from sql.Row", zap.Error(err))
 				return errors.Trace(err)
 			}
-			row.WriteToBufferInCsv(bf, escapeBackSlash, opt)
+			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
 		}
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
@@ -348,9 +349,10 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 		}
 	}
 
-	log.Debug("dumping table",
+	log.Debug("finish dumping table(chunk)",
+		zap.String("database", meta.DatabaseName()),
 		zap.String("table", meta.TableName()),
-		zap.Uint64("record counts", counter))
+		zap.Uint64("total rows", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}

@@ -16,6 +16,7 @@ require (
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
 	github.com/pingcap/tidb-tools v4.0.8-0.20200927084250-e47e0e12c7f3+incompatible
 	github.com/prometheus/client_golang v1.5.1
+	github.com/prometheus/client_model v0.2.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spf13/pflag v1.0.5
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09

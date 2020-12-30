@@ -31,7 +31,7 @@ func filterTables(conf *Config) {
 	}
 
 	if len(ignoredDBTable) > 0 {
-		log.Debug("ignore table", zap.String("", ignoredDBTable.Literal()))
+		log.Debug("ignore table", zap.String("tables", ignoredDBTable.Literal()))
 	}
 
 	conf.Tables = dbTables
