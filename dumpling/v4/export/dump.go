@@ -270,10 +270,10 @@ func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
 			} else {
 				task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 				d.sendTaskToChan(task, taskChan)
-			}
-			err = d.dumpTableData(metaConn, meta, taskChan)
-			if err != nil {
-				return err
+				err = d.dumpTableData(metaConn, meta, taskChan)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
