@@ -45,17 +45,15 @@ PARTITION BY RANGE (c) (
 );`)
 
 	is := s.dom.InfoSchema()
-	bundles := make(map[string]*placement.Bundle)
-	is.MockBundles(bundles)
 
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 	p0ID := placement.GroupID(partDefs[0].ID)
-	bundles[p0ID] = &placement.Bundle{
+	is.SetBundle(&placement.Bundle{
 		ID:    p0ID,
 		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
-	}
+	})
 
 	// normal cases
 	_, err = tk.Exec(`alter table t1 alter partition p0
