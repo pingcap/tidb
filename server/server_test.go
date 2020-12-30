@@ -697,12 +697,12 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
 		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows,
