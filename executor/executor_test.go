@@ -2175,14 +2175,14 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert t values ()")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
-	_, err = tk.Exec("insert t values (null)")
-	c.Check(err, NotNil)
+	tk.MustExec("insert t values (null)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert ignore t values (null)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t select null")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
 	tk.MustExec("insert t values (1000)")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "127"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("0", "0", "0", "0", "127"))
 
 	tk.MustExec("insert tdouble values (10.23)")
 	tk.MustQuery("select * from tdouble").Check(testkit.Rows("9.99"))
@@ -4268,7 +4268,7 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th, tr, tl`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
 	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
 	tk.MustExec(`create table tr (a int, b int)
 							partition by range (a) (
@@ -4748,6 +4748,11 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	// Exceed limit 1000.
 	errMsg = "Split table region num exceeded the limit 1000"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.1) regions 100000;", errMsg)
+
+	// Split on null values.
+	errMsg = "[planner:1048]Column 'a' cannot be null"
+	tk.MustGetErrMsg("split table t between (null, null) and (null, null) regions 1000;", errMsg)
+	tk.MustGetErrMsg("split table t by (null, null);", errMsg)
 
 	// Success.
 	tk.MustExec("split table t between ('aaa', 0.0) and ('aaa', 100.0) regions 10;")
