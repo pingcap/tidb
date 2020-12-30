@@ -110,6 +110,7 @@ drop placement policy
 	role=follower`)
 	c.Assert(err, NotNil)
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	role=xxx
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
@@ -203,13 +204,13 @@ add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array or object.*")
+	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array, JSON object or empty.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	role=voter
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*constraint should be a JSON array or object.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy

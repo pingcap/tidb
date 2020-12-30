@@ -5655,7 +5655,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
 	var err error
 	cnstr = strings.TrimSpace(cnstr)
-	rules := make([]*placement.Rule, 0, 1)
+	rules := []*placement.Rule{}
 	if len(cnstr) > 0 && cnstr[0] == '[' {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
@@ -5712,8 +5712,12 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 				Count: ruleCnt,
 			})
 		}
+	} else if len(cnstr) == 0 {
+		rules = append(rules, &placement.Rule{
+			Count: int(replicas),
+		})
 	} else {
-		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+		err = errors.Errorf("constraint should be a JSON array, JSON object or empty, but got '%s'", cnstr)
 	}
 	return rules, err
 }
