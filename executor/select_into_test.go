@@ -86,6 +86,16 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 	cmpAndRm(`0
 1
 `, outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id float(16,2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values (3.4), (1), (10.1), (2.00)")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t ORDER BY id INTO OUTFILE %q", outfile))
+	cmpAndRm(`1.00
+2.00
+3.40
+10.10
+`, outfile, c)
 }
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
