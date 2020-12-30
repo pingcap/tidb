@@ -1446,6 +1446,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 
 	// test issue21965
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec("create table t (a int) partition by list (a) (partition p0 values in (0,1));")
 	tk.MustExec("insert ignore into t values (1);")
 	tk.MustExec("update ignore t set a=2 where a=1;")
