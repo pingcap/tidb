@@ -1684,7 +1684,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 		sc.InLoadDataStmt = true
-		// return warning instead error when load data meet no partition
+		// return warning instead error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
