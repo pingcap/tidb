@@ -43,9 +43,8 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t              table.Table
-	ignored        bool
-	noPartitionErr error
+	t       table.Table
+	ignored bool
 }
 
 // encodeNewRow encodes a new row to value.
