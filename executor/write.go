@@ -18,9 +18,12 @@ import (
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -177,7 +180,14 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 			// If the new handle exists, this will avoid to remove the record.
 			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
 			if err != nil {
+<<<<<<< HEAD
 				return false, handleChanged, newHandle, err
+=======
+				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+					return false, nil
+				}
+				return false, err
+>>>>>>> f2a68ee28... executor: fix `update ignore` into not exists partition (#21984)
 			}
 		}
 		if err = t.RemoveRecord(sctx, h, oldData); err != nil {
@@ -199,8 +209,16 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+<<<<<<< HEAD
 			return false, false, 0, err
+=======
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
+			return false, err
+>>>>>>> f2a68ee28... executor: fix `update ignore` into not exists partition (#21984)
 		}
+
 		if onDup {
 			sc.AddAffectedRows(2)
 		} else {
