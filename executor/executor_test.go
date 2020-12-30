@@ -7379,7 +7379,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		tk.MustExec(testcase.preSql)
+		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
