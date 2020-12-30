@@ -801,12 +801,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return nil
 }
 
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-	engineLabelTiKV    = "tikv"
-)
-
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
@@ -819,14 +813,14 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 	engineLabel := ""
 	for _, label := range store.GetLabels() {
-		if label.GetKey() == engineLabelKey {
+		if label.GetKey() == placement.EngineLabelKey {
 			engineLabel = label.GetValue()
 			break
 		}
 	}
 
 	switch engineLabel {
-	case engineLabelTiFlash:
+	case placement.EngineLabelTiFlash:
 		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
 		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
 		// skip physical resolve locks for it.
@@ -834,8 +828,7 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 	case "":
 		// If no engine label is set, it should be a TiKV node.
-		fallthrough
-	case engineLabelTiKV:
+		// For now, TiKV node does not set any label
 		return true, nil
 
 	default:
