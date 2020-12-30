@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/mem"
+	"sync"
 )
 
 // MemTotal returns the total amount of RAM on this system
@@ -47,6 +48,7 @@ const (
 )
 
 type memInContainer struct {
+	sync.RWMutex
 	mem        uint64
 	updateTime time.Time
 }
@@ -59,27 +61,37 @@ var memUsageCache memInContainer
 
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
+	memLimitCache.RLock()
 	if time.Since(memLimitCache.updateTime) < 60*time.Second {
+		memLimitCache.RUnlock()
 		return memLimitCache.mem, nil
 	}
+	memLimitCache.RUnlock()
 	mem, err := readUint(cGroupMemLimitPath)
 	if err != nil {
 		return mem, err
 	}
+	memLimitCache.Lock()
 	memLimitCache.mem, memLimitCache.updateTime = mem, time.Now()
+	memLimitCache.Unlock()
 	return mem, nil
 }
 
 // MemUsedCGroup returns the total used amount of RAM on this system in container environment.
 func MemUsedCGroup() (uint64, error) {
+	memUsageCache.RLock()
 	if time.Since(memUsageCache.updateTime) < 500*time.Millisecond {
+		memUsageCache.RUnlock()
 		return memUsageCache.mem, nil
 	}
+	memUsageCache.RUnlock()
 	mem, err := readUint(cGroupMemUsagePath)
 	if err != nil {
 		return mem, err
 	}
+	memUsageCache.Lock()
 	memUsageCache.mem, memUsageCache.updateTime = mem, time.Now()
+	memUsageCache.Unlock()
 	return mem, nil
 }
 
@@ -95,10 +107,12 @@ func init() {
 		}
 		curTime := time.Now()
 		memLimitCache = memInContainer{
+			RWMutex:    sync.RWMutex{},
 			mem:        limit,
 			updateTime: curTime,
 		}
 		memUsageCache = memInContainer{
+			RWMutex:    sync.RWMutex{},
 			mem:        usage,
 			updateTime: curTime,
 		}
