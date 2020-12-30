@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/shirou/gopsutil/mem"
+	"time"
 )
 
 // MemTotal returns the total amount of RAM on this system
@@ -45,20 +46,62 @@ const (
 	selfCGroupPath     = "/proc/self/cgroup"
 )
 
+type memInContainer struct {
+	mem        uint64
+	updateTime time.Time
+}
+
+// expiration time is 60s
+var memLimitCache memInContainer
+
+// expiration time is 500ms
+var memUsageCache memInContainer
+
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
-	return readUint(cGroupMemLimitPath)
+	if time.Since(memLimitCache.updateTime) < 60*time.Second {
+		return memLimitCache.mem, nil
+	}
+	mem, err := readUint(cGroupMemLimitPath)
+	if err != nil {
+		return mem, err
+	}
+	memLimitCache.mem, memLimitCache.updateTime = mem, time.Now()
+	return mem, nil
 }
 
 // MemUsedCGroup returns the total used amount of RAM on this system in container environment.
 func MemUsedCGroup() (uint64, error) {
-	return readUint(cGroupMemUsagePath)
+	if time.Since(memUsageCache.updateTime) < 500*time.Millisecond {
+		return memUsageCache.mem, nil
+	}
+	mem, err := readUint(cGroupMemUsagePath)
+	if err != nil {
+		return mem, err
+	}
+	memUsageCache.mem, memUsageCache.updateTime = mem, time.Now()
+	return mem, nil
 }
 
 func init() {
 	if inContainer() {
 		MemTotal = MemTotalCGroup
 		MemUsed = MemUsedCGroup
+		limit, err := MemTotalCGroup()
+		if err != nil {
+		}
+		usage, err := MemUsedCGroup()
+		if err != nil {
+		}
+		curTime := time.Now()
+		memLimitCache = memInContainer{
+			mem:        limit,
+			updateTime: curTime,
+		}
+		memUsageCache = memInContainer{
+			mem:        usage,
+			updateTime: curTime,
+		}
 	} else {
 		MemTotal = MemTotalNormal
 		MemUsed = MemUsedNormal
