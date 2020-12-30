@@ -127,6 +127,9 @@ func init() {
 	memLimit = &memInfoCache{
 		RWMutex: &sync.RWMutex{},
 	}
+	memUsage = &memInfoCache{
+		RWMutex: &sync.RWMutex{},
+	}
 	_, err := MemTotal()
 	if err != nil {
 	}
