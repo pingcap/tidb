@@ -193,7 +193,15 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			case mysql.TypeJSON:
 				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
 			}
-			s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
+
+			switch col.GetType().Tp {
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
+				mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
+			default:
+				s.lineBuf = append(s.lineBuf, s.fieldBuf...)
+			}
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
