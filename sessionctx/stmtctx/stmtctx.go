@@ -80,6 +80,7 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
