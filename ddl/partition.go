@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -39,10 +38,12 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -287,8 +288,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	var enable bool
-	// When tidb_enable_table_partition is 'on' or 'auto'.
-	if s.Tp == model.PartitionTypeRange {
+	switch s.Tp {
+	case model.PartitionTypeRange:
+		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
 			// Partition by range expression is enabled by default.
 			if s.ColumnNames == nil {
@@ -299,16 +301,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				enable = true
 			}
 		}
-	}
-	// Partition by hash is enabled by default.
-	// Note that linear hash is not enabled.
-	if s.Tp == model.PartitionTypeHash {
+	case model.PartitionTypeHash:
+		// Partition by hash is enabled by default.
+		// Note that linear hash is not enabled.
 		if !s.Linear && s.Sub == nil {
 			enable = true
 		}
-	}
-	if s.Tp == model.PartitionTypeList {
-		enable = true
+	case model.PartitionTypeList:
+		// Partition by list is enabled only when tidb_enable_table_partition is 'nightly'.
+		enable = strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, variable.Nightly)
 	}
 
 	if !enable {
@@ -384,7 +385,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 
 func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -448,7 +449,7 @@ func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -595,7 +596,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 	if expr == nil {
 		return nil
 	}
-	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
 		return errors.Trace(exprChecker.err)
@@ -1607,7 +1608,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	bundle := &placement.Bundle{}
 	err = job.DecodeArgs(&partitionID, bundle)
@@ -1707,37 +1708,20 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 
 func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
-		*ast.SetCollationExpr:
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+	case *ast.FuncCallExpr:
+		if _, ok := expression.AllowedPartitionFuncMap[v.FnName.L]; ok {
+			return nil
+		}
 	case *ast.BinaryOperationExpr:
-		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
-		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
-		switch v.Op {
-		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4BinaryOpMap[v.Op]; ok {
+			return nil
 		}
 	case *ast.UnaryOperationExpr:
-		if v.Op == opcode.BitNeg {
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
+			return nil
 		}
-	}
-	return nil
-}
-
-func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
-	expr, ok := e.(*ast.FuncCallExpr)
-	if !ok {
-		return nil
-	}
-	allowedFuncMap := map[string]struct{}{
-		ast.ToDays: {}, ast.ToSeconds: {}, ast.DayOfMonth: {}, ast.Month: {}, ast.DayOfYear: {},
-		ast.Quarter: {}, ast.YearWeek: {}, ast.Year: {}, ast.Weekday: {}, ast.DayOfWeek: {}, ast.Day: {},
-		ast.Hour: {}, ast.Minute: {}, ast.Second: {}, ast.TimeToSec: {}, ast.MicroSecond: {},
-		ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {},
-		ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
-	}
-	if _, ok := allowedFuncMap[expr.FnName.L]; ok {
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
+		*ast.TimeUnitExpr:
 		return nil
 	}
 	return errors.Trace(ErrPartitionFunctionIsNotAllowed)

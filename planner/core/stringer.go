@@ -37,6 +37,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
+	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
 		if len(x.Children()) > 1 {
 			idxs = append(idxs, len(strs))
@@ -282,6 +283,18 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
+	case *PhysicalExchangeReceiver:
+		str = fmt.Sprintf("Recv(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str = fmt.Sprintf(")")
+	case *PhysicalExchangeSender:
+		str = fmt.Sprintf("Send(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str = fmt.Sprintf(")")
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
