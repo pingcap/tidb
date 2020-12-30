@@ -39,10 +39,7 @@ func MemTotalNormal() (uint64, error) {
 	if err != nil {
 		return v.Total, err
 	}
-	total, _ = memLimit.set(v.Total, time.Now())
-	if total != v.Total {
-		return total, nil
-	}
+	memLimit.set(v.Total, time.Now())
 	return v.Total, nil
 }
 
@@ -56,10 +53,7 @@ func MemUsedNormal() (uint64, error) {
 	if err != nil {
 		return v.Used, err
 	}
-	used, _ = memUsage.set(v.Used, time.Now())
-	if used != v.Used {
-		return used, nil
-	}
+	memUsage.set(v.Used, time.Now())
 	return v.Used, nil
 }
 
@@ -82,14 +76,10 @@ func (c *memInfoCache) get() (mem uint64, t time.Time) {
 	return
 }
 
-func (c *memInfoCache) set(mem uint64, t time.Time) (uint64, time.Time) {
+func (c *memInfoCache) set(mem uint64, t time.Time) {
 	c.Lock()
 	defer c.Unlock()
-	if t.After(c.updateTime) {
-		c.mem, c.updateTime = mem, t
-		return mem, t
-	}
-	return c.mem, c.updateTime
+	c.mem, c.updateTime = mem, t
 }
 
 // expiration time is 60s
@@ -108,10 +98,7 @@ func MemTotalCGroup() (uint64, error) {
 	if err != nil {
 		return mem, err
 	}
-	newMem, _ := memLimit.set(mem, time.Now())
-	if newMem != mem {
-		mem = newMem
-	}
+	memLimit.set(mem, time.Now())
 	return mem, nil
 }
 
@@ -125,10 +112,7 @@ func MemUsedCGroup() (uint64, error) {
 	if err != nil {
 		return mem, err
 	}
-	newMem, _ := memUsage.set(mem, time.Now())
-	if newMem != mem {
-		mem = newMem
-	}
+	memUsage.set(mem, time.Now())
 	return mem, nil
 }
 
