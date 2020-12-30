@@ -31,25 +31,29 @@ func (s testSuite) SetUpSuite(c *C) {}
 var _ = Suite(testSuite{})
 
 func (s testSuite) TestConfig(c *C) {
-	config.GetGlobalConfig().TxnLocalLatches = config.TxnLocalLatches{
-		Enabled:  true,
-		Capacity: 10240,
-	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches = config.TxnLocalLatches{
+			Enabled:  true,
+			Capacity: 10240,
+		}
+	})
 
 	type LatchEnableChecker interface {
 		IsLatchEnabled() bool
 	}
 
-	var driver MockDriver
+	var driver MockTiKVDriver
 	store, err := driver.Open("mocktikv://")
 	c.Assert(err, IsNil)
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsTrue)
 	store.Close()
 
-	config.GetGlobalConfig().TxnLocalLatches = config.TxnLocalLatches{
-		Enabled:  false,
-		Capacity: 10240,
-	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches = config.TxnLocalLatches{
+			Enabled:  false,
+			Capacity: 10240,
+		}
+	})
 	store, err = driver.Open("mocktikv://")
 	c.Assert(err, IsNil)
 	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsFalse)

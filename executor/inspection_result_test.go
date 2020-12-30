@@ -95,6 +95,14 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			types.MakeDatums("pd", "192.168.1.33:1234", "cpu", "cpu", "cpu-logical-cores", "10"),
 		},
 	}
+	// mock cluster system information
+	mockData[infoschema.TableClusterSystemInfo] = variable.TableSnapshot{
+		Rows: [][]types.Datum{
+			types.MakeDatums("pd", "pd-0", "system", "kernel", "transparent_hugepage_enabled", "always madvise [never]"),
+			types.MakeDatums("tikv", "tikv-2", "system", "kernel", "transparent_hugepage_enabled", "[always] madvise never"),
+			types.MakeDatums("tidb", "tidb-0", "system", "kernel", "transparent_hugepage_enabled", "always madvise [never]"),
+		},
+	}
 
 	datetime := func(str string) types.Time {
 		return s.parseTime(c, tk.Se, str)
@@ -118,11 +126,12 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version')",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning the cluster has different config value of coprocessor.high, execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning the cluster has different config value of ddl.lease, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
-				"config log.slow-threshold tidb inconsistent consistent warning the cluster has different config value of log.slow-threshold, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
-				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
+				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
+				"config log.slow-threshold tidb 0 > 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning 192.168.3.24:4000 config value is 0\n192.168.3.25:4000 config value is 1",
+				"config raftstore.sync-log tikv false true warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config transparent_hugepage_enabled tikv [always] madvise never always madvise [never] warning Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
 				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
 				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
@@ -131,18 +140,19 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning the cluster has different config value of coprocessor.high, execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
+				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
 				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
 			},
 		},
 		{
 			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='config'",
 			rows: []string{
-				"config coprocessor.high tikv inconsistent consistent warning the cluster has different config value of coprocessor.high, execute the sql to see more detail: select * from information_schema.cluster_config where type='tikv' and `key`='coprocessor.high'",
-				"config ddl.lease tidb inconsistent consistent warning the cluster has different config value of ddl.lease, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='ddl.lease'",
-				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
-				"config log.slow-threshold tidb inconsistent consistent warning the cluster has different config value of log.slow-threshold, execute the sql to see more detail: select * from information_schema.cluster_config where type='tidb' and `key`='log.slow-threshold'",
-				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
+				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
+				"config log.slow-threshold tidb 0 > 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb inconsistent consistent warning 192.168.3.24:4000 config value is 0\n192.168.3.25:4000 config value is 1",
+				"config raftstore.sync-log tikv false true warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config transparent_hugepage_enabled tikv [always] madvise never always madvise [never] warning Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
 			},
 		},
 		{
@@ -206,6 +216,14 @@ func (s *inspectionResultSuite) setupForInspection(c *C, mockData map[string][][
 				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
 				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
 				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
+			},
+		}
+		// mock cluster system information
+		configurations[infoschema.TableClusterSystemInfo] = variable.TableSnapshot{
+			Rows: [][]types.Datum{
+				types.MakeDatums("pd", "pd-0", "system", "kernel", "transparent_hugepage_enabled", "always madvise [never]"),
+				types.MakeDatums("tikv", "tikv-2", "system", "kernel", "transparent_hugepage_enabled", "always madvise [never]"),
+				types.MakeDatums("tidb", "tidb-0", "system", "kernel", "transparent_hugepage_enabled", "always madvise [never]"),
 			},
 		}
 	}

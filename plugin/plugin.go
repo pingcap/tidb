@@ -200,7 +200,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 			}
 			if cfg.GlobalSysVar != nil {
 				for key, value := range tiPlugins.plugins[kind][i].SysVars {
-					(*cfg.GlobalSysVar)[key] = value
+					variable.RegisterSysVar(value)
 					if value.Scope != variable.ScopeSession && cfg.PluginVarNames != nil {
 						*cfg.PluginVarNames = append(*cfg.PluginVarNames, key)
 					}

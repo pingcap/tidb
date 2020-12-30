@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
@@ -74,7 +76,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
+	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -95,6 +97,9 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
+	} else if runInGoTest && s.cfg.Status.StatusPort == 0 {
+		s.statusAddr = s.statusListener.Addr().String()
+		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
 	return nil
 }
@@ -137,6 +142,7 @@ func (s *Server) startHTTPServer() {
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
+		router.Handle("/tables/{db}/{table}/ranges", tableHandler{tikvHandlerTool, opTableRanges})
 		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
@@ -151,6 +157,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
+	// HTTP path for generate metric profile.
+	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
@@ -176,6 +184,30 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+
+			val, err := strconv.Atoi(string(body))
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				if _, err := w.Write([]byte(err.Error())); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+
+			util.SetGOGC(val)
+		}
+	})
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
@@ -257,11 +289,14 @@ func (s *Server) startHTTPServer() {
 	fetcher := sqlInfoFetcher{store: tikvHandlerTool.Store}
 	serverMux.HandleFunc("/debug/sub-optimal-plan", fetcher.zipInfoForSQL)
 
-	failpoint.Inject("integrateFailpoint", func() {
+	// failpoint is enabled only for tests so we can add some http APIs here for tests.
+	failpoint.Inject("enableTestAPI", func() {
 		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
+
+		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
 	})
 
 	var (
@@ -355,18 +390,24 @@ type status struct {
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
+	// If the server is in the process of shutting down, return a non-200 status.
+	// It is important not to return status{} as acquiring the s.ConnectionCount()
+	// acquires a lock that may already be held by the shutdown process.
+	if s.inShutdownMode {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
-		GitHash:     printer.TiDBGitHash,
+		GitHash:     versioninfo.TiDBGitHash,
 	}
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		logutil.BgLogger().Error("encode json failed", zap.Error(err))
-	} else {
-		_, err = w.Write(js)
-		terror.Log(errors.Trace(err))
+		return
 	}
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
 }

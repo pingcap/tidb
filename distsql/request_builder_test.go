@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -57,8 +56,8 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), -1),
-		DiskTracker: disk.NewTracker(stringutil.StringerStr("testSuite"), -1),
+		MemTracker:  memory.NewTracker(-1, -1),
+		DiskTracker: disk.NewTracker(-1, -1),
 	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
@@ -111,7 +110,8 @@ func (s *testSuite) getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRan
 }
 
 func (s *testSuite) TestTableHandlesToKVRanges(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100, 9223372036854775806, 9223372036854775807}
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4), kv.IntHandle(5),
+		kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100), kv.IntHandle(9223372036854775806), kv.IntHandle(9223372036854775807)}
 
 	// Build expected key ranges.
 	hrs := make([]*handleRange, 0, len(handles))
@@ -278,7 +278,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetTableRanges(12, ranges, nil).
+	actual, err := (&RequestBuilder{}).SetHandleRanges(nil, 12, false, ranges, nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
@@ -314,7 +314,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -390,7 +390,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -402,7 +402,8 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder3(c *C) {
-	handles := []int64{0, 2, 3, 4, 5, 10, 11, 100}
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
 	actual, err := (&RequestBuilder{}).SetTableHandles(15, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).
@@ -436,7 +437,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -483,7 +484,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		Streaming:      true,
@@ -572,32 +573,38 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 }
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
-	vars := variable.NewSessionVars()
-	vars.SetReplicaRead(kv.ReplicaReadFollower)
+	for _, replicaRead := range []kv.ReplicaReadType{
+		kv.ReplicaReadLeader,
+		kv.ReplicaReadFollower,
+		kv.ReplicaReadMixed,
+	} {
+		vars := variable.NewSessionVars()
+		vars.SetReplicaRead(replicaRead)
 
-	concurrency := 10
+		concurrency := 10
 
-	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(vars).
-		SetConcurrency(concurrency).
-		Build()
-	c.Assert(err, IsNil)
+		actual, err := (&RequestBuilder{}).
+			SetFromSessionVars(vars).
+			SetConcurrency(concurrency).
+			Build()
+		c.Assert(err, IsNil)
 
-	expect := &kv.Request{
-		Tp:             0,
-		StartTs:        0x0,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    concurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   false,
-		SyncLog:        false,
-		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadFollower,
+		expect := &kv.Request{
+			Tp:             0,
+			StartTs:        0x0,
+			KeepOrder:      false,
+			Desc:           false,
+			Concurrency:    concurrency,
+			IsolationLevel: 0,
+			Priority:       0,
+			NotFillCache:   false,
+			SyncLog:        false,
+			Streaming:      false,
+			ReplicaRead:    replicaRead,
+		}
+
+		c.Assert(actual, DeepEquals, expect)
 	}
-
-	c.Assert(actual, DeepEquals, expect)
 }
 
 func (s *testSuite) TestRequestBuilder8(c *C) {
@@ -611,7 +618,7 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		Tp:             0,
 		StartTs:        0x0,
 		Data:           []uint8(nil),
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
@@ -679,5 +686,35 @@ func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
 	}
 	for i := 0; i < len(actual); i++ {
 		c.Assert(actual[i], DeepEquals, expect[i])
+	}
+}
+
+func (s *testSuite) TestScanLimitConcurrency(c *C) {
+	vars := variable.NewSessionVars()
+	for _, tt := range []struct {
+		tp          tipb.ExecType
+		limit       uint64
+		concurrency int
+	}{
+		{tipb.ExecType_TypeTableScan, 1, 1},
+		{tipb.ExecType_TypeIndexScan, 1, 1},
+		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+	} {
+		firstExec := &tipb.Executor{Tp: tt.tp}
+		switch tt.tp {
+		case tipb.ExecType_TypeTableScan:
+			firstExec.TblScan = &tipb.TableScan{}
+		case tipb.ExecType_TypeIndexScan:
+			firstExec.IdxScan = &tipb.IndexScan{}
+		}
+		limitExec := &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: tt.limit}}
+		dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
+		actual, err := (&RequestBuilder{}).
+			SetDAGRequest(dag).
+			SetFromSessionVars(vars).
+			Build()
+		c.Assert(err, IsNil)
+		c.Assert(actual.Concurrency, Equals, tt.concurrency)
 	}
 }

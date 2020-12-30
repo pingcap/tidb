@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
@@ -98,6 +99,9 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		execInfo := row[5].(string)
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
+		}
 	}
 }
 
@@ -241,6 +245,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
@@ -355,8 +363,13 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 
 	testKit.MustExec("create view v as select * from t")
 	_, err = testKit.Exec("analyze table v")
-	c.Assert(err.Error(), Equals, "analyze v is not supported now.")
+	c.Assert(err.Error(), Equals, "analyze view v is not supported now.")
 	testKit.MustExec("drop view v")
+
+	testKit.MustExec("create sequence seq")
+	_, err = testKit.Exec("analyze table seq")
+	c.Assert(err.Error(), Equals, "analyze sequence seq is not supported now.")
+	testKit.MustExec("drop sequence seq")
 
 	var input, output []string
 	s.testData.GetTestCases(c, &input, &output)
@@ -367,6 +380,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
+		err = executor.ResetContextOfStmt(ctx, stmt)
+		c.Assert(err, IsNil)
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -405,8 +420,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 35.91 root  data:Selection_6",
-		"└─Selection_6 35.91 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"TableReader_7 29.77 root  data:Selection_6",
+		"└─Selection_6 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
@@ -426,13 +441,13 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		store.Close()
 	}()
 
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	defer config.RestoreFunc()()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.PreparedPlanCache.Enabled = flag
+			conf.PreparedPlanCache.Capacity = 100
+		})
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -455,8 +470,6 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testAnalyzeSuite) TestNullCount(c *C) {
@@ -553,7 +566,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -759,7 +772,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 		)
 	`)
 	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
-	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
@@ -772,6 +785,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		store.Close()
 	}()
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
@@ -796,6 +812,38 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 			}
 		}
+	}
+}
+
+func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
+	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	// The test purposes are:
+	// - index `idx2` runs much faster than `idx4` experimentally;
+	// - estimated row count of IndexLookUp should be 0;
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
@@ -848,5 +896,67 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 				tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 			}
 		}
+	}
+}
+
+func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
+	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
+	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
+	// these 2 columns are strictly correlated in reverse order.
+	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

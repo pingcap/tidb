@@ -120,6 +120,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ $InputString := (eq .Input.TypeName "String") }}
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
+{{ $InputTime := (eq .Input.TypeName "Time") }}
 func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- template "BufAllocator" . }}
@@ -185,6 +186,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 					}
 				{{- else if $InputString }}
 					if _, ok := b.hashSet[string(collator.Key(arg0))]; ok {
+						r64s[i] = 1
+						result.SetNull(i, false)
+					}
+				{{- else if $InputTime }}
+					if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 						r64s[i] = 1
 						result.SetNull(i, false)
 					}
@@ -379,8 +385,8 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 					{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
 				{{- end }}
 				{{- if eq .Input.ETName "Decimal" }}
-					{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeDecimal)},
-					{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeDecimal)},
+					{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
+					{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
 				{{- end }}
 			},
 		},

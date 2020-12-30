@@ -14,14 +14,17 @@
 package server
 
 import (
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -33,7 +36,7 @@ import (
 var _ = Suite(&testUtilSuite{})
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -63,26 +66,44 @@ func (s *testUtilSuite) TearDownSuite(c *C) {
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
-	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
+	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.000000")
 	c.Assert(err, IsNil)
 	d := dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.0000000")
+	c.Assert(d, DeepEquals, []byte{0})
+
+	t, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	// 199 & 7 composed to uint16 1991 (litter-endian)
+	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0})
+
+	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.000000")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	c.Assert(d, DeepEquals, []byte{0})
+	t, err = types.ParseDatetime(nil, "1993-07-13 01:01:01.000000")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	// 201 & 7 composed to uint16 1993 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{7, 201, 7, 7, 13, 1, 1, 1})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+	c.Assert(d, DeepEquals, []byte{0})
+	t, err = types.ParseDate(nil, "1992-06-01")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	// 200 & 7 composed to uint16 1992 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{4, 200, 7, 6, 1})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+	c.Assert(d, DeepEquals, []byte{0})
 
-	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
+	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
 	c.Assert(d, DeepEquals, []byte{0})
@@ -119,7 +140,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
-	columns[0].Flag = columns[0].Flag | uint16(mysql.UnsignedFlag)
+	columns[0].Flag |= uint16(mysql.UnsignedFlag)
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
@@ -231,6 +252,7 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
+	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
 		out     string
@@ -311,13 +333,97 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 		},
 		{
 			0.0000000000000009,
-			"0.000",
+			"9e-16",
 			3,
 			64,
 		},
 		{
 			0,
 			"0",
+			-1,
+			64,
+		},
+		{
+			-340282346638528860000000000000000000000,
+			"-3.40282e38",
+			-1,
+			32,
+		},
+		{
+			-34028236,
+			"-34028236.00",
+			2,
+			32,
+		},
+		{
+			-17976921.34,
+			"-17976921.34",
+			2,
+			64,
+		},
+		{
+			-3.402823466e+38,
+			"-3.40282e38",
+			-1,
+			32,
+		},
+		{
+			-1.7976931348623157e308,
+			"-1.7976931348623157e308",
+			-1,
+			64,
+		},
+		{
+			10.0e20,
+			"1e21",
+			-1,
+			32,
+		},
+		{
+			1e20,
+			"1e20",
+			-1,
+			32,
+		},
+		{
+			10.0,
+			"10",
+			-1,
+			32,
+		},
+		{
+			999999986991104,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			1e15,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			1e14,
+			"100000000000000",
+			-1,
+			64,
+		},
+		{
+			1e308,
+			"1e308",
 			-1,
 			64,
 		},
@@ -476,4 +582,11 @@ func (s *testUtilSuite) TestParseNullTermString(c *C) {
 		c.Assert(string(str), Equals, t.str)
 		c.Assert(string(remain), Equals, t.remain)
 	}
+}
+
+func newTestConfig() *config.Config {
+	cfg := config.NewConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Status.StatusHost = "127.0.0.1"
+	return cfg
 }

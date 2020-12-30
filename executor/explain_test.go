@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestExplainPriviliges(c *C) {
+func (s *testSuite1) TestExplainPrivileges(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
@@ -37,7 +37,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create view v as select * from t")
 	tk.MustExec(`create user 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err = session.CreateSession4Test(s.store)
@@ -46,7 +45,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk1.Se = se
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
 
 	tk1.MustExec("use explaindatabase")
@@ -55,11 +53,9 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("explain select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
@@ -97,14 +93,15 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
-	tk.MustExec("explain analyze insert into t select 1")
+	tk.MustQuery("explain analyze insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustExec("explain analyze update t set a=2 where a=1")
+	tk.MustQuery("explain analyze update t set a=2 where a=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustExec("explain insert into t select 1")
+	tk.MustQuery("explain insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
-	tk.MustExec("explain analyze insert into t select 1")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain analyze insert into t select 1")
+	tk.MustQuery("explain analyze replace into t values (3)")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2", "3"))
 }
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
@@ -238,5 +235,94 @@ func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 		}
 
 		c.Assert(strs[executionInfoCol], Not(Equals), "time:0s, loops:0, rows:0")
+	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeActRowsNotEmpty(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index (a))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	s.checkActRowsNotEmpty(c, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
+}
+
+func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string) {
+	actRowsCol := 2
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Not(Equals), "")
+	}
+}
+
+func checkActRows(c *C, tk *testkit.TestKit, sql string, expected []string) {
+	actRowsCol := 2
+	rows := tk.MustQuery("explain analyze " + sql).Rows()
+	c.Assert(len(rows), Equals, len(expected))
+	for id, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Equals, expected[id])
+	}
+}
+
+func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
+	// testSuite1 use default mockstore which is unistore
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t_unistore_act_rows")
+	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
+	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
+	tk.MustExec("analyze table t_unistore_act_rows")
+
+	type testStruct struct {
+		sql      string
+		expected []string
+	}
+
+	tests := []testStruct{
+		{
+			sql:      "select * from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1",
+			expected: []string{"2", "2"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where a > 1 and b > 0",
+			expected: []string{"1", "1", "2"},
+		},
+		{
+			sql:      "select b from t_unistore_act_rows",
+			expected: []string{"4", "4"},
+		},
+		{
+			sql:      "select * from t_unistore_act_rows where b > 0",
+			expected: []string{"1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows",
+			expected: []string{"1", "1", "1", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by a",
+			expected: []string{"2", "2", "2", "4"},
+		},
+		{
+			sql:      "select count(*) from t_unistore_act_rows group by b",
+			expected: []string{"2", "2", "2", "4"},
+		},
+	}
+
+	for _, test := range tests {
+		checkActRows(c, tk, test.sql, test.expected)
 	}
 }

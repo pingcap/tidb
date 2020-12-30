@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/collate"
@@ -66,6 +66,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
@@ -73,10 +77,9 @@ var _ = SerialSuites(&seqTestSuite{})
 var _ = SerialSuites(&seqTestSuite1{})
 
 type seqTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 }
@@ -88,15 +91,14 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+		var err error
+		s.store, err = mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
-		s.store = store
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
@@ -132,7 +134,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, N/2)
+	s.cluster.SplitTable(tblID, N/2)
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
@@ -175,7 +177,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -194,7 +198,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT 1,\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -214,7 +218,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT 2.0,\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -255,7 +259,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
-			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			"  `c1` decimal(10,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -283,20 +287,21 @@ func (s *seqTestSuite) TestShow(c *C) {
 		b int,
 		c int UNIQUE KEY,
 		d int UNIQUE KEY,
-		index (b) invisible,
+		index invisible_idx_b (b) invisible,
 		index (d) invisible)`)
-	excepted :=
+	expected :=
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) DEFAULT NULL,\n" +
 			"  `b` int(11) DEFAULT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
-			"  KEY `b` (`b`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `invisible_idx_b` (`b`) /*!80000 INVISIBLE */,\n" +
 			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+	tk.MustQuery("show create table t").Check(testkit.Rows(expected))
+	tk.MustExec("drop table t")
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
@@ -318,15 +323,15 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
 		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL",
 		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
@@ -614,7 +619,8 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c6 enum('s', 'm', 'l', 'xl') default 'xl',
 		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
 		c8 datetime default current_timestamp on update current_timestamp,
-		c9 year default '2014'
+		c9 year default '2014',
+		c10 enum('2', '3', '4') default 2
 	);`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
 		"c0|int(11)|YES||1|",
@@ -627,6 +633,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c7|set('a','b','c','d')|YES||a,c|",
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
+		"c10|enum('2','3','4')|YES||3|",
 	))
 
 	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
@@ -797,39 +804,74 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
+	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
+	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
+	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
+	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
+	// Test for a table with auto_random primary key.
+	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	// Start handle is 1.
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
+	// Insert some rows.
+	tk.MustExec("insert into t3 (c) values (1), (2);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 11 AUTO_RANDOM"))
+	// Rebase.
+	tk.MustExec("insert into t3 (id, c) values (103, 3);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 114 AUTO_RANDOM"))
+
+	// Test for a sequence.
+	tk.MustExec("create sequence seq1 start 15 cache 57")
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("15"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("16"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select setval(seq1, 96)")
+	r.Check(testkit.Rows("96"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
@@ -975,13 +1017,10 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableBatchDML = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableBatchDML = true
+	})
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
@@ -1093,8 +1132,8 @@ func (s *seqTestSuite1) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -1139,9 +1178,10 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.ExpensiveThreshold = 0
+	})
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
@@ -1201,8 +1241,11 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"latin1_bin latin1 47 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+		"utf8mb4_zh_pinyin_tidb_as_cs utf8mb4 2048  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
@@ -1217,15 +1260,15 @@ func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
 		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
 	}
 
-	mustGetUnsupportedCollation("select 'a' collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set names utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
 }
 
 func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
@@ -1247,6 +1290,84 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
+func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wg.Add(concurrency)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("set autocommit = 1")
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
+}
+
+func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	tk.MustExec("create table src (a int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wgCount := concurrency + 1
+	wg.Add(wgCount)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	var insertErr error
+	go func() {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		for i := 0; i < 10; i++ {
+			_, e := tk.Exec("insert into src values (null);")
+			if e != nil {
+				insertErr = e
+				wg.Done()
+				return
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
+	c.Assert(insertErr, IsNil)
+}
+
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -1255,7 +1376,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
@@ -1331,7 +1452,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
@@ -1384,4 +1505,73 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+}
+
+func (s *seqTestSuite) TestIssue18744(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t, t1;`)
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into t1(id) values(0),(1),(2);`)
+	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
+	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
+	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
+	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
+	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	c.Assert(err.Error(), Equals, "mockIndexHashJoinOuterWorkerErr")
+}
+
+func (s *seqTestSuite) TestIssue19410(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t2 values (1, 'C');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+
+	tk.MustExec("create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t3 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 }

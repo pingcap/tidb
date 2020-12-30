@@ -29,14 +29,12 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -90,11 +88,9 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
-var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
-
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
+	base := newBaseExecutor(ctx, nil, 0)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
@@ -123,7 +119,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
 		p := parser.New()
-		p.EnableWindowFunc(vars.EnableWindowFunction)
+		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
@@ -149,6 +145,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// DDL Statements can not accept parameters
 	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
 		return ErrPrepareDDL
+	}
+
+	switch stmt.(type) {
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+		return ErrUnsupportedPs
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
@@ -178,7 +179,15 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt, e.is)
+	if !plannercore.PreparedPlanCacheEnabled() {
+		prepared.UseCache = false
+	} else {
+		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			prepared.UseCache = plannercore.Cacheable(stmt, e.is)
+		} else {
+			prepared.UseCache = plannercore.Cacheable(stmt, nil)
+		}
+	}
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -189,7 +198,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
@@ -255,7 +264,6 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
 	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		e.lowerPriority = needLowerPriority(e.plan)
 	}
@@ -311,6 +319,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	stmt := &ExecStmt{
+		GoCtx:       ctx,
 		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execStmt,
@@ -328,22 +337,4 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
-}
-
-func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, plannercore.ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj.PreparedAst.Stmt, nil
-	}
-	return nil, plannercore.ErrStmtNotFound
 }

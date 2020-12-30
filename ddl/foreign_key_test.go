@@ -27,25 +27,25 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-var _ = Suite(&testForeighKeySuite{})
+var _ = Suite(&testForeignKeySuite{})
 
-type testForeighKeySuite struct {
+type testForeignKeySuite struct {
 	store  kv.Storage
 	dbInfo *model.DBInfo
 	d      *ddl
 	ctx    sessionctx.Context
 }
 
-func (s *testForeighKeySuite) SetUpSuite(c *C) {
+func (s *testForeignKeySuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_foreign")
 }
 
-func (s *testForeighKeySuite) TearDownSuite(c *C) {
+func (s *testForeignKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
-func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func (s *testForeignKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -110,9 +110,10 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := newDDL(
+func (s *testForeignKeySuite) TestForeignKey(c *C) {
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)

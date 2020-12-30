@@ -82,6 +82,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Charset:   e.charset,
 		Collation: e.collation,
 		Status:    bindinfo.Using,
+		Source:    bindinfo.Manual,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

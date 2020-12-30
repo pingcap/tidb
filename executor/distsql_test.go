@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -66,7 +67,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	ctx := context.Background()
 	// Send coprocessor request when the table split.
@@ -105,25 +106,27 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 }
 
 func (s *testSuite3) TestGetLackHandles(c *C) {
-	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	handlesMap := make(map[int64]struct{})
+	expectedHandles := []kv.Handle{kv.IntHandle(1), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(6), kv.IntHandle(7), kv.IntHandle(8), kv.IntHandle(9), kv.IntHandle(10)}
+	handlesMap := kv.NewHandleMap()
 	for _, h := range expectedHandles {
-		handlesMap[h] = struct{}{}
+		handlesMap.Set(h, true)
 	}
 
 	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	// obtained handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	diffHandles := executor.GetLackHandles(expectedHandles, handlesMap)
 	c.Assert(diffHandles, HasLen, 0)
-	c.Assert(handlesMap, HasLen, 0)
+	c.Assert(handlesMap.Len(), Equals, 0)
 
 	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	// obtained handles 2, 3, 4, 6, 7, 8, 9
-	retHandles := []int64{2, 3, 4, 6, 7, 8, 9}
-	handlesMap = make(map[int64]struct{})
-	handlesMap[1] = struct{}{}
-	handlesMap[5] = struct{}{}
-	handlesMap[10] = struct{}{}
+	retHandles := []kv.Handle{kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4), kv.IntHandle(6),
+		kv.IntHandle(7), kv.IntHandle(8), kv.IntHandle(9)}
+	handlesMap = kv.NewHandleMap()
+	handlesMap.Set(kv.IntHandle(1), true)
+	handlesMap.Set(kv.IntHandle(5), true)
+	handlesMap.Set(kv.IntHandle(10), true)
 	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
 	c.Assert(retHandles, DeepEquals, diffHandles)
 }
@@ -215,7 +218,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -232,7 +235,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), int64(100+i))
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -252,4 +255,29 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 1").Check(testkit.Rows("2 2 2"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
+}
+
+func (s *testSuite3) TestIndexLookUpStats(c *C) {
+	stats := &executor.IndexLookUpRunTimeStats{
+		IndexScan:    int64(2 * time.Second),
+		TableRowScan: int64(2 * time.Second),
+		TableTaskNum: 2,
+		Concurrency:  1,
+	}
+	c.Assert(stats.String(), Equals, "index_task: 2s, table_task: {num: 2, concurrency: 1, time: 2s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "index_task: 4s, table_task: {num: 4, concurrency: 2, time: 4s}")
+}
+
+func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl")
+	tk.MustExec("create table tbl(a int, b int, c int, key idx_a(a))")
+	for i := 0; i < 101; i++ {
+		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
+	}
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
 }

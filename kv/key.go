@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -145,6 +147,8 @@ type Handle interface {
 	NumCols() int
 	// EncodedCol returns the encoded column value at the given column index.
 	EncodedCol(idx int) []byte
+	// Data returns the data of all columns of a handle.
+	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
 }
@@ -208,6 +212,11 @@ func (ih IntHandle) EncodedCol(idx int) []byte {
 	panic("not supported in IntHandle")
 }
 
+// Data implements the Handle interface.
+func (ih IntHandle) Data() ([]types.Datum, error) {
+	return []types.Datum{types.NewIntDatum(int64(ih))}, nil
+}
+
 // String implements the Handle interface.
 func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
@@ -222,9 +231,18 @@ type CommonHandle struct {
 // NewCommonHandle creates a CommonHandle from a encoded bytes which is encoded by code.EncodeKey.
 func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 	ch := &CommonHandle{encoded: encoded}
+	if len(encoded) < 9 {
+		padded := make([]byte, 9)
+		copy(padded, encoded)
+		ch.encoded = padded
+	}
 	remain := encoded
 	endOff := uint16(0)
 	for len(remain) > 0 {
+		if remain[0] == 0 {
+			// padded data
+			break
+		}
 		var err error
 		var col []byte
 		col, remain, err = codec.CutOne(remain)
@@ -292,20 +310,160 @@ func (ch *CommonHandle) EncodedCol(idx int) []byte {
 	return ch.encoded[colStartOffset:ch.colEndOffsets[idx]]
 }
 
-// String implements the Handle interface.
-func (ch *CommonHandle) String() string {
-	strs := make([]string, 0, ch.NumCols())
+// Data implements the Handle interface.
+func (ch *CommonHandle) Data() ([]types.Datum, error) {
+	data := make([]types.Datum, 0, ch.NumCols())
 	for i := 0; i < ch.NumCols(); i++ {
 		encodedCol := ch.EncodedCol(i)
 		_, d, err := codec.DecodeOne(encodedCol)
 		if err != nil {
-			return err.Error()
+			return nil, err
 		}
-		str, err := d.ToString()
+		data = append(data, d)
+	}
+	return data, nil
+}
+
+// String implements the Handle interface.
+func (ch *CommonHandle) String() string {
+	data, err := ch.Data()
+	if err != nil {
+		return err.Error()
+	}
+	strs := make([]string, 0, ch.NumCols())
+	for _, datum := range data {
+		str, err := datum.ToString()
 		if err != nil {
 			return err.Error()
 		}
 		strs = append(strs, str)
 	}
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
+}
+
+// HandleMap is the map for Handle.
+type HandleMap struct {
+	ints map[int64]interface{}
+	strs map[string]strHandleVal
+}
+
+type strHandleVal struct {
+	h   Handle
+	val interface{}
+}
+
+// NewHandleMap creates a new map for handle.
+func NewHandleMap() *HandleMap {
+	// Initialize the two maps to avoid checking nil.
+	return &HandleMap{
+		ints: map[int64]interface{}{},
+		strs: map[string]strHandleVal{},
+	}
+}
+
+// Get gets a value by a Handle.
+func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
+	if h.IsInt() {
+		v, ok = m.ints[h.IntValue()]
+	} else {
+		var strVal strHandleVal
+		strVal, ok = m.strs[string(h.Encoded())]
+		v = strVal.val
+	}
+	return
+}
+
+// Set sets a value with a Handle.
+func (m *HandleMap) Set(h Handle, val interface{}) {
+	if h.IsInt() {
+		m.ints[h.IntValue()] = val
+	} else {
+		m.strs[string(h.Encoded())] = strHandleVal{
+			h:   h,
+			val: val,
+		}
+	}
+}
+
+// Delete deletes a entry from the map.
+func (m *HandleMap) Delete(h Handle) {
+	if h.IsInt() {
+		delete(m.ints, h.IntValue())
+	} else {
+		delete(m.strs, string(h.Encoded()))
+	}
+}
+
+// Len returns the length of the map.
+func (m *HandleMap) Len() int {
+	return len(m.ints) + len(m.strs)
+}
+
+// Range iterates the HandleMap with fn, the fn returns true to continue, returns false to stop.
+func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
+	for h, val := range m.ints {
+		if !fn(IntHandle(h), val) {
+			return
+		}
+	}
+	for _, strVal := range m.strs {
+		if !fn(strVal.h, strVal.val) {
+			return
+		}
+	}
+}
+
+// BuildHandleFromDatumRow builds kv.Handle from cols in row.
+func BuildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, handleOrdinals []int) (Handle, error) {
+	pkDts := make([]types.Datum, 0, len(handleOrdinals))
+	for _, ordinal := range handleOrdinals {
+		pkDts = append(pkDts, row[ordinal])
+	}
+	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := NewCommonHandle(handleBytes)
+	if err != nil {
+		return nil, err
+	}
+	return handle, nil
+}
+
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// Now only used in global index.
+// TODO: support PartitionHandle in HandleMap.
+type PartitionHandle struct {
+	Handle
+	PartitionID int64
+}
+
+// NewPartitionHandle creates a PartitionHandle from a normal handle and a pid.
+func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
+	return PartitionHandle{
+		Handle:      h,
+		PartitionID: pid,
+	}
+}
+
+// Equal implements the Handle interface.
+func (ph PartitionHandle) Equal(h Handle) bool {
+	if ph2, ok := h.(PartitionHandle); ok {
+		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
+	}
+	return false
+}
+
+// Compare implements the Handle interface.
+func (ph PartitionHandle) Compare(h Handle) int {
+	if ph2, ok := h.(PartitionHandle); ok {
+		if ph.PartitionID < ph2.PartitionID {
+			return -1
+		}
+		if ph.PartitionID > ph2.PartitionID {
+			return 1
+		}
+		return ph.Handle.Compare(ph2.Handle)
+	}
+	panic("PartitonHandle compares to non-parition Handle")
 }

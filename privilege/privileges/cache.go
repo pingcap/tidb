@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -113,10 +115,12 @@ const (
 
 // GlobalPrivValue is store json format for priv column in mysql.global_priv.
 type GlobalPrivValue struct {
-	SSLType     SSLType `json:"ssl_type,omitempty"`
-	SSLCipher   string  `json:"ssl_cipher,omitempty"`
-	X509Issuer  string  `json:"x509_issuer,omitempty"`
-	X509Subject string  `json:"x509_subject,omitempty"`
+	SSLType     SSLType                   `json:"ssl_type,omitempty"`
+	SSLCipher   string                    `json:"ssl_cipher,omitempty"`
+	X509Issuer  string                    `json:"x509_issuer,omitempty"`
+	X509Subject string                    `json:"x509_subject,omitempty"`
+	SAN         string                    `json:"san,omitempty"`
+	SANs        map[util.SANType][]string `json:"-"`
 }
 
 // RequireStr returns describe string after `REQUIRE` clause.
@@ -140,6 +144,10 @@ func (g *GlobalPrivValue) RequireStr() string {
 		if len(g.X509Subject) > 0 {
 			s = append(s, "SUBJECT")
 			s = append(s, "'"+g.X509Subject+"'")
+		}
+		if len(g.SAN) > 0 {
+			s = append(s, "SAN")
+			s = append(s, "'"+g.SAN+"'")
 		}
 		if len(s) > 0 {
 			require = strings.Join(s, " ")
@@ -330,7 +338,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
 	if e2, ok := e1.(*terror.Error); ok {
-		if e2.Code() == terror.ErrCode(mysql.ErrNoSuchTable) {
+		if terror.ErrCode(e2.Code()) == terror.ErrCode(mysql.ErrNoSuchTable) {
 			return true
 		}
 	}
@@ -579,7 +587,7 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *ast.ResultFi
 		record.User = row.GetString(i)
 	case "host":
 		record.Host = row.GetString(i)
-		record.patChars, record.patTypes = stringutil.CompilePattern(record.Host, '\\')
+		record.patChars, record.patTypes = stringutil.CompilePatternBytes(record.Host, '\\')
 		record.hostIPNet = parseHostIPNet(record.Host)
 	}
 }
@@ -629,6 +637,13 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 					value.Priv.SSLCipher = privValue.SSLCipher
 					value.Priv.X509Issuer = privValue.X509Issuer
 					value.Priv.X509Subject = privValue.X509Subject
+					value.Priv.SAN = privValue.SAN
+					if len(value.Priv.SAN) > 0 {
+						value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
+						if err != nil {
+							value.Broken = true
+						}
+					}
 				}
 			}
 		default:
@@ -648,7 +663,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		switch {
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
-			value.dbPatChars, value.dbPatTypes = stringutil.CompilePattern(strings.ToUpper(value.DB), '\\')
+			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
 		case f.Column.Tp == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
@@ -790,6 +805,10 @@ func (record *baseRecord) match(user, host string) bool {
 		record.hostMatch(host))
 }
 
+func (record *baseRecord) fullyMatch(user, host string) bool {
+	return record.User == user && record.Host == host
+}
+
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.baseRecord.match(user, host) &&
 		patternMatch(strings.ToUpper(db), record.dbPatChars, record.dbPatTypes)
@@ -811,7 +830,7 @@ func (record *columnsPrivRecord) match(user, host, db, table, col string) bool {
 // patternMatch matches "%" the same way as ".*" in regular expression, for example,
 // "10.0.%" would match "10.0.1" "10.0.1.118" ...
 func patternMatch(str string, patChars, patTypes []byte) bool {
-	return stringutil.DoMatch(str, patChars, patTypes)
+	return stringutil.DoMatchBytes(str, patChars, patTypes)
 }
 
 // connectionVerification verifies the connection have access to TiDB server.
@@ -989,10 +1008,22 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv = false
+	var hasGrantOptionPriv, userExists = false, false
+	// Check whether user exists.
+	if userList, ok := p.UserMap[user]; ok {
+		for _, record := range userList {
+			if record.fullyMatch(user, host) {
+				userExists = true
+				break
+			}
+		}
+		if !userExists {
+			return gs
+		}
+	}
 	var g string
 	for _, record := range p.User {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			if (record.Privileges & mysql.GrantPriv) > 0 {
 				hasGrantOptionPriv = true
@@ -1041,7 +1072,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// Show db scope grants.
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.Privileges & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1098,7 +1129,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
-		if record.baseRecord.match(user, host) {
+		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.TablePriv & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1149,6 +1180,22 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		}
 	}
 
+	// Show column scope grants, column and table are combined.
+	// A map of "DB.Table" => Priv(col1, col2 ...)
+	columnPrivTable := make(map[string]privOnColumns)
+	for _, record := range p.ColumnsPriv {
+		if !collectColumnGrant(&record, user, host, columnPrivTable) {
+			for _, r := range allRoles {
+				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
+			}
+		}
+	}
+	for k, v := range columnPrivTable {
+		privCols := privOnColumnsToString(v)
+		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
+		gs = append(gs, s)
+	}
+
 	// Show role grants.
 	graphKey := user + "@" + host
 	edgeTable, ok := p.RoleGraph[graphKey]
@@ -1172,6 +1219,55 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		gs = append(gs, s)
 	}
 	return gs
+}
+
+type columnStr = string
+type columnStrs = []columnStr
+type privOnColumns = map[mysql.PrivilegeType]columnStrs
+
+func privOnColumnsToString(p privOnColumns) string {
+	var buf bytes.Buffer
+	idx := 0
+	for _, priv := range mysql.AllColumnPrivs {
+		v, ok := p[priv]
+		if !ok || len(v) == 0 {
+			continue
+		}
+
+		if idx > 0 {
+			buf.WriteString(", ")
+		}
+		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		for i, col := range v {
+			if i > 0 {
+				fmt.Fprintf(&buf, ", ")
+			}
+			buf.WriteString(col)
+		}
+		buf.WriteString(")")
+		idx++
+	}
+	return buf.String()
+}
+
+func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns) bool {
+	if record.baseRecord.match(user, host) {
+		recordKey := record.DB + "." + record.TableName
+		privColumns, ok := columnPrivTable[recordKey]
+		if !ok {
+			privColumns = make(map[mysql.PrivilegeType]columnStrs)
+		}
+
+		for _, priv := range mysql.AllColumnPrivs {
+			if priv&record.ColumnPriv > 0 {
+				old := privColumns[priv]
+				privColumns[priv] = append(old, record.ColumnName)
+				columnPrivTable[recordKey] = privColumns
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func userPrivToString(privs mysql.PrivilegeType) string {

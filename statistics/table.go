@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -58,8 +59,34 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
-	Version uint64
-	Name    string
+	Version       uint64
+	Name          string
+	ExtendedStats *ExtendedStatsColl
+}
+
+// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
+type ExtendedStatsKey struct {
+	StatsName string
+	DB        string
+}
+
+// ExtendedStatsItem is the cached item of a mysql.stats_extended record.
+type ExtendedStatsItem struct {
+	ColIDs     []int64
+	Tp         uint8
+	ScalarVals float64
+	StringVals string
+}
+
+// ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
+type ExtendedStatsColl struct {
+	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	LastUpdateVersion uint64
+}
+
+// NewExtendedStatsColl allocate an ExtendedStatsColl struct.
+func NewExtendedStatsColl() *ExtendedStatsColl {
+	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -78,6 +105,23 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+}
+
+// MemoryUsage returns the total memory usage of this Table.
+// it will only calc the size of Columns and Indices stats data of table.
+// We ignore the size of other metadata in Table
+func (t *Table) MemoryUsage() (sum int64) {
+	for _, col := range t.Columns {
+		if col != nil {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, index := range t.Indices {
+		if index != nil {
+			sum += index.MemoryUsage()
+		}
+	}
+	return
 }
 
 // Copy copies the current table.
@@ -102,6 +146,16 @@ func (t *Table) Copy() *Table {
 		Version:  t.Version,
 		Name:     t.Name,
 	}
+	if t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		for key, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[key] = item
+		}
+		nt.ExtendedStats = newExtStatsColl
+	}
 	return nt
 }
 
@@ -125,6 +179,7 @@ func (t *Table) String() string {
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
+	// TODO: concat content of ExtendedStatsColl
 	return strings.Join(strs, "\n")
 }
 
@@ -216,7 +271,10 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoBetweenRate
 	}
-	count := c.BetweenRowCount(a, b)
+	count, err := c.BetweenRowCount(sc, a, b)
+	if err != nil {
+		return 0
+	}
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
@@ -274,7 +332,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer == Version1 {
+	if idx.CMSketch != nil && idx.StatsVer != Version0 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
@@ -391,25 +449,104 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-// getEqualCondSelectivity gets the selectivity of the equal conditions. `coverAll` means if the conditions
-// have covered all the index columns.
-func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, coverAll bool, unique bool) float64 {
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
+	if modifyRows == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	if selectivity*float64(totalRows) > float64(modifyRows) {
+		selectivity = float64(modifyRows) / float64(totalRows)
+	}
+	return selectivity
+}
+
+// crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
+func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
+	minRowCount := math.MaxFloat64
+	cols := coll.Idx2ColumnIDs[idx.ID]
+	crossValidationSelectivity := 1.0
+	totalRowCount := idx.TotalRowCount()
+	for i, colID := range cols {
+		if i >= usedColsLen {
+			break
+		}
+		if col, ok := coll.Columns[colID]; ok {
+			lowExclude := idxPointRange.LowExclude
+			highExclude := idxPointRange.HighExclude
+			// Consider this case:
+			// create table t(a int, b int, c int, primary key(a,b,c));
+			// insert into t values(1,1,1),(2,2,3);
+			// explain select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+			// For column a, we will get range: (1, 1], (2, 2], but GetColumnRowCount() with rang = (2, 2] will return 0.
+			// And the result of the explain statement will output estRow 0.0. So we change it to [2, 2].
+			if lowExclude != highExclude && i < usedColsLen {
+				lowExclude = false
+				highExclude = false
+			}
+			rang := ranger.Range{
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  lowExclude,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: highExclude,
+			}
+
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, 0, err
+			}
+			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
+		}
+	}
+	return minRowCount, crossValidationSelectivity, nil
+}
+
+// getEqualCondSelectivity gets the selectivity of the equal conditions.
+func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (float64, error) {
+	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
-	if unique && coverAll {
-		return 1.0 / float64(idx.TotalRowCount())
+	if idx.Info.Unique && coverAll {
+		return 1.0 / float64(idx.TotalRowCount()), nil
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			// for equality queries
-			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 		}
-		// for range queries
-		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		// The equal condition only uses prefix columns of the index.
+		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		var ndv int64
+		for i, colID := range colIDs {
+			if i >= usedColsLen {
+				break
+			}
+			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+		}
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
-	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+
+	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
+	if err != nil {
+		return 0, nil
+	}
+
+	idxCount := float64(idx.QueryBytes(bytes))
+	if minRowCount < idxCount {
+		return crossValidationSelectivity, nil
+	}
+	return idxCount / idx.TotalRowCount(), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
@@ -437,14 +574,16 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			continue
 		}
 		var selectivity float64
-		coverAll := len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal)
 		// use CM Sketch to estimate the equal conditions
 		if rangeVals == nil {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
+			selectivity, err = coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
 		} else {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
 			if err != nil {
@@ -457,7 +596,11 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, coverAll, idx.Info.Unique)
+				res, err := coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				selectivity += res
 			}
 		}
 		// use histogram to estimate the range condition

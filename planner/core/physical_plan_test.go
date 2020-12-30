@@ -48,7 +48,7 @@ type testPlanSuiteBase struct {
 func (s *testPlanSuiteBase) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 }
 
 type testPlanSerialSuite struct {
@@ -120,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -157,8 +162,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string
@@ -316,7 +324,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(nil), IsNil)
+		se.StmtCommit()
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -341,8 +349,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {
@@ -435,6 +445,42 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestEliminateMaxOneRow(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t1(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, UNIQUE KEY idx_a (a))")
+	tk.MustExec("create table t2(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL)")
+	tk.MustExec("create table t3(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL, UNIQUE KEY idx_abc (a, b, c))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 type overrideStore struct{ kv.Storage }
 
 func (store overrideStore) GetClient() kv.Client {
@@ -489,6 +535,9 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		tk.MustExec("begin")
@@ -740,8 +789,8 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
 
 	var input []struct {
 		SQL         string
@@ -782,6 +831,26 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
 		}
 	}
+}
+
+func (s *testPlanSuite) TestExplainJoinHints(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, key(b), key(c))")
+	tk.MustQuery("explain format='hint' select /*+ inl_merge_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(@`sel_1` `test`.`t2`), inl_merge_join(`t2`)",
+	))
+	tk.MustQuery("explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(@`sel_1` `test`.`t2`), inl_hash_join(`t2`)",
+	))
 }
 
 func (s *testPlanSuite) TestAggToCopHint(c *C) {
@@ -845,6 +914,54 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestLimitToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tn")
+	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning string
+		}
+	)
+
+	s.testData.GetTestCases(c, &input, &output)
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := Commentf("case:%v sql:%s", i, ts)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	defer testleak.AfterTest(c)()
 	var (
@@ -873,6 +990,7 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 			Result []string
 		}
 	)
+
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
@@ -922,6 +1040,9 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		PARTITION p1 VALUES LESS THAN (100)
 	);`)
 
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("CREATE TABLE `tc`(`timestamp` timestamp NULL DEFAULT NULL, KEY `idx_timestamp` (`timestamp`)) PARTITION BY RANGE ( UNIX_TIMESTAMP(`timestamp`) ) (PARTITION `p2020072312` VALUES LESS THAN (1595480400),PARTITION `p2020072313` VALUES LESS THAN (1595484000));")
+
 	tk.MustExec("drop table if exists ta")
 	tk.MustExec("create table ta(a int);")
 	tk.MustExec("insert into ta values(1), (1);")
@@ -932,6 +1053,8 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	tk.MustExec("set session sql_mode=''")
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 
 	for _, v := range vars {
 		tk.MustExec(v)
@@ -945,6 +1068,51 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
+
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", 1))
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -1432,4 +1600,49 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
+}
+
+func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.tt`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
+	// The query below is the same as queries in the testdata except for nth_plan() hint.
+	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
+	// hold in the future, you may need to modify this.
+	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }

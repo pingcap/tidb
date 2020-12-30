@@ -9,12 +9,12 @@
           "└─Apply_13 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
           "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
-          "    └─IndexMergeJoin_44 2.00 root  inner join, inner:TableReader_42, outer key:test.t.a, inner key:test.t.a",
-          "      ├─IndexReader_33(Build) 2.00 root  index:IndexRangeScan_32",
-          "      │ └─IndexRangeScan_32 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
-          "      └─TableReader_42(Probe) 1.00 root  data:TableRangeScan_41",
-          "        └─TableRangeScan_41 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:true"
+          "  └─StreamAgg_17(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "    └─HashJoin_44 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader_32(Build) 2.00 root  data:TableFullScan_31",
+          "      │ └─TableFullScan_31 2.00 cop[tikv] table:t1 keep order:false",
+          "      └─IndexReader_30(Probe) 2.00 root  index:IndexRangeScan_29",
+          "        └─IndexRangeScan_29 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
         ]
       },
       {
@@ -84,6 +84,446 @@
           "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
           "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"a\"), (\"a\",+inf], keep order:false"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestCompIndexDNFMatch",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 and b in (1, 2) and c > 1;",
+        "Plan": [
+          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b = 2) and c > 1;",
+        "Plan": [
+          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;",
+        "Plan": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], (1 3 1,1 3 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;",
+        "Plan": [
+          "TableDual_5 8000.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b is null or b = 2);",
+        "Plan": [
+          "IndexReader_6 0.20 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.20 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b is null or b = 2) and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.07 root  index:Selection_6",
+          "└─Selection_6 0.07 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.20 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.03 root  index:Selection_6",
+          "└─Selection_6 0.03 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and b is null and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.03 root  index:Selection_6",
+          "└─Selection_6 0.03 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and b = 1 and c > 1;",
+        "Plan": [
+          "TableDual_5 8000.00 root  rows:0"
+        ],
+        "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestCompIndexMultiColDNF1",
+    "Cases": [
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "TableReader_7 0.75 root  data:Selection_6",
+          "└─Selection_6 0.75 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3), or(eq(test.t.a, 1), eq(test.t.a, 2))",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "Selection_6 1.00 root  gt(test.t.c, 2)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;",
+        "Plan": [
+          "Selection_6 1.00 root  gt(test.t.c, 2)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestCompIndexMultiColDNF2",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 and (b,c) in ((1,1),(2,3));",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));",
+        "Plan": [
+          "TableReader_6 2.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 2.00 cop[tikv] table:t range:[1 1,1 1], [1 2 3,1 2 3], keep order:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "TableReader_7 0.75 root  data:Selection_6",
+          "└─Selection_6 0.75 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "Selection_6 0.75 root  gt(test.t.c, 2), or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;",
+        "Plan": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPrefixIndexMultiColDNF",
+    "Cases": [
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "IndexLookUp_11 10.00 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:t(t) range:[\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 10.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "IndexLookUp_11 16.00 root  ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:t(t) range:[\"a\",\"a\"], [\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 16.00 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "TableReader_7 0.00 root  data:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "TableReader_7 0.80 root  data:Selection_6",
+          "└─Selection_6 0.80 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexRangeForBit",
+    "Cases": [
+      {
+        "SQL": "select * from t;",
+        "Plan": [
+          "TableReader_5 4.00 root partition:all data:TableFullScan_4",
+          "└─TableFullScan_4 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 0;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 0)",
+          "└─TableReader_7 4.00 root partition:p0 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 0 or a = 4;",
+        "Plan": [
+          "Selection_5 3.20 root  or(eq(test.t.a, 0), eq(test.t.a, 4))",
+          "└─TableReader_7 4.00 root partition:p0 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 1)",
+          "└─TableReader_7 4.00 root partition:p1 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = -1;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 3;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a < 1;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, 1)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a < 3;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a < -1;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a > 0;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, 0)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a > -1;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a > 3;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
       }
     ]
   }

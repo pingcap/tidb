@@ -16,6 +16,7 @@ package stringutil
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -31,10 +32,10 @@ var ErrSyntax = errors.New("invalid syntax")
 // or character literal represented by the string s.
 // It returns four values:
 //
-//1) value, the decoded Unicode code point or byte value;
-//2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;
-//3) tail, the remainder of the string after the character; and
-//4) an error that will be nil if the character is syntactically valid.
+// 1) value, the decoded Unicode code point or byte value;
+// 2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;
+// 3) tail, the remainder of the string after the character; and
+// 4) an error that will be nil if the character is syntactically valid.
 //
 // The second argument, quote, specifies the type of literal being parsed
 // and therefore which escaped quote character is permitted.
@@ -136,24 +137,38 @@ const (
 	PatAny
 )
 
-// CompilePattern handles escapes and wild cards convert pattern characters and
+// CompilePatternBytes is a adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
+func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte) {
+	patWeights, patTypes := CompilePatternInner(pattern, escape)
+	patChars = []byte(string(patWeights))
+
+	return patChars, patTypes
+}
+
+// CompilePattern is a adapter for `CompilePatternInner`, `pattern` can be any unicode string.
+func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
+	return CompilePatternInner(pattern, escape)
+}
+
+// CompilePatternInner handles escapes and wild cards convert pattern characters and
 // pattern types.
-func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
-	patChars = make([]byte, len(pattern))
-	patTypes = make([]byte, len(pattern))
+func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
+	runes := []rune(pattern)
+	escapeRune := rune(escape)
+	lenRunes := len(runes)
+	patWeights = make([]rune, lenRunes)
+	patTypes = make([]byte, lenRunes)
 	patLen := 0
-	for i := 0; i < len(pattern); i++ {
+	for i := 0; i < lenRunes; i++ {
 		var tp byte
-		var c = pattern[i]
-		switch c {
-		case escape:
-			lastAny = false
+		var r = runes[i]
+		switch r {
+		case escapeRune:
 			tp = PatMatch
-			if i < len(pattern)-1 {
+			if i < lenRunes-1 {
 				i++
-				c = pattern[i]
-				if c == escape || c == '_' || c == '%' {
+				r = runes[i]
+				if r == escapeRune || r == '_' || r == '%' {
 					// Valid escape.
 				} else {
 					// Invalid escape, fall back to escape byte.
@@ -163,34 +178,37 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 					// Following case is correct just for escape \, not for others like +.
 					// TODO: Add more checks for other escapes.
 					i--
-					c = escape
+					r = escapeRune
 				}
 			}
 		case '_':
-			if lastAny {
-				continue
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
 			}
-			tp = PatOne
 		case '%':
-			if lastAny {
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
 				continue
 			}
-			lastAny = true
 			tp = PatAny
 		default:
-			lastAny = false
 			tp = PatMatch
 		}
-		patChars[patLen] = c
+		patWeights[patLen] = r
 		patTypes[patLen] = tp
 		patLen++
 	}
-	patChars = patChars[:patLen]
+	patWeights = patWeights[:patLen]
 	patTypes = patTypes[:patLen]
 	return
 }
 
-func matchByte(a, b byte) bool {
+func matchRune(a, b rune) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*
@@ -207,50 +225,51 @@ func matchByte(a, b byte) bool {
 // CompileLike2Regexp convert a like `lhs` to a regular expression
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
-	var result []byte
+	var result []rune
 	for i := 0; i < len(patChars); i++ {
 		switch patTypes[i] {
 		case PatMatch:
 			result = append(result, patChars[i])
 		case PatOne:
-			// .*. == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-			}
+			result = append(result, '.')
 		case PatAny:
-			// ..* == .*
-			if bytes.HasSuffix(result, []byte{'.'}) {
-				result = append(result, '*')
-				continue
-			}
-			// .*.* == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-				result = append(result, '*')
-			}
+			result = append(result, '.', '*')
 		}
 	}
 	return string(result)
 }
 
-// DoMatch matches the string with patChars and patTypes.
+// DoMatchBytes is a adapter for `DoMatchInner`, `str` can only be an ascii string.
+func DoMatchBytes(str string, patChars, patTypes []byte) bool {
+	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
+}
+
+// DoMatch is a adapter for `DoMatchInner`, `str` can be any unicode string.
+func DoMatch(str string, patChars []rune, patTypes []byte) bool {
+	return DoMatchInner(str, patChars, patTypes, matchRune)
+}
+
+// DoMatchInner matches the string with patChars and patTypes.
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
-func DoMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx, pIdx, nextSIdx, nextPIdx int
-	for pIdx < len(patChars) || sIdx < len(str) {
-		if pIdx < len(patChars) {
+func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	var rIdx, pIdx, nextRIdx, nextPIdx int
+	for pIdx < len(patWeights) || rIdx < lenRunes {
+		if pIdx < len(patWeights) {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if sIdx < len(str) && matchByte(str[sIdx], patChars[pIdx]) {
+				if rIdx < lenRunes && matcher(runes[rIdx], patWeights[pIdx]) {
 					pIdx++
-					sIdx++
+					rIdx++
 					continue
 				}
 			case PatOne:
-				if sIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
-					sIdx++
+					rIdx++
 					continue
 				}
 			case PatAny:
@@ -258,15 +277,15 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 				// If that doesn't work out,
 				// restart at sIdx+1 next.
 				nextPIdx = pIdx
-				nextSIdx = sIdx + 1
+				nextRIdx = rIdx + 1
 				pIdx++
 				continue
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextSIdx && nextSIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
-			sIdx = nextSIdx
+			rIdx = nextRIdx
 			continue
 		}
 		return false
@@ -326,4 +345,24 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 		quote = "`"
 	}
 	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+}
+
+// BuildStringFromLabels construct config labels into string by following format:
+// "keyA=valueA,keyB=valueB"
+func BuildStringFromLabels(labels map[string]string) string {
+	if len(labels) < 1 {
+		return ""
+	}
+	s := make([]string, 0, len(labels))
+	for k := range labels {
+		s = append(s, k)
+	}
+	sort.Strings(s)
+	r := new(bytes.Buffer)
+	// visit labels by sorted key in order to make sure that result should be consistency
+	for _, key := range s {
+		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+	}
+	returned := r.String()
+	return returned[:len(returned)-1]
 }

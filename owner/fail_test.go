@@ -16,6 +16,7 @@ package owner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -53,13 +54,14 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 var (
-	endpoints   = []string{"unix://new_session:12379"}
 	dialTimeout = 5 * time.Second
 	retryCnt    = math.MaxInt32
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
+	ln, err := net.Listen("unix", "new_session:0")
+	addr := ln.Addr()
+	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
 	c.Assert(err, IsNil)
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup

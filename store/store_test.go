@@ -26,6 +26,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -57,7 +58,7 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }
@@ -530,7 +531,7 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 
 func (s *testKVSuite) TestDBClose(c *C) {
 	c.Skip("don't know why it fails.")
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -542,12 +543,11 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
 
-	snap, err := store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, IsNil)
+	snap := store.GetSnapshot(kv.MaxVersion)
 
 	_, err = snap.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
@@ -561,8 +561,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = store.Begin()
 	c.Assert(err, NotNil)
 
-	_, err = store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, NotNil)
+	_ = store.GetSnapshot(kv.MaxVersion)
 
 	err = txn.Set([]byte("a"), []byte("b"))
 	c.Assert(err, IsNil)

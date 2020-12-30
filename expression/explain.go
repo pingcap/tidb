@@ -57,7 +57,10 @@ func (col *Column) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
-	return col.ExplainInfo()
+	if col.OrigName != "" {
+		return col.OrigName
+	}
+	return "?"
 }
 
 // ExplainInfo implements the Expression interface.
@@ -92,8 +95,20 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 		switch expr.(type) {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.String())
+		case *Constant:
+			v := expr.String()
+			length := 64
+			if len(v) < length {
+				builder.WriteString(v)
+			} else {
+				builder.WriteString(fmt.Sprintf("%s(len:%d)", v[:length], len(v)))
+			}
+			builder.WriteString("->")
+			builder.WriteString(schema.Columns[i].String())
 		default:
-			fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
+			builder.WriteString(expr.String())
+			builder.WriteString("->")
+			builder.WriteString(schema.Columns[i].String())
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")

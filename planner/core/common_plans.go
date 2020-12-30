@@ -30,17 +30,19 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"go.uber.org/zap"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -78,6 +80,7 @@ type CheckTable struct {
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	CheckIndex         bool
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -94,15 +97,6 @@ type CleanupIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// CheckIndex is used for checking index data, built from the 'admin check index' statement.
-type CheckIndex struct {
-	baseSchemaProducer
-
-	IndexLookUpReader *PhysicalIndexLookUpReader
-	DBName            string
-	IdxName           string
 }
 
 // CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
@@ -154,6 +148,16 @@ type AdminPlugins struct {
 	baseSchemaProducer
 	Action  AdminPluginsAction
 	Plugins []string
+}
+
+// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
+type AdminShowTelemetry struct {
+	baseSchemaProducer
+}
+
+// AdminResetTelemetryID regenerates a new telemetry tracking ID.
+type AdminResetTelemetryID struct {
+	baseSchemaProducer
 }
 
 // Change represents a change plan.
@@ -266,13 +270,26 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 
 func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	vars := sctx.GetSessionVars()
-	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToIntStr(opt))
+	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToOnOff(opt))
 	return err
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
+	stmtCtx.UseCache = prepared.UseCache
+	var cacheKey kvcache.Key
+	if prepared.UseCache {
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+	}
+	tps := make([]*types.FieldType, len(e.UsingVars))
+	for i, param := range e.UsingVars {
+		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
+		if tps[i] == nil {
+			tps[i] = types.NewFieldType(mysql.TypeNull)
+		}
+	}
 	if prepared.CachedPlan != nil {
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -282,7 +299,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		names := prepared.CachedNames.(types.NameSlice)
 		err := e.rebuildRange(plan)
 		if err != nil {
-			return err
+			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -298,47 +316,54 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	var cacheKey kvcache.Key
-	stmtCtx.UseCache = prepared.UseCache
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
-			planValid := true
-			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
-					planValid = false
-					// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-					// rebuilding the filters in UnionScan is pretty trivial.
-					sctx.PreparedPlanCache().Delete(cacheKey)
-					break
+			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
+			for _, cachedVal := range cachedVals {
+				if !cachedVal.UserVarTypes.Equal(tps) {
+					continue
 				}
-			}
-			if planValid {
-				err := e.setFoundInPlanCache(sctx, true)
-				if err != nil {
-					return err
+				planValid := true
+				for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+					if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+						planValid = false
+						// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
+						// rebuilding the filters in UnionScan is pretty trivial.
+						sctx.PreparedPlanCache().Delete(cacheKey)
+						break
+					}
 				}
-				if metrics.ResettablePlanCacheCounterFortTest {
-					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-				} else {
-					planCacheCounter.Inc()
+				if planValid {
+					err := e.rebuildRange(cachedVal.Plan)
+					if err != nil {
+						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+						goto REBUILD
+					}
+					err = e.setFoundInPlanCache(sctx, true)
+					if err != nil {
+						return err
+					}
+					if metrics.ResettablePlanCacheCounterFortTest {
+						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+					} else {
+						planCacheCounter.Inc()
+					}
+					e.names = cachedVal.OutPutNames
+					e.Plan = cachedVal.Plan
+					stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
+					return nil
 				}
-				err = e.rebuildRange(cachedVal.Plan)
-				if err != nil {
-					return err
-				}
-				e.names = cachedVal.OutPutNames
-				e.Plan = cachedVal.Plan
-				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-				return nil
+				break
 			}
 		}
 	}
-	p, names, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+
+REBUILD:
+	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
+	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
 	}
@@ -350,14 +375,25 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		err = e.setFoundInPlanCache(sctx, true)
-		if err != nil {
-			return err
-		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan)
+		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-		sctx.PreparedPlanCache().Put(cacheKey, cached)
+		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
+			hitVal := false
+			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
+				if cacheVal.UserVarTypes.Equal(tps) {
+					hitVal = true
+					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
+					break
+				}
+			}
+			if !hitVal {
+				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
+			}
+			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
+		} else {
+			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
+		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
@@ -409,27 +445,33 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		var pkCol *expression.Column
-		if ts.Table.PKIsHandle {
-			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+		if ts.Table.IsCommonHandle {
+			pk := tables.FindPrimaryIndex(ts.Table)
+			pkCols := make([]*expression.Column, 0, len(pk.Columns))
+			pkColsLen := make([]int, 0, len(pk.Columns))
+			for _, colInfo := range pk.Columns {
+				pkCols = append(pkCols, expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]))
+				pkColsLen = append(pkColsLen, colInfo.Length)
 			}
-		}
-		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
 			if err != nil {
 				return err
 			}
-			if ts.Table.Partition != nil && ts.Table.Partition.Type == model.PartitionTypeHash {
-				pID, err := rebuildNewTableIDFromTable(e.ctx, ts, sc, pkCol)
+			ts.Ranges = res.Ranges
+		} else {
+			if ts.Table.PKIsHandle {
+				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+				}
+			}
+			if pkCol != nil {
+				ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 				if err != nil {
 					return err
 				}
-				if pID != -1 {
-					ts.physicalTableID = pID
-				}
+			} else {
+				ts.Ranges = ranger.FullIntRange(false)
 			}
-		} else {
-			ts.Ranges = ranger.FullIntRange(false)
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
@@ -437,43 +479,51 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
-			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
-			if err != nil {
-				return err
-			}
-			if pID != -1 {
-				is.physicalTableID = pID
-			}
-		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
 		}
-		if is.Table.Partition != nil && is.Table.Partition.Type == model.PartitionTypeHash {
-			pID, err := rebuildNewTableIDFromIndex(e.ctx, is, sc)
-			if err != nil {
-				return err
-			}
-			if pID != -1 {
-				is.physicalTableID = pID
-				tblScan := x.TablePlans[0].(*PhysicalTableScan)
-				tblScan.physicalTableID = pID
+	case *PointGetPlan:
+		// if access condition is not nil, which means it's a point get generated by cbo.
+		if x.AccessConditions != nil {
+			if x.IndexInfo != nil {
+				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
+				if err != nil {
+					return err
+				}
+				for i := range x.IndexValues {
+					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
+				}
+			} else {
+				var pkCol *expression.Column
+				if x.TblInfo.PKIsHandle {
+					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
+						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					}
+				}
+				if pkCol != nil {
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					if err != nil {
+						return err
+					}
+					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
+				}
 			}
 		}
-	case *PointGetPlan:
+		// The code should never run here as long as we're not using point get for partition table.
+		// And if we change the logic one day, here work as defensive programming to cache the error.
+		if x.PartitionInfo != nil {
+			return errors.New("point get for partition table can not use plan cache")
+		}
 		if x.HandleParam != nil {
-			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
+			var iv int64
+			iv, err = x.HandleParam.Datum.ToInt64(sc)
 			if err != nil {
 				return err
 			}
-			if x.PartitionInfo != nil {
-				num := x.TblInfo.Partition.Num
-				pos := math.Abs(x.Handle) % int64(num)
-				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
-			}
+			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
@@ -481,19 +531,46 @@ func (e *Execute) rebuildRange(p Plan) error {
 				x.IndexValues[i] = param.Datum
 			}
 		}
-		if x.PartitionInfo != nil {
-			val := x.IndexValues[x.partitionColumnPos].GetInt64()
-			partitionID := val % int64(x.TblInfo.Partition.Num)
-			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
-		}
 		return nil
 	case *BatchPointGetPlan:
-		for i, param := range x.HandleParams {
-			if param != nil {
-				x.Handles[i], err = param.Datum.ToInt64(sc)
+		// if access condition is not nil, which means it's a point get generated by cbo.
+		if x.AccessConditions != nil {
+			if x.IndexInfo != nil {
+				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
 				if err != nil {
 					return err
 				}
+				for i := range x.IndexValues {
+					for j := range ranges.Ranges[i].LowVal {
+						x.IndexValues[i][j] = ranges.Ranges[i].LowVal[j]
+					}
+				}
+			} else {
+				var pkCol *expression.Column
+				if x.TblInfo.PKIsHandle {
+					if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
+						pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					}
+				}
+				if pkCol != nil {
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					if err != nil {
+						return err
+					}
+					for i := range ranges {
+						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
+					}
+				}
+			}
+		}
+		for i, param := range x.HandleParams {
+			if param != nil {
+				var iv int64
+				iv, err = param.Datum.ToInt64(sc)
+				if err != nil {
+					return err
+				}
+				x.Handles[i] = kv.IntHandle(iv)
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -601,6 +678,18 @@ type Simple struct {
 	baseSchemaProducer
 
 	Statement ast.StmtNode
+
+	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
+	//   and executing in co-processor.
+	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
+	IsFromRemote bool
+}
+
+// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+//   Used for simple statements executing in coprocessor.
+type PhysicalSimpleWrapper struct {
+	basePhysicalPlan
+	Inner Simple
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.
@@ -646,9 +735,15 @@ type Update struct {
 
 	AllAssignmentsAreConstant bool
 
+	VirtualAssignmentsOffset int
+
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	// Used when partition sets are given.
+	// e.g. update t partition(p0) set a = 1;
+	PartitionedTable []table.PartitionedTable
 }
 
 // Delete represents a delete plan.
@@ -662,21 +757,68 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
+// AnalyzeTableID is hybrid table id used to analyze table.
+type AnalyzeTableID struct {
+	PersistID  int64
+	CollectIDs []int64
+}
+
+// StoreAsCollectID indicates whether collect table id is same as persist table id.
+// for new partition implementation is TRUE but FALSE for old partition implementation
+func (h *AnalyzeTableID) StoreAsCollectID() bool {
+	return h.PersistID == h.CollectIDs[0]
+}
+
+func (h *AnalyzeTableID) String() string {
+	return fmt.Sprintf("%d => %v", h.CollectIDs, h.PersistID)
+}
+
+// Equals indicates whether two table id is equal.
+func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
+	if h == t {
+		return true
+	}
+	if h == nil || t == nil {
+		return false
+	}
+	if h.PersistID != t.PersistID {
+		return false
+	}
+	if len(h.CollectIDs) != len(t.CollectIDs) {
+		return false
+	}
+	if len(h.CollectIDs) == 1 {
+		return h.CollectIDs[0] == t.CollectIDs[0]
+	}
+	for _, hp := range h.CollectIDs {
+		var matchOne bool
+		for _, tp := range t.CollectIDs {
+			if tp == hp {
+				matchOne = true
+				break
+			}
+		}
+		if !matchOne {
+			return false
+		}
+	}
+	return true
+}
+
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
 type analyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	Incremental     bool
+	TableID       AnalyzeTableID
+	Incremental   bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PKInfo   *model.ColumnInfo
-	ColsInfo []*model.ColumnInfo
-	TblInfo  *model.TableInfo
+	HandleCols HandleCols
+	ColsInfo   []*model.ColumnInfo
+	TblInfo    *model.TableInfo
 	analyzeInfo
 }
 
@@ -708,6 +850,9 @@ type LoadData struct {
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
+
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 
 	GenCols InsertGeneratedColumns
 }
@@ -770,13 +915,28 @@ type SelectInto struct {
 type Explain struct {
 	baseSchemaProducer
 
-	TargetPlan Plan
-	Format     string
-	Analyze    bool
-	ExecStmt   ast.StmtNode
+	TargetPlan       Plan
+	Format           string
+	Analyze          bool
+	ExecStmt         ast.StmtNode
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
 	Rows           [][]string
+	ExplainRows    [][]string
 	explainedPlans map[int]bool
+}
+
+// GetExplainRowsForPlan get explain rows for plan.
+func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     ast.ExplainFormatROW,
+		Analyze:    false,
+	}
+	if err := explain.RenderResult(); err != nil {
+		return rows
+	}
+	return explain.Rows
 }
 
 // prepareSchema prepares explain's result schema.
@@ -785,9 +945,9 @@ func (e *Explain) prepareSchema() error {
 	format := strings.ToLower(e.Format)
 
 	switch {
-	case format == ast.ExplainFormatROW && !e.Analyze:
+	case format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && e.Analyze:
+	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -817,16 +977,20 @@ func (e *Explain) RenderResult() error {
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
-		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
-		if err != nil {
-			return err
+		if e.Rows == nil || e.Analyze {
+			e.explainedPlans = map[int]bool{}
+			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.prepareDotInfo(physicalPlan)
+		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
-		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt)...)
+		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -931,6 +1095,46 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
+func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+	if runtimeStatsColl == nil {
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if runtimeStatsColl == nil {
+			return
+		}
+	}
+	explainID := p.ID()
+
+	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+	if runtimeStatsColl.ExistsRootStats(explainID) {
+		rootStats := runtimeStatsColl.GetRootStats(explainID)
+		analyzeInfo = rootStats.String()
+		actRows = fmt.Sprint(rootStats.GetActRows())
+	} else {
+		actRows = "0"
+	}
+	if runtimeStatsColl.ExistsCopStats(explainID) {
+		if len(analyzeInfo) > 0 {
+			analyzeInfo += ", "
+		}
+		copStats := runtimeStatsColl.GetCopStats(explainID)
+		analyzeInfo += copStats.String()
+		actRows = fmt.Sprint(copStats.GetActRows())
+	}
+	memoryInfo = "N/A"
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
+	if memTracker != nil {
+		memoryInfo = memTracker.FormatBytes(memTracker.MaxConsumed())
+	}
+
+	diskInfo = "N/A"
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
+	if diskTracker != nil {
+		diskInfo = diskTracker.FormatBytes(diskTracker.MaxConsumed())
+	}
+	return
+}
+
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
 func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent string, isLastChild bool) {
@@ -939,63 +1143,46 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
-
-	estRows := "N/A"
-	if si := p.statsInfo(); si != nil {
-		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
-	}
-
-	var accessObject, operatorInfo string
-	if plan, ok := p.(dataAccesser); ok {
-		accessObject = plan.AccessObject()
-		operatorInfo = plan.OperatorInfo(false)
-	} else {
-		operatorInfo = p.ExplainInfo()
-	}
+	estRows, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
 	if e.Analyze {
-		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		explainID := p.ExplainID().String()
-		var actRows, analyzeInfo string
-
-		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-		// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
-		if runtimeStatsColl.ExistsCopStats(explainID) {
-			copstats := runtimeStatsColl.GetCopStats(explainID)
-			analyzeInfo = copstats.String()
-			actRows = fmt.Sprint(copstats.GetActRows())
-		} else if runtimeStatsColl.ExistsRootStats(explainID) {
-			rootstats := runtimeStatsColl.GetRootStats(explainID)
-			analyzeInfo = rootstats.String()
-			actRows = fmt.Sprint(rootstats.GetActRows())
-		} else {
-			analyzeInfo = "time:0ns, loops:0"
-		}
-		switch p.(type) {
-		case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-			if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-				analyzeInfo += ", " + s.String()
-			}
-		}
-
-		memoryInfo := "N/A"
-		memTracker := e.ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
-		if memTracker != nil {
-			memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
-		}
-
-		diskInfo := "N/A"
-		diskTracker := e.ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
-		if diskTracker != nil {
-			diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
-		}
-
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else if e.RuntimeStatsColl != nil {
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows, taskType, accessObject, operatorInfo}
 	}
 	e.Rows = append(e.Rows, row)
+}
+
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+	// For `explain for connection` statement, `e.ExplainRows` will be set.
+	for _, row := range e.ExplainRows {
+		if len(row) < 5 {
+			panic("should never happen")
+		}
+		if row[0] == id {
+			return row[1], row[3], row[4]
+		}
+	}
+	estRows := "N/A"
+	if si := p.statsInfo(); si != nil {
+		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+	}
+	var accessObject, operatorInfo string
+	if plan, ok := p.(dataAccesser); ok {
+		accessObject = plan.AccessObject(false)
+		operatorInfo = plan.OperatorInfo(false)
+	} else {
+		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
+			accessObject = pa.accessObject(e.ctx)
+		}
+		operatorInfo = p.ExplainInfo()
+	}
+	return estRows, accessObject, operatorInfo
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
@@ -1084,12 +1271,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		if !isPointRange {
+			return false, nil
+		}
+		pkLength := 1
+		if tableScan.Table.IsCommonHandle {
+			pkIdx := tables.FindPrimaryIndex(tableScan.Table)
+			pkLength = len(pkIdx.Columns)
+		}
+		return len(tableScan.Ranges[0].LowVal) == pkLength, nil
 	case *PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil, nil
+		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		return isPointGet, nil
 	default:
 		return false, nil
 	}
@@ -1162,43 +1359,4 @@ func locateHashPartition(ctx sessionctx.Context, expr expression.Expression, pi 
 		ret = 0 - ret
 	}
 	return int(ret % int64(pi.Num)), nil
-}
-
-func getPhysicalTableIDForPartition(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names types.NameSlice, val []types.Datum) (int64, error) {
-	expr, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
-	if err != nil {
-		return 0, err
-	}
-	pos, err := locateHashPartition(ctx, expr[0], pi, val)
-	if err != nil {
-		return 0, err
-	}
-	pID := pi.Definitions[pos].ID
-	return pID, nil
-}
-
-func rebuildNewTableIDFromIndex(ctx sessionctx.Context, is *PhysicalIndexScan, sc *stmtctx.StatementContext) (int64, error) {
-	pi := is.Table.Partition
-	if pi.Type == model.PartitionTypeHash && len(is.Ranges) == 1 && is.Ranges[0].IsPoint(sc) {
-		schema, names := buildSchemaAndNameFromIndex(is.IdxCols, is.DBName, is.Table, is.Index)
-		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, is.Ranges[0].LowVal)
-		if err != nil {
-			return -1, err
-		}
-		return pID, nil
-	}
-	return -1, nil
-}
-
-func rebuildNewTableIDFromTable(ctx sessionctx.Context, ts *PhysicalTableScan, sc *stmtctx.StatementContext, pkCol *expression.Column) (int64, error) {
-	pi := ts.Table.Partition
-	if pi.Type == model.PartitionTypeHash && len(ts.Ranges) == 1 && ts.Ranges[0].IsPoint(sc) {
-		schema, names := buildSchemaAndNameFromPKCol(pkCol, ts.DBName, ts.Table)
-		pID, err := getPhysicalTableIDForPartition(ctx, pi, schema, names, ts.Ranges[0].LowVal)
-		if err != nil {
-			return -1, err
-		}
-		return pID, nil
-	}
-	return -1, nil
 }

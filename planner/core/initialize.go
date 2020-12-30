@@ -103,6 +103,12 @@ func (p LogicalUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalUnionA
 	return &p
 }
 
+// Init initializes LogicalPartitionUnionAll.
+func (p LogicalPartitionUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalPartitionUnionAll {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
@@ -210,9 +216,9 @@ func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo,
 	return &p
 }
 
-// Init initializes PhysicalShuffleDataSourceStub.
-func (p PhysicalShuffleDataSourceStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleDataSourceStub {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleDataSourceStub, &p, offset)
+// Init initializes PhysicalShuffleReceiverStub.
+func (p PhysicalShuffleReceiverStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
@@ -233,6 +239,12 @@ func (p Delete) Init(ctx sessionctx.Context) *Delete {
 // Init initializes Insert.
 func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	p.basePlan = newBasePlan(ctx, plancodec.TypeInsert, 0)
+	return &p
+}
+
+// Init initializes LoadData.
+func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
 	return &p
 }
 
@@ -410,6 +422,13 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
+// Init initializes PhysicalTableSample.
+func (p PhysicalTableSample) Init(ctx sessionctx.Context, offset int) *PhysicalTableSample {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
+	p.stats = &property.StatsInfo{RowCount: 1}
+	return &p
+}
+
 // Init initializes PhysicalIndexReader.
 func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
@@ -453,16 +472,40 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalExchangeSender) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeSender {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeExchangeSender, 0)
+	p.stats = stats
+	return &p
+}
+
+// Init only assigns type and context.
+func (p PhysicalExchangeReceiver) Init(ctx sessionctx.Context, stats *property.StatsInfo) *PhysicalExchangeReceiver {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
+	p.stats = stats
+	return &p
+}
+
+func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
+	plans = append(plans, plan)
+	for _, child := range plan.Children() {
+		plans = flattenTreePlan(child, plans)
+	}
+	return plans
+}
+
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
-	for {
-		plans = append(plans, p)
-		if len(p.Children()) == 0 {
-			break
-		}
-		p = p.Children()[0]
-	}
+	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]

@@ -196,7 +196,7 @@ func (helper extractHelper) extractCol(
 			continue
 		}
 		var colName string
-		var datums []types.Datum
+		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch fn.FuncName.L {
 		case ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
@@ -534,7 +534,22 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 }
 
 func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.NodeTypes) > 0 {
+		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
+	}
+	if len(e.Instances) > 0 {
+		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // ClusterLogTableExtractor is used to extract some predicates of `cluster_config`
@@ -593,12 +608,11 @@ func (e *ClusterLogTableExtractor) Extract(
 	// The time unit for search log is millisecond.
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
 	e.StartTime = startTime
 	e.EndTime = endTime
-	e.SkipRequest = startTime > endTime
+	if startTime != 0 && endTime != 0 {
+		e.SkipRequest = startTime > endTime
+	}
 
 	if e.SkipRequest {
 		return nil
@@ -614,12 +628,12 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	r := new(bytes.Buffer)
-	st, et := e.GetTimeRange(false)
+	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.Unix(0, st*1e6)
 		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
-	if et < math.MaxInt64 {
+	if et > 0 {
 		et := time.Unix(0, et*1e6)
 		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
 	}
@@ -639,27 +653,6 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return s[:len(s)-2]
 	}
 	return s
-}
-
-// GetTimeRange extract startTime and endTime
-func (e *ClusterLogTableExtractor) GetTimeRange(isFailpointTestModeSkipCheck bool) (int64, int64) {
-	startTime := e.StartTime
-	endTime := e.EndTime
-	if endTime == 0 {
-		endTime = math.MaxInt64
-	}
-	if !isFailpointTestModeSkipCheck {
-		// Just search the recent half an hour logs if the user doesn't specify the start time
-		const defaultSearchLogDuration = 30 * time.Minute / time.Millisecond
-		if startTime == 0 {
-			if endTime == math.MaxInt64 {
-				startTime = time.Now().UnixNano()/int64(time.Millisecond) - int64(defaultSearchLogDuration)
-			} else {
-				startTime = endTime - int64(defaultSearchLogDuration)
-			}
-		}
-	}
-	return startTime, endTime
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.
@@ -832,7 +825,13 @@ func (e *InspectionResultTableExtractor) Extract(
 }
 
 func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection:true"
+	}
+	s := make([]string, 0, 2)
+	s = append(s, fmt.Sprintf("rules:[%s]", extractStringFromStringSet(e.Rules)))
+	s = append(s, fmt.Sprintf("items:[%s]", extractStringFromStringSet(e.Items)))
+	return strings.Join(s, ", ")
 }
 
 // InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
@@ -855,9 +854,9 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule` columns
-	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	_, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	_, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
@@ -868,7 +867,34 @@ func (e *InspectionSummaryTableExtractor) Extract(
 }
 
 func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.Rules) > 0 {
+		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
+	}
+	if len(e.MetricNames) > 0 {
+		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
+	}
+	if len(e.Quantiles) > 0 {
+		r.WriteString("quantiles:[")
+		for i, quantile := range e.Quantiles {
+			if i > 0 {
+				r.WriteByte(',')
+			}
+			r.WriteString(fmt.Sprintf("%f", quantile))
+		}
+		r.WriteString("], ")
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
@@ -956,6 +982,130 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	e.Enable = true
 }
 
+// TableStorageStatsExtractor is used to extract some predicates of `disk_usage`.
+type TableStorageStatsExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component.
+	SkipRequest bool
+	// TableSchema represents tableSchema applied to, and we should apply all table disk usage if there is no schema specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table_schema in ('test', 'information_schema').
+	TableSchema set.StringSet
+	// TableName represents tableName applied to, and we should apply all table disk usage if there is no table specified.
+	// e.g: SELECT * FROM information_schema.disk_usage WHERE table in ('schemata', 'tables').
+	TableName set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface.
+func (e *TableStorageStatsExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `table_schema` columns.
+	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	// Extract the `table_name` columns.
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	e.SkipRequest = schemaSkip || tableSkip
+	if e.SkipRequest {
+		return nil
+	}
+	e.TableSchema = tableSchema
+	e.TableName = tableName
+	return remained
+}
+
+func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
+	}
+	if r.Len() > 0 && len(e.TableName) > 0 {
+		r.WriteString(", ")
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
+	}
+	return r.String()
+}
+
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+}
+
+// TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
+type TiFlashSystemTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+	// TiFlashInstances represents all tiflash instances we should send request to.
+	// e.g:
+	// 1. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance='192.168.1.7:3930'
+	// 2. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance in ('192.168.1.7:3930', '192.168.1.9:3930')
+	TiFlashInstances set.StringSet
+	// TidbDatabases represents tidbDatabases applied to, and we should apply all tidb database if there is no database specified.
+	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_database in ('test', 'test2').
+	TiDBDatabases string
+	// TidbTables represents tidbTables applied to, and we should apply all tidb table if there is no table specified.
+	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_table in ('t', 't2').
+	TiDBTables string
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `tiflash_instance` columns.
+	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
+	// Extract the `tidb_database` columns.
+	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true)
+	// Extract the `tidb_table` columns.
+	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true)
+	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
+	if e.SkipRequest {
+		return nil
+	}
+	e.TiFlashInstances = tiflashInstances
+	e.TiDBDatabases = extractStringFromStringSet(tidbDatabases)
+	e.TiDBTables = extractStringFromStringSet(tidbTables)
+	return remained
+}
+
+func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TiFlashInstances) > 0 {
+		r.WriteString(fmt.Sprintf("tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances)))
+	}
+	if len(e.TiDBDatabases) > 0 {
+		r.WriteString(fmt.Sprintf("tidb_databases:[%s], ", e.TiDBDatabases))
+	}
+	if len(e.TiDBTables) > 0 {
+		r.WriteString(fmt.Sprintf("tidb_tables:[%s], ", e.TiDBTables))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }

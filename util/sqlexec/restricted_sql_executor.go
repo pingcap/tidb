@@ -37,11 +37,32 @@ type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
 	ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQLWithContext run sql statement in ctx with some restriction.
-	ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
 	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 	ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error)
+}
+
+// ExecOption is a struct defined for ExecRestrictedSQLWithContext option.
+type ExecOption struct {
+	IgnoreWarning bool
+	SnapshotTS    uint64
+}
+
+// OptionFuncAlias is defined for the optional paramater of ExecRestrictedSQLWithContext.
+type OptionFuncAlias = func(option *ExecOption)
+
+// ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to ignore the warnings.
+var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+	option.IgnoreWarning = true
+}
+
+// ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.
+func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.SnapshotTS = snapshot
+	}
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -70,6 +91,9 @@ type SQLParser interface {
 type Statement interface {
 	// OriginText gets the origin SQL text.
 	OriginText() string
+
+	// GetTextToLog gets the desensitization SQL text for logging.
+	GetTextToLog() string
 
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)

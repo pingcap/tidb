@@ -78,7 +78,22 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
-
+	testDatumToBool(c, json.CreateBinary(int64(1)), 1)
+	testDatumToBool(c, json.CreateBinary(int64(0)), 0)
+	testDatumToBool(c, json.CreateBinary("0"), 1)
+	testDatumToBool(c, json.CreateBinary("aaabbb"), 1)
+	testDatumToBool(c, json.CreateBinary(float64(0.0)), 0)
+	testDatumToBool(c, json.CreateBinary(float64(3.1415)), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(c, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(c, json.CreateBinary("0000-00-00 00:00:00"), 1)
+	testDatumToBool(c, json.CreateBinary("0778"), 1)
+	testDatumToBool(c, json.CreateBinary("0000"), 1)
+	testDatumToBool(c, json.CreateBinary(nil), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{nil}), 1)
+	testDatumToBool(c, json.CreateBinary(true), 1)
+	testDatumToBool(c, json.CreateBinary(false), 1)
+	testDatumToBool(c, json.CreateBinary(""), 1)
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
@@ -97,42 +112,6 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	sc.IgnoreTruncate = true
 	_, err = d.ToBool(sc)
 	c.Assert(err, NotNil)
-}
-
-func (ts *testDatumSuite) TestEqualDatums(c *C) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatums(c, tt.a, tt.b, tt.same)
-	}
-}
-
-func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
 
 func testDatumToInt64(c *C, val interface{}, expect int64) {
@@ -307,6 +286,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
 		{NewFloat64Datum(1.23), []byte("1.23")},
 		{NewStringDatum("abc"), []byte("abc")},
+		{Datum{}, []byte{}},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true

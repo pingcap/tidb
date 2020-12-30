@@ -51,7 +51,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 			return nil
 		}
 	}
-	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
+	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {

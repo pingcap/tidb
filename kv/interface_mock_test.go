@@ -105,6 +105,10 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
+func (t *mockTxn) GetUnionStore() UnionStore {
+	return nil
+}
+
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -125,6 +129,10 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
+func (t *mockTxn) GetVars() *Variables {
+	return nil
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
@@ -141,19 +149,23 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	return newMockTxn(), nil
+}
+
 func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
-// BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
+// BeginWithStartTS begins transaction with given txnScope and startTS.
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
 
-func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
+func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(),
-	}, nil
+		store: newMemDB(),
+	}
 }
 
 func (s *mockStorage) Close() error {
@@ -165,11 +177,15 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion() (Version, error) {
+func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 
 func (s *mockStorage) GetClient() Client {
+	return nil
+}
+
+func (s *mockStorage) GetMPPClient() MPPClient {
 	return nil
 }
 
@@ -191,6 +207,10 @@ func (s *mockStorage) Describe() string {
 
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, nil
+}
+
+func (s *mockStorage) GetMemCache() MemManager {
+	return nil
 }
 
 // newMockStorage creates a new mockStorage.

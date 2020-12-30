@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -254,6 +256,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -433,7 +436,11 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			i64s[i] = -1
 			continue
 		}
-		idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		if b.hasNullable {
+			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		} else {
+			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		}
 		if err != nil {
 			return err
 		}
@@ -466,7 +473,11 @@ func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			res[i] = -1
 			continue
 		}
-		idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		if b.hasNullable {
+			idx, err = b.linearSearch(f64s[i], b.args[1:], input.GetRow(i))
+		} else {
+			idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		}
 		if err != nil {
 			return err
 		}
@@ -605,7 +616,7 @@ func vecResOfGE(res []int64) {
 	}
 }
 
-//vecCompareInt is vectorized CompareInt()
+// vecCompareInt is vectorized CompareInt()
 func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
 	switch {
 	case isUnsigned0 && isUnsigned1:
@@ -624,47 +635,46 @@ func (b *builtinGreatestTimeSig) vectorized() bool {
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(dst)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dst.ResizeTime(n, false)
-	dstTimes := dst.Times()
-	for i := 0; i < n; i++ {
-		dstTimes[i] = types.ZeroDatetime
-	}
-	var argTime types.Time
+	n := input.NumRows()
+
+	dstStrings := make([]string, n)
+	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
+	dstNullMap := make([]bool, n)
+
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
 		}
 		for i := 0; i < n; i++ {
-			if result.IsNull(i) || dst.IsNull(i) {
-				dst.SetNull(i, true)
+			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
 				continue
 			}
-			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+
+			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
+			argTimeStr := string(result.GetBytes(i))
+
+			argTime, err := types.ParseDatetime(sc, argTimeStr)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				}
-				continue
+			} else {
+				argTimeStr = argTime.String()
 			}
-			if argTime.Compare(dstTimes[i]) > 0 {
-				dstTimes[i] = argTime
+			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
+				dstStrings[i] = argTimeStr
 			}
 		}
 	}
+
+	// Aggregate the NULL and String value into result
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if dst.IsNull(i) {
+		if dstNullMap[i] {
 			result.AppendNull()
 		} else {
-			result.AppendString(dstTimes[i].String())
+			result.AppendString(dstStrings[i])
 		}
 	}
 	return nil
@@ -710,58 +720,46 @@ func (b *builtinLeastTimeSig) vectorized() bool {
 }
 
 func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(dst)
-
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dst.ResizeTime(n, false)
-	dstTimes := dst.Times()
-	for i := 0; i < n; i++ {
-		dstTimes[i] = types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.DefaultFsp)
-	}
-	var argTime types.Time
+	n := input.NumRows()
 
-	findInvalidTime := make([]bool, n)
-	invalidValue := make([]string, n)
+	dstStrings := make([]string, n)
+	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
+	dstNullMap := make([]bool, n)
 
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
 		}
-		dst.MergeNulls(result)
 		for i := 0; i < n; i++ {
-			if dst.IsNull(i) {
+			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
 				continue
 			}
-			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+
+			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
+			argTimeStr := string(result.GetBytes(i))
+
+			argTime, err := types.ParseDatetime(sc, argTimeStr)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
-				} else if !findInvalidTime[i] {
-					invalidValue[i] = result.GetString(i)
-					findInvalidTime[i] = true
 				}
-				continue
+			} else {
+				argTimeStr = argTime.String()
 			}
-			if argTime.Compare(dstTimes[i]) < 0 {
-				dstTimes[i] = argTime
+			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
+				dstStrings[i] = argTimeStr
 			}
 		}
 	}
+
+	// Aggregate the NULL and String value into result
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if findInvalidTime[i] {
-			result.AppendString(invalidValue[i])
-			continue
-		}
-		if dst.IsNull(i) {
+		if dstNullMap[i] {
 			result.AppendNull()
 		} else {
-			result.AppendString(dstTimes[i].String())
+			result.AppendString(dstStrings[i])
 		}
 	}
 	return nil
@@ -791,6 +789,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err

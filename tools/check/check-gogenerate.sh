@@ -20,6 +20,6 @@ diffline=$(git status -s | awk '{print $2}' | xargs grep '^// Code generated .* 
 set -e
 if [[ $diffline != "" ]]
 then
-  echo "Your commit is changed after running go generate ./..., it should not hanppen."
+  echo "Your commit is changed after running go generate ./..., it should not happen."
   exit 1
 fi

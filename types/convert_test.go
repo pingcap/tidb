@@ -235,7 +235,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
+	c.Assert(err, IsNil)
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
@@ -272,6 +272,15 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(ZeroDuration, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(time.Now().Year()))
+	bj1, err := json.ParseBinaryFromString("99")
+	c.Assert(err, IsNil)
+	v, err = Convert(bj1, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1999))
+	bj2, err := json.ParseBinaryFromString("-1")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj2, ft)
+	c.Assert(err, NotNil)
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
@@ -341,7 +350,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
+	c.Assert(err, IsNil)
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -381,7 +390,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToInt(sc, str)
+	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -393,7 +402,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToUint(sc, str)
+	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -405,7 +414,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToFloat(sc, str)
+	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -479,15 +488,15 @@ func testSelectUpdateDeleteEmptyStringError(c *C) {
 		str := ""
 		expect := 0
 
-		val, err := StrToInt(sc, str)
+		val, err := StrToInt(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, int64(expect))
 
-		val1, err := StrToUint(sc, str)
+		val1, err := StrToUint(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val1, Equals, uint64(expect))
 
-		val2, err := StrToFloat(sc, str)
+		val2, err := StrToFloat(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val2, Equals, float64(expect))
 	}
@@ -673,25 +682,41 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedDeny(c, mysql.TypeYear, 123, "0")
-	signedDeny(c, mysql.TypeYear, 3000, "0")
+	signedDeny(c, mysql.TypeYear, 123, "1901")
+	signedDeny(c, mysql.TypeYear, 3000, "2155")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
 	signedAccept(c, mysql.TypeYear, "abc", "0")
 	signedAccept(c, mysql.TypeYear, "00abc", "2000")
 	signedAccept(c, mysql.TypeYear, "0019", "2019")
 	signedAccept(c, mysql.TypeYear, 2155, "2155")
 	signedAccept(c, mysql.TypeYear, 2155.123, "2155")
-	signedDeny(c, mysql.TypeYear, 2156, "0")
-	signedDeny(c, mysql.TypeYear, 123.123, "0")
-	signedDeny(c, mysql.TypeYear, 1900, "0")
+	signedDeny(c, mysql.TypeYear, 2156, "2155")
+	signedDeny(c, mysql.TypeYear, 123.123, "1901")
+	signedDeny(c, mysql.TypeYear, 1900, "1901")
 	signedAccept(c, mysql.TypeYear, 1901, "1901")
 	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
-	signedDeny(c, mysql.TypeYear, 1900.456, "0")
+	signedDeny(c, mysql.TypeYear, 1900.456, "1901")
+	signedAccept(c, mysql.TypeYear, 0, "0")
+	signedAccept(c, mysql.TypeYear, "0", "2000")
+	signedAccept(c, mysql.TypeYear, "00", "2000")
+	signedAccept(c, mysql.TypeYear, " 0", "2000")
+	signedAccept(c, mysql.TypeYear, " 00", "2000")
+	signedAccept(c, mysql.TypeYear, " 000", "0")
+	signedAccept(c, mysql.TypeYear, " 0000 ", "2000")
+	signedAccept(c, mysql.TypeYear, " 0ab", "0")
+	signedAccept(c, mysql.TypeYear, "00bc", "0")
+	signedAccept(c, mysql.TypeYear, "000a", "0")
+	signedAccept(c, mysql.TypeYear, " 000a ", "2000")
 	signedAccept(c, mysql.TypeYear, 1, "2001")
+	signedAccept(c, mysql.TypeYear, "1", "2001")
+	signedAccept(c, mysql.TypeYear, "01", "2001")
 	signedAccept(c, mysql.TypeYear, 69, "2069")
+	signedAccept(c, mysql.TypeYear, "69", "2069")
 	signedAccept(c, mysql.TypeYear, 70, "1970")
+	signedAccept(c, mysql.TypeYear, "70", "1970")
 	signedAccept(c, mysql.TypeYear, 99, "1999")
-	signedDeny(c, mysql.TypeYear, 100, "0")
+	signedAccept(c, mysql.TypeYear, "99", "1999")
+	signedDeny(c, mysql.TypeYear, 100, "1901")
 	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
 	// time from string
@@ -721,7 +746,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeString, ZeroDatetime, "0000-00-00 00:00:00")
 	signedAccept(c, mysql.TypeString, []byte("123"), "123")
 
-	//TODO add more tests
+	// TODO add more tests
 	signedAccept(c, mysql.TypeNewDecimal, 123, "123")
 	signedAccept(c, mysql.TypeNewDecimal, int64(123), "123")
 	signedAccept(c, mysql.TypeNewDecimal, uint64(123), "123")
@@ -764,11 +789,11 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"-1-1", "-1", true, true},
 		{"+1+1", "+1", true, true},
 		{"123..34", "123", true, true},
-		{"123.23E-10", "123", true, true},
-		{"1.1e1.3", "1", true, true},
-		{"11e1.3", "11", true, true},
-		{"1.", "1", true, true},
-		{".1", "0", true, true},
+		{"123.23E-10", "0", true, false},
+		{"1.1e1.3", "11", true, true},
+		{"11e1.3", "110", true, true},
+		{"1.", "1", true, false},
+		{".1", "0", true, false},
 		{"", "0", true, true},
 		{"123e+", "123", true, true},
 		{"123de", "123", true, true},
@@ -777,8 +802,8 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.TruncateAsWarning = true
 	sc.InSelectStmt = true
 	warningCount := 0
-	for _, tt := range tests {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+	for i, tt := range tests {
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		c.Assert(err, IsNil)
 		c.Assert(prefix, Equals, tt.valid)
 		if tt.signed {
@@ -789,7 +814,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		c.Assert(err, IsNil)
 		warnings := sc.GetWarnings()
 		if tt.warning {
-			c.Assert(warnings, HasLen, warningCount+1)
+			c.Assert(warnings, HasLen, warningCount+1, Commentf("%d", i))
 			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
 			warningCount += 1
 		} else {
@@ -820,7 +845,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.TruncateAsWarning = false
 	sc.InSelectStmt = false
 	for _, tt := range tests2 {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		if tt.warning {
 			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
 		} else {
@@ -851,10 +876,11 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123.e", "123."},
 		{"0-123", "0"},
 		{"9-3", "9"},
+		{"1001001\\u0000\\u0000\\u0000", "1001001"},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		prefix, _ := getValidFloatPrefix(sc, tt.origin)
+		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
 		c.Assert(prefix, Equals, tt.valid)
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
@@ -953,7 +979,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`[]`, 0},
 		{`3`, 3},
 		{`-3`, -3},
-		{`4.5`, 5},
+		{`4.5`, 4},
 		{`true`, 1},
 		{`false`, 0},
 		{`null`, 0},
@@ -965,7 +991,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
-		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
+		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
 		c.Assert(casted, Equals, tt.Out)
 	}
 }
@@ -1143,6 +1169,7 @@ func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
 		{"18446744073709551614.55", 18446744073709551615, true},
 		{"18446744073709551615.344", 18446744073709551615, true},
 		{"18446744073709551615.544", 0, false},
+		{"-111.111", 0, false},
 	}
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)

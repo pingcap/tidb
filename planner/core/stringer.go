@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // ToString explains a Plan, returns description string.
@@ -35,6 +37,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
+	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
 		if len(x.Children()) > 1 {
 			idxs = append(idxs, len(strs))
@@ -131,12 +134,16 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *LogicalUnionAll, *PhysicalUnionAll:
+	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
-		str = "UnionAll{" + strings.Join(children, "->") + "}"
+		name := "UnionAll"
+		if x.TP() == plancodec.TypePartitionUnion {
+			name = "PartitionUnionAll"
+		}
+		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
@@ -234,8 +241,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
-			if col.PKInfo != nil {
-				colNames = append(colNames, col.PKInfo.Name.O)
+			if col.HandleCols != nil {
+				colNames = append(colNames, col.HandleCols.String())
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)
@@ -260,8 +267,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleDataSourceStub:
-		str = fmt.Sprintf("PartitionDataSourceStub(%s)", x.ExplainInfo())
+	case *PhysicalShuffleReceiverStub:
+		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
 	case *PointGetPlan:
 		str = fmt.Sprintf("PointGet(")
 		if x.IndexInfo != nil {
@@ -276,6 +283,18 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
+	case *PhysicalExchangeReceiver:
+		str = fmt.Sprintf("Recv(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str = fmt.Sprintf(")")
+	case *PhysicalExchangeSender:
+		str = fmt.Sprintf("Send(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprintf("%d, ", task.ID)
+		}
+		str = fmt.Sprintf(")")
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

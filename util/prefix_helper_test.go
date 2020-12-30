@@ -45,7 +45,7 @@ type testPrefixSuite struct {
 
 func (s *testPrefixSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.s = store
 

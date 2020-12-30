@@ -24,18 +24,24 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
@@ -128,7 +134,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 
@@ -236,6 +242,7 @@ func checkRepeats(c *C, hg *Histogram) {
 
 func (s *testStatisticsSuite) TestBuild(c *C) {
 	bucketCount := int64(256)
+	topNCount := 20
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	sketch, _, err := buildFMSketch(sc, s.rc.(*recordSet).data, 1000)
@@ -269,7 +276,30 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
 	count = col.lessRowCount(types.NewIntDatum(1))
-	c.Check(int(count), Equals, 9)
+	c.Check(int(count), Equals, 5)
+
+	colv2, topnv2, err := BuildColumnHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
+	c.Check(err, IsNil)
+	c.Check(topnv2.TopN, NotNil)
+	expectedTopNCount := []uint64{9990, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30}
+	for i, meta := range topnv2.TopN {
+		c.Check(meta.Count, Equals, expectedTopNCount[i])
+	}
+	c.Check(colv2.Len(), Equals, 256)
+	count = colv2.lessRowCount(types.NewIntDatum(1000))
+	c.Check(int(count), Equals, 325)
+	count = colv2.lessRowCount(types.NewIntDatum(2000))
+	c.Check(int(count), Equals, 9430)
+	count = colv2.greaterRowCount(types.NewIntDatum(2000))
+	c.Check(int(count), Equals, 80008)
+	count = colv2.lessRowCount(types.NewIntDatum(200000000))
+	c.Check(int(count), Equals, 89440)
+	count = colv2.greaterRowCount(types.NewIntDatum(200000000))
+	c.Check(count, Equals, 0.0)
+	count = colv2.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
+	c.Check(int(count), Equals, 4995)
+	count = colv2.lessRowCount(types.NewIntDatum(1))
+	c.Check(int(count), Equals, 0)
 
 	builder := SampleBuilder{
 		Sc:              mock.NewContext().GetSessionVars().StmtCtx,
@@ -277,6 +307,8 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 		ColLen:          1,
 		MaxSampleSize:   1000,
 		MaxFMSketchSize: 1000,
+		Collators:       make([]collate.Collator, 1),
+		ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
 	}
 	c.Assert(s.pk.Close(), IsNil)
 	collectors, _, err := builder.CollectColumnStats()

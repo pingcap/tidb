@@ -8,9 +8,9 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "    └─IndexRangeScan_14 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
         ]
       },
@@ -21,9 +21,9 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
@@ -35,9 +35,9 @@
           "EXPLAIN SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
@@ -47,13 +47,13 @@
         ],
         "Plan": [
           "Limit_17 1.00 root  offset:0, count:1",
-          "└─IndexMergeJoin_70 1.00 root  left outer semi join, inner:IndexReader_68, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TopN_29(Build) 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─IndexJoin_66 1.00 root  left outer semi join, inner:IndexReader_65, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TopN_29(Build) 1.00 root  test.t.a, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root  index:TopN_36",
-          "  │   └─TopN_36 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  │   └─TopN_36 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
-          "  └─IndexReader_68(Probe) 1.04 root  index:IndexRangeScan_67",
-          "    └─IndexRangeScan_67 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:true"
+          "  └─IndexReader_65(Probe) 1.04 root  index:IndexRangeScan_64",
+          "    └─IndexRangeScan_64 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
         ]
       },
       {
@@ -91,9 +91,9 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
@@ -106,9 +106,9 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader_19 1.00 root  index:TopN_18",
-          "  └─TopN_18 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "  └─TopN_18 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "    └─Selection_17 6.00 cop[tikv]  gt(test.t.a, 0)",
           "      └─IndexRangeScan_16 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
@@ -123,9 +123,9 @@
         ],
         "Plan": [
           "Projection_7 1.00 root  test.t.a",
-          "└─TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
+          "└─TopN_8 1.00 root  test.t.a, offset:0, count:1",
           "  └─IndexReader_17 1.00 root  index:TopN_16",
-          "    └─TopN_16 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─TopN_16 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "      └─Selection_15 6.00 cop[tikv]  gt(test.t.c, 0)",
           "        └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
@@ -142,10 +142,10 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
         ],
         "Plan": [
-          "IndexJoin_9 12475.01 root  inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c), gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
-          "├─TableReader_19(Build) 9980.01 root  data:Selection_18",
-          "│ └─Selection_18 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
-          "│   └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "IndexJoin_9 12475.01 root  inner join, inner:IndexReader_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.c, test.t2.c), other cond:gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+          "├─TableReader_18(Build) 9980.01 root  data:Selection_17",
+          "│ └─Selection_17 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─IndexReader_8(Probe) 1.25 root  index:Selection_7",
           "  └─Selection_7 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
           "    └─IndexRangeScan_6 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
@@ -245,7 +245,7 @@
       ],
       [
         "IndexLookUp_7 2.00 root  ",
-        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) keep order:false",
+        "├─IndexRangeScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) range:[NULL,NULL], keep order:false",
         "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t keep order:false"
       ],
       [
@@ -268,14 +268,14 @@
         "└─Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
         "  ├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
         "  │ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#13",
-        "    └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_33(Build) 1.00 root  data:Selection_32",
-        "      │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader_27(Probe) 1.00 root  data:Selection_26",
-        "        └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
+        "  └─StreamAgg_19(Probe) 1.00 root  funcs:count(1)->Column#13",
+        "    └─HashJoin_20 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader_30(Build) 1.00 root  data:Selection_29",
+        "      │ └─Selection_29 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan_28 10.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader_24(Probe) 1.00 root  data:Selection_23",
+        "        └─Selection_23 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan_22 10.00 cop[tikv] table:s keep order:false"
       ],
       [
         "Projection_8 10.00 root  Column#9",
@@ -288,6 +288,22 @@
         "        └─Selection_18 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan_17 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
       ]
+    ]
+  },
+  {
+    "Name": "TestLowSelIndexGreedySearch",
+    "Cases": [
+      {
+        "SQL": "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
+        "Plan": [
+          "StreamAgg_11 1.00 root  funcs:max(test.t.e)->Column#7",
+          "└─TopN_14 0.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp_46 0.00 root  ",
+          "    ├─IndexRangeScan_43(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
+          "    └─Selection_45(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan_44 0.00 cop[tikv] table:t keep order:false"
+        ]
+      }
     ]
   },
   {
@@ -336,9 +352,57 @@
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
       "Analyze{Index(a),Index(b)}",
-      "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
-      "UnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
+      "TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))",
+      "IndexReader(Index(t4.b)[[-inf,2)])",
       "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
+    ]
+  },
+  {
+    "Name": "TestIndexEqualUnknown",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a = 7639902",
+        "Plan": [
+          "IndexReader_6 6.68 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select c, b from t where a = 7639902 order by b asc limit 6",
+        "Plan": [
+          "Projection_7 6.00 root  test.t.c, test.t.b",
+          "└─TopN_8 6.00 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader_16 6.00 root  index:TopN_15",
+          "    └─TopN_15 6.00 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan_14 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitIndexEstimation",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a <= 10000 order by b limit 1",
+        "Plan": [
+          "TopN_9 1.00 root  test.t.b, offset:0, count:1",
+          "└─IndexLookUp_21 1.00 root  ",
+          "  ├─IndexRangeScan_18(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) range:[-inf,10000], keep order:false",
+          "  └─TopN_20(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan_19 10000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a >= 999900 order by b limit 1",
+        "Plan": [
+          "Limit_12 1.00 root  offset:0, count:1",
+          "└─Projection_32 1.00 root  test.t.a, test.t.b",
+          "  └─IndexLookUp_31 1.00 root  ",
+          "    ├─IndexFullScan_28(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
+          "    └─Selection_30(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
+          "      └─TableRowIDScan_29 1.00 cop[tikv] table:t keep order:false"
+        ]
+      }
     ]
   }
 ]

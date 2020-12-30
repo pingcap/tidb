@@ -30,7 +30,7 @@ import (
 type Encoder struct {
 	row
 	tempColIDs []int64
-	values     []types.Datum
+	values     []*types.Datum
 	// Enable indicates whether this encoder should be use.
 	Enable bool
 }
@@ -60,11 +60,11 @@ func (encoder *Encoder) reset() {
 
 func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
 	for i, colID := range colIDs {
-		encoder.appendColVal(colID, values[i])
+		encoder.appendColVal(colID, &values[i])
 	}
 }
 
-func (encoder *Encoder) appendColVal(colID int64, d types.Datum) {
+func (encoder *Encoder) appendColVal(colID int64, d *types.Datum) {
 	if colID > 255 {
 		encoder.large = true
 	}
@@ -157,7 +157,7 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 
 // encodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func encodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
@@ -198,7 +198,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 		buffer = codec.EncodeFloat(buffer, d.GetFloat64())
 	case types.KindMysqlDecimal:
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if sc != nil {
+		if err != nil && sc != nil {
 			if terror.ErrorEqual(err, types.ErrTruncated) {
 				err = sc.HandleTruncate(err)
 			} else if terror.ErrorEqual(err, types.ErrOverflow) {

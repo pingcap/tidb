@@ -703,7 +703,7 @@ func (c *Column) MergeNulls(cols ...*Column) {
 	}
 	for _, col := range cols {
 		if c.length != col.length {
-			panic("should ensure all columns have the same length")
+			panic(fmt.Sprintf("should ensure all columns have the same length, expect %v, but got %v", c.length, col.length))
 		}
 	}
 	for _, col := range cols {

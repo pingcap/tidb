@@ -15,15 +15,24 @@ package types
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Enum is for MySQL enum type.
 type Enum struct {
 	Name  string
 	Value uint64
+}
+
+// Copy deep copy an Enum.
+func (e Enum) Copy() Enum {
+	return Enum{
+		Name:  stringutil.Copy(e.Name),
+		Value: e.Value,
+	}
 }
 
 // String implements fmt.Stringer interface.
@@ -36,17 +45,26 @@ func (e Enum) ToNumber() float64 {
 	return float64(e.Value)
 }
 
-// ParseEnumName creates a Enum with item name.
-func ParseEnumName(elems []string, name string) (Enum, error) {
-	for i, n := range elems {
-		if strings.EqualFold(n, name) {
-			return Enum{Name: n, Value: uint64(i) + 1}, nil
-		}
+// ParseEnum creates a Enum with item name or value.
+func ParseEnum(elems []string, name string, collation string) (Enum, error) {
+	if enumName, err := ParseEnumName(elems, name, collation); err == nil {
+		return enumName, nil
 	}
-
 	// name doesn't exist, maybe an integer?
 	if num, err := strconv.ParseUint(name, 0, 64); err == nil {
 		return ParseEnumValue(elems, num)
+	}
+
+	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)
+}
+
+// ParseEnumName creates a Enum with item name.
+func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
+	ctor := collate.GetCollator(collation)
+	for i, n := range elems {
+		if ctor.Compare(n, name) == 0 {
+			return Enum{Name: n, Value: uint64(i) + 1}, nil
+		}
 	}
 
 	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)

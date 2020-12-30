@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -73,7 +74,8 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
-	r.fetchDuration += time.Since(startTime)
+	duration := time.Since(startTime)
+	r.fetchDuration += duration
 	if err != nil {
 		return false, err
 	}
@@ -96,7 +98,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
-		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 	}
 
 	err = result.Unmarshal(stream.Data)
@@ -105,7 +107,15 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
-	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+
+	hasStats, ok := resultSubset.(CopRuntimeStats)
+	if ok {
+		copStats := hasStats.GetCopRuntimeStats()
+		if copStats != nil {
+			copStats.CopTime = duration
+			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+		}
+	}
 	return false, nil
 }
 

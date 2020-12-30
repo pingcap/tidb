@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -30,37 +31,54 @@ import (
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable, model.ActionTruncateTable:
-		ids := getPhysicalIDs(t.TableInfo)
+		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertTableStats2KV(t.TableInfo, id); err != nil {
 				return err
 			}
 		}
-	case model.ActionAddColumn, model.ActionAddColumns:
-		ids := getPhysicalIDs(t.TableInfo)
+	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
+		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
 				return err
 			}
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
-		for _, def := range t.PartInfo.Definitions {
-			if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
-				return err
+		pruneMode := h.CurrentPruneMode()
+		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+			for _, def := range t.PartInfo.Definitions {
+				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
+					return err
+				}
 			}
+		}
+		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			// TODO: need trigger full analyze
+		}
+	case model.ActionDropTablePartition:
+		pruneMode := h.CurrentPruneMode()
+		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			// TODO: need trigger full analyze
 		}
 	}
 	return nil
 }
 
-func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
+func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return []int64{tblInfo.ID}
 	}
-	ids := make([]int64, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
-		ids = append(ids, def.ID)
+	ids = make([]int64, 0, len(pi.Definitions)+1)
+	pruneMode := h.CurrentPruneMode()
+	if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+		for _, def := range pi.Definitions {
+			ids = append(ids, def.ID)
+		}
+	}
+	if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		ids = append(ids, tblInfo.ID)
 	}
 	return ids
 }
@@ -143,7 +161,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		count := req.GetRow(0).GetInt64(0)
 		sqls := make([]string, 0, len(colInfos))
 		for _, colInfo := range colInfos {
-			value := types.NewDatum(colInfo.OriginDefaultValue)
+			value := types.NewDatum(colInfo.GetOriginDefaultValue())
 			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return

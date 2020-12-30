@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"math"
+	"reflect"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -82,13 +83,13 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInf
 	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, sequenceBase)
 }
 
-func handleSequenceOptions(SeqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
+func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
 	var (
 		minSetFlag   bool
 		maxSetFlag   bool
 		startSetFlag bool
 	)
-	for _, op := range SeqOptions {
+	for _, op := range seqOptions {
 		switch op.Tp {
 		case ast.SequenceOptionIncrementBy:
 			sequenceInfo.Increment = op.IntValue
@@ -144,6 +145,10 @@ func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 		// Increment shouldn't be set as 0.
 		return false
 	}
+	if seqInfo.CacheValue <= 0 {
+		// Cache value should be bigger than 0.
+		return false
+	}
 	maxIncrement = math2.Abs(seqInfo.Increment)
 
 	return seqInfo.MaxValue >= seqInfo.Start &&
@@ -178,4 +183,111 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	return sequenceInfo, nil
+}
+
+func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident, oldSequence *model.SequenceInfo) (bool, int64, error) {
+	var (
+		restartFlag     bool
+		restartWithFlag bool
+		restartValue    int64
+	)
+	// Override the old sequence value with new option.
+	for _, op := range sequenceOptions {
+		switch op.Tp {
+		case ast.SequenceOptionIncrementBy:
+			oldSequence.Increment = op.IntValue
+		case ast.SequenceStartWith:
+			oldSequence.Start = op.IntValue
+		case ast.SequenceMinValue:
+			oldSequence.MinValue = op.IntValue
+		case ast.SequenceMaxValue:
+			oldSequence.MaxValue = op.IntValue
+		case ast.SequenceCache:
+			oldSequence.CacheValue = op.IntValue
+		case ast.SequenceNoCache:
+			oldSequence.Cache = false
+		case ast.SequenceCycle:
+			oldSequence.Cycle = true
+		case ast.SequenceNoCycle:
+			oldSequence.Cycle = false
+		case ast.SequenceRestart:
+			restartFlag = true
+		case ast.SequenceRestartWith:
+			restartWithFlag = true
+			restartValue = op.IntValue
+		}
+	}
+	if !validateSequenceOptions(oldSequence) {
+		return false, 0, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
+	}
+	if restartWithFlag {
+		return true, restartValue, nil
+	}
+	if restartFlag {
+		return true, oldSequence.Start, nil
+	}
+	return false, 0, nil
+}
+
+func onAlterSequence(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	var (
+		sequenceOpts []*ast.SequenceOption
+		ident        ast.Ident
+	)
+	if err := job.DecodeArgs(&ident, &sequenceOpts); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// Get the old tableInfo.
+	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Substitute the sequence info.
+	copySequenceInfo := *tblInfo.Sequence
+	restart, restartValue, err := alterSequenceOptions(sequenceOpts, ident, &copySequenceInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	shouldUpdateVer := !reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo) || restart
+	tblInfo.Sequence = &copySequenceInfo
+
+	// Restart the sequence value.
+	// Notice: during the alter sequence process, if there is some dml continually consumes sequence (nextval/setval),
+	// the below cases will occur:
+	// Since the table schema haven't been refreshed in local/other node, dml will still use old definition of sequence
+	// to allocate sequence ids. Once the restart value is updated to kv here, the allocated ids in the upper layer won't
+	// guarantee to be consecutive and monotonous.
+	if restart {
+		err := restartSequenceValue(t, schemaID, tblInfo, restartValue)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Store the sequence info into kv.
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+// Like setval does, restart sequence value won't affect current the step frequency. It will look backward for
+// the first valid sequence valid rather than return the restart value directly.
+func restartSequenceValue(t *meta.Meta, dbID int64, tblInfo *model.TableInfo, seqValue int64) error {
+	var sequenceBase int64
+	if tblInfo.Sequence.Increment >= 0 {
+		sequenceBase = seqValue - 1
+	} else {
+		sequenceBase = seqValue + 1
+	}
+	return t.RestartSequenceValue(dbID, tblInfo, sequenceBase)
 }

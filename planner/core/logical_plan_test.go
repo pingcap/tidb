@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hint"
@@ -60,7 +61,7 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.ctx = MockContext()
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite_unexported")
@@ -465,7 +466,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		Preprocess(s.ctx, stmt, s.is)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -537,7 +538,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("for %s", tt)
+		comment := Commentf("case:%v sql:\"%s\"", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -549,6 +550,31 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			output[i] = make(map[int][]string)
 		})
 		s.checkDataSourceCols(lp, c, output[i], comment)
+	}
+}
+
+func (s *testPlanSuite) TestSortByItemsPruning(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	s.testData.OnRecord(func() {
+		output = make([][]string, len(input))
+	})
+
+	ctx := context.Background()
+	for i, tt := range input {
+		comment := Commentf("for %s", tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		s.checkOrderByItems(lp, c, &output[i], comment)
 	}
 }
 
@@ -586,26 +612,13 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 }
 
 func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
-	switch p.(type) {
-	case *DataSource:
+	switch v := p.(type) {
+	case *DataSource, *LogicalUnionAll, *LogicalLimit:
 		s.testData.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
-		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
-		for i, col := range p.Schema().Columns {
-			s.testData.OnRecord(func() {
-				colList[i] = col.String()
-			})
-			c.Assert(col.String(), Equals, colList[i], comment)
-		}
-	case *LogicalUnionAll:
-		s.testData.OnRecord(func() {
-			ans[p.ID()] = make([]string, p.Schema().Len())
-		})
-		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
+		c.Assert(ok, IsTrue, Commentf("For %s %T ID %d Not found", comment.CheckCommentString(), v, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, col := range p.Schema().Columns {
 			s.testData.OnRecord(func() {
@@ -616,6 +629,27 @@ func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]s
 	}
 	for _, child := range p.Children() {
 		s.checkDataSourceCols(child, c, ans, comment)
+	}
+}
+
+func (s *testPlanSuite) checkOrderByItems(p LogicalPlan, c *C, colList *[]string, comment CommentInterface) {
+	switch p := p.(type) {
+	case *LogicalSort:
+		s.testData.OnRecord(func() {
+			*colList = make([]string, len(p.ByItems))
+		})
+		for i, col := range p.ByItems {
+			s.testData.OnRecord(func() {
+				(*colList)[i] = col.String()
+			})
+			s := col.String()
+			c.Assert(s, Equals, (*colList)[i], comment)
+		}
+	}
+	children := p.Children()
+	c.Assert(len(children), LessEqual, 1, Commentf("For %v Expected <= 1 Child", comment))
+	for _, child := range children {
+		s.checkOrderByItems(child, c, colList, comment)
 	}
 }
 
@@ -757,6 +791,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select a + 1 from t having a",
 			err: ErrUnknownColumn,
 		},
+		{ // issue (#20509)
+			sql: "select * from t left join t2 on t.a=t2.a having not (t.a <=> t2.a)",
+			err: nil,
+		},
 		{
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
@@ -767,6 +805,22 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having a",
+			err: nil,
+		},
+		{
+			sql: "select a+1 from t having t.a",
 			err: ErrUnknownColumn,
 		},
 	}
@@ -873,145 +927,145 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", nil},
+				{mysql.InsertPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", "", nil},
+				{mysql.CreatePriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.CreatePriv, "test", "t1", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil},
+				{mysql.IndexPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil},
+				{mysql.IndexPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil},
-				{mysql.InsertPriv, "test", "", "", nil},
-				{mysql.UpdatePriv, "test", "", "", nil},
-				{mysql.DeletePriv, "test", "", "", nil},
-				{mysql.CreatePriv, "test", "", "", nil},
-				{mysql.DropPriv, "test", "", "", nil},
-				{mysql.GrantPriv, "test", "", "", nil},
-				{mysql.AlterPriv, "test", "", "", nil},
-				{mysql.ExecutePriv, "test", "", "", nil},
-				{mysql.IndexPriv, "test", "", "", nil},
-				{mysql.CreateViewPriv, "test", "", "", nil},
-				{mysql.ShowViewPriv, "test", "", "", nil},
+				{mysql.SelectPriv, "test", "", "", nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil},
-				{mysql.GrantPriv, "test", "ttt", "", nil},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: `grant select on ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil},
-				{mysql.GrantPriv, "test", "ttt", "", nil},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on test.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil},
-				{mysql.InsertPriv, "test", "", "", nil},
-				{mysql.UpdatePriv, "test", "", "", nil},
-				{mysql.DeletePriv, "test", "", "", nil},
-				{mysql.CreatePriv, "test", "", "", nil},
-				{mysql.DropPriv, "test", "", "", nil},
-				{mysql.GrantPriv, "test", "", "", nil},
-				{mysql.AlterPriv, "test", "", "", nil},
-				{mysql.ExecutePriv, "test", "", "", nil},
-				{mysql.IndexPriv, "test", "", "", nil},
-				{mysql.CreateViewPriv, "test", "", "", nil},
-				{mysql.ShowViewPriv, "test", "", "", nil},
+				{mysql.SelectPriv, "test", "", "", nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false},
 			},
 		},
 		{
@@ -1021,44 +1075,44 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil},
+				{mysql.AllPrivMask, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t add column a int(4)",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.AlterPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "rename table t_old to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil},
-				{mysql.DropPriv, "test", "t_old", "", nil},
-				{mysql.CreatePriv, "test", "t_new", "", nil},
-				{mysql.InsertPriv, "test", "t_new", "", nil},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t_old rename to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil},
-				{mysql.DropPriv, "test", "t_old", "", nil},
-				{mysql.CreatePriv, "test", "t_new", "", nil},
-				{mysql.InsertPriv, "test", "t_new", "", nil},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t drop partition p0;",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil},
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.AlterPriv, "test", "t", "", nil, false},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "flush privileges",
 			ans: []visitInfo{
-				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied},
+				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied, false},
 			},
 		},
 	}
@@ -1068,8 +1122,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
-		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
 
@@ -1148,7 +1202,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
 			output[i].Err = err != nil
@@ -1180,7 +1234,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1221,8 +1275,10 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from ht) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
 		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
+		{"select row_number() over () as x from t group by 1", "[planner:1056]Can't group on 'x'"},
+		{"select sum(a) as x from t group by 1", "[planner:1056]Can't group on 'x'"},
 	}
 
 	ctx := context.Background()
@@ -1230,7 +1286,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {
@@ -1252,7 +1308,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1288,7 +1344,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1369,7 +1425,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 			return nil, nil, err
 		}
 	}
-	builder := NewPlanBuilder(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder(sctx, s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1378,14 +1434,14 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
-		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
+		pp.SortItems = append(pp.SortItems, property.SortItem{Col: item.Expr.(*expression.Column), Desc: item.Desc})
 	}
 	return pp
 }
@@ -1393,7 +1449,7 @@ func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath {
+		if path.path.IsTablePath() {
 			names = append(names, "PRIMARY_KEY")
 		} else {
 			names = append(names, path.path.Index.Name.O)
@@ -1451,7 +1507,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -1461,10 +1517,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
@@ -1473,12 +1529,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *LogicalProjection:
-				newItems := make([]*ByItems, 0, len(byItems))
+				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
-						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
 					}
 				}
 				byItems = newItems
@@ -1516,6 +1572,7 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			false,
 		},
 	}
+	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
 	for _, tt := range tests {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil)
@@ -1551,7 +1608,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1567,7 +1624,7 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 	Preprocess(s.ctx, stmt, s.is)
-	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1587,7 +1644,7 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 	Preprocess(s.ctx, stmt, s.is)
-	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1598,4 +1655,51 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	c.Assert(ok, IsTrue)
 	// previous wrong JoinType is InnerJoin
 	c.Assert(join.JoinType, Equals, RightOuterJoin)
+}
+
+func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select (select count(a)) from t",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
+		},
+		{
+			sql:  "select (select count(n.a) from t) from t n",
+			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Projection->MaxOneRow}->Projection",
+		},
+		{
+			sql:  "select (select sum(count(a))) from t",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#13))->MaxOneRow}->Projection",
+		},
+		{
+			sql:  "select (select sum(count(n.a)) from t) from t n",
+			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#25))->MaxOneRow}->Projection",
+		},
+		{
+			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
+		},
+		{
+			sql:  "select sum(a), sum(a), count(a), (select count(a)) from t",
+			best: "Apply{DataScan(t)->Aggr(sum(test.t.a),count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
+		},
+	}
+
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		err = Preprocess(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagEliminateProjection|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
 }

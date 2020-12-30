@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -46,12 +45,6 @@ type SetConfigExec struct {
 
 // Open implements the Executor Open interface.
 func (s *SetConfigExec) Open(ctx context.Context) error {
-	// TODO: create a new privilege for this operation instead of using the SuperPriv
-	checker := privilege.GetPrivilegeManager(s.ctx)
-	if checker != nil && !checker.RequestVerification(s.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv) {
-		return core.ErrSpecificAccessDenied.GenWithStackByArgs("SET CONFIG")
-	}
-
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
 		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" {
@@ -101,6 +94,9 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		nodeAddrs.Insert(s.p.Instance)
 	}
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
+	if s.p.Instance != "" && len(serversInfo) == 0 {
+		return errors.Errorf("instance %v is not found in this cluster", s.p.Instance)
+	}
 
 	for _, serverInfo := range serversInfo {
 		var url string
@@ -109,8 +105,10 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
 		case "tikv":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
+		case "tidb":
+			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
 		default:
-			continue
+			return errors.Errorf("Unknown server type %s", serverInfo.ServerType)
 		}
 		if err := s.doRequest(url); err != nil {
 			s.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -187,7 +185,14 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf("%v", i)
+			if mysql.HasIsBooleanFlag(val.GetType().Flag) {
+				str = "true"
+				if i == 0 {
+					str = "false"
+				}
+			} else {
+				str = fmt.Sprintf("%v", i)
+			}
 		}
 	case types.ETReal:
 		var f float64
@@ -196,7 +201,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 			str = fmt.Sprintf("%v", f)
 		}
 	case types.ETDecimal:
-		d := new(types.MyDecimal)
+		var d *types.MyDecimal
 		d, isNull, err = val.EvalDecimal(ctx, chunk.Row{})
 		if err == nil && !isNull {
 			str = string(d.ToString())

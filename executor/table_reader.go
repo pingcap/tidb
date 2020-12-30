@@ -15,13 +15,13 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -42,23 +42,36 @@ var _ Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs, rootPlanID)
 	}
 	return sr.selectResultFunc(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
 }
 
+type kvRangeBuilder interface {
+	buildKeyRange(pid int64) ([]kv.KeyRange, error)
+}
+
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	baseExecutor
 
-	table  table.Table
+	table table.Table
+
+	// The source of key ranges varies from case to case.
+	// It may be calculated from PhysicalPlan by executorBuilder, or calculated from argument by dataBuilder;
+	// It may be calculated from ranger.Ranger, or calculated from handles.
+	// The table ID may also change because of the partition table, and causes the key range to change.
+	// So instead of keeping a `range` struct field, it's better to define a interface.
+	kvRangeBuilder
+	// TODO: remove this field, use the kvRangeBuilder interface.
 	ranges []*ranger.Range
+
 	// kvRanges are only use for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
@@ -71,6 +84,7 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	feedback      *statistics.QueryFeedback
 	plans         []plannercore.PhysicalPlan
+	tablePlan     plannercore.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -92,7 +106,7 @@ type TableReaderExecutor struct {
 	batchCop bool
 }
 
-// Open initialzes necessary variables for using this executor.
+// Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
@@ -105,9 +119,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
-		if err != nil {
-			return err
+		if e.storeType == kv.TiFlash {
+			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			if err != nil {
+				return err
+			}
+			e.dagPB.RootExecutor = execs[0]
+		} else {
+			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if e.runtimeStats != nil {
@@ -133,7 +155,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -170,7 +192,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return nil
@@ -182,10 +204,7 @@ func (e *TableReaderExecutor) Close() error {
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
+	e.kvRanges = e.kvRanges[:0]
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -194,7 +213,17 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
+	var reqBuilder *distsql.RequestBuilder
+	if e.kvRangeBuilder != nil {
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table))
+		if err != nil {
+			return nil, err
+		}
+		reqBuilder = builder.SetKeyRanges(kvRange)
+	} else {
+		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
+	}
+	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -204,11 +233,13 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
 		return nil, err

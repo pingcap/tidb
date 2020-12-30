@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -69,7 +71,7 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -92,7 +94,9 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -153,6 +157,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
+			terror.Log(result.Close())
 		}
 	}
 	d := s.dom.DDL()
@@ -477,13 +482,12 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'A', '2018-09-19', 9)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2, and tidb_enable_change_column_type is false")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: cannot modify enum type column's to type int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin enum('N','Y'), and tidb_enable_change_column_type is false")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -513,8 +517,7 @@ func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
@@ -524,8 +527,7 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
@@ -535,8 +537,146 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
 	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnsSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
+}
+
+type idxType byte
+
+const (
+	noneIdx    idxType = 0
+	uniqIdx    idxType = 1
+	primaryIdx idxType = 2
+)
+
+// TestWriteReorgForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumn(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+}
+
+// TestWriteReorgForModifyColumnWithUniqIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+}
+
+// TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
+	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
+	s.se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		config.RestoreFunc()()
+	}()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a), index idx2(a, c))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(-1, -11)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(1, 11)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 12)
+	sqls[0] = sqlWithErr{"delete from tt where c = -11", nil}
+	sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 12, c = 555 where c = 11", errors.Errorf("[types:1690]constant 555 overflows tinyint")}
+	sqls[2] = sqlWithErr{"update tt use index(idx2) set a = 12, c = 10 where c = 11", nil}
+	sqls[3] = sqlWithErr{"insert into tt (a, c) values(2, 22)", nil}
+	sqls[4] = sqlWithErr{"update tt use index(idx2) set a = 21, c = 2 where c = 22", nil}
+	sqls[5] = sqlWithErr{"update tt use index(idx2) set a = 23 where c = 2", nil}
+	sqls[6] = sqlWithErr{"insert tt set a = 31, c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
+	sqls[7] = sqlWithErr{"insert tt set a = 32, c = 123", nil}
+	sqls[8] = sqlWithErr{"insert tt set a = 33", nil}
+	sqls[9] = sqlWithErr{"insert into tt select * from tt order by c limit 1 on duplicate key update c = 44;", nil}
+	sqls[10] = sqlWithErr{"replace into tt values(5, 55, 56)", nil}
+	sqls[11] = sqlWithErr{"replace into tt values(6, 66, 56)", nil}
+
+	query := &expectQuery{sql: "admin check table tt;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
+}
+
+// TestWriteReorgForModifyColumnWithPrimaryIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPrimaryIdx(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+}
+
+// TestWriteReorgForModifyColumnWithoutFirst tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithoutFirst(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+}
+
+// TestWriteReorgForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithoutDefaultVal(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+}
+
+// TestDeleteOnlyForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefaultVal(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint first"
+	s.testModifyColumn(c, model.StateDeleteOnly, modifyColumnSQL, noneIdx)
+}
+
+func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaState, modifyColumnSQL string, idx idxType) {
+	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
+	s.se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	switch idx {
+	case uniqIdx:
+		_, err = s.se.Execute(context.Background(), `create table tt  (a varchar(64), b int default 1, c int not null default 0, unique index idx(c), unique index idx1(a), index idx2(a, c))`)
+	case primaryIdx:
+		// TODO: Support modify/change column with the primary key.
+		_, err = s.se.Execute(context.Background(), `create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), primary index idx1(a), index idx2(a, c))`)
+	default:
+		_, err = s.se.Execute(context.Background(), `create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
+	}
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values('a', 11)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values('b', 22)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 13)
+	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
+	if state == model.StateWriteReorganization {
+		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 555 where c = 22", errors.Errorf("[types:1690]constant 555 overflows tinyint")}
+		sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
+	} else {
+		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
+		sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', b = 123, c = 111", nil}
+	}
+	sqls[2] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
+	sqls[3] = sqlWithErr{"update tt use index(idx2) set a = 'a_update_1' where c = 2", nil}
+	if idx == noneIdx {
+		sqls[5] = sqlWithErr{"insert tt set a = 'a_insert', c = 111", nil}
+	} else {
+		sqls[5] = sqlWithErr{"insert tt set a = 'a_insert_1', c = 123", nil}
+	}
+	sqls[6] = sqlWithErr{"insert tt set a = 'a_insert_2'", nil}
+	sqls[7] = sqlWithErr{"insert into tt select * from tt order by c limit 1 on duplicate key update c = 44;", nil}
+	sqls[8] = sqlWithErr{"insert ignore into tt values('a_insert_2', 2, 0), ('a_insert_ignore_1', 1, 123), ('a_insert_ignore_1', 1, 33)", nil}
+	sqls[9] = sqlWithErr{"insert ignore into tt values('a_insert_ignore_2', 1, 123) on duplicate key update c = 33 ", nil}
+	sqls[10] = sqlWithErr{"insert ignore into tt values('a_insert_ignore_3', 1, 123) on duplicate key update c = 66 ", nil}
+	sqls[11] = sqlWithErr{"replace into tt values('a_replace_1', 55, 56)", nil}
+	sqls[12] = sqlWithErr{"replace into tt values('a_replace_2', 77, 56)", nil}
+
+	query := &expectQuery{sql: "admin check table tt;", rows: nil}
+	s.runTestInSchemaState(c, state, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -559,13 +699,57 @@ func (s *testStateChangeSuite) TestWriteOnlyForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
 }
 
-// TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+// TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
-	sqls := make([]sqlWithErr, 1)
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tt (c varchar(64), c4 int)`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (c, c4) values('a', 8)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
+	sqls[1] = sqlWithErr{"update t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
+		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
+	sqls[2] = sqlWithErr{"delete from t where c1='a'",
+		errors.Errorf("[planner:1054]Unknown column 'c1' in 'where clause'")}
+	sqls[3] = sqlWithErr{"delete t, tt from tt inner join t on t.c4=tt.c4 where tt.c='a' and t.c1='a'",
+		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'where clause'")}
+	sqls[4] = sqlWithErr{"delete t, tt from tt inner join t on t.c1=tt.c where tt.c='a'",
+		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'on clause'")}
+	query := &expectQuery{sql: "select * from t;", rows: []string{"N 2017-07-01 00:00:00 8"}}
 	dropColumnSQL := "alter table t drop column c1"
-	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, nil)
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+}
+
+// TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
+func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int, b int)`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `alter table tt add index expr_idx((a+1))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, b) values(8, 8)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"delete from tt where b=8", nil}
+	dropIdxSQL := "alter table tt drop index expr_idx"
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropIdxSQL, sqls, nil)
+
+	_, err = s.se.Execute(context.Background(), "admin check table tt")
+	c.Assert(err, IsNil)
 }
 
 // TestDeleteOnlyForDropColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -633,7 +817,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	_, err = s.se.Execute(context.Background(), "drop stats t")
 	c.Assert(err, IsNil)
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
 	var checkErr error
 	times := 0
@@ -652,10 +836,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
-				checkErr = err
-				if checkErr == nil {
-					checkErr = errors.New("err can't be nil")
-				}
+				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
 				break
 			}
 		}
@@ -678,6 +859,10 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		tk.MustExec("use test_db_state")
 		result, err := s.execQuery(tk, expectQuery.sql)
 		c.Assert(err, IsNil)
+		if expectQuery.rows == nil {
+			c.Assert(result, IsNil)
+			return
+		}
 		err = checkResult(result, testkit.Rows(expectQuery.rows...))
 		c.Assert(err, IsNil)
 	}
@@ -688,6 +873,9 @@ func (s *testStateChangeSuiteBase) execQuery(tk *testkit.TestKit, sql string, ar
 	rs, err := tk.Exec(sql, args...)
 	if err != nil {
 		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
 	}
 	result := tk.ResultSetToResult(rs, comment)
 	return result, nil
@@ -790,6 +978,31 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+
+	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
+	c.Assert(err, IsNil)
+	defer func() {
+		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
+		c.Assert(err, IsNil)
+	}()
+	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
+
+	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b);"
+	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+		_, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 // TODO: This test is not a test that performs two DDLs in parallel.
 // So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
 // func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
@@ -857,7 +1070,9 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
@@ -881,11 +1096,14 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
    );`
+	sql2 := `alter table t_part add partition (
+    partition p3 values less than (30)
+   );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql1, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
@@ -946,6 +1164,19 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterAndDropSchema(c *C) {
+	_, err := s.se.Execute(context.Background(), "create database db_drop_db")
+	c.Assert(err, IsNil)
+	sql1 := "DROP SCHEMA db_drop_db"
+	sql2 := "ALTER SCHEMA db_drop_db CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, NotNil)
+		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1052,7 +1283,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -1241,7 +1475,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		for {
 			seCnt := atomic.LoadInt32(&sessionCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the frist session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
+			// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
@@ -1253,7 +1487,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		return info
 	}
 	d := s.dom.DDL()
-	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -1265,6 +1499,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se.SetConnectionID(firstConnID)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
+		// Sleep a while to make sure the connection 2 break out the first for loop in OnGetInfoSchemaExported, otherwise atomic.LoadInt32(&sessionCnt) == 2 will be false forever.
+		time.Sleep(100 * time.Millisecond)
 		atomic.StoreInt32(&sessionCnt, finishedCnt)
 	}()
 	go func() {
@@ -1279,7 +1515,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	wg.Wait()
 
 	intercept = &ddl.TestInterceptor{}
-	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {
@@ -1360,7 +1596,70 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
-
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
+
+	// Test parallel flashback table with different name
+	tk.MustExec("drop table t_flashback")
+	sql1 = "flashback table t_flashback"
+	sql2 := "flashback table t_flashback to t_flashback2"
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+// TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
+func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"), IsNil)
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_modify_column_args")
+	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	_, err := tk.Exec("alter table t_modify_column_args modify column a tinyint")
+	c.Assert(err, NotNil)
+	// error goes like `mock update version and tableInfo error,jobID=xx`
+	strs := strings.Split(err.Error(), ",")
+	c.Assert(strs[0], Equals, "[ddl:-1]mock update version and tableInfo error")
+	jobID := strings.Split(strs[1], "=")[1]
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t_modify_column_args")
+	c.Assert(len(tbl.Meta().Columns), Equals, 1)
+	c.Assert(len(tbl.Meta().Indices), Equals, 1)
+
+	ID, err := strconv.Atoi(jobID)
+	c.Assert(err, IsNil)
+	var historyJob *model.Job
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err = t.GetHistoryDDLJob(int64(ID))
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(historyJob, NotNil)
+
+	var (
+		newCol                *model.ColumnInfo
+		oldColName            *model.CIStr
+		modifyColumnTp        byte
+		updatedAutoRandomBits uint64
+		changingCol           *model.ColumnInfo
+		changingIdxs          []*model.IndexInfo
+	)
+	pos := &ast.ColumnPosition{}
+	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+	c.Assert(err, IsNil)
+	c.Assert(changingCol, IsNil)
+	c.Assert(changingIdxs, IsNil)
 }

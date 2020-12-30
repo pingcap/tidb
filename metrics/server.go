@@ -14,8 +14,6 @@
 package metrics
 
 import (
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,13 +26,22 @@ var (
 
 // Metrics
 var (
+	PacketIOHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "packet_io_bytes",
+			Help:      "Bucketed histogram of packet IO bytes.",
+			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
+		}, []string{LblType})
+
 	QueryDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblSQLType})
 
 	QueryTotalCounter = prometheus.NewCounterVec(
@@ -52,6 +59,14 @@ var (
 			Name:      "connections",
 			Help:      "Number of connections.",
 		})
+
+	DisconnectionCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "disconnection_total",
+			Help:      "Counter of connections disconnected.",
+		}, []string{LblResult})
 
 	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
@@ -128,7 +143,7 @@ var (
 			Subsystem: "server",
 			Name:      "get_token_duration_seconds",
 			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 26), // 1us ~ 33s
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 
 	TotalQueryProcHistogram = prometheus.NewHistogram(
@@ -137,7 +152,7 @@ var (
 			Subsystem: "server",
 			Name:      "slow_query_process_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		})
 	TotalCopProcHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -145,7 +160,7 @@ var (
 			Subsystem: "server",
 			Name:      "slow_query_cop_duration_seconds",
 			Help:      "Bucketed histogram of all cop processing time (s) of of slow queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		})
 	TotalCopWaitHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -153,8 +168,33 @@ var (
 			Subsystem: "server",
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		})
+
+	MaxProcs = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "maxprocs",
+			Help:      "The value of GOMAXPROCS.",
+		})
+
+	GOGC = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "gogc",
+			Help:      "The value of GOGC",
+		})
+
+	ConnIdleDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "conn_idle_duration_seconds",
+			Help:      "Bucketed histogram of connection idle time (s).",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblInTxn})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
@@ -162,7 +202,7 @@ func ExecuteErrorToLabel(err error) string {
 	err = errors.Cause(err)
 	switch x := err.(type) {
 	case *terror.Error:
-		return x.Class().String() + ":" + strconv.Itoa(int(x.Code()))
+		return string(x.RFCCode())
 	default:
 		return "unknown"
 	}

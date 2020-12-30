@@ -36,6 +36,14 @@ const (
 	// Rejected means that the bind has been rejected after verify process.
 	// We can retry it after certain time has passed.
 	Rejected = "rejected"
+	// Manual indicates the binding is created by SQL like "create binding for ...".
+	Manual = "manual"
+	// Capture indicates the binding is captured by TiDB automatically.
+	Capture = "capture"
+	// Evolve indicates the binding is evolved by TiDB from old bindings.
+	Evolve = "evolve"
+	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	Builtin = "builtin"
 )
 
 // Binding stores the basic bind hint info.
@@ -47,6 +55,7 @@ type Binding struct {
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
+	Source     string
 	Charset    string
 	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
@@ -111,15 +120,19 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		if sctx != nil {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
-		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
+		}
+		if sctx != nil {
+			paramChecker := &paramMarkerChecker{}
+			stmt.Accept(paramChecker)
+			if !paramChecker.hasParamMarker {
+				_, err = getHintsForSQL(sctx, bind.BindSQL)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {
@@ -127,7 +140,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		}
 		// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
 		// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
-		// the hint is totally invaild, we escalate warning to error.
+		// the hint is totally invalid, we escalate warning to error.
 		if hintsStr == "" && len(warns) > 0 {
 			return warns[0]
 		}

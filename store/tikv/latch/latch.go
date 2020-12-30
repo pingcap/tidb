@@ -22,7 +22,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 

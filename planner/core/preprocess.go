@@ -21,15 +21,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
@@ -45,6 +47,36 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
+		return node
+	}
+	if explain, ok := node.(*ast.ExplainStmt); ok {
+		explain.Stmt = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain
+	} else if sel, ok := node.(*ast.SelectStmt); ok {
+		if sel.Limit != nil || sel.SelectIntoOpt != nil {
+			return node
+		}
+		newSel := *sel
+		newSel.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSel
+	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
+		if setOprStmt.Limit != nil {
+			return node
+		}
+		newSetOpr := *setOprStmt
+		newSetOpr.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSetOpr
+	}
+	return node
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -78,10 +110,11 @@ const (
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is   infoschema.InfoSchema
-	ctx  sessionctx.Context
-	err  error
-	flag preprocessorFlag
+	is     infoschema.InfoSchema
+	ctx    sessionctx.Context
+	err    error
+	flag   preprocessorFlag
+	stmtTp byte
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -90,49 +123,70 @@ type preprocessor struct {
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.DeleteStmt:
+		p.stmtTp = TypeDelete
+	case *ast.SelectStmt:
+		p.stmtTp = TypeSelect
+	case *ast.UpdateStmt:
+		p.stmtTp = TypeUpdate
+	case *ast.InsertStmt:
+		p.stmtTp = TypeInsert
 	case *ast.CreateTableStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateTableStmt(node)
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
+		p.stmtTp = TypeDrop
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
+		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
+		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
+		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
+		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
 	case *ast.AlterDatabaseStmt:
+		p.stmtTp = TypeAlter
 		p.checkAlterDatabaseGrammar(node)
 	case *ast.DropDatabaseStmt:
+		p.stmtTp = TypeDrop
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
+		p.stmtTp = TypeShow
 		p.resolveShowStmt(node)
-	case *ast.UnionSelectList:
-		p.checkUnionSelectList(node)
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
+		p.stmtTp = TypeDelete
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		EraseLastSemicolon(node.OriginSel)
-		EraseLastSemicolon(node.HintedSel)
-		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		p.stmtTp = TypeCreate
+		EraseLastSemicolon(node.OriginNode)
+		EraseLastSemicolon(node.HintedNode)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		return in, true
 	case *ast.DropBindingStmt:
-		EraseLastSemicolon(node.OriginSel)
-		if node.HintedSel != nil {
-			EraseLastSemicolon(node.HintedSel)
-			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		p.stmtTp = TypeDrop
+		EraseLastSemicolon(node.OriginNode)
+		if node.HintedNode != nil {
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -141,19 +195,45 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
 	case *ast.RepairTableStmt:
+		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
 	case *ast.CreateSequenceStmt:
+		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
 		p.resolveCreateSequenceStmt(node)
 	case *ast.DropSequenceStmt:
+		p.stmtTp = TypeDrop
 		p.flag |= inCreateOrDropTable
 		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCastExpr:
+		p.checkFuncCastExpr(node)
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.stmtTp = TypeCreate
+		p.checkStatisticsOpGrammar(in)
+	case *ast.GroupByClause:
+		p.checkGroupBy(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -168,10 +248,69 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
+const (
+	// TypeInvalid for unexpected types.
+	TypeInvalid byte = iota
+	// TypeSelect for SelectStmt.
+	TypeSelect
+	// TypeSetOpr for SetOprStmt.
+	TypeSetOpr
+	// TypeDelete for DeleteStmt.
+	TypeDelete
+	// TypeUpdate for UpdateStmt.
+	TypeUpdate
+	// TypeInsert for InsertStmt.
+	TypeInsert
+	// TypeDrop for DropStmt
+	TypeDrop
+	// TypeCreate for CreateStmt
+	TypeCreate
+	// TypeAlter for AlterStmt
+	TypeAlter
+	// TypeRename for RenameStmt
+	TypeRename
+	// TypeRepair for RepairStmt
+	TypeRepair
+	// TypeShow for ShowStmt
+	TypeShow
+)
 
+func bindableStmtType(node ast.StmtNode) byte {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		return TypeSelect
+	case *ast.SetOprStmt:
+		return TypeSetOpr
+	case *ast.DeleteStmt:
+		return TypeDelete
+	case *ast.UpdateStmt:
+		return TypeUpdate
+	case *ast.InsertStmt:
+		return TypeInsert
+	}
+	return TypeInvalid
+}
+
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	origTp := bindableStmtType(originNode)
+	hintedTp := bindableStmtType(hintedNode)
+	if origTp == TypeInvalid || hintedTp == TypeInvalid {
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+		return
+	}
+	if origTp != hintedTp {
+		p.err = errors.Errorf("hinted sql and original sql have different query types")
+		return
+	}
+	if origTp == TypeInsert {
+		origInsert, hintedInsert := originNode.(*ast.InsertStmt), hintedNode.(*ast.InsertStmt)
+		if origInsert.Select == nil || hintedInsert.Select == nil {
+			p.err = errors.Errorf("create binding only supports INSERT / REPLACE INTO SELECT")
+			return
+		}
+	}
+	originSQL := parser.Normalize(originNode.Text())
+	hintedSQL := parser.Normalize(hintedNode.Text())
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -247,6 +386,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindRestore {
+			p.flag &= ^inCreateOrDropTable
+		}
 	}
 
 	return in, p.err == nil
@@ -288,6 +431,9 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		if c.Keys[0].Expr != nil {
+			continue
+		}
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
@@ -359,21 +505,28 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 
 }
 
-// checkUnionSelectList checks union's selectList.
+// checkSetOprSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+//        https://mariadb.com/kb/en/intersect/
+//        https://mariadb.com/kb/en/except/
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
-func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
-		if sel.IsInBraces {
-			continue
-		}
-		if sel.Limit != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
-			return
-		}
-		if sel.OrderBy != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
-			return
+		switch s := sel.(type) {
+		case *ast.SelectStmt:
+			if s.IsInBraces {
+				continue
+			}
+			if s.Limit != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
+				return
+			}
+			if s.OrderBy != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
+				return
+			}
+		case *ast.SetOprSelectList:
+			p.checkSetOprSelectList(s)
 		}
 	}
 }
@@ -421,17 +574,15 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
-		for _, spec := range constraint.Keys {
-			if spec.Expr != nil {
-				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
-				return
-			}
-		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
 				p.err = err
+				return
+			}
+			if constraint.IsEmptyIndex {
+				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
 				return
 			}
 		case ast.ConstraintPrimaryKey:
@@ -446,6 +597,9 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 		}
+	}
+	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
+		return
 	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
@@ -471,14 +625,21 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
-func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
-	if stmt.SelectIntoOpt != nil {
-		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
-		return
-	}
-	if stmt.LockTp != ast.SelectLockNone {
-		stmt.LockTp = ast.SelectLockNone
-		return
+func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
+	switch s := stmt.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			return
+		}
+		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
+			s.LockInfo.LockType = ast.SelectLockNone
+			return
+		}
+	case *ast.SetOprSelectList:
+		for _, sel := range s.Selects {
+			p.checkCreateViewWithSelect(sel)
+		}
 	}
 }
 
@@ -486,7 +647,7 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 	switch stmt := stmt.Select.(type) {
 	case *ast.SelectStmt:
 		p.checkCreateViewWithSelect(stmt)
-	case *ast.UnionStmt:
+	case *ast.SetOprStmt:
 		for _, selectStmt := range stmt.SelectList.Selects {
 			p.checkCreateViewWithSelect(selectStmt)
 			if p.err != nil {
@@ -518,13 +679,16 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
-		p.err = err
-		return
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }
@@ -576,12 +740,41 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	if stmt.IndexName == "" {
+		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
+		return
+	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
+func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	for _, item := range stmt.Items {
+		if !item.NullOrder && !enableNoopFuncs {
+			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			return
+		}
+	}
+}
+
+func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
+	var statsName string
+	switch stmt := node.(type) {
+	case *ast.CreateStatisticsStmt:
+		statsName = stmt.StatsName
+	case *ast.DropStatisticsStmt:
+		statsName = stmt.StatsName
+	}
+	if isIncorrectName(statsName) {
+		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+		p.err = ErrInternal.GenWithStack(msg)
+	}
+	return
+}
+
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.OldTable.Name.String()
-	newTable := stmt.NewTable.Name.String()
+	oldTable := stmt.TableToTables[0].OldTable.Name.String()
+	newTable := stmt.TableToTables[0].NewTable.Name.String()
 
 	p.checkRenameTable(oldTable, newTable)
 }
@@ -635,6 +828,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
+		if p.err = checkUnsupportedTableOptions(spec.Options); p.err != nil {
+			return
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -679,6 +875,47 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 	return checkDuplicateColumnName(IndexPartSpecifications)
 }
 
+// checkUnsupportedTableOptions checks if there exists unsupported table options
+func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	var err error = nil
+	for _, option := range options {
+		switch option.Tp {
+		case ast.TableOptionUnion:
+			err = ddl.ErrTableOptionUnionUnsupported
+		case ast.TableOptionInsertMethod:
+			err = ddl.ErrTableOptionInsertMethodUnsupported
+		case ast.TableOptionEngine:
+			err = checkTableEngine(option.StrValue)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var mysqlValidTableEngineNames = map[string]struct{}{
+	"archive":    {},
+	"blackhole":  {},
+	"csv":        {},
+	"example":    {},
+	"federated":  {},
+	"innodb":     {},
+	"memory":     {},
+	"merge":      {},
+	"mgr_myisam": {},
+	"myisam":     {},
+	"ndb":        {},
+	"heap":       {},
+}
+
+func checkTableEngine(engineName string) error {
+	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
+		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
+	}
+	return nil
+}
+
 // checkColumn checks if the column definition is valid.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func checkColumn(colDef *ast.ColumnDef) error {
@@ -718,11 +955,27 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
-		if tp.Decimal > mysql.MaxFloatingTypeScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
-		}
-		if tp.Flen > mysql.MaxFloatingTypeWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+		// For FLOAT, the SQL standard permits an optional specification of the precision.
+		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
+		if tp.Decimal == -1 {
+			switch tp.Tp {
+			case mysql.TypeDouble:
+				// For Double type Flen and Decimal check is moved to parser component
+			default:
+				if tp.Flen > mysql.MaxDoublePrecisionLength {
+					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+				}
+			}
+		} else {
+			if tp.Decimal > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			}
+			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
+				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
+			if tp.Flen < tp.Decimal {
+				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+			}
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
@@ -741,6 +994,15 @@ func checkColumn(colDef *ast.ColumnDef) error {
 
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
+
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		// If decimal and flen all equals 0, just set flen to default value.
+		if tp.Decimal == 0 && tp.Flen == 0 {
+			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
+			tp.Flen = defaultFlen
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
@@ -813,6 +1075,32 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	}
 }
 
+func (p *preprocessor) stmtType() string {
+
+	switch p.stmtTp {
+	case TypeDelete:
+		return "DELETE"
+	case TypeUpdate:
+		return "UPDATE"
+	case TypeInsert:
+		return "INSERT"
+	case TypeDrop:
+		return "DROP"
+	case TypeCreate:
+		return "CREATE"
+	case TypeAlter:
+		return "ALTER"
+	case TypeRename:
+		return "DROP, ALTER"
+	case TypeRepair:
+		return "SELECT, INSERT"
+	case TypeShow:
+		return "SHOW"
+	default:
+		return "SELECT" // matches Select and uncaught cases.
+	}
+}
+
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
@@ -843,6 +1131,22 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
+		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
+		// unless we know that the user has permissions to it, should it exist.
+		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
+		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+			if !pm.RequestVerification(activeRoles, tn.Schema.L, tn.Name.O, "", mysql.AllPrivMask) {
+				u := currentUser.Username
+				h := currentUser.Hostname
+				if currentUser.AuthHostname != "" {
+					u = currentUser.AuthUsername
+					h = currentUser.AuthHostname
+				}
+				p.err = ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
+				return
+			}
+		}
 		p.err = err
 		return
 	}
@@ -925,6 +1229,12 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			p.flag |= inCreateOrDropTable
 			break
 		}
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
+			table := spec.Constraint.Refer.Table
+			if table.Schema.L == "" && node.Table.Schema.L != "" {
+				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
+		}
 	}
 }
 
@@ -933,5 +1243,33 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
+	}
+}
+
+func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.EvalType() == types.ETDecimal {
+		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+			// valid
+			return
+		}
+
+		var buf strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+		if err := node.Expr.Restore(restoreCtx); err != nil {
+			p.err = err
+			return
+		}
+		if node.Tp.Flen < node.Tp.Decimal {
+			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
+			return
+		}
+		if node.Tp.Flen > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+			return
+		}
+		if node.Tp.Decimal > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+			return
+		}
 	}
 }

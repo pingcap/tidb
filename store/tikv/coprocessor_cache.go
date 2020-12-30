@@ -29,6 +29,7 @@ import (
 
 type coprCache struct {
 	cache                   *ristretto.Cache
+	admissionMaxRanges      int
 	admissionMaxSize        int
 	admissionMinProcessTime time.Duration
 }
@@ -56,7 +57,7 @@ func (v *coprCacheValue) Len() int {
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
-	if config == nil || !config.Enabled {
+	if config == nil || !config.Enable {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
@@ -81,6 +82,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	}
 	c := coprCache{
 		cache:                   cache,
+		admissionMaxRanges:      int(config.AdmissionMaxRanges),
 		admissionMaxSize:        int(maxEntityInBytes),
 		admissionMinProcessTime: time.Duration(config.AdmissionMinProcessMs) * time.Millisecond,
 	}
@@ -158,8 +160,19 @@ func (c *coprCache) Get(key []byte) *coprCacheValue {
 	return typedValue
 }
 
-// CheckAdmission checks whether an item is worth caching.
-func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool {
+// CheckRequestAdmission checks whether a response item is worth caching.
+func (c *coprCache) CheckRequestAdmission(ranges int) bool {
+	if c == nil {
+		return false
+	}
+	if c.admissionMaxRanges != 0 && ranges > c.admissionMaxRanges {
+		return false
+	}
+	return true
+}
+
+// CheckResponseAdmission checks whether a response item is worth caching.
+func (c *coprCache) CheckResponseAdmission(dataSize int, processTime time.Duration) bool {
 	if c == nil {
 		return false
 	}
@@ -173,7 +186,8 @@ func (c *coprCache) CheckAdmission(dataSize int, processTime time.Duration) bool
 }
 
 // Set inserts an item to the cache.
-// It is recommended to call `CheckAdmission` before inserting the item to the cache.
+// It is recommended to call `CheckRequestAdmission` and `CheckResponseAdmission` before inserting
+// the item to the cache.
 func (c *coprCache) Set(key []byte, value *coprCacheValue) bool {
 	if c == nil {
 		return false

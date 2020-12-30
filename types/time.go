@@ -131,8 +131,8 @@ var (
 )
 
 var (
-	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
+	// MinDatetime is the minimum for Golang Time type.
+	MinDatetime = FromDate(1, 1, 1, 0, 0, 0, 0)
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
@@ -735,68 +735,290 @@ func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
 func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
+	if len(format) == 0 {
+		return nil
+	}
+
+	// Date format must start and end with number.
+	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+		return nil
+	}
+
 	start := 0
 	// Initialize `seps` with capacity of 6. The input `format` is typically
 	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
-	for i := 0; i < len(format); i++ {
-		// Date format must start and end with number.
-		if i == 0 || i == len(format)-1 {
-			if !unicode.IsNumber(rune(format[i])) {
-				return nil
+
+	for i := 1; i < len(format)-1; i++ {
+		if isValidSeparator(format[i], len(seps)) {
+			prevParts := len(seps)
+			seps = append(seps, format[start:i])
+			start = i + 1
+
+			// consume further consecutive separators
+			for j := i + 1; j < len(format); j++ {
+				if !isValidSeparator(format[j], prevParts) {
+					break
+				}
+
+				start++
+				i++
 			}
 
 			continue
 		}
 
-		// Separator is a single none-number char.
-		if !unicode.IsNumber(rune(format[i])) {
-			if !unicode.IsNumber(rune(format[i-1])) {
-				return nil
-			}
-
-			seps = append(seps, format[start:i])
-			start = i + 1
+		if !isDigit(format[i]) {
+			return nil
 		}
-
 	}
 
 	seps = append(seps, format[start:])
 	return seps
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
-func splitDateTime(format string) (seps []string, fracStr string) {
-	index := GetFracIndex(format)
-	if index > 0 {
-		fracStr = format[index+1:]
-		format = format[:index]
+// helper for date part splitting, punctuation characters are valid separators anywhere,
+// while space and 'T' are valid separators only between date and time.
+func isValidSeparator(c byte, prevParts int) bool {
+	if isPunctuation(c) {
+		return true
 	}
 
+	return prevParts == 2 && (c == ' ' || c == 'T')
+}
+
+var validIdxCombinations = map[int]struct {
+	h int
+	m int
+}{
+	100: {0, 0}, // 23:59:59Z
+	30:  {2, 0}, // 23:59:59+08
+	50:  {4, 2}, // 23:59:59+0800
+	63:  {5, 2}, // 23:59:59+08:00
+	// postgres supports the following additional syntax that deviates from ISO8601, although we won't support it
+	// currently, it will be fairly easy to add in the current parsing framework
+	// 23:59:59Z+08
+	// 23:59:59Z+08:00
+}
+
+// GetTimezone parses the trailing timezone information of a given time string literal. If idx = -1 is returned, it
+// means timezone information not found, otherwise it indicates the index of the starting index of the timezone
+// information. If the timezone contains sign, hour part and/or minute part, it will be returned as is, otherwise an
+// empty string will be returned.
+//
+// Supported syntax:
+//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
+//     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+//     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
+//     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
+//   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
+//     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
+func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
+	idx, zidx, sidx, spidx := -1, -1, -1, -1
+	// idx is for the position of the starting of the timezone information
+	// zidx is for the z symbol
+	// sidx is for the sign
+	// spidx is for the separator
+	l := len(lit)
+	// the following loop finds the first index of Z, sign, and separator from backwards.
+	for i := l - 1; 0 <= i; i-- {
+		if lit[i] == 'Z' {
+			zidx = i
+			break
+		}
+		if sidx == -1 && (lit[i] == '-' || lit[i] == '+') {
+			sidx = i
+		}
+		if spidx == -1 && lit[i] == ':' {
+			spidx = i
+		}
+	}
+	// we could enumerate all valid combinations of these values and look it up in a table, see validIdxCombinations
+	// zidx can be -1 (23:59:59+08:00), l-1 (23:59:59Z)
+	// sidx can be -1, l-3, l-5, l-6
+	// spidx can be -1, l-3
+	k := 0
+	if l-zidx == 1 {
+		k += 100
+	}
+	if t := l - sidx; t == 3 || t == 5 || t == 6 {
+		k += t * 10
+	}
+	if l-spidx == 3 {
+		k += 3
+	}
+	if v, ok := validIdxCombinations[k]; ok {
+		hidx, midx := l-v.h, l-v.m
+		valid := func(v string) bool {
+			return '0' <= v[0] && v[0] <= '9' && '0' <= v[1] && v[1] <= '9'
+		}
+		if sidx != -1 {
+			tzSign = lit[sidx : sidx+1]
+			idx = sidx
+		}
+		if zidx != -1 {
+			idx = zidx
+		}
+		if (l - spidx) == 3 {
+			tzSep = lit[spidx : spidx+1]
+		}
+		if v.h != 0 {
+			tzHour = lit[hidx : hidx+2]
+			if !valid(tzHour) {
+				return -1, "", "", "", ""
+			}
+		}
+		if v.m != 0 {
+			tzMinute = lit[midx : midx+2]
+			if !valid(tzMinute) {
+				return -1, "", "", "", ""
+			}
+		}
+		return
+	}
+	return -1, "", "", "", ""
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+// splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
+// For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
+// therefore we could look from backwards at the literal to find the index of the decimal point.
+// For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
+// https://dev.mysql.com/doc/refman/8.0/en/datetime.html) and Z/z (w.r.t. ISO 8601, see section Time zone in
+// https://www.cl.cam.ac.uk/~mgk25/iso-time.html). We also look from backwards for the delimiter, see GetTimezone.
+func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string) {
+	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
+	if tzIndex > 0 {
+		hasTZ = true
+		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
+			// in case of multiple separators, e.g. 2020-10--10
+		}
+		format = format[:tzIndex]
+	}
+	fracIndex := GetFracIndex(format)
+	if fracIndex > 0 {
+		fracStr = format[fracIndex+1:]
+		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
+			// in case of multiple separators, e.g. 2020-10..10
+		}
+		format = format[:fracIndex]
+	}
 	seps = ParseDateFormat(format)
 	return
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
-	// Try to split str with delimiter.
-	// TODO: only punctuation can be the delimiter for date parts or time parts.
-	// But only space and T can be the delimiter between the date and time part.
 	var (
-		year, month, day, hour, minute, second int
-		fracStr                                string
-		hhmmss                                 bool
-		err                                    error
+		year, month, day, hour, minute, second, deltaHour, deltaMinute int
+		fracStr                                                        string
+		tzSign, tzHour, tzSep, tzMinute                                string
+		hasTZ, hhmmss                                                  bool
+		err                                                            error
 	)
 
-	seps, fracStr := splitDateTime(str)
+	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
+
 	var truncatedOrIncorrect bool
+	/*
+		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
+
+		1. Z, then it must be time zone information, and we should not tamper with it
+		2. -HH, it might be from
+		    1. no fracStr
+		        1. YYYY-MM-DD
+		        2. YYYY-MM-DD-HH
+		        3. YYYY-MM-DD HH-MM
+		        4. YYYY-MM-DD HH:MM-SS
+		        5. YYYY-MM-DD HH:MM:SS-HH (correct, no need absorb)
+		    2. with fracStr
+		        1. YYYY.MM-DD
+		        2. YYYY-MM.DD-HH
+		        3. YYYY-MM-DD.HH-MM
+		        4. YYYY-MM-DD HH.MM-SS
+		        5. YYYY-MM-DD HH:MM.SS-HH (correct, no need absorb)
+		3. -HH:MM, similarly it might be from
+		    1. no fracStr
+		        1. YYYY-MM:DD
+		        2. YYYY-MM-DD:HH
+		        3. YYYY-MM-DD-HH:MM
+		        4. YYYY-MM-DD HH-MM:SS
+		        5. YYYY-MM-DD HH:MM-SS:HH (invalid)
+		        6. YYYY-MM-DD HH:MM:SS-HH:MM (correct, no need absorb)
+		    2. with fracStr
+		        1. YYYY.MM-DD:HH
+		        2. YYYY-MM.DD-HH:MM
+		        3. YYYY-MM-DD.HH-MM:SS
+		        4. YYYY-MM-DD HH.MM-SS:HH (invalid)
+		        5. YYYY-MM-DD HH:MM.SS-HH:MM (correct, no need absorb)
+		4. -HHMM, there should only be one case, that is both the date and time part have existed, only then could we have fracStr or time zone
+		    1. YYYY-MM-DD HH:MM:SS.FSP-HHMM (correct, no need absorb)
+
+		to summarize, FSP and timezone is only valid if we have date and time presented, otherwise we should consider absorbing
+		FSP or timezone into seps. additionally, if we want to absorb timezone, we either absorb them all, or not, meaning
+		we won't only absorb tzHour but not tzMinute.
+
+		additional case to consider is that when the time literal is presented in float string (e.g. `YYYYMMDD.HHMMSS`), in
+		this case, FSP should not be absorbed and only `+HH:MM` would be allowed (i.e. Z, +HHMM, +HH that comes from ISO8601
+		should be banned), because it only conforms to MySQL's timezone parsing logic, but it is not valid in ISO8601.
+		However, I think it is generally acceptable to allow a wider spectrum of timezone format in string literal.
+	*/
+
+	// noAbsorb tests if can absorb FSP or TZ
+	noAbsorb := func(seps []string) bool {
+		// if we have more than 5 parts (i.e. 6), the tailing part can't be absorbed
+		// or if we only have 1 part, but its length is longer than 4, then it is at least YYMMD, in this case, FSP can
+		// not be absorbed, and it will be handled later, and the leading sign prevents TZ from being absorbed, because
+		// if date part has no separators, we can't use -/+ as separators between date & time.
+		return len(seps) > 5 || (len(seps) == 1 && len(seps[0]) > 4)
+	}
+	if len(fracStr) != 0 && !isFloat {
+		if !noAbsorb(seps) {
+			seps = append(seps, fracStr)
+			fracStr = ""
+		}
+	}
+	if hasTZ && tzSign != "" {
+		// if tzSign is empty, we can be sure that the string literal contains timezone (such as 2010-10-10T10:10:10Z),
+		// therefore we could safely skip this branch.
+		if !noAbsorb(seps) && !(tzMinute != "" && tzSep == "") {
+			// we can't absorb timezone if there is no separate between tzHour and tzMinute
+			if len(tzHour) != 0 {
+				seps = append(seps, tzHour)
+			}
+			if len(tzMinute) != 0 {
+				seps = append(seps, tzMinute)
+			}
+			hasTZ = false
+		}
+	}
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
+		// Values specified as numbers
+		if isFloat {
+			numOfTime, err := StrToInt(sc, seps[0], false)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			year, month, day, hour, minute, second =
+				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
+			if l >= 9 && l <= 14 {
+				hhmmss = true
+			}
+
+			break
+		}
+
+		// Values specified as strings
 		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
@@ -861,15 +1083,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
-	case 2:
-		// YYYY-MM is not valid
-		if len(fracStr) == 0 {
-			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
-		}
-
-		// YYYY-MM.DD, DD is treat as fracStr
-		err = scanTimeArgs(append(seps, fracStr), &year, &month, &day)
-		fracStr = ""
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -905,7 +1118,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	var microsecond int
 	var overflow bool
 	if hhmmss {
-		// If input string is "20170118.999", without hhmmss, fsp is meanless.
+		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
+		// TODO: this case is not only meaningless, but erroneous, please confirm.
 		microsecond, overflow, err = ParseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
@@ -923,6 +1137,36 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			return ZeroDatetime, errors.Trace(err)
 		}
 		tmp = FromGoTime(t1.Add(gotime.Second))
+	}
+	if hasTZ {
+		// without hhmmss, timezone is also meaningless
+		if !hhmmss {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStack(DateTimeStr, str))
+		}
+		if len(tzHour) != 0 {
+			deltaHour = int((tzHour[0]-'0')*10 + (tzHour[1] - '0'))
+		}
+		if len(tzMinute) != 0 {
+			deltaMinute = int((tzMinute[0]-'0')*10 + (tzMinute[1] - '0'))
+		}
+		// allowed delta range is [-14:00, 14:00], and we will intentionally reject -00:00
+		if deltaHour > 14 || deltaMinute > 59 || (deltaHour == 14 && deltaMinute != 0) || (tzSign == "-" && deltaHour == 0 && deltaMinute == 0) {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		}
+		// by default, if the temporal string literal does not contain timezone information, it will be in the timezone
+		// specified by the time_zone system variable. However, if the timezone is specified in the string literal, we
+		// will use the specified timezone to interpret the string literal and convert it into the system timezone.
+		offset := deltaHour*60*60 + deltaMinute*60
+		if tzSign == "-" {
+			offset = -offset
+		}
+		loc := gotime.FixedZone(fmt.Sprintf("UTC%s%s:%s", tzSign, tzHour, tzMinute), offset)
+		t1, err := tmp.GoTime(loc)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
+		t1 = t1.In(sc.TimeZone)
+		tmp = FromGoTime(t1)
 	}
 
 	nt := NewTime(tmp, mysql.TypeDatetime, fsp)
@@ -980,16 +1224,34 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
-	if y < int64(MinYear) || y > int64(MaxYear) {
+	if y < 0 {
 		return 0, errors.Trace(ErrInvalidYear)
+	}
+	if y < int64(MinYear) {
+		return int64(MinYear), errors.Trace(ErrInvalidYear)
+	}
+	if y > int64(MaxYear) {
+		return int64(MaxYear), errors.Trace(ErrInvalidYear)
 	}
 
 	return y, nil
+}
+
+func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
+	if y == 0 && !shouldAdjust {
+		return y
+	}
+	if y >= 0 && y <= 69 {
+		y = 2000 + y
+	} else if y >= 70 && y <= 99 {
+		y = 1900 + y
+	}
+	return y
 }
 
 // NewDuration construct duration with time.
@@ -1594,11 +1856,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 		return getTime(sc, num, t.Type())
 	}
 
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
-	}
-
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
@@ -1691,6 +1948,17 @@ func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
 func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
+}
+
+// ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
+// Note: the invoker must promise the `year` is in the range [MinYear, MaxYear].
+func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
+	if year == 0 {
+		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
+	}
+
+	dt := FromDate(int(year), 0, 0, 0, 0, 0, 0)
+	return NewTime(dt, mysql.TypeDatetime, DefaultFsp), nil
 }
 
 // ParseTimeFromNum parses a formatted int64,
@@ -1918,6 +2186,14 @@ func ExtractDurationNum(d *Duration, unit string) (int64, error) {
 		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
 	case "HOUR_MINUTE":
 		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_MICROSECOND":
+		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+	case "DAY_SECOND":
+		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+	case "DAY_MINUTE":
+		return int64(d.Hour())*100 + int64(d.Minute()), nil
+	case "DAY_HOUR":
+		return int64(d.Hour()), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
@@ -1946,13 +2222,15 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
-		if lf-decimalPointPos >= 6 {
+		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
+		dvPreLen := len(dvPre)
+		if dvPreLen >= 6 {
 			// MySQL rounds down to 1e-6.
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
@@ -2437,7 +2715,8 @@ func abbrDayOfMonth(day int) string {
 func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
 	ctx := make(map[string]int)
 	var tm CoreTime
-	if !strToDate(&tm, date, format, ctx) {
+	success, warning := strToDate(&tm, date, format, ctx)
+	if !success {
 		t.SetCoreTime(ZeroCoreTime)
 		t.SetType(mysql.TypeDatetime)
 		t.SetFsp(0)
@@ -2449,7 +2728,15 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 
 	t.SetCoreTime(tm)
 	t.SetType(mysql.TypeDatetime)
-	return t.check(sc) == nil
+	if t.check(sc) != nil {
+		return false
+	}
+	if warning {
+		// Only append this warning when success but still need warning.
+		// Currently this only happens when `date` has extra characters at the end.
+		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, date))
+	}
+	return true
 }
 
 // mysqlTimeFix fixes the Time use the values in the context.
@@ -2479,34 +2766,43 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.setHour(t.getHour() + 12)
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.setHour(0)
+		}
 	}
 	return nil
 }
 
-// strToDate converts date string according to format, returns true on success,
+// strToDate converts date string according to format,
 // the value will be stored in argument t or ctx.
-func strToDate(t *CoreTime, date string, format string, ctx map[string]int) bool {
+// The second return value is true when success but still need to append a warning.
+func strToDate(t *CoreTime, date string, format string, ctx map[string]int) (success bool, warning bool) {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
 	token, formatRemain, succ := getFormatToken(format)
 	if !succ {
-		return false
+		return false, false
 	}
 
 	if token == "" {
-		// Extra characters at the end of date are ignored.
-		return true
+		if len(date) != 0 {
+			// Extra characters at the end of date are ignored, but a warning should be reported at this case.
+			return true, true
+		}
+		// Normal case. Both token and date are empty now.
+		return true, false
 	}
 
 	if len(date) == 0 {
 		ctx[token] = 0
-		return true
+		return true, false
 	}
 
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
-		return false
+		return false, false
 	}
 
 	return strToDate(t, dateRemain, formatRemain, ctx)
@@ -2567,7 +2863,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%h": hour12Numeric,         // Hour (01..12)
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
@@ -2613,7 +2909,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		}
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f', 'r', 'T':
 				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
 				isDate = true
@@ -2647,15 +2943,6 @@ func parseDigits(input string, count int) (int, bool) {
 		return int(v), false
 	}
 	return int(v), true
-}
-
-func hour24TwoDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v >= 24 {
-		return input, false
-	}
-	t.setHour(uint8(v))
-	return input[2:], true
 }
 
 func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -2693,6 +2980,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
 	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
+	}
 
 	minute, succ := parseDigits(input[3:], 2)
 	if !succ || minute > 59 || input[5] != ':' {
@@ -2708,8 +2999,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	switch {
 	case strings.HasPrefix(remain, "AM"):
 		t.setHour(uint8(hour))
+		remain = strings.TrimPrefix(remain, "AM")
 	case strings.HasPrefix(remain, "PM"):
 		t.setHour(uint8(hour + 12))
+		remain = strings.TrimPrefix(remain, "PM")
 	default:
 		return input, false
 	}
@@ -2816,6 +3109,7 @@ func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool)
 		return input, false
 	}
 	t.setHour(uint8(v))
+	ctx["%h"] = v
 	return input[length:], true
 }
 

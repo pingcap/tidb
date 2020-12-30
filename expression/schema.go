@@ -33,6 +33,9 @@ func (ki KeyInfo) Clone() KeyInfo {
 type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
+	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	UniqueKeys []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -104,6 +107,16 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 	return false
 }
 
+// IsUnique checks if this column is a unique key which may contain duplicate nulls .
+func (s *Schema) IsUnique(col *Column) bool {
+	for _, key := range s.UniqueKeys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
+		}
+	}
+	return false
+}
+
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
@@ -159,6 +172,23 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 		cols = append(cols, s.Columns[offset])
 	}
 	return cols
+}
+
+// ExtractColGroups checks if column groups are from current schema, and returns
+// offsets of those satisfied column groups.
+func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
+	if len(colGroups) == 0 {
+		return nil, nil
+	}
+	extracted := make([][]int, 0, len(colGroups))
+	offsets := make([]int, 0, len(colGroups))
+	for i, g := range colGroups {
+		if j := s.ColumnsIndices(g); j != nil {
+			extracted = append(extracted, j)
+			offsets = append(offsets, i)
+		}
+	}
+	return extracted, offsets
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.

@@ -37,7 +37,6 @@ func TestLoadPluginSuccess(t *testing.T) {
 	cfg := Config{
 		Plugins:        []string{pluginSign},
 		PluginDir:      "",
-		GlobalSysVar:   &variable.SysVars,
 		PluginVarNames: &variable.PluginVarNames,
 		EnvVersion:     map[string]uint16{"go": 1112},
 	}

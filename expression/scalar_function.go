@@ -28,12 +28,13 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 // error definitions.
 var (
-	ErrNoDB = terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.
@@ -136,7 +137,7 @@ func (sf *ScalarFunction) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
+	return []byte(fmt.Sprintf("%q", sf)), nil
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
@@ -152,10 +153,10 @@ func typeInferForNull(args []Expression) {
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
 	var hasNullArg bool
-	for _, arg := range args {
-		isNullArg := isNull(arg)
+	for i := len(args) - 1; i >= 0; i-- {
+		isNullArg := isNull(args[i])
 		if !isNullArg && retFieldTp == nil {
-			retFieldTp = arg.GetType()
+			retFieldTp = args[i].GetType()
 		}
 		hasNullArg = hasNullArg || isNullArg
 		// Break if there are both NULL and non-NULL expression
@@ -174,12 +175,17 @@ func typeInferForNull(args []Expression) {
 }
 
 // newFunctionImpl creates a new scalar function or constant.
-func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+// fold: 1 means folding constants, while 0 means not,
+// -1 means try to fold constants if without errors/warnings, otherwise not.
+func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if funcName == ast.Cast {
+	switch funcName {
+	case ast.Cast:
 		return BuildCastFunction(ctx, args[0], retType), nil
+	case ast.GetVar:
+		return BuildGetVarFunction(ctx, args[0], retType)
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -197,7 +203,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	typeInferForNull(funcArgs)
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.Nullif:
+		// Do nothing. Because it will call InferType4ControlFuncs.
+	default:
+		typeInferForNull(funcArgs)
+	}
+
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
@@ -210,20 +222,36 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 		RetType:  retType,
 		Function: f,
 	}
-	if fold {
+	if fold == 1 {
 		return FoldConstant(sf), nil
+	} else if fold == -1 {
+		// try to fold constants, and return the original function if errors/warnings occur
+		sc := ctx.GetSessionVars().StmtCtx
+		beforeWarns := sc.WarningCount()
+		newSf := FoldConstant(sf)
+		afterWarns := sc.WarningCount()
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+			return sf, nil
+		}
+		return newSf, nil
 	}
 	return sf, nil
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
 func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, true, funcName, retType, args...)
+	return newFunctionImpl(ctx, 1, funcName, retType, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
 func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, false, funcName, retType, args...)
+	return newFunctionImpl(ctx, 0, funcName, retType, args...)
+}
+
+// NewFunctionTryFold creates a new scalar function with trying constant folding.
+func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, -1, funcName, retType, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
@@ -517,11 +545,11 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 }
 
 // CharsetAndCollation ...
-func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
+func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return sf.Function.CharsetAndCollation(ctx)
 }
 
 // SetCharsetAndCollation ...
-func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string, flen int) {
-	sf.Function.SetCharsetAndCollation(chs, coll, flen)
+func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
+	sf.Function.SetCharsetAndCollation(chs, coll)
 }

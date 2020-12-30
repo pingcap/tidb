@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -28,13 +29,14 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/peer"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -54,6 +56,9 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 	}
 	// For redirection the cop task.
 	mocktikv.GRPCClientFactory = func() mocktikv.Client {
+		return tikv.NewTestRPCClient(config.Security)
+	}
+	unistore.GRPCClientFactory = func() unistore.Client {
 		return tikv.NewTestRPCClient(config.Security)
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
@@ -182,6 +187,10 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	}
 	defer se.Close()
 
+	if p, ok := peer.FromContext(ctx); ok {
+		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
+	}
+
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleRequest(ctx, req)
 }
@@ -200,9 +209,9 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
-	se.GetSessionVars().HashAggPartialConcurrency = 1
-	se.GetSessionVars().HashAggFinalConcurrency = 1
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+	se.GetSessionVars().SetHashAggPartialConcurrency(1)
+	se.GetSessionVars().SetHashAggFinalConcurrency(1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

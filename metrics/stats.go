@@ -25,7 +25,7 @@ var (
 			Subsystem: "statistics",
 			Name:      "auto_analyze_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of auto analyze.",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 1.5hours
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
 		})
 
 	AutoAnalyzeCounter = prometheus.NewCounterVec(

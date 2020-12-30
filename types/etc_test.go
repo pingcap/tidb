@@ -137,14 +137,14 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 		Input  float64
 		Expect float64
 	}{
-		{2.5, 3},
+		{2.5, 2},
 		{1.5, 2},
-		{0.5, 1},
+		{0.5, 0},
 		{0.49999999999999997, 0},
 		{0, 0},
 		{-0.49999999999999997, 0},
-		{-0.5, -1},
-		{-2.5, -3},
+		{-0.5, 0},
+		{-2.5, -2},
 		{-1.5, -2},
 	}
 
@@ -323,8 +323,8 @@ func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
 	res = IsTypeNumeric(mysql.TypeNewDecimal)
 	c.Assert(res, Equals, true)
 
-	res = IsTypeNumeric(mysql.TypeDecimal)
-	c.Assert(res, Equals, true)
+	res = IsTypeNumeric(mysql.TypeUnspecified)
+	c.Assert(res, Equals, false)
 
 	res = IsTypeNumeric(mysql.TypeFloat)
 	c.Assert(res, Equals, true)

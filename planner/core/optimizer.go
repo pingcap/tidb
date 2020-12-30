@@ -83,7 +83,7 @@ type logicalOptRule interface {
 func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -111,7 +111,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	}
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
+		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	physical, cost, err := physicalOptimize(logic)
+	planCounter := PlanCounterTp(sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
+	}
+	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -142,8 +146,39 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
-	plan = injectExtraProjection(plan)
+	plan = InjectExtraProjection(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = enableParallelApply(sctx, plan)
+	return plan
+}
+
+func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+	if !sctx.GetSessionVars().EnableParallelApply {
+		return plan
+	}
+	// the parallel apply has three limitation:
+	// 1. the parallel implementation now cannot keep order;
+	// 2. the inner child has to support clone;
+	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
+	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
+	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
+	if apply, ok := plan.(*PhysicalApply); ok {
+		outerIdx := 1 - apply.InnerChildIdx
+		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
+		_, err := SafeClone(apply.Children()[apply.InnerChildIdx])
+		supportClone := err == nil // limitation 2
+		if noOrder && supportClone {
+			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
+		}
+
+		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// so we only invoke recursively for its outer child.
+		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
+		return apply
+	}
+	for i, child := range plan.Children() {
+		plan.SetChild(i, enableParallelApply(sctx, child))
+	}
 	return plan
 }
 
@@ -169,8 +204,8 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
-	if _, err := logic.recursiveDeriveStats(); err != nil {
+func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPlan, float64, error) {
+	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 
@@ -181,9 +216,13 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, float64, error) {
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	t, err := logic.findBestTask(prop)
+	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
+	t, _, err := logic.findBestTask(prop, planCounter)
 	if err != nil {
 		return nil, 0, err
+	}
+	if *planCounter > 0 {
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range."))
 	}
 	if t.invalid() {
 		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
@@ -278,6 +317,7 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 
 func init() {
 	expression.EvalAstExpr = evalAstExpr
+	expression.RewriteAstExpr = rewriteAstExpr
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }
