@@ -1299,7 +1299,7 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 		return nil
 	}
 	if !planner.IsReadOnly(stmtNode, vars) {
-		return errors.New("only support read only statement during read only time-bounded transaction.")
+		return errors.New("only support read only statement during time-bounded read only transaction")
 	}
 	return nil
 }
