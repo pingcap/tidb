@@ -5742,7 +5742,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleVoter:
 			role = placement.Voter
 		default:
-			err = errors.Errorf("missing the ROLE=xx field")
+			err = errors.Errorf("ROLE is not specified")
 		}
 		if err != nil {
 			break
