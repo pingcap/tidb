@@ -1591,9 +1591,6 @@ type mppTask struct {
 
 	ts        *PhysicalTableScan
 	receivers []*PhysicalExchangeReceiver
-
-	oldProp    *property.PhysicalProperty
-	oldMppTask *mppTask
 }
 
 func (t *mppTask) count() float64 {
@@ -1690,12 +1687,10 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
 	return &mppTask{
-		p:          receiver,
-		cst:        t.cst,
-		partTp:     prop.PartitionTp,
-		hashCols:   prop.PartitionCols,
-		receivers:  []*PhysicalExchangeReceiver{receiver},
-		oldMppTask: t,
-		oldProp:    prop,
+		p:         receiver,
+		cst:       t.cst,
+		partTp:    prop.PartitionTp,
+		hashCols:  prop.PartitionCols,
+		receivers: []*PhysicalExchangeReceiver{receiver},
 	}
 }
