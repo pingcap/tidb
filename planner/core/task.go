@@ -1479,22 +1479,17 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			mpp.addCost(p.GetCost(inputRows, false))
 			return mpp
 		} else if len(p.GroupByItems) != 0 && mpp.partTp == property.AnyType {
-			/// 2-phase agg: partial + final agg with two types partitions: hash partition or collected partition
+			/// 2-phase agg: partial + final agg with two types partitions: hash partition or merged partition
 			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 			if partialAgg == nil {
 				return invalidTask
 			}
-			groupByItems := finalAgg.(*PhysicalHashAgg).GroupByItems
-			partitionCols := make([]*expression.Column, 0, len(groupByItems))
-			for _, item := range groupByItems {
-				if col, ok := item.(*expression.Column); ok {
-					partitionCols = append(partitionCols, col)
-				} else {
-					return invalidTask
-				}
-			}
 			partialAgg.SetChildren(mpp.p)
 			mpp.p = partialAgg
+			partitionCols := p.GetChildReqProps(0).PartitionCols
+			if len(partitionCols) == 0 {
+				return invalidTask
+			}
 			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, Enforced: true}
 			newMpp := mpp.enforceExchangerImpl(prop)
 			finalAgg.SetChildren(newMpp.p)
