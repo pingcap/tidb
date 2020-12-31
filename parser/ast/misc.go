@@ -2299,6 +2299,46 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// GrantProxyStmt is the struct for GRANT PROXY statement.
+type GrantProxyStmt struct {
+	stmtNode
+
+	LocalUser     *auth.UserIdentity
+	ExternalUsers []*auth.UserIdentity
+	WithGrant     bool
+}
+
+// Accept implements Node Accept interface.
+func (n *GrantProxyStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*GrantProxyStmt)
+	return v.Leave(n)
+}
+
+// Restore implements Node interface.
+func (n *GrantProxyStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("GRANT PROXY ON ")
+	if err := n.LocalUser.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore GrantProxyStmt.LocalUser")
+	}
+	ctx.WriteKeyWord(" TO ")
+	for i, v := range n.ExternalUsers {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore GrantProxyStmt.ExternalUsers[%d]", i)
+		}
+	}
+	if n.WithGrant {
+		ctx.WriteKeyWord(" WITH GRANT OPTION")
+	}
+	return nil
+}
+
 // GrantRoleStmt is the struct for GRANT TO statement.
 type GrantRoleStmt struct {
 	stmtNode
