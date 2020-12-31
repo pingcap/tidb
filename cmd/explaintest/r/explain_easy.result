@@ -438,6 +438,7 @@ explain select * from t where b = 1 and b = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
 explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
+<<<<<<< HEAD
 id	count	task	operator info
 Projection_7	0.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
 └─HashRightJoin_9	0.00	root	inner join, inner:IndexReader_12, equal:[eq(test.t2.b, test.t1.b)]
@@ -447,6 +448,17 @@ Projection_7	0.00	root	test.t1.a, test.t1.b, test.t2.a, test.t2.b
   └─IndexReader_15	9990.00	root	index:Selection_14
     └─Selection_14	9990.00	cop	not(isnull(test.t1.b))
       └─IndexScan_13	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:false, stats:pseudo
+=======
+id	estRows	task	access object	operator info
+Projection_9	0.00	root		test.t.a, test.t.b, test.t.a, test.t.b
+└─HashJoin_11	0.00	root		inner join, equal:[eq(test.t.b, test.t.b)]
+  ├─TableReader_14(Build)	0.00	root		data:Selection_13
+  │ └─Selection_13	0.00	cop[tikv]		isnull(test.t.b), not(isnull(test.t.b))
+  │   └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_20(Probe)	9990.00	root		data:Selection_19
+    └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.b))
+      └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 857e3da6e... planner: join reorder should not change the order of output columns (#16852)
 explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	count	task	operator info
 HashLeftJoin_9	8000.00	root	anti semi join, inner:IndexReader_13, equal:[eq(test.t1.b, test.t2.b)]
