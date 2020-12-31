@@ -2723,7 +2723,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	if hasWindowFuncField {
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -2813,21 +2813,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-<<<<<<< HEAD
-		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
-		if err != nil {
-			return nil, err
-=======
 		// `hasWindowFuncField == false` means there's only unused named window specs without window functions.
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 			if err != nil {
 				return nil, err
 			}
->>>>>>> f2a88ffa4... planner: report error for invalid window specs which are not used (#21083)
 		}
 	}
 
@@ -4478,15 +4471,9 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 	return p, windowMap, nil
 }
 
-<<<<<<< HEAD
-// checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
-// Because of the grouped specification is different from it, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
-=======
 // checkOriginWindowFuncs checks the validity for original window specifications for a group of functions.
 // Because the grouped specification is different from them, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
->>>>>>> f2a88ffa4... planner: report error for invalid window specs which are not used (#21083)
+func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -4508,11 +4495,8 @@ func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderB
 	return nil
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
-=======
 // checkOriginWindowSpec checks the validity for given window specification.
-func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.SortItem) error {
+func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.Item) error {
 	if spec.Frame == nil {
 		return nil
 	}
@@ -4544,8 +4528,7 @@ func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems [
 	return nil
 }
 
-func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.SortItem) error {
->>>>>>> f2a88ffa4... planner: report error for invalid window specs which are not used (#21083)
+func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
 	if bound.Type == ast.CurrentRow || bound.UnBounded {
 		return nil
 	}
