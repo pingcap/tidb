@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -43,8 +42,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -382,7 +384,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 
 func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -391,6 +393,12 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		if len(tbInfo.Partition.Columns) > 0 {
 			for _, vs := range clause.Values {
 				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			for _, vs := range clause.Values {
+				if err := checkPartitionValuesIsInt(ctx, def, vs); err != nil {
 					return nil, err
 				}
 			}
@@ -425,9 +433,22 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 	return definitions, nil
 }
 
+func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
+	if len(tbInfo.Partition.Columns) > 0 {
+		colTypes := make([]types.FieldType, 0, len(tbInfo.Partition.Columns))
+		for _, col := range tbInfo.Partition.Columns {
+			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldType)
+		}
+
+		return colTypes
+	}
+
+	return nil
+}
+
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -435,6 +456,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(tbInfo.Partition.Columns) > 0 {
 			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -462,6 +487,25 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		definitions = append(definitions, piDef)
 	}
 	return definitions, nil
+}
+
+func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode) error {
+	for _, exp := range exprs {
+		if _, ok := exp.(*ast.MaxValueExpr); ok {
+			continue
+		}
+		val, err := expression.EvalAstExpr(ctx, exp)
+		if err != nil {
+			return err
+		}
+		switch val.Kind() {
+		case types.KindInt64, types.KindUint64, types.KindNull:
+		default:
+			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+		}
+	}
+
+	return nil
 }
 
 func checkPartitionNameUnique(pi *model.PartitionInfo) error {
@@ -551,7 +595,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 	if expr == nil {
 		return nil
 	}
-	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
 		return errors.Trace(exprChecker.err)
@@ -651,39 +695,76 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	if len(pi.Definitions) == 0 {
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
-	if err := formatListPartitionValue(ctx, tblInfo); err != nil {
-		return err
+	expStr, err := formatListPartitionValue(ctx, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	var partitionsValuesMap []map[string]struct{}
-	partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
-	for i := 1; i < len(pi.Columns); i++ {
-		partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
-	}
-
-	checkUniqueValue := func(vs []string) error {
-		found := 0
-		for i, v := range vs {
-			m := partitionsValuesMap[i]
-			if _, ok := m[v]; ok {
-				found++
-			}
-			m[v] = struct{}{}
-		}
-		if found == len(vs) {
+	partitionsValuesMap := make(map[string]struct{})
+	for _, s := range expStr {
+		if _, ok := partitionsValuesMap[s]; ok {
 			return errors.Trace(ErrMultipleDefConstInListPart)
 		}
-		return nil
+		partitionsValuesMap[s] = struct{}{}
 	}
 
-	for _, def := range pi.Definitions {
-		for _, vs := range def.InValues {
-			if err := checkUniqueValue(vs); err != nil {
-				return err
+	return nil
+}
+
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]string, error) {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return nil, errors.Trace(ErrFieldNotFoundPart)
 			}
+			colTps = append(colTps, colInfo.FieldType.Clone())
+			cols = append(cols, colInfo)
 		}
 	}
-	return nil
+
+	exprStrs := make([]string, 0)
+	inValueStrs := make([]string, 0, mathutil.Max(len(pi.Columns), 1))
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			inValueStrs = inValueStrs[:0]
+			for k, v := range vs {
+				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				eval, err := expr.Eval(chunk.Row{})
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				s, err := eval.ToString()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if !eval.IsNull() && colTps[k].EvalType() == types.ETInt {
+					defs[i].InValues[j][k] = s
+				}
+				if colTps[k].EvalType() == types.ETString {
+					s = string(hack.String(collate.GetCollator(cols[k].Collate).Key(s)))
+				}
+				s = strings.ReplaceAll(s, ",", `\,`)
+				inValueStrs = append(inValueStrs, s)
+			}
+			exprStrs = append(exprStrs, strings.Join(inValueStrs, ","))
+		}
+	}
+	return exprStrs, nil
 }
 
 // getRangeValue gets an integer from the range value string.
@@ -718,43 +799,6 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
 		if err2 == nil && !isNull {
 			return res, true, nil
-		}
-	}
-	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
-}
-
-// getListPartitionValue gets an integer/null from the string value.
-// The returned boolean value indicates whether the input string is a null.
-func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
-	// The input value maybe an integer or constant expression or null.
-	// For example:
-	// PARTITION p0 VALUES IN (1)
-	// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
-	// PARTITION p0 VALUES IN (NULL)
-	if unsignedBigint {
-		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
-			return value, false, nil
-		}
-
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
-		if err1 != nil {
-			return 0, false, err1
-		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil {
-			return uint64(res), isNull, nil
-		}
-	} else {
-		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
-			return value, false, nil
-		}
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
-		if err1 != nil {
-			return 0, false, err1
-		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil {
-			return res, isNull, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
@@ -1563,10 +1607,10 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	bundle := &placement.Bundle{}
-	err := job.DecodeArgs(&partitionID, bundle)
+	err = job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1583,20 +1627,30 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	pstate := ptInfo.GetStateByID(partitionID)
+	switch pstate {
+	case model.StatePublic:
+		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateGlobalTxnOnly
+	case model.StateGlobalTxnOnly:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		ptInfo.SetStateByID(partitionID, model.StatePublic)
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	}
-
-	// used by ApplyDiff in updateSchemaVersion
-	job.CtxVars = []interface{}{partitionID}
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 
@@ -1653,37 +1707,20 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 
 func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
-		*ast.SetCollationExpr:
-		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+	case *ast.FuncCallExpr:
+		if _, ok := expression.AllowedPartitionFuncMap[v.FnName.L]; ok {
+			return nil
+		}
 	case *ast.BinaryOperationExpr:
-		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
-		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
-		switch v.Op {
-		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4BinaryOpMap[v.Op]; ok {
+			return nil
 		}
 	case *ast.UnaryOperationExpr:
-		if v.Op == opcode.BitNeg {
-			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
+			return nil
 		}
-	}
-	return nil
-}
-
-func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
-	expr, ok := e.(*ast.FuncCallExpr)
-	if !ok {
-		return nil
-	}
-	allowedFuncMap := map[string]struct{}{
-		ast.ToDays: {}, ast.ToSeconds: {}, ast.DayOfMonth: {}, ast.Month: {}, ast.DayOfYear: {},
-		ast.Quarter: {}, ast.YearWeek: {}, ast.Year: {}, ast.Weekday: {}, ast.DayOfWeek: {}, ast.Day: {},
-		ast.Hour: {}, ast.Minute: {}, ast.Second: {}, ast.TimeToSec: {}, ast.MicroSecond: {},
-		ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {},
-		ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
-	}
-	if _, ok := allowedFuncMap[expr.FnName.L]; ok {
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
+		*ast.TimeUnitExpr:
 		return nil
 	}
 	return errors.Trace(ErrPartitionFunctionIsNotAllowed)

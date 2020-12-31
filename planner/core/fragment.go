@@ -21,15 +21,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
-	/// following field are filled during getPlanFragment.
-	// TODO: Strictly speaking, not all plan fragment contain table scan. we can do this assumption until more plans are supported.
+	// following field are filled during getPlanFragment.
 	TableScan         *PhysicalTableScan          // result physical table scan
 	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
 
@@ -71,9 +69,9 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		}
 	}
 	if f.TableScan != nil {
-		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan.Table.ID, f.TableScan.Ranges)
+		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
 	} else {
-		tasks, err = e.constructMPPTasksImpl(context.Background(), -1, nil)
+		tasks, err = e.constructMPPTasksImpl(context.Background(), nil)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -92,10 +90,16 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.
-func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	var kvRanges []kv.KeyRange
-	if tableID != -1 {
-		kvRanges = distsql.TableRangesToKVRanges(tableID, ranges, nil)
+	var err error
+	var tableID int64 = -1
+	if ts != nil {
+		tableID = ts.Table.ID
+		kvRanges, err = distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, ts.Table.IsCommonHandle, ts.Ranges, nil)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
 	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)

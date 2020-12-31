@@ -180,6 +180,15 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
+	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
+		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
+		p.SetChildren(pj.children...)
+		p.stats = tasks[0].plan().statsInfo()
+		rt, _ := tasks[0].(*rootTask)
+		rt.p = pj.children[0]
+		pj.SetChildren(p)
+		return pj.attach2Task(p.basePhysicalPlan.attach2Task(tasks...))
+	}
 	p.stats = tasks[0].plan().statsInfo()
 	return p.basePhysicalPlan.attach2Task(tasks...)
 }
@@ -722,6 +731,8 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
+	needExtraProj := false
+	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
@@ -736,7 +747,13 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
+		prevColumnLen := len(ts.Columns)
+		prevSchema = ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		if len(ts.Columns) > prevColumnLen {
+			// Add an projection to make sure not to output extract columns.
+			needExtraProj = true
+		}
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -777,7 +794,14 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
-		newTask.p = p
+		if needExtraProj {
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
+			proj.SetSchema(prevSchema)
+			proj.SetChildren(p)
+			newTask.p = proj
+		} else {
+			newTask.p = p
+		}
 	}
 
 	if len(t.rootTaskConds) > 0 {
@@ -1057,7 +1081,8 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
 	for _, aggFunc := range aggFuncs {
-		if expression.ContainVirtualColumn(aggFunc.Args) {
+		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
+		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			return false
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)

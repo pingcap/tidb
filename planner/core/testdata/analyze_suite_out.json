@@ -47,13 +47,13 @@
         ],
         "Plan": [
           "Limit_17 1.00 root  offset:0, count:1",
-          "└─IndexMergeJoin_72 1.00 root  left outer semi join, inner:IndexReader_70, outer key:test.t.a, inner key:test.t.b",
+          "└─IndexJoin_66 1.00 root  left outer semi join, inner:IndexReader_65, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
           "  ├─TopN_29(Build) 1.00 root  test.t.a, offset:0, count:1",
           "  │ └─IndexReader_37 1.00 root  index:TopN_36",
           "  │   └─TopN_36 1.00 cop[tikv]  test.t.a, offset:0, count:1",
           "  │     └─IndexRangeScan_35 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
-          "  └─IndexReader_70(Probe) 1.04 root  index:IndexRangeScan_69",
-          "    └─IndexRangeScan_69 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:true"
+          "  └─IndexReader_65(Probe) 1.04 root  index:IndexRangeScan_64",
+          "    └─IndexRangeScan_64 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
         ]
       },
       {
@@ -268,14 +268,14 @@
         "└─Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
         "  ├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
         "  │ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#13",
-        "    └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_33(Build) 1.00 root  data:Selection_32",
-        "      │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader_27(Probe) 1.00 root  data:Selection_26",
-        "        └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
+        "  └─StreamAgg_19(Probe) 1.00 root  funcs:count(1)->Column#13",
+        "    └─HashJoin_20 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader_30(Build) 1.00 root  data:Selection_29",
+        "      │ └─Selection_29 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan_28 10.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader_24(Probe) 1.00 root  data:Selection_23",
+        "        └─Selection_23 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan_22 10.00 cop[tikv] table:s keep order:false"
       ],
       [
         "Projection_8 10.00 root  Column#9",
@@ -296,12 +296,12 @@
       {
         "SQL": "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
-          "StreamAgg_14 1.00 root  funcs:max(test.t.e)->Column#7",
-          "└─TopN_17 0.00 root  test.t.e:desc, offset:0, count:1",
-          "  └─IndexLookUp_49 0.00 root  ",
-          "    ├─IndexRangeScan_46(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
-          "    └─Selection_48(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
-          "      └─TableRowIDScan_47 0.00 cop[tikv] table:t keep order:false"
+          "StreamAgg_11 1.00 root  funcs:max(test.t.e)->Column#7",
+          "└─TopN_14 0.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp_46 0.00 root  ",
+          "    ├─IndexRangeScan_43(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
+          "    └─Selection_45(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan_44 0.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]

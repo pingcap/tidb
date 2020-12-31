@@ -121,6 +121,34 @@ func (s *testRegionCacheSuite) getAddr(c *C, key []byte, replicaRead kv.ReplicaR
 	return ctx.Addr
 }
 
+func (s *testRegionCacheSuite) TestStoreLabels(c *C) {
+	testcases := []struct {
+		storeID uint64
+	}{
+		{
+			storeID: s.store1,
+		},
+		{
+			storeID: s.store2,
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.storeID)
+		store := s.cache.getStoreByStoreID(testcase.storeID)
+		_, err := store.initResolve(s.bo, s.cache)
+		c.Assert(err, IsNil)
+		labels := []*metapb.StoreLabel{
+			{
+				Key:   "id",
+				Value: fmt.Sprintf("%v", testcase.storeID),
+			},
+		}
+		stores := s.cache.getStoresByLabels(labels)
+		c.Assert(len(stores), Equals, 1)
+		c.Assert(stores[0].labels, DeepEquals, labels)
+	}
+}
+
 func (s *testRegionCacheSuite) TestSimple(c *C) {
 	seed := rand.Uint32()
 	r := s.getRegion(c, []byte("a"))
@@ -593,6 +621,96 @@ func (s *testRegionCacheSuite) TestSendFailedInMultipleNode(c *C) {
 		c.Assert(ctxFollower2.Peer.Id, Equals, peer3)
 	}
 	c.Assert(ctxFollower1.Peer.Id, Not(Equals), ctxFollower2.Peer.Id)
+}
+
+func (s *testRegionCacheSuite) TestLabelSelectorTiKVPeer(c *C) {
+	dc1Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-1",
+		},
+	}
+	dc2Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-2",
+		},
+	}
+	dc3Label := []*metapb.StoreLabel{
+		{
+			Key:   "zone",
+			Value: "dc-3",
+		},
+	}
+	s.cluster.UpdateStoreLabels(s.store1, dc1Label)
+	s.cluster.UpdateStoreLabels(s.store2, dc2Label)
+
+	store3 := s.cluster.AllocID()
+	peer3 := s.cluster.AllocID()
+	s.cluster.AddStore(store3, s.storeAddr(store3))
+	s.cluster.AddPeer(s.region1, store3, peer3)
+	s.cluster.UpdateStoreLabels(store3, dc1Label)
+	// Region have 3 peer, leader located in dc-1, followers located in dc-1, dc-2
+	loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+	c.Assert(err, IsNil)
+	seed := rand.Uint32()
+
+	testcases := []struct {
+		name               string
+		t                  kv.ReplicaReadType
+		labels             []*metapb.StoreLabel
+		expectStoreIDRange map[uint64]struct{}
+	}{
+		{
+			name:   "any Peer,located in dc-1",
+			t:      kv.ReplicaReadMixed,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+				store3:   {},
+			},
+		},
+		{
+			name:   "any Peer,located in dc-2",
+			t:      kv.ReplicaReadMixed,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store2: {},
+			},
+		},
+		{
+			name:   "only follower,located in dc-1",
+			t:      kv.ReplicaReadFollower,
+			labels: dc1Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				store3: {},
+			},
+		},
+		{
+			name:   "only leader, shouldn't consider labels",
+			t:      kv.ReplicaReadLeader,
+			labels: dc2Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+		{
+			name:   "no label matching, fallback to leader",
+			t:      kv.ReplicaReadMixed,
+			labels: dc3Label,
+			expectStoreIDRange: map[uint64]struct{}{
+				s.store1: {},
+			},
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, testcase.t, seed, WithMatchLabels(testcase.labels))
+		c.Assert(err, IsNil)
+		_, exist := testcase.expectStoreIDRange[ctx.Store.storeID]
+		c.Assert(exist, Equals, true)
+	}
 }
 
 func (s *testRegionCacheSuite) TestSplit(c *C) {

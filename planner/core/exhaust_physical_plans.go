@@ -1462,6 +1462,18 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return ranges, false, nil
 }
 
+func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
+	if sc.GetSessionVars().EnableIndexMergeJoin {
+		return indexJoins
+	}
+	for i := len(indexJoins) - 1; i >= 0; i-- {
+		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
+			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
+		}
+	}
+	return indexJoins
+}
+
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, canForced bool) {
@@ -1554,7 +1566,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 		switch {
 		case len(forcedLeftOuterJoins) == 0 && !supportRightOuter:
-			return allLeftOuterJoins, false
+			return filterIndexJoinBySessionVars(p.ctx, allLeftOuterJoins), false
 		case len(forcedLeftOuterJoins) != 0 && (!supportRightOuter || (forceLeftOuter && !forceRightOuter)):
 			return forcedLeftOuterJoins, true
 		}
@@ -1580,7 +1592,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		}
 		switch {
 		case len(forcedRightOuterJoins) == 0 && !supportLeftOuter:
-			return allRightOuterJoins, false
+			return filterIndexJoinBySessionVars(p.ctx, allRightOuterJoins), false
 		case len(forcedRightOuterJoins) != 0 && (!supportLeftOuter || (forceRightOuter && !forceLeftOuter)):
 			return forcedRightOuterJoins, true
 		}
@@ -1592,7 +1604,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	if canForced {
 		return append(forcedLeftOuterJoins, forcedRightOuterJoins...), true
 	}
-	return append(allLeftOuterJoins, allRightOuterJoins...), false
+	return filterIndexJoinBySessionVars(p.ctx, append(allLeftOuterJoins, allRightOuterJoins...)), false
 }
 
 func checkChildFitBC(p Plan) bool {
@@ -1603,6 +1615,8 @@ func checkChildFitBC(p Plan) bool {
 	sz := avg * float64(p.statsInfo().Count())
 	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
+
+// If we can use mpp broadcast join, that's our first choice.
 
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
@@ -1692,6 +1706,10 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
+		return nil
+	}
+
 	lkeys, rkeys, _, nullEQ := p.GetJoinKeys()
 	if nullEQ {
 		return nil
@@ -1706,7 +1724,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
 	}
-
+	// It indicates which side is the build side.
 	preferredBuildIndex := 0
 	if p.JoinType == InnerJoin {
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
@@ -2006,6 +2024,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		return nil, true
 	}
+	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
 	var columns []*expression.Column
 	for _, colColumn := range la.CorCols {
@@ -2020,7 +2039,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 
 	var canUseCache bool
-	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().NestedLoopJoinCacheCapacity > 0 {
+	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().MemQuotaApplyCache > 0 {
 		canUseCache = true
 	} else {
 		canUseCache = false
@@ -2037,6 +2056,15 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}, true
+}
+
+func disableAggPushDownToCop(p LogicalPlan) {
+	for _, child := range p.Children() {
+		disableAggPushDownToCop(child)
+	}
+	if agg, ok := p.(*LogicalAggregation); ok {
+		agg.noCopPushDown = true
+	}
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
@@ -2072,7 +2100,7 @@ func (la *LogicalAggregation) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := la.children[0].(*DataSource)
-	return ok
+	return ok && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2166,15 +2194,16 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 				taskTypes = []property.TaskType{property.RootTaskType}
-			} else {
-				if !la.distinctArgsMeetsProperty() {
-					continue
-				}
+			} else if !la.distinctArgsMeetsProperty() {
+				continue
 			}
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
+		}
+		if !la.canPushToCop() {
+			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
@@ -2211,6 +2240,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
+	if prop.IsFlashProp() && !la.canPushToCop() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
@@ -2220,7 +2252,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2228,6 +2260,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
+	}
+	if !la.canPushToCop() {
+		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})

@@ -9,6 +9,45 @@
     ]
   },
   {
+    "name": "TestMPPJoin",
+    "cases": [
+      "explain select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
+      "explain select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+      "explain select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
+      "explain select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)"
+    ]
+  },
+  {
+    "name": "TestMPPShuffledJoin",
+    "cases": [
+      "explain select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d1_k = d2_t.value and fact_t.d1_k = d3_t.value",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
+      "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
+      "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
+      "explain select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
+      "explain select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+      "explain select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
+      "explain select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)"
+    ]
+  },
+  {
     "name": "TestBroadcastJoin",
     "cases": [
       "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",

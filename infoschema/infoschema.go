@@ -396,6 +396,9 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = snap.(InfoSchema)
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
+		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
+			return nil
+		}
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
@@ -412,4 +415,30 @@ func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
 
 func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
 	is.ruleBundleMap = ruleBundleMap
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		newRules := b.Rules[:0]
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+		b.Rules = newRules
+		return b
+	}
+
+	return &placement.Bundle{ID: placement.GroupID(ids[0])}
 }

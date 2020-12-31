@@ -1111,7 +1111,7 @@ func checkTooLongColumn(cols []*model.ColumnInfo) error {
 }
 
 func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
-	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(len(colDefs)) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -2250,8 +2250,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	for i := len(options) - 1; i >= 0; i-- {
 		opt := options[i]
-		switch opt.Tp {
-		case ast.TableOptionCharset:
+		if opt.Tp == ast.TableOptionCharset {
 			// Only overwrite columns charset if the option contains `CONVERT TO`.
 			return opt.UintValue == ast.TableOptionCharsetWithConvertTo
 		}
@@ -2316,6 +2315,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
+		if !ctx.GetSessionVars().EnableChangeMultiSchema {
+			return errRunMultiSchemaChanges
+		}
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
@@ -2428,7 +2430,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableAlterPartition:
-			err = d.AlterTablePartition(ctx, ident, spec)
+			if ctx.GetSessionVars().EnableAlterPlacement {
+				err = d.AlterTableAlterPartition(ctx, ident, spec)
+			} else {
+				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
+			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -3451,7 +3457,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3494,6 +3500,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
 		return false
 	}
 
@@ -4571,7 +4582,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
-		//oldIdent is equal to newIdent, do nothing
+		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
@@ -4705,7 +4716,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
@@ -4802,6 +4813,9 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
+	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+		return nil, ErrUnsupportedExpressionIndex
+	}
 	return hiddenCols, nil
 }
 
@@ -4878,7 +4892,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			if !config.GetGlobalConfig().EnableGlobalIndex {
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
-			//index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must set global
 			global = true
 		}
 	}
@@ -5193,19 +5207,12 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
-	colNames := meta.Partition.Columns
+	colTypes := collectColumnsType(meta)
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			continue
 		}
-
-		colName := colNames[i]
-		colInfo := getColumnInfoByName(meta, colName.L)
-		if colInfo == nil {
-			return errors.Trace(ErrFieldNotFoundPart)
-		}
-		colType := &colInfo.FieldType
-
+		colType := colTypes[i]
 		val, err := expression.EvalAstExpr(ctx, colExpr)
 		if err != nil {
 			return err
@@ -5239,49 +5246,9 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType)
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colType)
 		if err != nil {
 			return ErrWrongTypeColumnValue.GenWithStackByArgs()
-		}
-	}
-	return nil
-}
-
-func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
-	defs := tblInfo.Partition.Definitions
-	pi := tblInfo.Partition
-	var colTps []*types.FieldType
-	if len(pi.Columns) == 0 {
-		tp := types.NewFieldType(mysql.TypeLonglong)
-		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
-			tp.Flag |= mysql.UnsignedFlag
-		}
-		colTps = []*types.FieldType{tp}
-	} else {
-		colTps = make([]*types.FieldType, 0, len(pi.Columns))
-		for _, colName := range pi.Columns {
-			colInfo := findColumnByName(colName.L, tblInfo)
-			if colInfo == nil {
-				return errors.Trace(ErrFieldNotFoundPart)
-			}
-			colTps = append(colTps, &colInfo.FieldType)
-		}
-	}
-	for i := range defs {
-		for j, vs := range defs[i].InValues {
-			for k, v := range vs {
-				if colTps[k].EvalType() != types.ETInt {
-					continue
-				}
-				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
-				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !isNull {
-					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
-				}
-			}
 		}
 	}
 	return nil
@@ -5825,7 +5792,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 	return bundle, nil
 }
 
-func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -5841,14 +5808,9 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	pid := placement.GroupID(partitionID)
+	oldBundle := infoschema.GetBundle(d.infoHandle.Get(), []int64{partitionID, meta.ID, schema.ID})
 
-	oldBundle, ok := d.infoHandle.Get().BundleByName(pid)
-	if !ok {
-		oldBundle = &placement.Bundle{ID: pid}
-	} else {
-		oldBundle = oldBundle.Clone()
-	}
+	oldBundle.ID = placement.GroupID(partitionID)
 
 	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
 	if err != nil {
@@ -5875,15 +5837,16 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		if cnt <= 0 {
 			continue
 		}
-		bundle.Rules = append(newRules, &placement.Rule{
+		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
-			ID:          "default",
+			ID:          string(role),
 			Role:        role,
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
 		})
 	}
+	bundle.Rules = newRules
 	if len(bundle.Rules) == 0 {
 		bundle.Index = 0
 		bundle.Override = false
