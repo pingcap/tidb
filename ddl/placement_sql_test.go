@@ -44,8 +44,21 @@ PARTITION BY RANGE (c) (
 	PARTITION p3 VALUES LESS THAN (21)
 );`)
 
+	is := s.dom.InfoSchema()
+	bundles := make(map[string]*placement.Bundle)
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	partDefs := tb.Meta().GetPartitionInfo().Definitions
+	p0ID := placement.GroupID(partDefs[0].ID)
+	bundles[p0ID] = &placement.Bundle{
+		ID:    p0ID,
+		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
+	}
+
 	// normal cases
-	_, err := tk.Exec(`alter table t1 alter partition p0
+	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
@@ -92,6 +105,11 @@ drop placement policy
 	role=leader`)
 	c.Assert(err, IsNil)
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+drop placement policy
+	role=follower`)
+	c.Assert(err, NotNil)
+
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -110,7 +128,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -136,7 +154,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=follower
 	replicas=3,
 alter placement policy
@@ -150,11 +168,11 @@ drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
 	role=voter
 	replicas=3,
 drop placement policy
