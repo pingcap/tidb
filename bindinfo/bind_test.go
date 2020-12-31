@@ -1955,7 +1955,7 @@ func (s *testSuite) TestCompatibilityForIssue20417(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(tk.MustUseIndex("SELECT * FROM `t`", "idxb(b)"), IsTrue)
 	c.Assert(tk.MustUseIndex("SELECT * FROM `t`", "idxc(c)"), IsFalse)
-	tk.MustExec("create binding for select * from t using select /*+ use_index(t, idxc) */ * from t")
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxc) */ * from t")
 	c.Assert(tk.MustUseIndex("SELECT * FROM `t`", "idxb(b)"), IsFalse)
 	c.Assert(tk.MustUseIndex("SELECT * FROM `t`", "idxc(c)"), IsTrue)
 }
