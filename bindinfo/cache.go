@@ -120,15 +120,19 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		if sctx != nil {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
-		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
+		}
+		if sctx != nil {
+			paramChecker := &paramMarkerChecker{}
+			stmt.Accept(paramChecker)
+			if !paramChecker.hasParamMarker {
+				_, err = getHintsForSQL(sctx, bind.BindSQL)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {

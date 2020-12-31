@@ -821,6 +821,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	// Test show list partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
