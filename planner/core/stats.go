@@ -338,13 +338,10 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
-<<<<<<< HEAD
-=======
 			if possiblePath == nil {
 				return
 			}
 
->>>>>>> f1805f3de... planner: avoid using index_merge when there are multiple table filters (#22122)
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
 				accessConds = append(accessConds, p.AccessConds...)
