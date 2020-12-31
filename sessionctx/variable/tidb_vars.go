@@ -51,6 +51,14 @@ const (
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
+	// tidb_broadcast_join_threshold_size is used to limit the size of small table for mpp broadcast join.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
+	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
+
+	// tidb_broadcast_join_threshold_count is used to limit the count of small table for mpp broadcast join.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
+	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
+
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -137,8 +145,9 @@ const (
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
-	// The valid value include auto/on/off:
-	// on or auto: enable table partition if the partition type is implemented.
+	// The valid value include auto/on/off/nightly:
+	// on or auto: enable range/hash partition table.
+	// nightly: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
@@ -568,6 +577,8 @@ const (
 	DefTiDBConstraintCheckInPlace       = false
 	DefTiDBHashJoinConcurrency          = ConcurrencyUnset
 	DefTiDBProjectionConcurrency        = ConcurrencyUnset
+	DefBroadcastJoinThresholdSize       = 100 * 1024 * 1024
+	DefBroadcastJoinThresholdCount      = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel    = 0
 	DefTiDBAllowBatchCop                = 1
 	DefTiDBAllowMPPExecution            = false
