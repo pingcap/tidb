@@ -931,6 +931,12 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	// Disable async commit in local transactions
+	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+		return false
+	}
+
 	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
 	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
@@ -953,6 +959,12 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
+	// Disable 1PC in local transactions
+	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+		return false
+	}
+
 	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
