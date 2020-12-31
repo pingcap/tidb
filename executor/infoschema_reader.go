@@ -1820,13 +1820,13 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 	checker := privilege.GetPrivilegeManager(ctx)
 	is := infoschema.GetInfoSchema(ctx)
 	var rows [][]types.Datum
-	if err := is.ForEachBundle(func(bundle *placement.Bundle) error {
+	for _, bundle := range is.RuleBundles() {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
 		if err != nil {
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
 		}
 		if id == 0 {
-			return nil
+			continue
 		}
 		// Currently, only partitions have placement rules.
 		tb, db, part := is.FindTableByPartitionID(id)
@@ -1834,7 +1834,7 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			return errors.Errorf("Can't find partition by id %d", id)
 		}
 		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
-			return nil
+			continue
 		}
 		for _, rule := range bundle.Rules {
 			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
@@ -1855,9 +1855,6 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 			)
 			rows = append(rows, row)
 		}
-		return nil
-	}); err != nil {
-		return errors.Trace(err)
 	}
 	e.rows = rows
 	return nil

@@ -57,12 +57,10 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
-	// ForEachBundle will iterate all placement rule bundles. If visitor
-	// return a non-nil value, the iteration will stop and the error will
-	// be returned to the caller.
-	ForEachBundle(visitor func(*placement.Bundle) error) error
 	// SetBundle is only used for TEST
 	SetBundle(*placement.Bundle)
+	// RuleBundles will return a copy of all rule bundles.
+	RuleBundles() []*placement.Bundle
 }
 
 type sortedTables []table.Table
@@ -415,15 +413,14 @@ func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
 	return t, r
 }
 
-func (is *infoSchema) ForEachBundle(visitor func(*placement.Bundle) error) error {
+func (is *infoSchema) RuleBundles() []*placement.Bundle {
 	is.ruleBundleMutex.RLock()
 	defer is.ruleBundleMutex.RUnlock()
+	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
 	for _, bundle := range is.ruleBundleMap {
-		if err := visitor(bundle); err != nil {
-			return err
-		}
+		bundles = append(bundles, bundle)
 	}
-	return nil
+	return bundles
 }
 
 func (is *infoSchema) SetBundle(bundle *placement.Bundle) {

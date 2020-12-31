@@ -474,11 +474,8 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 	is := b.is
-	if err := oldIS.ForEachBundle(func(v *placement.Bundle) error {
+	for _, v := range oldIS.RuleBundles() {
 		is.SetBundle(v)
-		return nil
-	}); err != nil {
-		return
 	}
 }
 
