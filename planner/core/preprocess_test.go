@@ -20,9 +20,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,10 +38,45 @@ import (
 var _ = Suite(&testValidatorSuite{})
 
 type testValidatorSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+	se    session.Session
+	ctx   sessionctx.Context
+	is    infoschema.InfoSchema
+}
+
+func (s *testValidatorSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+
+	s.se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	s.ctx = s.se.(sessionctx.Context)
+
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+}
+
+func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
+	stmts, err1 := session.Parse(s.ctx, sql)
+	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
+	c.Assert(stmts, HasLen, 1)
+	stmt := stmts[0]
+	var opts []core.PreprocessOpt
+	if inPrepare {
+		opts = append(opts, core.InPrepare)
+	}
+	err := core.Preprocess(s.ctx, stmt, s.is, opts...)
+	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
 }
 
 func (s *testValidatorSuite) TestValidator(c *C) {
 	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
 	tests := []struct {
 		sql       string
 		inPrepare bool
@@ -180,10 +220,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		{"CREATE TABLE t (a float(255, 30))", true, nil},
 		{"CREATE TABLE t (a double(255, 30))", true, nil},
-		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
-		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// issue 20447
+		{"CREATE TABLE t (a float(53))", true, nil},
+		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
+		{"CREATE TABLE t (a double)", true, nil},
 
 		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
 		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
@@ -201,35 +246,90 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
+		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
 		// issue 9464
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
+
+		// issue 13032
+		{"CREATE TABLE origin (a int primary key, b varchar(10), c int auto_increment);", false, autoid.ErrWrongAutoKey},
+		{"CREATE TABLE origin (a int auto_increment, b int key);", false, autoid.ErrWrongAutoKey},
+		{"CREATE TABLE origin (a int auto_increment, b int unique);", false, autoid.ErrWrongAutoKey},
+		{"CREATE TABLE origin (a int primary key auto_increment, b int);", false, nil},
+		{"CREATE TABLE origin (a int unique auto_increment, b int);", false, nil},
+		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
+
+		// issue 18149
+		{"CREATE TABLE t (a int, index ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, b int, index ``((a+1), (b+1)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, key ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, b int, key ``((a+1), (b+1)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, index(a));", false, nil},
+		{"CREATE INDEX `` on t (a);", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+
+		// issue 21082
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
+		{"CREATE TABLE t (a int);", false, nil},
+		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
+		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+
+		// issue 20295
+		// issue 11193
+		{"select cast(1.23 as decimal(65,65))", true, types.ErrTooBigScale.GenWithStackByArgs(65, "1.23", mysql.MaxDecimalScale)},
+		{"select CONVERT( 2, DECIMAL(62,60) )", true, types.ErrTooBigScale.GenWithStackByArgs(60, "2", mysql.MaxDecimalScale)},
+		{"select CONVERT( 2, DECIMAL(66,29) )", true, types.ErrTooBigPrecision.GenWithStackByArgs(66, "2", mysql.MaxDecimalWidth)},
+		{"select CONVERT( 2, DECIMAL(28,29) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+
+		// TABLESAMPLE
+		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	store, dom, err := newStoreWithBootstrap()
+	_, err := s.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	ctx := se.(sessionctx.Context)
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+
 	for _, tt := range tests {
-		stmts, err1 := session.Parse(ctx, tt.sql)
-		c.Assert(err1, IsNil)
-		c.Assert(stmts, HasLen, 1)
-		stmt := stmts[0]
-		var opts []core.PreprocessOpt
-		if tt.inPrepare {
-			opts = append(opts, core.InPrepare)
-		}
-		err = core.Preprocess(ctx, stmt, is, opts...)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
+		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
 	}
+}
+
+func (s *testValidatorSuite) TestForeignKey(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create table test.t2(d int)")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create database test2")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create table test2.t(e int)")
+	c.Assert(err, IsNil)
+
+	s.is = s.dom.InfoSchema()
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
+
+	_, err = s.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }

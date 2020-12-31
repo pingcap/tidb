@@ -25,12 +25,12 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -57,8 +57,21 @@ func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
 }
 
+// GetUnionStore implements GetUnionStore
+func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Support.")
+}
+
+// ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
+func (c *Context) ExecuteInternal(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Support.")
 }
 
@@ -110,6 +123,14 @@ func (c *Context) GetClient() kv.Client {
 	return c.Store.GetClient()
 }
 
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
+func (c *Context) GetMPPClient() kv.MPPClient {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetMPPClient()
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -159,17 +180,21 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
 }
 
+// RefreshVars implements the sessionctx.Context interface.
+func (c *Context) RefreshVars(ctx context.Context) error {
+	return nil
+}
+
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn.Valid() {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(startTS)
+		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		txn.SetCap(kv.DefaultTxnMembufCap)
 		c.txn.Transaction = txn
 	}
 	return nil
@@ -203,10 +228,11 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
+// StoreIndexUsage strores the index usage information.
+func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit(tracker *memory.Tracker) error {
-	return nil
-}
+func (c *Context) StmtCommit() {}
 
 // StmtRollback implements the sessionctx.Context interface.
 func (c *Context) StmtRollback() {
@@ -215,10 +241,6 @@ func (c *Context) StmtRollback() {
 // StmtGetMutation implements the sessionctx.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle int64) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.
@@ -272,8 +294,8 @@ func NewContext() *Context {
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
-	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
+	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

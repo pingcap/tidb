@@ -21,7 +21,7 @@ import (
 type OneByOneSuite struct{}
 
 func (s *OneByOneSuite) SetUpSuite(c *C) {
-	if *withTiKV {
+	if *WithTiKV {
 		withTiKVGlobalLock.Lock()
 	} else {
 		withTiKVGlobalLock.RLock()
@@ -29,7 +29,7 @@ func (s *OneByOneSuite) SetUpSuite(c *C) {
 }
 
 func (s *OneByOneSuite) TearDownSuite(c *C) {
-	if *withTiKV {
+	if *WithTiKV {
 		withTiKVGlobalLock.Unlock()
 	} else {
 		withTiKVGlobalLock.RUnlock()

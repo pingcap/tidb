@@ -64,7 +64,7 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConstKey := b.args[1].ConstItem()
+	isConstKey := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 
 	var key []byte
 	if isConstKey {
@@ -150,7 +150,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem()
+	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -323,7 +323,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem()
+	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -630,7 +630,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConst := b.args[1].ConstItem()
+	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)

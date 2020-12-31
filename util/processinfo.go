@@ -14,26 +14,34 @@
 package util
 
 import (
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID            uint64
-	User          string
-	Host          string
-	DB            string
-	Plan          interface{}
-	Time          time.Time
-	Info          string
-	CurTxnStartTS uint64
-	StmtCtx       *stmtctx.StatementContext
-	StatsInfo     func(interface{}) map[string]uint64
+	ID               uint64
+	User             string
+	Host             string
+	DB               string
+	Digest           string
+	Plan             interface{}
+	PlanExplainRows  [][]string
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	Time             time.Time
+	Info             string
+	CurTxnStartTS    uint64
+	StmtCtx          *stmtctx.StatementContext
+	StatsInfo        func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
@@ -41,6 +49,7 @@ type ProcessInfo struct {
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
+	RedactSQL                 bool
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
@@ -65,7 +74,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		db,
 		mysql.Command2Str[pi.Command],
 		t,
-		fmt.Sprintf("%d", pi.State),
+		serverStatus2Str(pi.State),
 		info,
 	}
 }
@@ -85,7 +94,54 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
-	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, pi.txnStartTs(tz))
+}
+
+// ascServerStatus is a slice of all defined server status in ascending order.
+var ascServerStatus = []uint16{
+	mysql.ServerStatusInTrans,
+	mysql.ServerStatusAutocommit,
+	mysql.ServerMoreResultsExists,
+	mysql.ServerStatusNoGoodIndexUsed,
+	mysql.ServerStatusNoIndexUsed,
+	mysql.ServerStatusCursorExists,
+	mysql.ServerStatusLastRowSend,
+	mysql.ServerStatusDBDropped,
+	mysql.ServerStatusNoBackslashEscaped,
+	mysql.ServerStatusMetadataChanged,
+	mysql.ServerStatusWasSlow,
+	mysql.ServerPSOutParams,
+}
+
+// mapServerStatus2Str is the map for server status to string.
+var mapServerStatus2Str = map[uint16]string{
+	mysql.ServerStatusInTrans:            "in transaction",
+	mysql.ServerStatusAutocommit:         "autocommit",
+	mysql.ServerMoreResultsExists:        "more results exists",
+	mysql.ServerStatusNoGoodIndexUsed:    "no good index used",
+	mysql.ServerStatusNoIndexUsed:        "no index used",
+	mysql.ServerStatusCursorExists:       "cursor exists",
+	mysql.ServerStatusLastRowSend:        "last row send",
+	mysql.ServerStatusDBDropped:          "db dropped",
+	mysql.ServerStatusNoBackslashEscaped: "no backslash escaped",
+	mysql.ServerStatusMetadataChanged:    "metadata changed",
+	mysql.ServerStatusWasSlow:            "was slow",
+	mysql.ServerPSOutParams:              "ps out params",
+}
+
+// serverStatus2Str convert server status to string.
+// Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
+func serverStatus2Str(state uint16) string {
+	// l collect server status strings.
+	var l []string
+	// check each defined server status, if match, append to collector.
+	for _, s := range ascServerStatus {
+		if state&s == 0 {
+			continue
+		}
+		l = append(l, mapServerStatus2Str[s])
+	}
+	return strings.Join(l, "; ")
 }
 
 // SessionManager is an interface for session manage. Show processlist and
@@ -94,4 +150,88 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
 	Kill(connectionID uint64, query bool)
+	KillAllConnections()
+	UpdateTLSConfig(cfg *tls.Config)
+	ServerID() uint64
+}
+
+// GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
+// 64 bits version:
+//  63 62                 41 40                                   1   0
+// +--+---------------------+--------------------------------------+------+
+// |  |      serverId       |             local connId             |markup|
+// |=0|       (22b)         |                 (40b)                |  =1  |
+// +--+---------------------+--------------------------------------+------+
+// 32 bits version(coming soon):
+//  31                          1   0
+// +-----------------------------+------+
+// |             ???             |markup|
+// |             ???             |  =0  |
+// +-----------------------------+------+
+type GlobalConnID struct {
+	ServerID       uint64
+	LocalConnID    uint64
+	Is64bits       bool
+	ServerIDGetter func() uint64
+}
+
+const (
+	// MaxServerID is maximum serverID.
+	MaxServerID = 1<<22 - 1
+)
+
+func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
+	var (
+		id       uint64
+		serverID uint64
+	)
+	if g.ServerIDGetter != nil {
+		serverID = g.ServerIDGetter()
+	} else {
+		serverID = g.ServerID
+	}
+	if g.Is64bits {
+		id |= 0x1
+		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
+		id |= serverID & MaxServerID << 41      // 22 bits serverID.
+	} else {
+		// TODO: update after new design for 32 bits version.
+		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
+	}
+	return id
+}
+
+// ID returns the connection id
+func (g *GlobalConnID) ID() uint64 {
+	return g.makeID(g.LocalConnID)
+}
+
+// NextID returns next connection id
+func (g *GlobalConnID) NextID() uint64 {
+	localConnID := atomic.AddUint64(&g.LocalConnID, 1)
+	return g.makeID(localConnID)
+}
+
+// ParseGlobalConnID parses an uint64 to GlobalConnID.
+//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
+func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
+	if id&0x80000000_00000000 > 0 {
+		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")
+	}
+	if id&0x1 > 0 {
+		if id&0xffffffff_00000000 == 0 {
+			return GlobalConnID{}, true, nil
+		}
+		return GlobalConnID{
+			Is64bits:    true,
+			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
+			ServerID:    (id >> 41) & MaxServerID,
+		}, false, nil
+	}
+	// TODO: update after new design for 32 bits version.
+	return GlobalConnID{
+		Is64bits:    false,
+		LocalConnID: (id >> 1) & 0x7fff_ffff,
+		ServerID:    0,
+	}, false, nil
 }

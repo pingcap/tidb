@@ -14,7 +14,11 @@
 package memo
 
 import (
+	"encoding/binary"
+	"reflect"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
@@ -23,13 +27,19 @@ func (s *testMemoSuite) TestNewGroupExpr(c *C) {
 	expr := NewGroupExpr(p)
 	c.Assert(expr.ExprNode, Equals, p)
 	c.Assert(expr.Children, IsNil)
-	c.Assert(expr.Explored, IsFalse)
+	c.Assert(expr.Explored(0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
-	p := &plannercore.LogicalLimit{}
+	p := &plannercore.LogicalLimit{Count: 3}
 	expr := NewGroupExpr(p)
-
-	// we haven't set the id of the created LogicalLimit, so the result is 0.
-	c.Assert(expr.FingerPrint(), Equals, "0")
+	childGroup := NewGroupWithSchema(nil, expression.NewSchema())
+	expr.SetChildren(childGroup)
+	// ChildNum(2 bytes) + ChildPointer(8 bytes) + LogicalLimit HashCode
+	planHash := p.HashCode()
+	buffer := make([]byte, 10+len(planHash))
+	binary.BigEndian.PutUint16(buffer, 1)
+	binary.BigEndian.PutUint64(buffer[2:], uint64(reflect.ValueOf(childGroup).Pointer()))
+	copy(buffer[10:], planHash)
+	c.Assert(expr.FingerPrint(), Equals, string(buffer))
 }

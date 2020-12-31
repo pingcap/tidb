@@ -17,8 +17,12 @@ package set
 type IntSet map[int]struct{}
 
 // NewIntSet builds a IntSet.
-func NewIntSet() IntSet {
-	return make(map[int]struct{})
+func NewIntSet(is ...int) IntSet {
+	set := make(IntSet, len(is))
+	for _, x := range is {
+		set.Insert(x)
+	}
+	return set
 }
 
 // Exist checks whether `val` exists in `s`.
@@ -32,12 +36,17 @@ func (s IntSet) Insert(val int) {
 	s[val] = struct{}{}
 }
 
+// Count returns the number in Set s.
+func (s IntSet) Count() int {
+	return len(s)
+}
+
 // Int64Set is a int64 set.
 type Int64Set map[int64]struct{}
 
 // NewInt64Set builds a Int64Set.
 func NewInt64Set(xs ...int64) Int64Set {
-	set := make(Int64Set)
+	set := make(Int64Set, len(xs))
 	for _, x := range xs {
 		set.Insert(x)
 	}
@@ -53,4 +62,9 @@ func (s Int64Set) Exist(val int64) bool {
 // Insert inserts `val` into `s`.
 func (s Int64Set) Insert(val int64) {
 	s[val] = struct{}{}
+}
+
+// Count returns the number in Set s.
+func (s Int64Set) Count() int {
+	return len(s)
 }

@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -85,10 +86,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETInt,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETInt, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
+				inGener{*newDefaultGener(0.2, types.ETInt)},
 			},
 		},
 		// builtinInStringSig
@@ -101,10 +102,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETString,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETString, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
+				inGener{*newDefaultGener(0.2, types.ETString)},
 			},
 		},
 		// builtinInDecimalSig
@@ -117,10 +118,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDecimal,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDecimal, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
+				inGener{*newDefaultGener(0.2, types.ETDecimal)},
 			},
 		},
 		// builtinInRealSig
@@ -133,10 +134,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETReal,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETReal, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
+				inGener{*newDefaultGener(0.2, types.ETReal)},
 			},
 		},
 		// builtinInTimeSig
@@ -149,10 +150,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDatetime,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDatetime, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
+				inGener{*newDefaultGener(0.2, types.ETDatetime)},
 			},
 		},
 		// builtinInDurationSig
@@ -165,10 +166,10 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETDuration,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETDuration, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
+				inGener{*newDefaultGener(0.2, types.ETDuration)},
 			},
 		},
 		// builtinInJSONSig
@@ -181,10 +182,101 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 				types.ETJson,
 			},
 			geners: []dataGenerator{
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
-				inGener{defaultGener{eType: types.ETJson, nullRation: 0.2}},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+				inGener{*newDefaultGener(0.2, types.ETJson)},
+			},
+		},
+		// builtinInIntSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETInt,
+				types.ETInt, types.ETInt,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
+				{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
+			},
+		},
+		// builtinInStringSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETString,
+				types.ETString, types.ETString,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
+				{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
+			},
+		},
+		// builtinInDecimalSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETDecimal,
+				types.ETDecimal, types.ETDecimal,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
+				{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
+			},
+		},
+		// builtinInRealSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETReal,
+				types.ETReal, types.ETReal,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldType(mysql.TypeFloat)},
+				{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
+			},
+		},
+		// builtinInTimeSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETDatetime,
+				types.ETDatetime, types.ETDatetime,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+			},
+		},
+		// builtinInDurationSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETDuration,
+				types.ETDuration, types.ETDuration,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
+			},
+		},
+		// builtinInJSONSig with const arguments
+		{
+			retEvalType: types.ETInt,
+			childrenTypes: []types.EvalType{
+				types.ETJson,
+				types.ETJson, types.ETJson,
+			},
+			constants: []*Constant{
+				nil,
+				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
 			},
 		},
 	},

@@ -14,11 +14,16 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,9 +49,12 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		curr.SetChildren(src)
+		if src != nil {
+			curr.SetChildren(src)
+		}
 		src = curr
 	}
+	_, src = b.predicatePushDown(src, nil)
 	return src, nil
 }
 
@@ -64,6 +72,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToAgg(e, false)
 	case tipb.ExecType_TypeStreamAgg:
 		p, err = b.pbToAgg(e, true)
+	case tipb.ExecType_TypeKill:
+		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
@@ -77,6 +87,10 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}
+	dbInfo, ok := b.is.SchemaByTable(tbl.Meta())
+	if !ok {
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStack("Database of table ID = %d does not exist.", tblScan.TableId)
+	}
 	// Currently only support cluster table.
 	if !tbl.Type().IsClusterTable() {
 		return nil, errors.Errorf("table %s is not a cluster table", tbl.Meta().Name.L)
@@ -87,10 +101,14 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
 	p := PhysicalMemTable{
+		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
+	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+		p.Extractor = &SlowQueryExtractor{}
+	}
 	return p, nil
 }
 
@@ -119,32 +137,32 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 	}
 	p := PhysicalSelection{
 		Conditions: conds,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
 func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	topN := e.TopN
 	sc := b.sctx.GetSessionVars().StmtCtx
-	byItems := make([]*ByItems, 0, len(topN.OrderBy))
+	byItems := make([]*util.ByItems, 0, len(topN.OrderBy))
 	for _, item := range topN.OrderBy {
 		expr, err := expression.PBToExpr(item.Expr, b.tps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		byItems = append(byItems, &ByItems{Expr: expr, Desc: item.Desc})
+		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
 	p := PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (PhysicalPlan, error) {
 	p := PhysicalLimit{
 		Count: e.Limit.Limit,
-	}.Init(b.sctx, nil, 0)
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
@@ -161,9 +179,9 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPla
 	baseAgg.schema = schema
 	var partialAgg PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForHash(b.sctx, nil, 0)
+		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForStream(b.sctx, nil, 0)
+		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -183,9 +201,8 @@ func (b *PBPlanBuilder) buildAggSchema(aggFuncs []*aggregation.AggFuncDesc, grou
 func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggFuncDesc, []expression.Expression, error) {
 	var err error
 	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(executor.Aggregation.AggFunc))
-	sc := b.sctx.GetSessionVars().StmtCtx
 	for _, expr := range executor.Aggregation.AggFunc {
-		aggFunc, err := aggregation.PBExprToAggFuncDesc(sc, expr, b.tps)
+		aggFunc, err := aggregation.PBExprToAggFuncDesc(b.sctx, expr, b.tps)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -217,4 +234,59 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	}
 	b.tps = tps
 	return columns, nil
+}
+
+func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+	node := &ast.KillStmt{
+		ConnectionID: e.Kill.ConnID,
+		Query:        e.Kill.Query,
+	}
+	simple := Simple{Statement: node, IsFromRemote: true}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
+}
+
+func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+	if p == nil {
+		return predicates, p
+	}
+	switch p.(type) {
+	case *PhysicalMemTable:
+		memTable := p.(*PhysicalMemTable)
+		if memTable.Extractor == nil {
+			return predicates, p
+		}
+		names := make([]*types.FieldName, 0, len(memTable.Columns))
+		for _, col := range memTable.Columns {
+			names = append(names, &types.FieldName{
+				TblName:     memTable.Table.Name,
+				ColName:     col.Name,
+				OrigTblName: memTable.Table.Name,
+				OrigColName: col.Name,
+			})
+		}
+		// Set the expression column unique ID.
+		// Since the expression is build from PB, It has not set the expression column ID yet.
+		schemaCols := memTable.schema.Columns
+		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
+		for i := range cols {
+			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		}
+		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
+		return predicates, memTable
+	case *PhysicalSelection:
+		selection := p.(*PhysicalSelection)
+		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
+		if len(conditions) > 0 {
+			selection.Conditions = conditions
+			selection.SetChildren(child)
+			return predicates, selection
+		}
+		return predicates, child
+	default:
+		if children := p.Children(); len(children) > 0 {
+			_, child := b.predicatePushDown(children[0], nil)
+			p.SetChildren(child)
+		}
+		return predicates, p
+	}
 }

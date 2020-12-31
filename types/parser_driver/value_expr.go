@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -45,6 +46,9 @@ func init() {
 	ast.NewDecimal = func(str string) (interface{}, error) {
 		dec := new(types.MyDecimal)
 		err := dec.FromString(hack.Slice(str))
+		if err == types.ErrTruncated {
+			err = nil
+		}
 		return dec, err
 	}
 	ast.NewHexLiteral = func(str string) (interface{}, error) {
@@ -69,6 +73,11 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
+// SetValue implements interface of ast.ValueExpr.
+func (n *ValueExpr) SetValue(res interface{}) {
+	n.Datum.SetValueWithDefaultCollation(res)
+}
+
 // Restore implements Node interface.
 func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	switch n.Kind() {
@@ -91,11 +100,12 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case types.KindString:
-		if n.Type.Charset != "" && n.Type.Charset != mysql.DefaultCharset {
+		if n.Type.Charset != "" {
 			ctx.WritePlain("_")
 			ctx.WriteKeyWord(n.Type.Charset)
 		}
-		ctx.WriteString(n.GetString())
+		// Replace '\' to '\\' regardless of sql_mode "NO_BACKSLASH_ESCAPES", which is the same as MySQL.
+		ctx.WriteString(strings.ReplaceAll(n.GetString(), "\\", "\\\\"))
 	case types.KindBytes:
 		ctx.WriteString(n.GetString())
 	case types.KindMysqlDecimal:
@@ -106,8 +116,12 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
 		}
-	case types.KindMysqlDuration, types.KindMysqlEnum,
-		types.KindMysqlBit, types.KindMysqlSet, types.KindMysqlTime,
+	case types.KindMysqlDuration:
+		ctx.WritePlainf("'%s'", n.GetMysqlDuration())
+	case types.KindMysqlTime:
+		ctx.WritePlainf("'%s'", n.GetMysqlTime())
+	case types.KindMysqlEnum,
+		types.KindMysqlBit, types.KindMysqlSet,
 		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
 		types.KindRaw, types.KindMysqlJSON:
 		// TODO implement Restore function
@@ -162,13 +176,14 @@ func (n *ValueExpr) Format(w io.Writer) {
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
-func newValueExpr(value interface{}) ast.ValueExpr {
+func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
 	ve := &ValueExpr{}
-	ve.SetValue(value)
-	types.DefaultTypeForValue(value, &ve.Type)
+	// We need to keep the ve.Type.Collate equals to ve.Datum.collation.
+	types.DefaultTypeForValue(value, &ve.Type, charset, collate)
+	ve.Datum.SetValue(value, &ve.Type)
 	ve.projectionOffset = -1
 	return ve
 }

@@ -21,16 +21,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(mysql.ErrUnsupportedType, mysql.MySQLErrName[mysql.ErrUnsupportedType])
+	ErrUnsupportedType = dbterror.ClassOptimizer.NewStd(errno.ErrUnsupportedType)
 )
 
 // RangeType is alias for int.
@@ -148,6 +151,7 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
+	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []point {
@@ -205,18 +209,45 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
+
+	// refineValue refines the constant datum:
+	// 1. for string type since we may eval the constant to another collation instead of its own collation.
+	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
+	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
+		}
+		if col.GetType().Tp == mysql.TypeYear {
+			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
+		}
+		return
+	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		op = expr.FuncName.L
 		ft = col.RetType
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
+		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
 		}
 		ft = col.RetType
-
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
+
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -230,19 +261,26 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	}
-	if err != nil {
-		return nil
-	}
-	if value.IsNull() {
+	if op != ast.NullEQ && value.IsNull() {
 		return nil
 	}
 
-	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	value, op, isValidRange := handleUnsignedCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
+	value, op, isValidRange = handleBoundCol(ft, value, op)
 	if !isValidRange {
 		return nil
 	}
 
 	switch op {
+	case ast.NullEQ:
+		if value.IsNull() {
+			return []point{{start: true}, {}} // [null, null]
+		}
+		fallthrough
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
 		endPoint := point{value: value}
@@ -273,15 +311,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	return nil
 }
 
-// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isIntegerType := mysql.IsIntegerType(ft.Tp)
-	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
+		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
+		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
+		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative())
 
-	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+	if !isUnsigned || !isNegative {
 		return val, op, true
 	}
 
@@ -289,15 +329,76 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	// Otherwise the value is out of valid range.
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
-		val.SetUint64(0)
+		switch val.Kind() {
+		case types.KindInt64:
+			val.SetUint64(0)
+		case types.KindFloat32:
+			val.SetFloat32(0)
+		case types.KindFloat64:
+			val.SetFloat64(0)
+		case types.KindMysqlDecimal:
+			val.SetMysqlDecimal(new(types.MyDecimal))
+		}
 		return val, op, true
 	}
 
 	return val, op, false
 }
 
-func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
+// handleBoundCol handles the case when column meets overflow value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	if isUnsigned {
+		return val, op, true
+	}
+
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !isNegative && val.GetUint64() > math.MaxInt64 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewIntDatum(math.MaxInt64)
+			}
+		}
+	case mysql.TypeFloat:
+		if val.GetFloat64() > math.MaxFloat32 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewFloat32Datum(math.MaxFloat32)
+			}
+		} else if val.GetFloat64() < -math.MaxFloat32 {
+			switch op {
+			case ast.LE, ast.LT:
+				return val, op, false
+			case ast.GT, ast.GE, ast.NE:
+				op = ast.GE
+				val = types.NewFloat32Datum(-math.MaxFloat32)
+			}
+		}
+	}
+
+	return val, op, true
+}
+
+func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
 	if isNot == 1 {
+		if keepNull {
+			// Range is {[0, 0]}
+			startPoint := point{start: true}
+			startPoint.value.SetInt64(0)
+			endPoint := point{}
+			endPoint.value.SetInt64(0)
+			return []point{startPoint, endPoint}
+		}
 		// NOT TRUE range is {[null null] [0, 0]}
 		startPoint1 := point{start: true}
 		endPoint1 := point{}
@@ -340,6 +441,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
 	hasNull := false
+	colCollate := expr.GetArgs()[0].GetType().Collate
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -355,8 +457,21 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			hasNull = true
 			continue
 		}
-		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
-		endPoint := point{value: types.NewDatum(dt.GetValue())}
+		if dt.Kind() == types.KindString {
+			dt.SetString(dt.GetString(), colCollate)
+		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
+			dt, err = types.ConvertDatumToFloatYear(r.sc, dt)
+			if err != nil {
+				r.err = ErrUnsupportedType.GenWithStack("expr:%v is not converted to year", e)
+				return fullRange, hasNull
+			}
+		}
+		var startValue, endValue types.Datum
+		dt.Copy(&startValue)
+		dt.Copy(&endValue)
+		startPoint := point{value: startValue, start: true}
+		endPoint := point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
@@ -382,7 +497,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
+	_, collation := expr.CharsetAndCollation(expr.GetCtx())
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+		return fullRange
+	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
+	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -434,11 +554,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewStringDatum(string(lowValue))
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
 		return []point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue)
+	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := point{excl: true}
@@ -448,7 +568,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue)
+			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
@@ -461,8 +581,10 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
-	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 1)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 1, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 1, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -511,14 +633,16 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	switch op := expr.FuncName.L; op {
-	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
+	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFormBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 0)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 0, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 0, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:

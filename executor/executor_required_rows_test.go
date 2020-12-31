@@ -20,19 +20,20 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -64,7 +65,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, nil)
+	baseExec := newBaseExecutor(ctx, schema, 0)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
@@ -192,7 +193,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 
 func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), nil, src)
+	base := newBaseExecutor(ctx, src.Schema(), 0, src)
 	base.initCap = n
 	limitExec := &LimitExec{
 		baseExecutor: base,
@@ -206,9 +207,8 @@ func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, ctx.GetSessionVars().MemQuotaQuery)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
@@ -256,10 +256,10 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		byItems := make([]*util.ByItems, 0, len(testCase.groupBy))
 		for _, groupBy := range testCase.groupBy {
 			col := ds.Schema().Columns[groupBy]
-			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildSortExec(sctx, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
@@ -274,9 +274,9 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 	}
 }
 
-func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
+func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -363,10 +363,10 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
-		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		byItems := make([]*util.ByItems, 0, len(testCase.groupBy))
 		for _, groupBy := range testCase.groupBy {
 			col := ds.Schema().Columns[groupBy]
-			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
 		c.Assert(exec.Open(ctx), IsNil)
@@ -381,9 +381,9 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 	}
 }
 
-func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
+func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -476,7 +476,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
 		filters:      filters,
 	}
 }
@@ -594,7 +594,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), 0, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
@@ -665,7 +665,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		c.Assert(err, IsNil)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {
@@ -714,25 +714,40 @@ func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 
 func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression.Expression, inputs []*chunk.Chunk) {
 	chkNum := len(chkRows)
+	numRows := 0
 	inputs = make([]*chunk.Chunk, chkNum)
 	fts := make([]*types.FieldType, 1)
 	fts[0] = types.NewFieldType(mysql.TypeLonglong)
 	for i := 0; i < chkNum; i++ {
 		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
+		numRows += chkRows[i]
+	}
+	var numGroups int
+	if numRows%sameNum == 0 {
+		numGroups = numRows / sameNum
+	} else {
+		numGroups = numRows/sameNum + 1
 	}
 
+	rand.Seed(time.Now().Unix())
+	nullPos := rand.Intn(numGroups)
 	cnt := 0
-	val := 0
+	val := rand.Int63()
 	for i := 0; i < chkNum; i++ {
 		col := inputs[i].Column(0)
 		col.ResizeInt64(chkRows[i], false)
 		i64s := col.Int64s()
 		for j := 0; j < chkRows[i]; j++ {
 			if cnt == sameNum {
-				val++
+				val = rand.Int63()
 				cnt = 0
+				nullPos--
 			}
-			i64s[j] = int64(val)
+			if nullPos == 0 {
+				col.SetNull(j, true)
+			} else {
+				i64s[j] = val
+			}
 			cnt++
 		}
 	}
@@ -776,6 +791,18 @@ func (s *testExecSuite) TestVecGroupChecker(c *C) {
 			expectedFlag:   []bool{false, false},
 			sameNum:        1,
 		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 2,
+			expectedFlag:   []bool{false, false},
+			sameNum:        2,
+		},
+		{
+			chunkRows:      []int{2, 2},
+			expectedGroups: 1,
+			expectedFlag:   []bool{false, true},
+			sameNum:        4,
+		},
 	}
 
 	ctx := mock.NewContext()
@@ -813,7 +840,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
 	b := newExecutorBuilder(ctx, nil)
@@ -827,6 +854,10 @@ type mockPlan struct {
 
 func (mp *mockPlan) GetExecutor() Executor {
 	return mp.exec
+}
+
+func (mp *mockPlan) Schema() *expression.Schema {
+	return mp.exec.Schema()
 }
 
 func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {

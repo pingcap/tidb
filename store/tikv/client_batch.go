@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,7 +51,8 @@ type batchConn struct {
 	idleNotify *uint32
 	idleDetect *time.Timer
 
-	pendingRequests prometheus.Gauge
+	pendingRequests prometheus.Observer
+	batchSize       prometheus.Observer
 
 	index uint32
 }
@@ -76,7 +78,7 @@ func (a *batchConn) fetchAllPendingRequests(
 	maxBatchSize int,
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
-) {
+) time.Time {
 	// Block on the first element.
 	var headEntry *batchCommandsEntry
 	select {
@@ -90,13 +92,14 @@ func (a *batchConn) fetchAllPendingRequests(
 		atomic.AddUint32(&a.idle, 1)
 		atomic.CompareAndSwapUint32(a.idleNotify, 0, 1)
 		// This batchConn to be recycled
-		return
+		return time.Now()
 	case <-a.closed:
-		return
+		return time.Now()
 	}
 	if headEntry == nil {
-		return
+		return time.Now()
 	}
+	ts := time.Now()
 	*entries = append(*entries, headEntry)
 	*requests = append(*requests, headEntry.req)
 
@@ -105,14 +108,15 @@ func (a *batchConn) fetchAllPendingRequests(
 		select {
 		case entry := <-a.batchCommandsCh:
 			if entry == nil {
-				return
+				return ts
 			}
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
 		default:
-			return
+			return ts
 		}
 	}
+	return ts
 }
 
 // fetchMorePendingRequests fetches more pending requests from the channel.
@@ -124,8 +128,6 @@ func fetchMorePendingRequests(
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
 ) {
-	waitStart := time.Now()
-
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
 	after := time.NewTimer(maxWaitTime)
 	for len(*entries) < batchWaitSize {
@@ -136,8 +138,7 @@ func fetchMorePendingRequests(
 			}
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
-		case waitEnd := <-after.C:
-			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
+		case <-after.C:
 			return
 		}
 	}
@@ -155,7 +156,6 @@ func fetchMorePendingRequests(
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
 		default:
-			metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(waitStart)))
 			return
 		}
 	}
@@ -203,6 +203,7 @@ type batchCommandsClient struct {
 
 	tikvClientCfg config.TiKVClient
 	tikvLoad      *uint64
+	dialTimeout   time.Duration
 
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
@@ -217,9 +218,13 @@ func (c *batchCommandsClient) isStopped() bool {
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
+		if trace.IsEnabled() {
+			trace.Log(entries[i].ctx, "rpc", "send")
+		}
 	}
 
-	if err := c.initBatchClient(); err != nil {
+	err := c.initBatchClient()
+	if err != nil {
 		logutil.BgLogger().Warn(
 			"init create streaming fail",
 			zap.String("target", c.target),
@@ -233,18 +238,30 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 		logutil.BgLogger().Info(
 			"sending batch commands meets error",
 			zap.String("target", c.target),
+			zap.Uint64s("requestIDs", request.RequestIds),
 			zap.Error(err),
 		)
 		c.failPendingRequests(err)
 	}
 }
 
-func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
-	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (*tikvpb.BatchCommandsResponse, error) {
-		return nil, errors.New("injected error in batchRecvLoop")
+func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			logutil.BgLogger().Error("batchCommandsClient.recv panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.SuspendStack(errors.New("batch conn recv paniced"))
+		}
+	}()
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (resp *tikvpb.BatchCommandsResponse, err error) {
+		err = errors.New("injected error in batchRecvLoop")
+		return
 	})
 	// When `conn.Close()` is called, `client.Recv()` will return an error.
-	return c.client.Recv()
+	resp, err = c.client.Recv()
+	return
 }
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
@@ -261,7 +278,14 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	if c.conn.GetState() == connectivity.Ready {
+		return
+	}
+	start := time.Now()
+	defer func() {
+		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
+	}()
+	dialCtx, cancel := context.WithTimeout(context.Background(), c.dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
@@ -339,12 +363,16 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 		for i, requestID := range resp.GetRequestIds() {
 			value, ok := c.batched.Load(requestID)
 			if !ok {
-				// There shouldn't be any unknown responses because if the old entries
-				// are cleaned by `failPendingRequests`, the stream must be re-created
-				// so that old responses will be never received.
-				panic("batchRecvLoop receives a unknown response")
+				// this maybe caused by batchCommandsClient#send meets ambiguous error that request has be sent to TiKV but still report a error.
+				// then TiKV will send response back though stream and reach here.
+				logutil.BgLogger().Warn("batchRecvLoop receives outdated response", zap.Uint64("requestID", requestID))
+				continue
 			}
 			entry := value.(*batchCommandsEntry)
+
+			if trace.IsEnabled() {
+				trace.Log(entry.ctx, "rpc", "received")
+			}
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
 				// Put the response only if the request is not canceled.
@@ -366,7 +394,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
 
-	b := NewBackoffer(context.Background(), math.MaxInt32)
+	b := NewBackofferWithVars(context.Background(), math.MaxInt32, nil)
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
 			return true
@@ -442,12 +470,21 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		requests = resetRequests(requests)
 		requestIDs = requestIDs[:0]
 
-		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
-		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+		start := a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+		a.pendingRequests.Observe(float64(len(a.batchCommandsCh)))
+		a.batchSize.Observe(float64(len(requests)))
+
+		// curl -XPUT -d 'return(true)' http://0.0.0.0:10080/fail/github.com/pingcap/tidb/store/tikv/mockBlockOnBatchClient
+		failpoint.Inject("mockBlockOnBatchClient", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(1 * time.Hour)
+			}
+		})
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if atomic.LoadUint64(&a.tikvTransportLayerLoad) >= uint64(cfg.OverloadThreshold) {
+				metrics.TiKvBatchWaitOverLoad.Add(1)
 				fetchMorePendingRequests(
 					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
 					cfg.MaxBatchWaitTime, &entries, &requests,
@@ -471,6 +508,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		}
 
 		a.getClientAndSend(entries, requests, requestIDs)
+		metrics.TiKVBatchSendLatency.Observe(float64(time.Since(start)))
 	}
 }
 
@@ -491,6 +529,8 @@ func (a *batchConn) getClientAndSend(entries []*batchCommandsEntry, requests []*
 	}
 	if cli == nil {
 		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+		metrics.TiKVNoAvailableConnectionCounter.Inc()
+
 		for _, entry := range entries {
 			// Please ensure the error is handled in region cache correctly.
 			entry.err = errors.New("no available connections")
@@ -573,27 +613,34 @@ func sendBatchRequest(
 		canceled: 0,
 		err:      nil,
 	}
-	ctx1, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	start := time.Now()
 	select {
 	case batchConn.batchCommandsCh <- entry:
-	case <-ctx1.Done():
+	case <-ctx.Done():
 		logutil.BgLogger().Warn("send request is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait sendLoop"))
 	}
+	metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(start)))
 
 	select {
 	case res, ok := <-entry.res:
 		if !ok {
 			return nil, errors.Trace(entry.err)
 		}
-		return tikvrpc.FromBatchCommandsResponse(res), nil
-	case <-ctx1.Done():
+		return tikvrpc.FromBatchCommandsResponse(res)
+	case <-ctx.Done():
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.BgLogger().Warn("wait response is cancelled",
-			zap.String("to", addr), zap.String("cause", ctx1.Err().Error()))
-		return nil, errors.Trace(ctx1.Err())
+			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		return nil, errors.Trace(ctx.Err())
+	case <-timer.C:
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }
 
@@ -601,7 +648,7 @@ func (c *rpcClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
-		if conn.isIdle() {
+		if conn.batchConn != nil && conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
 	}

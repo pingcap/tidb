@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 func (b *builtinLikeSig) vectorized() bool {
@@ -36,7 +35,6 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
 		return err
 	}
-
 	bufPattern, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
@@ -56,6 +54,9 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	}
 	escapes := bufEscape.Int64s()
 
+	// Must not use b.pattern to avoid data race
+	pattern := b.collator().Pattern()
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(bufVal, bufPattern, bufEscape)
 	i64s := result.Int64s()
@@ -63,10 +64,8 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		if result.IsNull(i) {
 			continue
 		}
-
-		escape := byte(escapes[i])
-		patChars, patTypes := stringutil.CompilePattern(bufPattern.GetString(i), escape)
-		match := stringutil.DoMatch(bufVal.GetString(i), patChars, patTypes)
+		pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))
+		match := pattern.DoMatch(bufVal.GetString(i))
 		i64s[i] = boolToInt64(match)
 	}
 
@@ -81,26 +80,30 @@ func (b *builtinRegexpUTF8Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRegexpSharedSig) isMemoizedRegexpInitialized() bool {
-	return !(b.memoizedRegexp == nil && b.memoizedErr == nil)
+func (b *builtinRegexpSharedSig) isMemorizedRegexpInitialized() bool {
+	return !(b.memorizedRegexp == nil && b.memorizedErr == nil)
 }
 
 func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n int) {
 	// Precondition: patterns is generated from a constant expression
+	if n == 0 {
+		// If the input rownum is zero, the Regexp error shouldn't be generated.
+		return
+	}
 	for i := 0; i < n; i++ {
 		if patterns.IsNull(i) {
 			continue
 		}
 		re, err := b.compile(patterns.GetString(i))
-		b.memoizedRegexp = re
-		b.memoizedErr = err
+		b.memorizedRegexp = re
+		b.memorizedErr = err
 		break
 	}
-	if !b.isMemoizedRegexpInitialized() {
-		b.memoizedErr = errors.New("No valid regexp pattern found")
+	if !b.isMemorizedRegexpInitialized() {
+		b.memorizedErr = errors.New("No valid regexp pattern found")
 	}
-	if b.memoizedErr != nil {
-		b.memoizedRegexp = nil
+	if b.memorizedErr != nil {
+		b.memorizedRegexp = nil
 	}
 }
 
@@ -124,12 +127,12 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	if b.args[1].ConstItem() && !b.isMemoizedRegexpInitialized() {
+	if b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx) && !b.isMemorizedRegexpInitialized() {
 		b.initMemoizedRegexp(bufPat, n)
 	}
 	getRegexp := func(pat string) (*regexp.Regexp, error) {
-		if b.isMemoizedRegexpInitialized() {
-			return b.memoizedRegexp, b.memoizedErr
+		if b.isMemorizedRegexpInitialized() {
+			return b.memorizedRegexp, b.memorizedErr
 		}
 		return b.compile(pat)
 	}

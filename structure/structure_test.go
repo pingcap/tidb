@@ -39,7 +39,7 @@ type testTxStructureSuite struct {
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -406,7 +406,7 @@ func (*testTxStructureSuite) TestError(c *C) {
 		structure.ErrWriteOnSnapshot,
 	}
 	for _, err := range kvErrs {
-		code := err.ToSQLError().Code
+		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

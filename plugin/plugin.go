@@ -145,7 +145,7 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
 		plugins:      make(map[Kind][]Plugin),
-		versions:     make(map[string]uint16),
+		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
 		dyingPlugins: make([]Plugin, 0),
 	}
 
@@ -200,7 +200,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 			}
 			if cfg.GlobalSysVar != nil {
 				for key, value := range tiPlugins.plugins[kind][i].SysVars {
-					(*cfg.GlobalSysVar)[key] = value
+					variable.RegisterSysVar(value)
 					if value.Scope != variable.ScopeSession && cfg.PluginVarNames != nil {
 						*cfg.PluginVarNames = append(*cfg.PluginVarNames, key)
 					}

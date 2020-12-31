@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -34,45 +34,65 @@ import (
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
 var _ = Suite(&testEvaluatorSuite{})
+var _ = Suite(&testVectorizeSuite1{})
+var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
 	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)
+	defer testleak.AfterTestT(t)()
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 
-type testEvaluatorSuite struct {
+type testEvaluatorSuiteBase struct {
 	*parser.Parser
 	ctx sessionctx.Context
+}
+
+type testEvaluatorSuite struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite1 struct {
+	testEvaluatorSuiteBase
+}
+
+type testVectorizeSuite2 struct {
+	testEvaluatorSuiteBase
 }
 
 type testEvaluatorSerialSuites struct {
-	*parser.Parser
-	ctx sessionctx.Context
+	testEvaluatorSuiteBase
 }
 
-func (s *testEvaluatorSuite) SetUpSuite(c *C) {
+func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
+}
+
+func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
+}
+
+func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	sc := s.ctx.GetSessionVars().StmtCtx
+	sc.TruncateAsWarning = true
 	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
-}
-
-func (s *testEvaluatorSuite) TearDownSuite(c *C) {
-}
-
-func (s *testEvaluatorSuite) SetUpTest(c *C) {
 	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 
-func (s *testEvaluatorSuite) TearDownTest(c *C) {
+func (s *testEvaluatorSuiteBase) TearDownTest(c *C) {
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 }
 
-func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
+func (s *testEvaluatorSuiteBase) kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
 	case types.KindNull:
@@ -118,20 +138,24 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 	return ft
 }
 
-func (s *testEvaluatorSuite) datumsToConstants(datums []types.Datum) []Expression {
+func (s *testEvaluatorSuiteBase) datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := s.kindToFieldType(d.Kind())
+		if types.IsNonBinaryStr(&ft) {
+			ft.Collate = d.Collation()
+		}
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants
 }
 
-func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expression {
+func (s *testEvaluatorSuiteBase) primitiveValsToConstants(args []interface{}) []Expression {
 	cons := s.datumsToConstants(types.MakeDatums(args...))
+	char, col := s.ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType())
+		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
 	return cons
 }
@@ -148,7 +172,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	c.Assert(err, IsNil)
 	ret, isNull, err := f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(isNull, IsTrue)
+	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
@@ -547,64 +571,6 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
-}
-
-func (s *testEvaluatorSuite) TestLike(c *C) {
-	tests := []struct {
-		input   string
-		pattern string
-		match   int
-	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 0},
-		{"aAb", `Aa%`, 0},
-		{"aAb", "aA_", 1},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
-	}
-}
-
-func (s *testEvaluatorSuite) TestRegexp(c *C) {
-	tests := []struct {
-		pattern string
-		input   string
-		match   int64
-		err     error
-	}{
-		{"^$", "a", 0, nil},
-		{"a", "a", 1, nil},
-		{"a", "b", 0, nil},
-		{"aA", "aA", 1, nil},
-		{".", "a", 1, nil},
-		{"^.$", "ab", 0, nil},
-		{"..", "b", 0, nil},
-		{".ab", "aab", 1, nil},
-		{".*", "abcd", 1, nil},
-		{"(", "", 0, ErrRegexp},
-		{"(*", "", 0, ErrRegexp},
-		{"[a", "", 0, ErrRegexp},
-		{"\\", "", 0, ErrRegexp},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
-		c.Assert(err, IsNil)
-		match, err := evalBuiltinFunc(f, chunk.Row{})
-		if tt.err == nil {
-			c.Assert(err, IsNil)
-			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
-		} else {
-			c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
-		}
-	}
 }
 
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {

@@ -17,8 +17,8 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // TypeCode indicates JSON type.
@@ -53,21 +53,20 @@ const (
 const unknownTypeCodeErrorMsg = "unknown type code: %d"
 const unknownTypeErrorMsg = "unknown type: %s"
 
-// htmlSafeSet holds the value true if the ASCII character with the given
-// array position can be safely represented inside a JSON string, embedded
-// inside of HTML <script> tags, without any additional escaping.
+// safeSet holds the value true if the ASCII character with the given array
+// position can be represented inside a JSON string without any further
+// escaping.
 //
 // All values are true except for the ASCII control characters (0-31), the
-// double quote ("), the backslash character ("\"), HTML opening and closing
-// tags ("<" and ">"), and the ampersand ("&").
-var htmlSafeSet = [utf8.RuneSelf]bool{
+// double quote ("), and the backslash character ("\").
+var safeSet = [utf8.RuneSelf]bool{
 	' ':      true,
 	'!':      true,
 	'"':      false,
 	'#':      true,
 	'$':      true,
 	'%':      true,
-	'&':      false,
+	'&':      true,
 	'\'':     true,
 	'(':      true,
 	')':      true,
@@ -89,9 +88,9 @@ var htmlSafeSet = [utf8.RuneSelf]bool{
 	'9':      true,
 	':':      true,
 	';':      true,
-	'<':      false,
+	'<':      true,
 	'=':      true,
-	'>':      false,
+	'>':      true,
 	'?':      true,
 	'@':      true,
 	'A':      true,
@@ -207,29 +206,24 @@ const (
 
 var (
 	// ErrInvalidJSONText means invalid JSON text.
-	ErrInvalidJSONText = terror.ClassJSON.New(mysql.ErrInvalidJSONText, mysql.MySQLErrName[mysql.ErrInvalidJSONText])
+	ErrInvalidJSONText = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONText)
 	// ErrInvalidJSONPath means invalid JSON path.
-	ErrInvalidJSONPath = terror.ClassJSON.New(mysql.ErrInvalidJSONPath, mysql.MySQLErrName[mysql.ErrInvalidJSONPath])
+	ErrInvalidJSONPath = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPath)
 	// ErrInvalidJSONData means invalid JSON data.
-	ErrInvalidJSONData = terror.ClassJSON.New(mysql.ErrInvalidJSONData, mysql.MySQLErrName[mysql.ErrInvalidJSONData])
+	ErrInvalidJSONData = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONData)
 	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
-	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
+	ErrInvalidJSONPathWildcard = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathWildcard)
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
-	ErrInvalidJSONContainsPathType = terror.ClassJSON.New(mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
+	ErrInvalidJSONContainsPathType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
+	// ErrJSONDocumentNULLKey means that json's key is null
+	ErrJSONDocumentNULLKey = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentNULLKey)
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
-	ErrInvalidJSONPathArrayCell = terror.ClassJSON.New(mysql.ErrInvalidJSONPathArrayCell, mysql.MySQLErrName[mysql.ErrInvalidJSONPathArrayCell])
+	ErrInvalidJSONPathArrayCell = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathArrayCell)
+	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
+	ErrUnsupportedSecondArgumentType = dbterror.ClassJSON.NewStd(mysql.ErrUnsupportedSecondArgumentType)
+	// ErrJSONObjectKeyTooLong means JSON object with key length >= 65536 which is not yet supported.
+	ErrJSONObjectKeyTooLong = dbterror.ClassTypes.NewStdErr(mysql.ErrJSONObjectKeyTooLong, mysql.MySQLErrName[mysql.ErrJSONObjectKeyTooLong])
 )
-
-func init() {
-	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard:     mysql.ErrInvalidJSONPathWildcard,
-		mysql.ErrInvalidJSONContainsPathType: mysql.ErrInvalidJSONContainsPathType,
-		mysql.ErrInvalidJSONPathArrayCell:    mysql.ErrInvalidJSONPathArrayCell,
-	}
-}
 
 // json_contains_path function type choices
 // See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path

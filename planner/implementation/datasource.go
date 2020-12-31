@@ -14,12 +14,13 @@
 package implementation
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
-	"math"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.
@@ -34,6 +35,21 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 
 // CalcCost calculates the cost of the table dual Implementation.
 func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	return 0
+}
+
+// MemTableScanImpl implementation of PhysicalTableDual.
+type MemTableScanImpl struct {
+	baseImpl
+}
+
+// NewMemTableScanImpl creates a new table dual Implementation.
+func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
+	return &MemTableScanImpl{baseImpl{plan: dual}}
+}
+
+// CalcCost calculates the cost of the table dual Implementation.
+func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -63,16 +79,16 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
 
-// ScaleCostLimit implements Implementation interface.
-func (impl *TableReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+// GetCostLimit implements Implementation interface.
+func (impl *TableReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
 		return math.MaxFloat64
 	}
@@ -115,11 +131,11 @@ type IndexReaderImpl struct {
 	tblColHists *statistics.HistColl
 }
 
-// ScaleCostLimit implements Implementation interface.
-func (impl *IndexReaderImpl) ScaleCostLimit(costLimit float64) float64 {
+// GetCostLimit implements Implementation interface.
+func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
 		return math.MaxFloat64
 	}
@@ -131,7 +147,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
-	copIterWorkers := float64(sessVars.DistSQLScanConcurrency)
+	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }

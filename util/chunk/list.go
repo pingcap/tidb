@@ -50,7 +50,7 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(chunkListLabel, -1),
+		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
 		consumedIdx:   -1,
 	}
 	return l
@@ -184,7 +184,7 @@ func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chk := l.chunks[chkIdx]
 	rowIdx := chk.preAlloc(row)
 	l.length++
-	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
+	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: rowIdx}
 }
 
 // Insert inserts `row` on the position specified by `ptr`.

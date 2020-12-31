@@ -26,8 +26,32 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{&constJSONGener{"{\"a\": {\"c\": 3}, \"b\": 2}"}, &constStrGener{"$.a"}}},
 	},
-	ast.JSONArrayAppend:  {},
-	ast.JSONContainsPath: {},
+	ast.JSONArrayAppend: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson},
+			geners: []dataGenerator{newNullWrappedGener(0.1, &constJSONGener{"{\"a\": {\"c\": 3}, \"b\": 2}"}),
+				newNullWrappedGener(0.1, &constStrGener{"$.a"}),
+				newNullWrappedGener(0.1, &constJSONGener{"{\"b\": 2}"})}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson, types.ETString, types.ETJson},
+			geners: []dataGenerator{newNullWrappedGener(0.1, &constJSONGener{"{\"a\": {\"c\": 3}, \"b\": 2}"}),
+				newNullWrappedGener(0.1, &constStrGener{"$.a"}),
+				newNullWrappedGener(0.1, &constJSONGener{"{\"b\": 2}"}),
+				newNullWrappedGener(0.1, &constStrGener{"$.b"}),
+				newNullWrappedGener(0.1, &constJSONGener{"{\"x\": 3}"}),
+			}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson, types.ETString, types.ETJson},
+			geners: []dataGenerator{newNullWrappedGener(0.1, &constJSONGener{"{\"a\": {\"c\": 3}, \"b\": 2}"}),
+				newNullWrappedGener(0.1, &constStrGener{"$.a"}),
+				newNullWrappedGener(0.1, &constJSONGener{"{\"b\": 2}"}),
+				newNullWrappedGener(0.1, &constStrGener{"$.x"}), // not exists
+				newNullWrappedGener(0.1, &constJSONGener{"{\"x\": 3}"}),
+			}},
+	},
+	ast.JSONContainsPath: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"{\"a\": {\"c\": {\"d\": 4}}, \"b\": 2}"}, &constStrGener{"one"}, &constStrGener{"$.c"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"{\"a\": {\"c\": {\"d\": 4}}, \"b\": 2}"}, &constStrGener{"all"}, &constStrGener{"$.a"}, &constStrGener{"$.c"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"{\"a\": {\"c\": {\"d\": 4}}, \"b\": 2}"}, &constStrGener{"one"}, &constStrGener{"$.*"}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"{\"a\": {\"c\": {\"d\": 4}}, \"b\": 2}"}, &constStrGener{"aLl"}, &constStrGener{"$.a"}, &constStrGener{"$.e"}}},
+	},
 	ast.JSONExtract: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}, &constStrGener{"$[0]"}}},
@@ -70,31 +94,39 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 				types.ETString, types.ETJson,
 			},
 			geners: []dataGenerator{
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
-				&randLenStrGener{10, 20}, nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
+				newRandLenStrGener(10, 20), nil,
 			},
 		},
 	},
 	ast.JSONSet: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson, types.ETString, types.ETJson}, geners: []dataGenerator{nil, &constStrGener{"$.key"}, nil, &constStrGener{"$.aaa"}, nil}},
 	},
-	ast.JSONSearch: {},
+	ast.JSONSearch: {
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"one"}, &constStrGener{"abc"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"abc"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}, &constStrGener{}, &constStrGener{"$"}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"%a%"}, &constStrGener{}}},
+		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETString, types.ETString, types.ETString}, geners: []dataGenerator{&constJSONGener{"[\"abc\", [{\"k\": \"10\"}, \"def\"], {\"x\":\"abc\"}, {\"y\":\"bcd\"}]"}, &constStrGener{"all"}, &constStrGener{"10"}, &constStrGener{""}, &constStrGener{"$[1][0]"}}},
+	},
 	ast.JSONReplace: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString, types.ETJson}, geners: []dataGenerator{nil, &constStrGener{"$.key"}, nil}},
 	},
-	ast.JSONDepth: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
+	ast.JSONStorageSize: {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
+	ast.JSONDepth:       {{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETJson}}},
 	ast.JSONUnquote: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&jsonStringGener{}}},
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{newJSONStringGener()}},
 	},
 	ast.JSONRemove: {
 		{retEvalType: types.ETJson, childrenTypes: []types.EvalType{types.ETJson, types.ETString}, geners: []dataGenerator{nil, &constStrGener{"$.key"}}},
@@ -108,7 +140,7 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinJSONFunc(c *C) {
+func (s *testVectorizeSuite2) TestVectorizedBuiltinJSONFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinJSONCases)
 }
 

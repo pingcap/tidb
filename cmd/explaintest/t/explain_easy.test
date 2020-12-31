@@ -5,11 +5,13 @@ create table t2 (c1 int unique, c2 int);
 insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
+create index expr_idx on t4((a+b+1));
 
 set @@session.tidb_opt_agg_push_down = 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
+set @@session.tidb_window_concurrency = 1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
@@ -36,6 +38,8 @@ explain select ifnull(null, t1.c1) from t1;
 explain select if(10, t1.c1, t1.c2) from t1;
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
+
+select * from information_schema.tidb_indexes where table_name='t4';
 
 # https://github.com/pingcap/tidb/issues/9125
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
@@ -199,4 +203,18 @@ drop table if exists t;
 
 create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
+drop table if exists t;
+
+# select / update should choose same access path for table t.
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+drop table if exists t;
+
+create table t(a int, b int);
+explain select (select count(n.a) from t) from t n;
+explain select (select sum((select count(a)))) from t;
+explain select count(a) from t group by b order by (select count(a));
+explain select (select sum(count(a))) from t;
+explain select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 drop table if exists t;

@@ -29,12 +29,12 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	sf := newFunction(ast.LT, a, One)
+	sf := newFunction(ast.LT, a, NewOne())
 	res, err := sf.MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22})
 	c.Assert(sf.IsCorrelated(), IsFalse)
-	c.Assert(sf.ConstItem(), IsFalse)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), IsFalse)
 	c.Assert(sf.Decorrelate(nil).Equal(s.ctx, sf), IsTrue)
 	c.Assert(sf.HashCode(sc), DeepEquals, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
 
@@ -52,8 +52,8 @@ func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sf0, _ := newFunction(ast.LT, a, Zero).(*ScalarFunction)
-	sf1, _ := newFunction(ast.LT, a, One).(*ScalarFunction)
+	sf0, _ := newFunction(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunction(ast.LT, a, NewOne()).(*ScalarFunction)
 
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)

@@ -208,6 +208,17 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
 		}
 	}
+	for i := range p.OuterHashKeys {
+		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.children[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.children[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
+	}
 	return
 }
 
@@ -223,11 +234,11 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	resolvedHandleCol, err := p.HandleCol.ResolveIndices(p.children[0].Schema())
+	resolvedHandleCol, err := p.HandleCols.ResolveIndices(p.children[0].Schema())
 	if err != nil {
 		return err
 	}
-	p.HandleCol = resolvedHandleCol.(*expression.Column)
+	p.HandleCols = resolvedHandleCol
 	return
 }
 
@@ -295,11 +306,22 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		}
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
+	for i, commonHandleCol := range p.CommonHandleCols {
+		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.CommonHandleCols[i] = newCol.(*expression.Column)
+	}
 	return
 }
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
+	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
+	if err != nil {
+		return err
+	}
 	if p.tablePlan != nil {
 		err = p.tablePlan.ResolveIndices()
 		if err != nil {
@@ -339,6 +361,12 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 	for _, aggFun := range p.AggFuncs {
 		for i, arg := range aggFun.Args {
 			aggFun.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+		for _, byItem := range aggFun.OrderByItems {
+			byItem.Expr, err = byItem.Expr.ResolveIndices(p.children[0].Schema())
 			if err != nil {
 				return err
 			}
@@ -422,6 +450,26 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalShuffle) ResolveIndices() (err error) {
+	err = p.basePhysicalPlan.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	// There may be one or more DataSource
+	for i := range p.ByItemArrays {
+		// Each DataSource has an array of HashByItems
+		for j := range p.ByItemArrays[i] {
+			// "Shuffle" get value of items from `DataSource`, other than children[0].
+			p.ByItemArrays[i][j], err = p.ByItemArrays[i][j].ResolveIndices(p.DataSources[i].Schema())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return err
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
@@ -442,12 +490,20 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
+	// p.OuterSchema may have duplicated CorrelatedColumns,
+	// we deduplicate it here.
+	dedupCols := make(map[int64]*expression.CorrelatedColumn, len(p.OuterSchema))
 	for _, col := range p.OuterSchema {
+		dedupCols[col.UniqueID] = col
+	}
+	p.OuterSchema = make([]*expression.CorrelatedColumn, 0, len(dedupCols))
+	for _, col := range dedupCols {
 		newCol, err := col.Column.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			return err
 		}
 		col.Column = *newCol.(*expression.Column)
+		p.OuterSchema = append(p.OuterSchema, col)
 	}
 	// Resolve index for equal conditions again, because apply is different from
 	// hash join on the fact that equal conditions are evaluated against the join result,
@@ -497,7 +553,7 @@ func (p *PhysicalLock) ResolveIndices() (err error) {
 			if err != nil {
 				return err
 			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
+			p.TblID2Handle[i][j] = resolvedCol
 		}
 	}
 	return nil

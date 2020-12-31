@@ -52,7 +52,7 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 }
 
 // PutMutations is exported for testing.
-var PutMutations func(kvpairs ...string) []*kvrpcpb.Mutation = putMutations
+var PutMutations = putMutations
 
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
@@ -689,23 +689,29 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 	startTS := uint64(5 << 18)
 	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", startTS, 666)
 
-	ttl, commitTS, action, err := s.store.CheckTxnStatus([]byte("pk"), startTS, startTS+100, 666, false)
+	ttl, commitTS, action, err := s.store.CheckTxnStatus([]byte("pk"), startTS, startTS+100, 666, false, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(666))
 	c.Assert(commitTS, Equals, uint64(0))
 	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
+	// MaxUint64 as callerStartTS shouldn't update minCommitTS but return Action_MinCommitTSPushed.
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk"), startTS, math.MaxUint64, 666, false, false)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(666))
+	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 	s.mustCommitOK(c, [][]byte{[]byte("pk")}, startTS, startTS+101)
 
-	ttl, commitTS, _, err = s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false)
+	ttl, commitTS, _, err = s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
-	c.Assert(commitTS, Equals, uint64(startTS+101))
+	c.Assert(commitTS, Equals, startTS+101)
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", startTS, 666)
 	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, startTS)
 
-	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk1"), startTS, 0, 666, false)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk1"), startTS, 0, 666, false, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
@@ -713,21 +719,21 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 
 	s.mustPrewriteWithTTLOK(c, putMutations("pk2", "val"), "pk2", startTS, 666)
 	currentTS := uint64(777 << 18)
-	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk2"), startTS, 0, currentTS, false)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk2"), startTS, 0, currentTS, false, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
 	c.Assert(action, Equals, kvrpcpb.Action_TTLExpireRollback)
 
 	// Cover the TxnNotFound case.
-	_, _, _, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, false)
+	_, _, _, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, false, false)
 	c.Assert(err, NotNil)
 	notFound, ok := errors.Cause(err).(*ErrTxnNotFound)
 	c.Assert(ok, IsTrue)
 	c.Assert(notFound.StartTs, Equals, uint64(5))
 	c.Assert(string(notFound.PrimaryKey), Equals, "txnNotFound")
 
-	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
@@ -747,7 +753,7 @@ func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
 func (s *testMVCCLevelDB) TestRejectCommitTS(c *C) {
 	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
 	// Push the minCommitTS
-	_, _, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100, false)
+	_, _, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100, false, false)
 	c.Assert(err, IsNil)
 	err = s.store.Commit([][]byte{[]byte("x")}, 5, 10)
 	e, ok := errors.Cause(err).(*ErrCommitTSExpired)

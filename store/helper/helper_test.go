@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
@@ -48,8 +49,8 @@ type mockStore struct {
 	pdAddrs []string
 }
 
-func (s *mockStore) EtcdAddrs() []string {
-	return s.pdAddrs
+func (s *mockStore) EtcdAddrs() ([]string, error) {
+	return s.pdAddrs, nil
 }
 
 func (s *mockStore) StartGCWorker() error {
@@ -61,13 +62,17 @@ func (s *mockStore) TLSConfig() *tls.Config {
 }
 
 func (s *HelperTestSuite) SetUpSuite(c *C) {
-	go s.mockPDHTTPServer(c)
+	url := s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	mockTikvStore, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
+		}),
+	)
+
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
-		[]string{"127.0.0.1:10100/"},
+		[]string{url[len("http://"):]},
 	}
 	c.Assert(err, IsNil)
 }
@@ -79,18 +84,25 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	}
 	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	expected := make(map[uint64]helper.RegionMetric)
-	expected[1] = helper.RegionMetric{
-		FlowBytes:    100,
-		MaxHotDegree: 1,
-		Count:        0,
+	expected := map[uint64]helper.RegionMetric{
+		2: {
+			FlowBytes:    100,
+			MaxHotDegree: 1,
+			Count:        0,
+		},
+		4: {
+			FlowBytes:    200,
+			MaxHotDegree: 2,
+			Count:        0,
+		},
 	}
 	c.Assert(regionMetric, DeepEquals, expected)
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
 	c.Assert(err, IsNil)
-	_, err = h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	c.Assert(res[0].RegionMetric, Not(Equals), res[1].RegionMetric)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 }
 
@@ -121,19 +133,18 @@ func (s *HelperTestSuite) TestTiKVStoresStat(c *C) {
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 	data, err := json.Marshal(stat)
 	c.Assert(err, IsNil)
-	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":""},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
+	c.Assert(string(data), Equals, `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
 }
 
-func (s *HelperTestSuite) mockPDHTTPServer(c *C) {
+func (s *HelperTestSuite) mockPDHTTPServer(c *C) (url string) {
 	router := mux.NewRouter()
 	router.HandleFunc(pdapi.HotRead, s.mockHotRegionResponse)
 	router.HandleFunc(pdapi.Regions, s.mockTiKVRegionsInfoResponse)
 	router.HandleFunc(pdapi.Stores, s.mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	server := &http.Server{Addr: "127.0.0.1:10100", Handler: serverMux}
-	err := server.ListenAndServe()
-	c.Assert(err, IsNil)
+	server := httptest.NewServer(serverMux)
+	return server.URL
 }
 
 func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http.Request) {
@@ -143,8 +154,13 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
-				RegionID:  1,
+				RegionID:  2,
 				HotDegree: 1,
+			},
+			{
+				FlowBytes: 200,
+				RegionID:  4,
+				HotDegree: 2,
 			},
 		},
 	}

@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -24,42 +25,42 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 )
 
 // NewRPCServer creates a new rpc server.
 func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 
-	var s *grpc.Server
-	if len(config.Security.ClusterSSLCA) != 0 {
-		tlsConfig, err := config.Security.ToTLSConfig()
-		if err == nil {
-			s = grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
-		}
-	}
-	if s == nil {
-		s = grpc.NewServer()
-	}
+	s := grpc.NewServer()
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
 		sm:                sm,
 	}
 	// For redirection the cop task.
-	mocktikv.TiDBRPCServerCoprocessorHandler = rpcSrv.handleCopRequest
+	mocktikv.GRPCClientFactory = func() mocktikv.Client {
+		return tikv.NewTestRPCClient(config.Security)
+	}
+	unistore.GRPCClientFactory = func() unistore.Client {
+		return tikv.NewTestRPCClient(config.Security)
+	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)
 	return s
@@ -81,12 +82,99 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server coprocessor", zap.Any("stack", v))
-			resp.OtherError = fmt.Sprintf("rpc coprocessor panic, :%v", v)
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
+			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
 	}()
 	resp = s.handleCopRequest(ctx, in)
 	return resp, nil
+}
+
+// CoprocessorStream implements the TiKVServer interface.
+func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) (err error) {
+	resp := &coprocessor.Response{}
+	defer func() {
+		if v := recover(); v != nil {
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
+			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
+			err = stream.Send(resp)
+			if err != nil {
+				logutil.BgLogger().Error("panic when RPC server handing coprocessor stream, send response to stream error", zap.Error(err))
+			}
+		}
+	}()
+
+	se, err := s.createSession()
+	if err != nil {
+		resp.OtherError = err.Error()
+		return stream.Send(resp)
+	}
+	defer se.Close()
+
+	h := executor.NewCoprocessorDAGHandler(se)
+	return h.HandleStreamRequest(context.Background(), in, stream)
+}
+
+// BatchCommands implements the TiKVServer interface.
+func (s *rpcServer) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
+	defer func() {
+		if v := recover(); v != nil {
+			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
+		}
+	}()
+	for {
+		reqs, err := ss.Recv()
+		if err != nil {
+			logutil.BgLogger().Error("RPC server batch commands receive fail", zap.Error(err))
+			return err
+		}
+
+		responses := make([]*tikvpb.BatchCommandsResponse_Response, 0, len(reqs.Requests))
+		for _, req := range reqs.Requests {
+			var response *tikvpb.BatchCommandsResponse_Response
+			switch request := req.Cmd.(type) {
+			case *tikvpb.BatchCommandsRequest_Request_Coprocessor:
+				cop := request.Coprocessor
+				resp, err := s.Coprocessor(context.Background(), cop)
+				if err != nil {
+					return err
+				}
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Coprocessor{
+						Coprocessor: resp,
+					},
+				}
+			case *tikvpb.BatchCommandsRequest_Request_Empty:
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
+						Empty: &tikvpb.BatchCommandsEmptyResponse{
+							TestId: request.Empty.TestId,
+						},
+					},
+				}
+			default:
+				logutil.BgLogger().Info("RPC server batch commands receive unknown request", zap.Any("req", request))
+				response = &tikvpb.BatchCommandsResponse_Response{
+					Cmd: &tikvpb.BatchCommandsResponse_Response_Empty{
+						Empty: &tikvpb.BatchCommandsEmptyResponse{},
+					},
+				}
+			}
+			responses = append(responses, response)
+		}
+
+		err = ss.Send(&tikvpb.BatchCommandsResponse{
+			Responses:  responses,
+			RequestIds: reqs.GetRequestIds(),
+		})
+		if err != nil {
+			logutil.BgLogger().Error("RPC server batch commands send fail", zap.Error(err))
+			return err
+		}
+	}
 }
 
 // handleCopRequest handles the cop dag request.
@@ -99,6 +187,10 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	}
 	defer se.Close()
 
+	if p, ok := peer.FromContext(ctx); ok {
+		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
+	}
+
 	h := executor.NewCoprocessorDAGHandler(se)
 	return h.HandleRequest(ctx, req)
 }
@@ -110,13 +202,16 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	}
 	do := domain.GetDomain(se)
 	is := do.InfoSchema()
-	// TODO: Need user and host to do privilege check.
+	pm := &privileges.UserPrivileges{
+		Handle: do.PrivilegeHandle(),
+	}
+	privilege.BindPrivilegeManager(se, pm)
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
-	se.GetSessionVars().HashAggPartialConcurrency = 1
-	se.GetSessionVars().HashAggFinalConcurrency = 1
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+	se.GetSessionVars().SetHashAggPartialConcurrency(1)
+	se.GetSessionVars().SetHashAggFinalConcurrency(1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

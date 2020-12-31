@@ -43,7 +43,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -100,7 +99,7 @@ func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 func dumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	switch {
 	case n <= 250:
-		return append(buffer, tinyIntCache[n]...)
+		return append(buffer, byte(n))
 
 	case n <= 0xffff:
 		return append(buffer, 0xfc, byte(n), byte(n>>8))
@@ -165,18 +164,9 @@ func dumpUint64(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
-var tinyIntCache [251][]byte
-
-func init() {
-	for i := 0; i < len(tinyIntCache); i++ {
-		tinyIntCache[i] = []byte{byte(i)}
-	}
-}
-
 func dumpBinaryTime(dur time.Duration) (data []byte) {
 	if dur == 0 {
-		data = tinyIntCache[0]
-		return
+		return []byte{0}
 	}
 	data = make([]byte, 13)
 	data[0] = 12
@@ -204,29 +194,40 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, error) {
-	if t.Type() == mysql.TypeTimestamp && loc != nil {
-		// TODO: Consider time_zone variable.
-		t1, err := t.GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.CoreTime())
-		}
-		t.SetCoreTime(types.FromGoTime(t1.In(loc)))
-	}
-
+func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	year, mon, day := t.Year(), t.Month(), t.Day()
 	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
-		data = append(data, 11)
-		data = dumpUint16(data, uint16(year))
-		data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
-		data = dumpUint32(data, uint32(t.Microsecond()))
+		if t.IsZero() {
+			// All zero.
+			data = append(data, 0)
+		} else if t.Microsecond() != 0 {
+			// Has micro seconds.
+			data = append(data, 11)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+			data = dumpUint32(data, uint32(t.Microsecond()))
+		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
+			// Has HH:MM:SS
+			data = append(data, 7)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+		} else {
+			// Only YY:MM:DD
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day))
+		}
 	case mysql.TypeDate:
-		data = append(data, 4)
-		data = dumpUint16(data, uint16(year)) //year
-		data = append(data, byte(mon), byte(day))
+		if t.IsZero() {
+			data = append(data, 0)
+		} else {
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year)) // year
+			data = append(data, byte(mon), byte(day))
+		}
 	}
-	return data, nil
+	return data
 }
 
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
@@ -262,11 +263,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			var err error
-			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
-			if err != nil {
-				return buffer, err
-			}
+			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
@@ -311,14 +308,14 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeFloat:
 			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
 			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
@@ -362,14 +359,27 @@ func lengthEncodedIntSize(n uint64) int {
 }
 
 const (
-	expFormatBig   = 1e15
-	expFormatSmall = 1e-15
+	expFormatBig     = 1e15
+	expFormatSmall   = 1e-15
+	defaultMySQLPrec = 5
 )
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
+	isEFormat := false
+	if bitSize == 32 {
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
+	} else {
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+	}
 	var out []byte
-	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
+	if isEFormat {
+		if bitSize == 32 {
+			prec = defaultMySQLPrec
+		}
 		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
 		valStr := out[len(in):]
 		// remove the '+' from the string for compatibility.
@@ -378,6 +388,20 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			plusPosInOut := len(in) + plusPos
 			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
 		}
+		// remove extra '0'
+		ePos := bytes.IndexByte(valStr, 'e')
+		pointPos := bytes.IndexByte(valStr, '.')
+		ePosInOut := len(in) + ePos
+		pointPosInOut := len(in) + pointPos
+		validPos := ePosInOut
+		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
+			if out[i] == '0' || out[i] == '.' {
+				validPos = i
+			} else {
+				break
+			}
+		}
+		out = append(out[:validPos], out[ePosInOut:]...)
 	} else {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}

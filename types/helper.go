@@ -21,16 +21,12 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
+// RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
 // RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round half away from zero".
+// so rounding use "round to nearest even".
 // e.g, 1.5 -> 2, -1.5 -> -2.
 func RoundFloat(f float64) float64 {
-	if math.Abs(f) < 0.5 {
-		return 0
-	}
-
-	return math.Trunc(f + math.Copysign(0.5, f))
+	return math.RoundToEven(f)
 }
 
 // Round rounds the argument f to dec decimal places.
@@ -43,7 +39,11 @@ func Round(f float64, dec int) float64 {
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	return RoundFloat(tmp) / shift
+	result := RoundFloat(tmp) / shift
+	if math.IsNaN(result) {
+		return 0
+	}
+	return result
 }
 
 // Truncate truncates the argument f to dec decimal places.
@@ -99,6 +99,11 @@ func isSpace(c byte) bool {
 
 func isDigit(c byte) bool {
 	return c >= '0' && c <= '9'
+}
+
+// Returns true if the given byte is an ASCII punctuation character (printable and non-alphanumeric).
+func isPunctuation(c byte) bool {
+	return (c >= 0x21 && c <= 0x2F) || (c >= 0x3A && c <= 0x40) || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E)
 }
 
 func myMax(a, b int) int {

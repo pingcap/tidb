@@ -15,11 +15,11 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -27,28 +27,27 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []string) (*selectResult, []*types.FieldType) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
-			s.sctx.GetSessionVars().MemQuotaDistSQL)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -68,12 +67,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		var planIDFuncs []fmt.Stringer
-		for i := range planIDs {
-			idx := i
-			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
-		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
 	}
 
 	c.Assert(err, IsNil)
@@ -136,13 +130,13 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 }
 
 func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
-	planIDs := []string{"1", "2", "3"}
+	planIDs := []int{1, 2, 3}
 	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
 	if len(response.copPlanIDs) != len(planIDs) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i].String() != planIDs[i] {
+		if response.copPlanIDs[i] != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}
@@ -165,6 +159,51 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+	basic := &execdetails.BasicRuntimeStats{}
+	basic.Record(time.Second, 20)
+	s1 := &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second, time.Millisecond},
+		procKeys:         []int64{100, 200},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	s2 := *s1
+	stmtStats := execdetails.NewRuntimeStatsColl()
+	stmtStats.RegisterStats(1, basic)
+	stmtStats.RegisterStats(1, s1)
+	stmtStats.RegisterStats(1, &s2)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
+	c.Assert(stats.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(stats.String(), Equals, expect)
+
+	s1.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
+		Count:   1,
+		Consume: int64(time.Second),
+	}
+	stmtStats.RegisterStats(2, s1)
+	stats = stmtStats.GetRootStats(2)
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(stats.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(stats.String(), Equals, expect)
+
+	s1 = &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second},
+		procKeys:         []int64{100},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(s1.String(), Equals, expect)
+}
+
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
@@ -175,7 +214,7 @@ func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamRe
 		Build()
 	c.Assert(err, IsNil)
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,
@@ -296,7 +335,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
@@ -430,11 +469,6 @@ func (r *mockResultSubset) GetData() []byte { return r.data }
 // GetStartKey implements kv.ResultSubset interface.
 func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
 
-// GetExecDetails implements kv.ResultSubset interface.
-func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
-	return &execdetails.ExecDetails{}
-}
-
 // MemSize implements kv.ResultSubset interface.
 func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
@@ -447,11 +481,10 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"),
-			ctx.GetSessionVars().MemQuotaDistSQL)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
-	/// 4 int64 types.
+	// 4 int64 types.
 	colTypes := []*types.FieldType{
 		{
 			Tp:      mysql.TypeLonglong,

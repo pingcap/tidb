@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/opcode"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
@@ -25,6 +26,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},
+	ast.RowCount:     {},
 	ast.Version:      {},
 	ast.Like:         {},
 }
@@ -43,6 +45,9 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.GetParam:  {},
 	ast.Benchmark: {},
 	ast.DayName:   {},
+	ast.NextVal:   {},
+	ast.LastVal:   {},
+	ast.SetVal:    {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -50,6 +55,19 @@ var unFoldableFunctions = map[string]struct{}{
 // are in child scope of an outer function, and the outer function is recursively folding its children.
 var DisableFoldFunctions = map[string]struct{}{
 	ast.Benchmark: {},
+}
+
+// TryFoldFunctions stores functions which try to fold constant in child scope functions if without errors/warnings,
+// otherwise, the child functions do not fold constant.
+// Note: the function itself should fold constant.
+var TryFoldFunctions = map[string]struct{}{
+	ast.If:       {},
+	ast.Ifnull:   {},
+	ast.Case:     {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.Coalesce: {},
+	ast.Interval: {},
 }
 
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
@@ -83,6 +101,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.MasterPosWait:    {},
 	ast.NameConst:        {},
 	ast.ReleaseLock:      {},
+	ast.RowFunc:          {},
 	ast.RowCount:         {},
 	ast.Schema:           {},
 	ast.SessionUser:      {},
@@ -99,21 +118,64 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.ReleaseAllLocks:  {},
 }
 
-// DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
+// DeferredFunctions stores functions which are foldable but should be deferred as well when plan cache is enabled.
+// Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},
 	ast.CurrentTime:      {},
 	ast.UTCTimestamp:     {},
 	ast.UnixTimestamp:    {},
-	ast.Sysdate:          {},
 	ast.Curdate:          {},
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
-	ast.Rand:             {},
-	ast.UUID:             {},
+}
+
+// AllowedPartitionFuncMap stores functions which can be used in the partition expression.
+var AllowedPartitionFuncMap = map[string]struct{}{
+	ast.ToDays:        {},
+	ast.ToSeconds:     {},
+	ast.DayOfMonth:    {},
+	ast.Month:         {},
+	ast.DayOfYear:     {},
+	ast.Quarter:       {},
+	ast.YearWeek:      {},
+	ast.Year:          {},
+	ast.Weekday:       {},
+	ast.DayOfWeek:     {},
+	ast.Day:           {},
+	ast.Hour:          {},
+	ast.Minute:        {},
+	ast.Second:        {},
+	ast.TimeToSec:     {},
+	ast.MicroSecond:   {},
+	ast.UnixTimestamp: {},
+	ast.FromDays:      {},
+	ast.Extract:       {},
+	ast.Abs:           {},
+	ast.Ceiling:       {},
+	ast.DateDiff:      {},
+	ast.Floor:         {},
+	ast.Mod:           {},
+}
+
+// AllowedPartition4BinaryOpMap store the operator for Binary Expr
+// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html for more details
+var AllowedPartition4BinaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:   {},
+	opcode.Minus:  {},
+	opcode.Mul:    {},
+	opcode.IntDiv: {},
+	opcode.Mod:    {},
+}
+
+// AllowedPartition4UnaryOpMap store the operator for Unary Expr
+var AllowedPartition4UnaryOpMap = map[opcode.Op]struct{}{
+	opcode.Plus:  {},
+	opcode.Minus: {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.
@@ -168,4 +230,30 @@ var mutableEffectsFunctions = map[string]struct{}{
 var noopFuncs = map[string]struct{}{
 	ast.GetLock:     {},
 	ast.ReleaseLock: {},
+}
+
+// booleanFunctions stores boolean functions
+var booleanFunctions = map[string]struct{}{
+	ast.UnaryNot:           {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.NullEQ:             {},
+	ast.LT:                 {},
+	ast.LE:                 {},
+	ast.GT:                 {},
+	ast.GE:                 {},
+	ast.In:                 {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.IsTruthWithNull:    {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.IsNull:             {},
+	ast.Like:               {},
+	ast.Regexp:             {},
+	ast.IsIPv4:             {},
+	ast.IsIPv4Compat:       {},
+	ast.IsIPv4Mapped:       {},
+	ast.IsIPv6:             {},
 }

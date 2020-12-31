@@ -10,11 +10,13 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !windows
 
 package owner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -31,6 +33,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+// Ignore this test on the windows platform, because calling unix socket with address in
+// host:port format fails on windows.
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
@@ -50,13 +54,14 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 var (
-	endpoints   = []string{"unix://new_session:12379"}
 	dialTimeout = 5 * time.Second
-	retryCnt    = int(math.MaxInt32)
+	retryCnt    = math.MaxInt32
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
+	ln, err := net.Listen("unix", "new_session:0")
+	addr := ln.Addr()
+	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
 	c.Assert(err, IsNil)
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup

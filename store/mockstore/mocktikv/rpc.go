@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // For gofail injection.
@@ -54,12 +55,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
-				Key:         locked.Key.Raw(),
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-				TxnSize:     locked.TxnSize,
-				LockType:    locked.LockType,
+				Key:             locked.Key.Raw(),
+				PrimaryLock:     locked.Primary,
+				LockVersion:     locked.StartTS,
+				LockTtl:         locked.TTL,
+				TxnSize:         locked.TxnSize,
+				LockType:        locked.LockType,
+				LockForUpdateTs: locked.ForUpdateTS,
 			},
 		}
 	}
@@ -157,6 +159,15 @@ type rpcHandler struct {
 	resolvedLocks  []uint64
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if l.GetKey() == "engine" && l.GetValue() == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
@@ -202,8 +213,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	// The Peer on the Store is not leader.
-	if storePeer.GetId() != leaderPeer.GetId() {
+	// The Peer on the Store is not leader. If it's tiflash store , we pass this check.
+	if storePeer.GetId() != leaderPeer.GetId() && !isTiFlashStore(h.cluster.GetStore(storePeer.GetStoreId())) {
 		return &errorpb.Error{
 			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
@@ -251,7 +262,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, NewMvccKey(key))
 }
 
 func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
@@ -303,6 +314,9 @@ func (h *rpcHandler) handleKvScan(req *kvrpcpb.ScanRequest) *kvrpcpb.ScanRespons
 }
 
 func (h *rpcHandler) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.PrewriteResponse {
+	regionID := req.Context.RegionId
+	h.cluster.handleDelay(req.StartVersion, regionID)
+
 	for _, m := range req.Mutations {
 		if !h.checkKeyInRegion(m.Key) {
 			panic("KvPrewrite: key not in region")
@@ -323,18 +337,10 @@ func (h *rpcHandler) handleKvPessimisticLock(req *kvrpcpb.PessimisticLockRequest
 	startTS := req.StartVersion
 	regionID := req.Context.RegionId
 	h.cluster.handleDelay(startTS, regionID)
-	errs := h.mvccStore.PessimisticLock(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetForUpdateTs(),
-		req.GetLockTtl(), req.WaitTimeout)
-	if req.WaitTimeout == kv.LockAlwaysWait {
-		// TODO: remove this when implement sever side wait.
-		h.simulateServerSideWaitLock(errs)
-	}
-	return &kvrpcpb.PessimisticLockResponse{
-		Errors: convertToKeyErrors(errs),
-	}
+	return h.mvccStore.PessimisticLock(req)
 }
 
-func (h *rpcHandler) simulateServerSideWaitLock(errs []error) {
+func simulateServerSideWaitLock(errs []error) {
 	for _, err := range errs {
 		if _, ok := err.(*ErrLocked); ok {
 			time.Sleep(time.Millisecond * 5)
@@ -390,7 +396,7 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
+	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist(), req.ResolvingPessimisticLock)
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {
@@ -667,6 +673,53 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
+func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
+	var chunk tipb.Chunk
+	for {
+		row, err := e.Next(ctx)
+		if err != nil {
+			return chunk, errors.Trace(err)
+		}
+		if row == nil {
+			return chunk, nil
+		}
+		for _, offset := range req.OutputOffsets {
+			chunk.RowsData = append(chunk.RowsData, row[offset]...)
+		}
+	}
+}
+
+func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
+	client := &mockBatchCopDataClient{}
+	for _, ri := range req.Regions {
+		cop := coprocessor.Request{
+			Tp:      kv.ReqTypeDAG,
+			Data:    req.Data,
+			StartTs: req.StartTs,
+			Ranges:  ri.Ranges,
+		}
+		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		client.chunks = append(client.chunks, chunk)
+	}
+	return client, nil
+}
+
+// Client is a client that sends RPC.
+// This is same with tikv.Client, define again for avoid circle import.
+type Client interface {
+	// Close should release all data.
+	Close() error
+	// SendRequest sends Request.
+	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
@@ -674,6 +727,11 @@ type RPCClient struct {
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
 	done          chan struct{}
+	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
+	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+	// sync.Once uses to avoid concurrency initialize rpcCli.
+	sync.Once
+	rpcCli Client
 }
 
 // NewRPCClient creates an RPCClient.
@@ -723,9 +781,24 @@ func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, er
 	return handler, nil
 }
 
-// TiDBRPCServerCoprocessorHandler is the TiDB rpc server coprocessor handler.
+// GRPCClientFactory is the GRPC client factory.
+// Use global variable to avoid circle import.
 // TODO: remove this global variable.
-var TiDBRPCServerCoprocessorHandler func(context.Context, *coprocessor.Request) *coprocessor.Response
+var GRPCClientFactory func() Client
+
+// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
+// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
+func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.Once.Do(func() {
+		if GRPCClientFactory != nil {
+			c.rpcCli = GRPCClientFactory()
+		}
+	})
+	if c.rpcCli == nil {
+		return nil, errors.Errorf("GRPCClientFactory is nil")
+	}
+	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
+}
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -741,12 +814,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
+	// increase coverage for mock tikv
+	_ = req.Type.String()
+	_ = req.ToBatchCommandsRequest()
+
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
 	// When the store type is TiDB, the request should handle over to TiDB rpc server to handle.
-	if req.Type == tikvrpc.CmdCop && req.StoreTp == kv.TiDB && TiDBRPCServerCoprocessorHandler != nil {
-		resp.Resp = TiDBRPCServerCoprocessorHandler(context.Background(), req.Cop())
-		return resp, nil
+	if req.StoreTp == kv.TiDB {
+		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
 	}
 
 	handler, err := c.checkArgs(ctx, addr)
@@ -946,6 +1022,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvRawScan(r)
 	case tikvrpc.CmdUnsafeDestroyRange:
 		panic("unimplemented")
+	case tikvrpc.CmdRegisterLockObserver:
+		return nil, errors.New("unimplemented")
+	case tikvrpc.CmdCheckLockObserver:
+		return nil, errors.New("unimplemented")
+	case tikvrpc.CmdRemoveLockObserver:
+		return nil, errors.New("unimplemented")
+	case tikvrpc.CmdPhysicalScanLock:
+		return nil, errors.New("unimplemented")
 	case tikvrpc.CmdCop:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
@@ -966,6 +1050,45 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Resp = res
+	case tikvrpc.CmdBatchCop:
+		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+			if value.(bool) {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
+
+		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+			if value.(string) == addr {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		r := req.BatchCop()
+		if err := handler.checkRequestContext(reqCtx); err != nil {
+			resp.Resp = &tikvrpc.BatchCopStreamResponse{
+				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
+				BatchResponse: &coprocessor.BatchResponse{
+					OtherError: err.Message,
+				},
+			}
+			return resp, nil
+		}
+		ctx1, cancel := context.WithCancel(ctx)
+		batchCopStream, err := handler.handleBatchCopRequest(ctx1, r)
+		if err != nil {
+			cancel()
+			return nil, errors.Trace(err)
+		}
+		batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: batchCopStream}
+		batchResp.Lease.Cancel = cancel
+		batchResp.Timeout = timeout
+		c.streamTimeout <- &batchResp.Lease
+
+		first, err := batchResp.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		batchResp.BatchResponse = first
+		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
@@ -1045,8 +1168,20 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 // Close closes the client.
 func (c *RPCClient) Close() error {
 	close(c.done)
-	if raw, ok := c.MvccStore.(io.Closer); ok {
-		return raw.Close()
+
+	var err error
+	if c.MvccStore != nil {
+		err = c.MvccStore.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	if c.rpcCli != nil {
+		err = c.rpcCli.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

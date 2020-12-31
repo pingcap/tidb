@@ -1,8 +1,8 @@
 explain select * from ((select 4 as a) union all (select 33 as a)) tmp order by a desc limit 1;
-id	count	task	operator info
-TopN_17	1.00	root	Column#3:desc, offset:0, count:1
-└─Union_21	2.00	root	
-  ├─Projection_22	1.00	root	cast(4)->Column#3
-  │ └─TableDual_23	1.00	root	rows:1
-  └─Projection_24	1.00	root	33->Column#3
-    └─TableDual_25	1.00	root	rows:1
+id	estRows	task	access object	operator info
+TopN_17	1.00	root		Column#3:desc, offset:0, count:1
+└─Union_21	2.00	root		
+  ├─Projection_22	1.00	root		4->Column#3
+  │ └─TableDual_23	1.00	root		rows:1
+  └─Projection_24	1.00	root		33->Column#3
+    └─TableDual_25	1.00	root		rows:1

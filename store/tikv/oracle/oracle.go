@@ -16,16 +16,26 @@ package oracle
 import (
 	"context"
 	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+// Option represents available options for the oracle.Oracle.
+type Option struct {
+	TxnScope string
+}
 
 // Oracle is the interface that provides strictly ascending timestamps.
 type Oracle interface {
-	GetTimestamp(ctx context.Context) (uint64, error)
-	GetTimestampAsync(ctx context.Context) Future
-	GetLowResolutionTimestamp(ctx context.Context) (uint64, error)
-	GetLowResolutionTimestampAsync(ctx context.Context) Future
-	IsExpired(lockTimestamp uint64, TTL uint64) bool
-	UntilExpired(lockTimeStamp uint64, TTL uint64) int64
+	GetTimestamp(ctx context.Context, opt *Option) (uint64, error)
+	GetTimestampAsync(ctx context.Context, opt *Option) Future
+	GetLowResolutionTimestamp(ctx context.Context, opt *Option) (uint64, error)
+	GetLowResolutionTimestampAsync(ctx context.Context, opt *Option) Future
+	GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (uint64, error)
+	IsExpired(lockTimestamp, TTL uint64, opt *Option) bool
+	UntilExpired(lockTimeStamp, TTL uint64, opt *Option) int64
 	Close()
 }
 
@@ -34,10 +44,27 @@ type Future interface {
 	Wait() (uint64, error)
 }
 
-const physicalShiftBits = 18
+const (
+	physicalShiftBits = 18
+	// GlobalTxnScope is the default transaction scope for a Oracle service.
+	GlobalTxnScope = "global"
+)
 
 // ComposeTS creates a ts from physical and logical parts.
 func ComposeTS(physical, logical int64) uint64 {
+	failpoint.Inject("changeTSFromPD", func(val failpoint.Value) {
+		valInt, ok := val.(int)
+		if ok {
+			origPhyTS := physical
+			logical := logical
+			newPhyTs := origPhyTS + int64(valInt)
+			origTS := uint64((physical << physicalShiftBits) + logical)
+			newTS := uint64((newPhyTs << physicalShiftBits) + logical)
+			logutil.BgLogger().Warn("ComposeTS failpoint", zap.Uint64("origTS", origTS),
+				zap.Int("valInt", valInt), zap.Uint64("ts", newTS))
+			failpoint.Return(newTS)
+		}
+	})
 	return uint64((physical << physicalShiftBits) + logical)
 }
 

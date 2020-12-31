@@ -21,7 +21,12 @@
       "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
       "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
       "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
-      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a"
+      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
+      "select avg(a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct b) from (select * from t t1 union all select * from t t2) t",
+      "select approx_count_distinct(a) from (select * from t t1 union all select * from t t2) t",
+      "select approx_count_distinct(b) from (select * from t t1 union all select * from t t2) t"
     ]
   },
   {
@@ -158,6 +163,8 @@
       "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
       // Test TopN + Left Semi Join Apply + Proj.
       "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+      // Test TopN + Left Semi Outer Join + Proj.
+      "select (exists (select s.a from t s where t.a = s.a)) as x from t order by x limit 5",
       // Test TopN + Semi Join Apply + Proj.
       "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
       // Test TopN + Right Join + Proj.
@@ -264,6 +271,87 @@
       "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
       "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
       // Test issue 11943
+      "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
+      // Test issue 10996
+      "SELECT GROUP_CONCAT(a) OVER () FROM t"
+    ]
+  },
+  {
+    "name": "TestWindowParallelFunction",
+    "cases": [
+      "select a, avg(a) over(partition by a) from t",
+      "select a, avg(a) over(partition by b) from t",
+      "select a, avg(a+1) over(partition by (a+1)) from t",
+      "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+      "select a, b as a, avg(a) over(partition by a) from t",
+      "select a, b as z, sum(z) over() from t",
+      "select a, b as z from t order by (sum(z) over())",
+      "select sum(avg(a)) over() from t",
+      "select b from t order by(sum(a) over())",
+      "select b from t order by(sum(a) over(partition by a))",
+      "select b from t order by(sum(avg(a)) over())",
+      "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+      "select avg(a) over() as w from t having w > 1",
+      "select sum(a) over() as sum_a from t group by sum_a",
+      "select sum(a) over() from t window w1 as (w2)",
+      "select sum(a) over(w) from t",
+      "select sum(a) over() from t window w1 as (w2), w2 as (w1)",
+      "select sum(a) over(w partition by a) from t window w as ()",
+      "SELECT FIRST_VALUE(a) RESPECT NULLS OVER (w1 PARTITION BY b ORDER BY b ASC, a DESC ROWS 2 PRECEDING) AS 'first_value', a, b FROM ( SELECT a, b FROM `t` ) as t WINDOW w1 AS (PARTITION BY b ORDER BY b ASC, a ASC );",
+      "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
+      "select sum(a) over w from t window w as (rows between 1 preceding AND 1 following)",
+      "select sum(a) over(w order by b) from t window w as (order by a)",
+      "select sum(a) over() from t window w1 as (), w1 as ()",
+      "select avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+      "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
+      "select sum(a) over(groups 1 preceding) from t",
+      "select sum(a) over(rows between unbounded following and 1 preceding) from t",
+      "select sum(a) over(rows between current row and unbounded preceding) from t",
+      "select sum(a) over(rows interval 1 MINUTE_SECOND preceding) from t",
+      "select sum(a) over(rows between 1.0 preceding and 1 following) from t",
+      "select sum(a) over(range between 1 preceding and 1 following) from t",
+      "select sum(a) over(order by c_str range between 1 preceding and 1 following) from t",
+      "select sum(a) over(order by a range interval 1 MINUTE_SECOND preceding) from t",
+      "select sum(a) over(order by i_date range interval a MINUTE_SECOND preceding) from t",
+      "select sum(a) over(order by i_date range interval -1 MINUTE_SECOND preceding) from t",
+      "select sum(a) over(order by i_date range 1 preceding) from t",
+      "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
+      "select row_number() over(rows between 1 preceding and 1 following) from t",
+      "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max from t group by c",
+      "select nth_value(a, 1.0) over() from t",
+      "SELECT NTH_VALUE(a, 1.0) OVER() FROM t",
+      "select nth_value(a, 0) over() from t",
+      "select ntile(0) over() from t",
+      "select ntile(null) over() from t",
+      "select avg(a) over w from t window w as(partition by b)",
+      "select nth_value(i_date, 1) over() from t",
+      "select sum(b) over w, sum(c) over w from t window w as (order by a)",
+      "delete from t order by (sum(a) over())",
+      "delete from t order by (SUM(a) over())",
+      "SELECT * from t having ROW_NUMBER() over()",
+      // The best execution order should be (a,c), (a, b, c), (a, b), (), it requires only 2 sort operations.
+      "select sum(a) over (partition by a order by b), sum(b) over (order by a, b, c), sum(c) over(partition by a order by c), sum(d) over() from t",
+      // Test issue 11010.
+      "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and 1 following)",
+      "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between current row and unbounded following)",
+      "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a desc, t.b desc range between 1 preceding and 1 following)",
+      // Test issue 11001.
+      "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) t1 WINDOW w1 AS ( ROWS BETWEEN 0 FOLLOWING AND UNBOUNDED PRECEDING)",
+      // Test issue 11002.
+      "SELECT PERCENT_RANK() OVER w1 AS 'percent_rank', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as t1 WINDOW w1 AS ( ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING)",
+      // Test issue 11011.
+      "select dense_rank() over w1, a, b from t window w1 as (partition by t.b order by t.a asc range between 1250951168 following AND 1250951168 preceding)",
+      // Test issue 10556.
+      "SELECT FIRST_VALUE(a) IGNORE NULLS OVER () FROM t",
+      "SELECT SUM(DISTINCT a) OVER () FROM t",
+      "SELECT NTH_VALUE(a, 1) FROM LAST over (partition by b order by b), a FROM t",
+      "SELECT NTH_VALUE(a, 1) FROM LAST IGNORE NULLS over (partition by b order by b), a FROM t",
+      "SELECT NTH_VALUE(fieldA, ATAN(-1)) OVER (w1) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as te WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+      "SELECT NTH_VALUE(fieldA, -1) OVER (w1 PARTITION BY fieldB ORDER BY fieldB , fieldA ) AS 'ntile', fieldA, fieldB FROM ( SELECT a AS fieldA, b AS fieldB FROM t ) as temp WINDOW w1 AS ( ORDER BY fieldB ASC, fieldA DESC )",
+      "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND CURRENT ROW )",
+      "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN CURRENT ROW AND 1 PRECEDING )",
+      "SELECT SUM(a) OVER w AS 'sum' FROM t WINDOW w AS (ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING )",
+      // Test issue 11943
       "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t"
     ]
   },
@@ -276,7 +364,9 @@
       "select f, g, sum(a) from t",
       "select * from t t1 join t t2 on t1.a = t2.e",
       "select f from t having sum(a) > 0",
-      "select * from t t1 left join t t2 on t1.a = t2.a"
+      "select * from t t1 left join t t2 on t1.a = t2.a",
+      "select a from t where b > 0",
+      "select a from t where b > 0 limit 5"
     ]
   },
   {
@@ -287,7 +377,8 @@
       "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
       "select count(1) from (select count(1), a as b from t group by a) tt group by b",
       "select a, count(b) from t group by a",
-      "select a, count(distinct a, b) from t group by a"
+      "select a, count(distinct a, b) from t group by a",
+      "select a, approx_count_distinct(a, b) from t group by a"
     ]
   },
   {
@@ -312,7 +403,16 @@
       "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
       "select 1 from (select count(b) as cnt from t) t1",
       "select count(1) from (select count(b) as cnt from t) t1",
-      "select count(1) from (select count(b) as cnt from t group by c) t1"
+      "select count(1) from (select count(b) as cnt from t group by c) t1",
+      "select b from t where a > 0 limit 5, 10"
+    ]
+  },
+  {
+    "name": "TestSortByItemsPruning",
+    "cases": [
+      "select * from t where a > 1 order by a asc, a asc limit 10",
+      "select * from t where a > 1 order by a asc, b asc, a asc, c asc limit 10",
+      "select * from t where a > 1 order by pow(a, 2) asc, b asc, pow(a, 2) asc, c asc limit 10"
     ]
   },
   {
@@ -428,6 +528,7 @@
       "select max(t1.a), min(test.t1.b) from t t1 left join t t2 on t1.b = t2.b",
       "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
       "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+      "select approx_count_distinct(t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
       // Test left outer join
       "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
       // Test right outer join

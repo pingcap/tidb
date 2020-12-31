@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -25,7 +26,10 @@ import (
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
-	if aggFunc.HasDistinct {
+	// if aggFunc.HasDistinct {
+	// do nothing and ignore aggFunc.HasDistinct
+	// }
+	if len(aggFunc.OrderByItems) > 0 {
 		return nil
 	}
 	pc := expression.NewPBConverter(client, sc)
@@ -33,6 +37,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		tp = tipb.ExprType_Count
+	case ast.AggFuncApproxCountDistinct:
+		tp = tipb.ExprType_ApproxCountDistinct
 	case ast.AggFuncFirstRow:
 		tp = tipb.ExprType_First
 	case ast.AggFuncGroupConcat:
@@ -51,6 +57,16 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_Agg_BitXor
 	case ast.AggFuncBitAnd:
 		tp = tipb.ExprType_Agg_BitAnd
+	case ast.AggFuncVarPop:
+		tp = tipb.ExprType_VarPop
+	case ast.AggFuncJsonObjectAgg:
+		tp = tipb.ExprType_JsonObjectAgg
+	case ast.AggFuncStddevPop:
+		tp = tipb.ExprType_StddevPop
+	case ast.AggFuncVarSamp:
+		tp = tipb.ExprType_VarSamp
+	case ast.AggFuncStddevSamp:
+		tp = tipb.ExprType_StddevSamp
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -68,11 +84,13 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 }
 
 // PBExprToAggFuncDesc converts pb to aggregate function.
-func PBExprToAggFuncDesc(sc *stmtctx.StatementContext, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
+func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
 	var name string
 	switch aggFunc.Tp {
 	case tipb.ExprType_Count:
 		name = ast.AggFuncCount
+	case tipb.ExprType_ApproxCountDistinct:
+		name = ast.AggFuncApproxCountDistinct
 	case tipb.ExprType_First:
 		name = ast.AggFuncFirstRow
 	case tipb.ExprType_GroupConcat:
@@ -95,7 +113,7 @@ func PBExprToAggFuncDesc(sc *stmtctx.StatementContext, aggFunc *tipb.Expr, field
 		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
 	}
 
-	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, sc)
+	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +122,7 @@ func PBExprToAggFuncDesc(sc *stmtctx.StatementContext, aggFunc *tipb.Expr, field
 		Args:  args,
 		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
 	}
+	base.WrapCastForAggArgs(ctx)
 	return &AggFuncDesc{
 		baseFuncDesc: base,
 		Mode:         Partial1Mode,

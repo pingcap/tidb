@@ -45,11 +45,9 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 	for _, val := range values {
 		var d Datum
 		d.SetMinNotNull()
-		d.SetValue(val)
+		d.SetValueWithDefaultCollation(val)
 		x := d.GetValue()
 		c.Assert(x, DeepEquals, val)
-		d.SetCollation(d.Collation())
-		c.Assert(d.Collation(), NotNil)
 		c.Assert(d.Length(), Equals, int(d.length))
 		c.Assert(fmt.Sprint(d), Equals, d.String())
 	}
@@ -66,21 +64,36 @@ func testDatumToBool(c *C, in interface{}, res int) {
 }
 
 func (ts *testDatumSuite) TestToBool(c *C) {
-	testDatumToBool(c, int(0), 0)
+	testDatumToBool(c, 0, 0)
 	testDatumToBool(c, int64(0), 0)
 	testDatumToBool(c, uint64(0), 0)
-	testDatumToBool(c, float32(0.1), 0)
-	testDatumToBool(c, float64(0.1), 0)
+	testDatumToBool(c, float32(0.1), 1)
+	testDatumToBool(c, float64(0.1), 1)
 	testDatumToBool(c, float64(0.5), 1)
-	testDatumToBool(c, float64(0.499), 0)
+	testDatumToBool(c, float64(0.499), 1)
 	testDatumToBool(c, "", 0)
-	testDatumToBool(c, "0.1", 0)
+	testDatumToBool(c, "0.1", 1)
 	testDatumToBool(c, []byte{}, 0)
-	testDatumToBool(c, []byte("0.1"), 0)
+	testDatumToBool(c, []byte("0.1"), 1)
 	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
-
+	testDatumToBool(c, json.CreateBinary(int64(1)), 1)
+	testDatumToBool(c, json.CreateBinary(int64(0)), 0)
+	testDatumToBool(c, json.CreateBinary("0"), 1)
+	testDatumToBool(c, json.CreateBinary("aaabbb"), 1)
+	testDatumToBool(c, json.CreateBinary(float64(0.0)), 0)
+	testDatumToBool(c, json.CreateBinary(float64(3.1415)), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(c, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(c, json.CreateBinary("0000-00-00 00:00:00"), 1)
+	testDatumToBool(c, json.CreateBinary("0778"), 1)
+	testDatumToBool(c, json.CreateBinary("0000"), 1)
+	testDatumToBool(c, json.CreateBinary(nil), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{nil}), 1)
+	testDatumToBool(c, json.CreateBinary(true), 1)
+	testDatumToBool(c, json.CreateBinary(false), 1)
+	testDatumToBool(c, json.CreateBinary(""), 1)
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
@@ -93,48 +106,12 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
 	c.Assert(err, IsNil)
-	testDatumToBool(c, v, 0)
+	testDatumToBool(c, v, 1)
 	d := NewDatum(&invalidMockType{})
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	_, err = d.ToBool(sc)
 	c.Assert(err, NotNil)
-}
-
-func (ts *testDatumSuite) TestEqualDatums(c *C) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatums(c, tt.a, tt.b, tt.same)
-	}
-}
-
-func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
 
 func testDatumToInt64(c *C, val interface{}, expect int64) {
@@ -148,7 +125,7 @@ func testDatumToInt64(c *C, val interface{}, expect int64) {
 
 func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, int(0), int64(0))
+	testDatumToInt64(c, 0, int64(0))
 	testDatumToInt64(c, int64(0), int64(0))
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
@@ -173,10 +150,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	binLit, err := ParseHexStr("0x9999999999999999999999999999999999999999999")
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, binLit, -1)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
@@ -189,7 +162,7 @@ func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
 
-	datum.SetString("281.37")
+	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
@@ -313,6 +286,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
 		{NewFloat64Datum(1.23), []byte("1.23")},
 		{NewStringDatum("abc"), []byte("abc")},
+		{Datum{}, []byte{}},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
@@ -347,7 +321,7 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 		c.Assert(err != nil, Equals, tt.hasErr)
 		v, err := got.CompareDatum(sc, &tt.plus)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, got, tt.plus))
+		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x))
 	}
 }
 
@@ -366,7 +340,7 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
-		tt1 := CloneDatum(tt)
+		tt1 := *tt.Clone()
 		res, err := tt.CompareDatum(sc, &tt1)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, 0)

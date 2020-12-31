@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -25,8 +24,34 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// DispatchMPPTasks dispathes all tasks and returns an iterator.
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return nil, err
+	}
+
+	encodeType := tipb.EncodeType_TypeDefault
+	if canUseChunkRPC(sctx) {
+		encodeType = tipb.EncodeType_TypeChunk
+	}
+	// TODO: Add metric label and set open tracing.
+	return &selectResult{
+		label:      "mpp",
+		resp:       resp,
+		rowLen:     len(fieldTypes),
+		fieldTypes: fieldTypes,
+		ctx:        sctx,
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		encodeType: encodeType,
+	}, nil
+
+}
 
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
@@ -45,7 +70,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
+	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
@@ -92,7 +118,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
 	if err == nil {
 		if selectResult, ok := sr.(*selectResult); ok {
@@ -105,8 +131,8 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
-	isRestrict bool) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars)
+	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -126,7 +152,9 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 
 // Checksum sends a checksum request.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars)
+	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
+	// Checksum function signature. The two-way dependence should be removed in future.
+	resp := client.Send(ctx, kvReq, vars, nil, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -166,9 +194,7 @@ func canUseChunkRPC(ctx sessionctx.Context) bool {
 	return true
 }
 
-var supportedAlignment = !(unsafe.Sizeof(types.MysqlTime{}) != 16 ||
-	unsafe.Sizeof(types.Time{}) != 20 ||
-	unsafe.Sizeof(types.MyDecimal{}) != 40)
+var supportedAlignment = unsafe.Sizeof(types.MyDecimal{}) == 40
 
 // checkAlignment checks the alignment in current system environment.
 // The alignment is influenced by system, machine and Golang version.
@@ -190,7 +216,7 @@ func GetSystemEndian() tipb.Endian {
 }
 
 func init() {
-	var i int = 0x0100
+	i := 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
 		systemEndian = tipb.Endian_BigEndian

@@ -17,8 +17,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -36,14 +34,4 @@ func (s *testSuiteP2) TestQueryTime(c *C) {
 
 	costTime = time.Since(tk.Se.GetSessionVars().StartTime)
 	c.Assert(costTime < 1*time.Second, IsTrue)
-}
-
-func (s testSuiteP2) TestTurnOffSlowLog(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	c.Assert(config.GetGlobalConfig().Log.EnableSlowLog, Equals, uint32(logutil.DefaultTiDBEnableSlowLog))
-	tk.MustExec("set @@tidb_enable_slow_log=0")
-	c.Assert(config.GetGlobalConfig().Log.EnableSlowLog, Equals, uint32(0))
-	tk.MustExec("set @@tidb_enable_slow_log=1")
-	c.Assert(config.GetGlobalConfig().Log.EnableSlowLog, Equals, uint32(logutil.DefaultTiDBEnableSlowLog))
 }

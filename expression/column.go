@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -37,7 +38,11 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
-	return col
+	var d types.Datum
+	return &CorrelatedColumn{
+		Column: col.Column,
+		Data:   &d,
+	}
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -155,7 +160,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem() bool {
+func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 
@@ -190,14 +195,17 @@ type Column struct {
 
 	hashcode []byte
 
-	// InOperand indicates whether this column is the inner operand of column equal condition converted
-	// from `[not] in (subq)`.
-	InOperand bool
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
 	OrigName string
 	IsHidden bool
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
+
+	collationInfo
 }
 
 // Equal implements Expression interface.
@@ -323,7 +331,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col)), nil
+	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.
@@ -342,6 +350,10 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
+		}
+		if val.Kind() == types.KindMysqlBit {
+			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+			return int64(val), err != nil, err
 		}
 		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, err != nil, err
@@ -425,7 +437,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *Column) ConstItem() bool {
+func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
 	return false
 }
 
@@ -441,7 +453,7 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	}
 	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.UniqueID))
+	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
 }
 
@@ -586,4 +598,23 @@ func (col *Column) SupportReverseEval() bool {
 // ReverseEval evaluates the only one column value with given function result.
 func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.ChangeReverseResultByUpperLowerBound(sc, col.RetType, res, rType)
+}
+
+// Coercibility returns the coercibility value which is used to check collations.
+func (col *Column) Coercibility() Coercibility {
+	if col.HasCoercibility() {
+		return col.collationInfo.Coercibility()
+	}
+	col.SetCoercibility(deriveCoercibilityForColumn(col))
+	return col.collationInfo.Coercibility()
+}
+
+// SortColumns sort columns based on UniqueID.
+func SortColumns(cols []*Column) []*Column {
+	sorted := make([]*Column, len(cols))
+	copy(sorted, cols)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].UniqueID < sorted[j].UniqueID
+	})
+	return sorted
 }

@@ -16,9 +16,11 @@ package owner_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
@@ -33,11 +35,15 @@ import (
 
 const testLease = 5 * time.Millisecond
 
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
-	// The longest to wait for 3 seconds to
+	// The longest to wait for 30 seconds to
 	// make sure that campaigning owners is completed.
-	for i := 0; i < 600; i++ {
+	for i := 0; i < 6000; i++ {
 		time.Sleep(5 * time.Millisecond)
 		isOwner = manager.IsOwner()
 		if isOwner == fbVal {
@@ -48,7 +54,10 @@ func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 }
 
 func TestSingle(t *testing.T) {
-	store, err := mockstore.NewMockTikvStore()
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +73,10 @@ func TestSingle(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d.Stop()
 
 	isOwner := checkOwner(d, true)
@@ -73,9 +86,9 @@ func TestSingle(t *testing.T) {
 
 	// test for newSession failed
 	ctx, cancel := goctx.WithCancel(ctx)
+	manager := owner.NewOwnerManager(ctx, cli, "ddl", "ddl_id", DDLOwnerKey)
 	cancel()
-	manager := owner.NewOwnerManager(cli, "ddl", "ddl_id", DDLOwnerKey, nil)
-	err = manager.CampaignOwner(ctx)
+	err = manager.CampaignOwner()
 	if !terror.ErrorEqual(err, goctx.Canceled) &&
 		!terror.ErrorEqual(err, goctx.DeadlineExceeded) {
 		t.Fatalf("campaigned result don't match, err %v", err)
@@ -99,13 +112,16 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	tmpTTL := 3
 	orignalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = tmpTTL
 	defer func() {
 		owner.ManagerSessionTTL = orignalTTL
 	}()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +136,10 @@ func TestCluster(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	isOwner := checkOwner(d, true)
 	if !isOwner {
 		t.Fatalf("expect true, got isOwner:%v", isOwner)
@@ -131,6 +151,10 @@ func TestCluster(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d1.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	isOwner = checkOwner(d1, false)
 	if isOwner {
 		t.Fatalf("expect false, got isOwner:%v", isOwner)
@@ -156,6 +180,10 @@ func TestCluster(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d3.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d3.Stop()
 	isOwner = checkOwner(d3, false)
 	if isOwner {

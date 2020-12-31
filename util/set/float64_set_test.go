@@ -37,6 +37,7 @@ func (s *float64SetTestSuite) TestFloat64Set(c *check.C) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
+	c.Assert(set.Count(), check.Equals, len(vals))
 
 	c.Assert(len(set), check.Equals, len(vals))
 	for i := range vals {

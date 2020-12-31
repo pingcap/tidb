@@ -14,31 +14,31 @@
 package admin_test
 
 import (
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = Suite(&testAdminSuite{})
 
 type testAdminSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 }
 
 func (s *testAdminSuite) SetUpSuite(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(s.cluster),
-		mockstore.WithMVCCStore(s.mvccStore),
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
 	)
 	c.Assert(err, IsNil)
 	s.store = store
@@ -101,4 +101,37 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("alter table t1 add index idx_i(i);")
 	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
 	tk.MustExec("admin check table t1;")
+}
+
+func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists admin_check_table_clustered_index;")
+	tk.MustExec("create database admin_check_table_clustered_index;")
+	tk.MustExec("use admin_check_table_clustered_index;")
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+
+	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
+	tk.MustExec("insert into t values (1, '1', 1);")
+	tk.MustExec("insert into t values (2, '2', 2);")
+	tk.MustExec("admin check table t;")
+	for i := 3; i < 200; i++ {
+		tk.MustExec("insert into t values (?, ?, ?);", i, strconv.Itoa(i), i)
+	}
+	tk.MustExec("admin check table t;")
+
+	// Test back filled created index data.
+	tk.MustExec("create index idx_2 on t (c);")
+	tk.MustExec("admin check table t;")
+	tk.MustExec("create index idx_3 on t (a,c);")
+	tk.MustExec("admin check table t;")
+
+	// Test newly created columns.
+	tk.MustExec("alter table t add column e char(36);")
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t add column d char(36) NULL DEFAULT '';")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("insert into t values (1000, '1000', 1000, '1000', '1000');")
+	tk.MustExec("admin check table t;")
 }

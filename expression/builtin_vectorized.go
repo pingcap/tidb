@@ -128,3 +128,21 @@ func vecEvalIntByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column)
 	}
 	return nil
 }
+
+// vecEvalStringByRows uses the non-vectorized(row-based) interface `evalString` to eval the expression.
+func vecEvalStringByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := sig.evalString(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
+}

@@ -15,27 +15,45 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	plannerutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
 var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+// Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
+var (
+	InspectionSummaryRules = inspectionSummaryRules
+	InspectionRules        = inspectionRules
+)
 
 type testExecSuite struct {
 }
 
+type testExecSerialSuite struct {
+}
+
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []*util.ProcessInfo
+	PS       []*util.ProcessInfo
+	serverID uint64
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -58,7 +76,20 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager) KillAllConnections() {
+}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return msm.serverID
+}
+
+func (msm *mockSessionManager) SetServerID(serverID uint64) {
+	msm.serverID = serverID
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
@@ -89,7 +120,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, nil),
+		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -215,6 +246,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 		FieldsInfo: &ast.FieldsClause{
 			Enclosed:   '"',
 			Terminated: ",",
+			Escaped:    '\\',
 		},
 	}
 
@@ -228,9 +260,189 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
+	tests := []struct {
+		input      string
+		escapeChar byte
+		expected   []string
+	}{
+		{
+			`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`,
+			byte(0), // escaped by ''
+			[]string{`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`},
+		},
+	}
+
+	for _, test := range tests {
+		ldInfo := LoadDataInfo{
+			FieldsInfo: &ast.FieldsClause{
+				Enclosed:   '"',
+				Terminated: ",",
+				Escaped:    test.escapeChar,
+			},
+		}
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+}
+
 func assertEqualStrings(c *C, got []field, expect []string) {
 	c.Assert(len(got), Equals, len(expect))
 	for i := 0; i < len(got); i++ {
 		c.Assert(string(got[i].str), Equals, expect[i])
 	}
+}
+
+func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err := exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition and all data in memory.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test 2 partitions and all data in disk.
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition but spill disk.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	// Test partition nums.
+	ctx = mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt = mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource = buildMockDataSource(opt)
+	exec = &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx = context.Background()
+	chk = newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Don't spill too many partitions.
+	c.Assert(len(exec.partitionList) <= 4, IsTrue)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
+	stats := &slowQueryRuntimeStats{
+		totalFileNum: 2,
+		readFileNum:  2,
+		readFile:     time.Second,
+		initialize:   time.Millisecond,
+		readFileSize: 1024 * 1024 * 1024,
+		parseLog:     int64(time.Millisecond * 100),
+		concurrent:   15,
+	}
+	c.Assert(stats.String(), Equals, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
 }

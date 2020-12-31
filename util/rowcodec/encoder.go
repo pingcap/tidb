@@ -30,7 +30,9 @@ import (
 type Encoder struct {
 	row
 	tempColIDs []int64
-	values     []types.Datum
+	values     []*types.Datum
+	// Enable indicates whether this encoder should be use.
+	Enable bool
 }
 
 // Encode encodes a row from a datums slice.
@@ -52,15 +54,17 @@ func (encoder *Encoder) reset() {
 	encoder.data = encoder.data[:0]
 	encoder.tempColIDs = encoder.tempColIDs[:0]
 	encoder.values = encoder.values[:0]
+	encoder.offsets32 = encoder.offsets32[:0]
+	encoder.offsets = encoder.offsets[:0]
 }
 
 func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
 	for i, colID := range colIDs {
-		encoder.appendColVal(colID, values[i])
+		encoder.appendColVal(colID, &values[i])
 	}
 }
 
-func (encoder *Encoder) appendColVal(colID int64, d types.Datum) {
+func (encoder *Encoder) appendColVal(colID int64, d *types.Datum) {
 	if colID > 255 {
 		encoder.large = true
 	}
@@ -126,7 +130,7 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 	for i := 0; i < notNullIdx; i++ {
 		d := encoder.values[i]
 		var err error
-		r.data, err = EncodeValueDatum(sc, d, r.data)
+		r.data, err = encodeValueDatum(sc, d, r.data)
 		if err != nil {
 			return err
 		}
@@ -148,27 +152,12 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	// handle convert to large
-	if !r.large {
-		if len(r.data) >= math.MaxUint16 {
-			r.large = true
-			r.initColIDs32()
-			for i, val := range r.colIDs {
-				r.colIDs32[i] = uint32(val)
-			}
-		} else {
-			r.initOffsets()
-			for i, val := range r.offsets32 {
-				r.offsets[i] = uint16(val)
-			}
-		}
-	}
 	return nil
 }
 
-// EncodeValueDatum encodes one row datum entry into bytes.
+// encodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
@@ -209,7 +198,7 @@ func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 		buffer = codec.EncodeFloat(buffer, d.GetFloat64())
 	case types.KindMysqlDecimal:
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if sc != nil {
+		if err != nil && sc != nil {
 			if terror.ErrorEqual(err, types.ErrTruncated) {
 				err = sc.HandleTruncate(err)
 			} else if terror.ErrorEqual(err, types.ErrOverflow) {
@@ -220,9 +209,6 @@ func EncodeValueDatum(sc *stmtctx.StatementContext, d types.Datum, buffer []byte
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)
 		buffer = append(buffer, j.Value...)
-	case types.KindNull:
-	case types.KindMinNotNull:
-	case types.KindMaxValue:
 	default:
 		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}

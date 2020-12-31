@@ -15,18 +15,20 @@ package tablecodec
 
 import (
 	"testing"
+
+	"github.com/pingcap/tidb/kv"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
+		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 	}
 }
 
 func BenchmarkEncodeEndKey(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
-		EncodeRowKeyWithHandle(100, 101)
+		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
+		EncodeRowKeyWithHandle(100, kv.IntHandle(101))
 	}
 }
 
@@ -36,13 +38,13 @@ func BenchmarkEncodeEndKey(b *testing.B) {
 // BenchmarkEncodeRowKeyWithPrefixNex-4	10000000	       121 ns/op
 func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		sk := EncodeRowKeyWithHandle(100, 100)
+		sk := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 		sk.PrefixNext()
 	}
 }
 
 func BenchmarkDecodeRowKey(b *testing.B) {
-	rowKey := EncodeRowKeyWithHandle(100, 100)
+	rowKey := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 	for i := 0; i < b.N; i++ {
 		DecodeRowKey(rowKey)
 	}

@@ -65,28 +65,36 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	schema := expression.NewSchema(getColumns()...)
-	baseExec := newBaseExecutor(ctx, schema, nil)
+	baseExec := newBaseExecutor(ctx, schema, 0)
 	explainExec := &ExplainExec{
 		baseExecutor: baseExec,
 		explain:      nil,
 	}
 	// mockErrorOperator returns errors
-	mockOper := mockErrorOperator{baseExec, false, false}
-	explainExec.analyzeExec = &mockOper
+	mockOpr := mockErrorOperator{baseExec, false, false}
+	explainExec.analyzeExec = &mockOpr
 	tmpCtx := context.Background()
 	_, err := explainExec.generateExplainInfo(tmpCtx)
 
 	expectedStr := "next error, close error"
-	if err.Error() != expectedStr || !mockOper.closed {
+	if err != nil && (err.Error() != expectedStr || !mockOpr.closed) {
 		t.Errorf(err.Error())
 	}
 	// mockErrorOperator panic
-	mockOper = mockErrorOperator{baseExec, true, false}
-	explainExec.analyzeExec = &mockOper
+	explainExec = &ExplainExec{
+		baseExecutor: baseExec,
+		explain:      nil,
+	}
+	mockOpr = mockErrorOperator{baseExec, true, false}
+	explainExec.analyzeExec = &mockOpr
 	defer func() {
-		if panicErr := recover(); panicErr == nil || !mockOper.closed {
+		if panicErr := recover(); panicErr == nil || !mockOpr.closed {
 			t.Errorf("panic test failed: without panic or close() is not called")
 		}
 	}()
+
 	_, err = explainExec.generateExplainInfo(tmpCtx)
+	if err != nil {
+		t.Errorf(err.Error())
+	}
 }

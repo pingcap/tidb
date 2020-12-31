@@ -286,6 +286,67 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 	return nil
 }
 
+// ReverseHashIterator is the reverse hash iterator.
+type ReverseHashIterator struct {
+	t      *TxStructure
+	iter   kv.Iterator
+	prefix []byte
+	done   bool
+	field  []byte
+}
+
+// Next implements the Iterator Next.
+func (i *ReverseHashIterator) Next() error {
+	err := i.iter.Next()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !i.iter.Key().HasPrefix(i.prefix) {
+		i.done = true
+		return nil
+	}
+
+	_, field, err := i.t.decodeHashDataKey(i.iter.Key())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	i.field = field
+	return nil
+}
+
+// Valid implements the Iterator Valid.
+func (i *ReverseHashIterator) Valid() bool {
+	return i.iter.Valid() && !i.done
+}
+
+// Key implements the Iterator Key.
+func (i *ReverseHashIterator) Key() []byte {
+	return i.field
+}
+
+// Value implements the Iterator Value.
+func (i *ReverseHashIterator) Value() []byte {
+	return i.iter.Value()
+}
+
+// Close Implements the Iterator Close.
+func (i *ReverseHashIterator) Close() {
+}
+
+// NewHashReverseIter creates a reverse hash iterator.
+func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {
+	dataPrefix := t.hashDataKeyPrefix(key)
+	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &ReverseHashIterator{
+		t:      t,
+		iter:   it,
+		prefix: dataPrefix,
+	}, nil
+}
+
 func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (bool, error)) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.IterReverse(dataPrefix.PrefixNext())

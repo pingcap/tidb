@@ -15,95 +15,35 @@ package executor
 
 import (
 	"context"
-	"sync"
+	"fmt"
+	"runtime/trace"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// DirtyDB stores uncommitted write operations for a transaction.
-// It is stored and retrieved by context.Value and context.SetValue method.
-type DirtyDB struct {
-	sync.Mutex
-
-	// tables is a map whose key is tableID.
-	tables map[int64]*DirtyTable
-}
-
-// GetDirtyTable gets the DirtyTable by id from the DirtyDB.
-func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
-	// The index join access the tables map parallelly.
-	// But the map throws panic in this case. So it's locked.
-	udb.Lock()
-	dt, ok := udb.tables[tid]
-	if !ok {
-		dt = &DirtyTable{
-			tid:         tid,
-			addedRows:   make(map[int64]struct{}),
-			deletedRows: make(map[int64]struct{}),
-		}
-		udb.tables[tid] = dt
-	}
-	udb.Unlock()
-	return dt
-}
-
-// DirtyTable stores uncommitted write operation for a transaction.
-type DirtyTable struct {
-	tid int64
-	// addedRows ...
-	// the key is handle.
-	addedRows   map[int64]struct{}
-	deletedRows map[int64]struct{}
-}
-
-// AddRow adds a row to the DirtyDB.
-func (dt *DirtyTable) AddRow(handle int64) {
-	dt.addedRows[handle] = struct{}{}
-}
-
-// DeleteRow deletes a row from the DirtyDB.
-func (dt *DirtyTable) DeleteRow(handle int64) {
-	delete(dt.addedRows, handle)
-	dt.deletedRows[handle] = struct{}{}
-}
-
-// IsEmpty checks whether the table is empty.
-func (dt *DirtyTable) IsEmpty() bool {
-	return len(dt.addedRows)+len(dt.deletedRows) == 0
-}
-
-// GetDirtyDB returns the DirtyDB bind to the context.
-func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
-	var udb *DirtyDB
-	x := ctx.GetSessionVars().TxnCtx.DirtyDB
-	if x == nil {
-		udb = &DirtyDB{tables: make(map[int64]*DirtyTable)}
-		ctx.GetSessionVars().TxnCtx.DirtyDB = udb
-	} else {
-		udb = x.(*DirtyDB)
-	}
-	return udb
-}
-
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
-	dirty *DirtyTable
+	memBuf     kv.MemBuffer
+	memBufSnap kv.Getter
+
 	// usedIndex is the column offsets of the index which Src executor has used.
-	usedIndex  []int
-	desc       bool
-	conditions []expression.Expression
-	columns    []*model.ColumnInfo
-	table      table.Table
-	// belowHandleIndex is the handle's position of the below scan plan.
-	belowHandleIndex int
+	usedIndex            []int
+	desc                 bool
+	conditions           []expression.Expression
+	conditionsWithVirCol []expression.Expression
+	columns              []*model.ColumnInfo
+	table                table.Table
+	// belowHandleCols is the handle's position of the below scan plan.
+	belowHandleCols plannercore.HandleCols
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
@@ -112,6 +52,9 @@ type UnionScanExec struct {
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
 	mutableRow          chunk.MutRow
+	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
+	// to make sure we can compute the virtual column in right order.
+	virtualColumnIndex []int
 }
 
 // Open implements the Executor Open interface.
@@ -125,15 +68,37 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) open(ctx context.Context) error {
 	var err error
 	reader := us.children[0]
+
+	// If the push-downed condition contains virtual column, we may build a selection upon reader. Since unionScanExec
+	// has already contained condition, we can ignore the selection.
+	if sel, ok := reader.(*SelectionExec); ok {
+		reader = sel.children[0]
+	}
+
+	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
+	txn, err := us.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	mb := txn.GetMemBuffer()
+	mb.RLock()
+	defer mb.RUnlock()
+
+	us.memBuf = mb
+	us.memBufSnap = mb.SnapshotGetter()
+
+	// 1. select without virtual columns
+	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
 	case *IndexReaderExecutor:
-		mIdxReader := buildMemIndexReader(us, x)
-		us.addedRows, err = mIdxReader.getMemRows()
+		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
-		idxLookup := buildMemIndexLookUpReader(us, x)
-		us.addedRows, err = idxLookup.getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	default:
+		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
 	if err != nil {
 		return err
@@ -144,6 +109,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	us.memBuf.RLock()
+	defer us.memBuf.RUnlock()
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
@@ -156,48 +123,81 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 		mutableRow.SetDatums(row...)
-		req.AppendRow(mutableRow.ToRow())
+
+		for _, idx := range us.virtualColumnIndex {
+			datum, err := us.schema.Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			// Because the expression might return different type from
+			// the generated column, we should wrap a CAST on the result.
+			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
+			if err != nil {
+				return err
+			}
+			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(us.columns[idx].Flag) || mysql.HasPreventNullInsertFlag(us.columns[idx].Flag)) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(us.columns[idx])
+			}
+			mutableRow.SetDatum(idx, castDatum)
+		}
+
+		matched, _, err := expression.EvalBool(us.ctx, us.conditionsWithVirCol, mutableRow.ToRow())
+		if err != nil {
+			return err
+		}
+		if matched {
+			req.AppendRow(mutableRow.ToRow())
+		}
 	}
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (us *UnionScanExec) Close() error {
+	us.cursor4AddRows = 0
+	us.cursor4SnapshotRows = 0
+	us.addedRows = us.addedRows[:0]
+	us.snapshotRows = us.snapshotRows[:0]
+	return us.children[0].Close()
+}
+
 // getOneRow gets one result row from dirty table or child.
 func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
-	for {
-		snapshotRow, err := us.getSnapshotRow(ctx)
+	snapshotRow, err := us.getSnapshotRow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addedRow := us.getAddedRow()
+
+	var row []types.Datum
+	var isSnapshotRow bool
+	if addedRow == nil {
+		row = snapshotRow
+		isSnapshotRow = true
+	} else if snapshotRow == nil {
+		row = addedRow
+	} else {
+		isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
-		addedRow := us.getAddedRow()
-		var row []types.Datum
-		var isSnapshotRow bool
-		if addedRow == nil {
-			row = snapshotRow
-			isSnapshotRow = true
-		} else if snapshotRow == nil {
-			row = addedRow
-		} else {
-			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
-			if err != nil {
-				return nil, err
-			}
-			if isSnapshotRow {
-				row = snapshotRow
-			} else {
-				row = addedRow
-			}
-		}
-		if row == nil {
-			return nil, nil
-		}
-
 		if isSnapshotRow {
-			us.cursor4SnapshotRows++
+			row = snapshotRow
 		} else {
-			us.cursor4AddRows++
+			row = addedRow
 		}
-		return row, nil
 	}
+	if row == nil {
+		return nil, nil
+	}
+
+	if isSnapshotRow {
+		us.cursor4SnapshotRows++
+	} else {
+		us.cursor4AddRows++
+	}
+	return row, nil
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
@@ -214,11 +214,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			snapshotHandle := row.GetInt64(us.belowHandleIndex)
-			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
-				continue
+			var snapshotHandle kv.Handle
+			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
+			if err != nil {
+				return nil, err
 			}
-			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
+			checkKey := us.table.RecordKey(snapshotHandle)
+			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
 				continue
@@ -271,35 +273,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	aHandle := a[us.belowHandleIndex].GetInt64()
-	bHandle := b[us.belowHandleIndex].GetInt64()
-	var cmp int
-	if aHandle == bHandle {
-		cmp = 0
-	} else if aHandle > bHandle {
-		cmp = 1
-	} else {
-		cmp = -1
-	}
-	return cmp, nil
-}
-
-// Len implements sort.Interface interface.
-func (us *UnionScanExec) Len() int {
-	return len(us.addedRows)
-}
-
-// Less implements sort.Interface interface.
-func (us *UnionScanExec) Less(i, j int) bool {
-	cmp, err := us.compare(us.addedRows[i], us.addedRows[j])
-	if err != nil {
-		us.sortErr = errors.Trace(err)
-		return true
-	}
-	return cmp < 0
-}
-
-// Swap implements sort.Interface interface.
-func (us *UnionScanExec) Swap(i, j int) {
-	us.addedRows[i], us.addedRows[j] = us.addedRows[j], us.addedRows[i]
+	return us.belowHandleCols.Compare(a, b)
 }

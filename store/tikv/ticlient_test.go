@@ -23,13 +23,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
 	withTiKVGlobalLock sync.RWMutex
-	withTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+	WithTiKV           = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
@@ -39,7 +39,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *withTiKV {
+	if *WithTiKV {
 		var d Driver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
@@ -47,10 +47,9 @@ func NewTestStore(c *C) kv.Storage {
 		c.Assert(err, IsNil)
 		return store
 	}
-
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(nil, nil, "")
+	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
-
+	unistore.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 	return store

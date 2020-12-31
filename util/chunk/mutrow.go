@@ -38,6 +38,18 @@ func (mr MutRow) Len() int {
 	return len(mr.c.columns)
 }
 
+// Clone deep clone a MutRow.
+func (mr MutRow) Clone() MutRow {
+	newChk := mr.c
+	if mr.c != nil {
+		newChk = mr.c.CopyConstruct()
+	}
+	return MutRow{
+		c:   newChk,
+		idx: mr.idx,
+	}
+}
+
 // MutRowFromValues creates a MutRow from a interface slice.
 func MutRowFromValues(vals ...interface{}) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(vals))}
@@ -109,7 +121,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 func makeMutRowColumn(in interface{}) *Column {
 	switch x := in.(type) {
 	case nil:
-		col := makeMutRowUint64Column(uint64(0))
+		col := makeMutRowBytesColumn(nil)
 		col.nullBitmap[0] = 0
 		return col
 	case int:
@@ -149,12 +161,12 @@ func makeMutRowColumn(in interface{}) *Column {
 		return col
 	case types.Enum:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	case types.Set:
 		col := newMutRowVarLenColumn(len(x.Name) + 8)
-		*(*uint64)(unsafe.Pointer(&col.data[0])) = x.Value
+		copy(col.data, (*[8]byte)(unsafe.Pointer(&x.Value))[:])
 		copy(col.data[8:], x.Name)
 		return col
 	default:
@@ -163,12 +175,12 @@ func makeMutRowColumn(in interface{}) *Column {
 }
 
 func newMutRowFixedLenColumn(elemSize int) *Column {
-	buf := make([]byte, elemSize+1)
+	buf := make([]byte, elemSize)
 	col := &Column{
 		length:     1,
-		elemBuf:    buf[:elemSize],
-		data:       buf[:elemSize],
-		nullBitmap: buf[elemSize:],
+		elemBuf:    buf,
+		data:       buf,
+		nullBitmap: make([]byte, 1),
 	}
 	col.nullBitmap[0] = 1
 	return col

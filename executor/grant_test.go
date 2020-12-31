@@ -21,10 +21,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite3) TestGrantGlobal(c *C) {
+func (s *testSuiteP1) TestGrantGlobal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testGlobal'@'localhost' IDENTIFIED BY '123';`
@@ -53,7 +54,7 @@ func (s *testSuite3) TestGrantGlobal(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
-	//with grant option
+	// with grant option
 	tk.MustExec("GRANT ALL ON *.* TO 'testGlobal1'@'localhost' WITH GRANT OPTION;")
 	for _, v := range mysql.AllGlobalPrivs {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
@@ -111,7 +112,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
-func (s *testSuite3) TestTableScope(c *C) {
+func (s *testSuiteP1) TestTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
@@ -192,6 +193,8 @@ func (s *testSuite3) TestColumnScope(c *C) {
 func (s *testSuite3) TestIssue2456(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE USER 'dduser'@'%' IDENTIFIED by '123456';")
+	tk.MustExec("CREATE DATABASE `dddb_%`;")
+	tk.MustExec("CREATE table `dddb_%`.`te%` (id int);")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.* TO 'dduser'@'%';")
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
@@ -216,6 +219,57 @@ func (s *testSuite3) TestCreateUserWhenGrant(c *C) {
 		testkit.Rows("test"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+}
+
+func (s *testSuite3) TestGrantPrivilegeAtomic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
+	tk.MustExec(`create role r1, r2, r3;`)
+	tk.MustExec(`create table test.testatomic(x int);`)
+
+	_, err := tk.Exec(`grant update, select, insert, delete on *.* to r1, r2, r4;`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
+	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
+		"N N N N",
+		"N N N N",
+		"N N N N",
+	))
+	tk.MustExec(`grant update, select, insert, delete on *.* to r1, r2, r3;`)
+	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	c.Check(err, NotNil)
+	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
+		"Y Y Y Y",
+		"Y Y Y Y",
+		"Y Y Y Y",
+	))
+
+	_, err = tk.Exec(`grant update, select, insert, delete on test.* to r1, r2, r4;`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
+	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
+	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
+	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	c.Check(err, NotNil)
+	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
+		"Y Y Y Y",
+		"Y Y Y Y",
+		"Y Y Y Y",
+	))
+
+	_, err = tk.Exec(`grant update, select, insert, delete on test.testatomic to r1, r2, r4;`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant), IsTrue)
+	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
+	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
+	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
+	c.Check(err, NotNil)
+	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
+		"Select,Insert,Update,Delete",
+		"Select,Insert,Update,Delete",
+		"Select,Insert,Update,Delete",
+	))
+
+	tk.MustExec(`drop role if exists r1, r2, r3, r4;`)
+	tk.MustExec(`drop table test.testatomic;`)
+
 }
 
 func (s *testSuite3) TestIssue2654(c *C) {
@@ -306,4 +360,27 @@ func (s *testSuite3) TestMaintainRequire(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user genius")
+	tk.MustExec("use test")
+	_, err := tk.Exec("select * from nonexist")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	tk.MustExec("create table if not exists xx (id int)")
+	// Case sensitive
+	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// The database name should also case sensitive match.
+	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+
+	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
+	c.Assert(err, IsNil)
 }

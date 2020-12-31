@@ -16,10 +16,10 @@ package executor
 import (
 	"context"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // ExplainExec represents an explain executor.
@@ -28,6 +28,7 @@ type ExplainExec struct {
 
 	explain     *core.Explain
 	analyzeExec Executor
+	executed    bool
 	rows        [][]string
 	cursor      int
 }
@@ -71,43 +72,49 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	closed := false
-	defer func() {
-		if !closed && e.analyzeExec != nil {
-			err = e.analyzeExec.Close()
-			closed = true
-		}
-	}()
-	if e.analyzeExec != nil {
+func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
+	if e.analyzeExec != nil && !e.executed {
+		defer func() {
+			err1 := e.analyzeExec.Close()
+			if err1 != nil {
+				if err != nil {
+					err = errors.New(err.Error() + ", " + err1.Error())
+				} else {
+					err = err1
+				}
+			}
+		}()
+		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
-		var nextErr, closeErr error
 		for {
-			nextErr = Next(ctx, e.analyzeExec, chk)
-			if nextErr != nil || chk.NumRows() == 0 {
+			err = Next(ctx, e.analyzeExec, chk)
+			if err != nil || chk.NumRows() == 0 {
 				break
 			}
 		}
-		closeErr = e.analyzeExec.Close()
-		closed = true
-		if nextErr != nil {
-			if closeErr != nil {
-				err = errors.New(nextErr.Error() + ", " + closeErr.Error())
-			} else {
-				err = nextErr
-			}
-		} else if closeErr != nil {
-			err = closeErr
-		}
-		if err != nil {
-			return nil, err
-		}
+	}
+	return err
+}
+
+func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	if err = e.executeAnalyzeExec(ctx); err != nil {
+		return nil, err
 	}
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
-	if e.analyzeExec != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	}
 	return e.explain.Rows, nil
+}
+
+// getAnalyzeExecToExecutedNoDelay gets the analyze DML executor to execute in handleNoDelay function.
+// For explain analyze insert/update/delete statement, the analyze executor should be executed in handleNoDelay
+// function and then commit transaction if needed.
+// Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
+// will not be committed.
+func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
+	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
+		e.executed = true
+		return e.analyzeExec
+	}
+	return nil
 }

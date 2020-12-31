@@ -62,7 +62,7 @@ func (s *testMemoSuite) TestNewGroup(c *C) {
 	c.Assert(g.Equivalents.Len(), Equals, 1)
 	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
 	c.Assert(len(g.Fingerprints), Equals, 1)
-	c.Assert(g.Explored, IsFalse)
+	c.Assert(g.Explored(0), IsFalse)
 }
 
 func (s *testMemoSuite) TestGroupInsert(c *C) {
@@ -112,6 +112,56 @@ func (s *testMemoSuite) TestGroupExists(c *C) {
 	c.Assert(g.Exists(expr), IsFalse)
 }
 
+func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
+	stmt1, err := s.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
+	c.Assert(err, IsNil)
+	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt1, s.is)
+	c.Assert(err, IsNil)
+	logic1, ok := p1.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	// Plan tree should be: DataSource -> Selection -> Projection
+	proj, ok := logic1.(*plannercore.LogicalProjection)
+	c.Assert(ok, IsTrue)
+	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
+	c.Assert(ok, IsTrue)
+	group1 := Convert2Group(logic1)
+	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
+
+	// Insert a GroupExpr with the same ExprNode.
+	newGroupExpr := NewGroupExpr(proj)
+	newGroupExpr.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr)
+	c.Assert(group1.Equivalents.Len(), Equals, 1)
+
+	// Insert a GroupExpr with different children。
+	newGroupExpr2 := NewGroupExpr(proj)
+	newGroup := NewGroupWithSchema(oldGroupExpr, group1.Prop.Schema)
+	newGroupExpr2.SetChildren(newGroup)
+	group1.Insert(newGroupExpr2)
+	c.Assert(group1.Equivalents.Len(), Equals, 2)
+
+	// Insert a GroupExpr with different ExprNode.
+	limit := plannercore.LogicalLimit{}.Init(proj.SCtx(), 0)
+	newGroupExpr3 := NewGroupExpr(limit)
+	newGroupExpr3.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr3)
+	c.Assert(group1.Equivalents.Len(), Equals, 3)
+
+	// Insert two LogicalSelections with same conditions but different order.
+	c.Assert(len(sel.Conditions), Equals, 2)
+	newSelection := plannercore.LogicalSelection{
+		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
+	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
+	newGroupExpr4 := NewGroupExpr(sel)
+	newGroupExpr5 := NewGroupExpr(newSelection)
+	newGroupExpr4.SetChildren(oldGroupExpr.Children[0])
+	newGroupExpr5.SetChildren(oldGroupExpr.Children[0])
+	group1.Insert(newGroupExpr4)
+	c.Assert(group1.Equivalents.Len(), Equals, 4)
+	group1.Insert(newGroupExpr5)
+	c.Assert(group1.Equivalents.Len(), Equals, 4)
+}
+
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
@@ -140,11 +190,11 @@ func (impl *fakeImpl) SetCost(float64)                                 {}
 func (impl *fakeImpl) GetCost() float64                                { return 0 }
 func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return impl.plan }
 func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
-func (impl *fakeImpl) ScaleCostLimit(float64) float64                  { return 0 }
+func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), s.schema)
 	emptyProp := &property.PhysicalProperty{}
-	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
+	orderProp := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: &expression.Column{}}}}
 
 	impl := g.GetImpl(emptyProp)
 	c.Assert(impl, IsNil)
@@ -182,9 +232,9 @@ func (s *testMemoSuite) TestEngineTypeSet(c *C) {
 }
 
 func (s *testMemoSuite) TestFirstElemAfterDelete(c *C) {
-	oldExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	oldExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 10}.Init(s.sctx, 0))
 	g := NewGroupWithSchema(oldExpr, s.schema)
-	newExpr := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
+	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(s.sctx, 0))
 	g.Insert(newExpr)
 	c.Assert(g.GetFirstElem(OperandLimit), NotNil)
 	c.Assert(g.GetFirstElem(OperandLimit).Value, Equals, oldExpr)
@@ -235,4 +285,17 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	newGroup2 := NewGroupWithSchema(newExpr2, group2.Prop.Schema)
 	newGroup2.BuildKeyInfo()
 	c.Assert(newGroup2.Prop.MaxOneRow, IsTrue)
+}
+
+func (s *testMemoSuite) TestExploreMark(c *C) {
+	mark := ExploreMark(0)
+	c.Assert(mark.Explored(0), IsFalse)
+	c.Assert(mark.Explored(1), IsFalse)
+	mark.SetExplored(0)
+	mark.SetExplored(1)
+	c.Assert(mark.Explored(0), IsTrue)
+	c.Assert(mark.Explored(1), IsTrue)
+	mark.SetUnexplored(1)
+	c.Assert(mark.Explored(0), IsTrue)
+	c.Assert(mark.Explored(1), IsFalse)
 }

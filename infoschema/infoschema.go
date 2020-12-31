@@ -20,63 +20,15 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(mysql.ErrDBCreateExists, mysql.MySQLErrName[mysql.ErrDBCreateExists])
-	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(mysql.ErrDBDropExists, mysql.MySQLErrName[mysql.ErrDBDropExists])
-	// ErrAccessDenied return when the user doesn't have the permission to access the table.
-	ErrAccessDenied = terror.ClassSchema.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDenied])
-	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
-	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
-	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(mysql.ErrBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(mysql.ErrDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
-	// ErrKeyNameDuplicate returns for index duplicate when rename index.
-	ErrKeyNameDuplicate = terror.ClassSchema.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
-	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = terror.ClassSchema.New(mysql.ErrNonuniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
-	// ErrMultiplePriKey returns for multiple primary keys.
-	ErrMultiplePriKey = terror.ClassSchema.New(mysql.ErrMultiplePriKey, mysql.MySQLErrName[mysql.ErrMultiplePriKey])
-	// ErrTooManyKeyParts returns for too many key parts.
-	ErrTooManyKeyParts = terror.ClassSchema.New(mysql.ErrTooManyKeyParts, mysql.MySQLErrName[mysql.ErrTooManyKeyParts])
-	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = terror.ClassSchema.New(mysql.ErrCantDropFieldOrKey, mysql.MySQLErrName[mysql.ErrCantDropFieldOrKey])
-	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = terror.ClassSchema.New(mysql.ErrTableNotLockedForWrite, mysql.MySQLErrName[mysql.ErrTableNotLockedForWrite])
-	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = terror.ClassSchema.New(mysql.ErrTableNotLocked, mysql.MySQLErrName[mysql.ErrTableNotLocked])
-	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
-	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = terror.ClassSchema.New(mysql.ErrKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-	// ErrCannotAddForeign returns for foreign key exists.
-	ErrCannotAddForeign = terror.ClassSchema.New(mysql.ErrCannotAddForeign, mysql.MySQLErrName[mysql.ErrCannotAddForeign])
-	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.New(mysql.ErrWrongFkDef, mysql.MySQLErrName[mysql.ErrWrongFkDef])
-	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.New(mysql.ErrDupIndex, mysql.MySQLErrName[mysql.ErrDupIndex])
-	// ErrUserDropExists returns for dropping a non-existent user.
-	ErrUserDropExists = terror.ClassSchema.New(mysql.ErrBadUser, mysql.MySQLErrName[mysql.ErrBadUser])
-	// ErrUserAlreadyExists return for creating a existent user.
-	ErrUserAlreadyExists = terror.ClassSchema.New(mysql.ErrUserAlreadyExists, mysql.MySQLErrName[mysql.ErrUserAlreadyExists])
-	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassSchema.New(mysql.ErrTableLocked, mysql.MySQLErrName[mysql.ErrTableLocked])
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -99,6 +51,15 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
+	// TableIsSequence indicates whether the schema.table is a sequence.
+	TableIsSequence(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// BundleByName is used to get a rule bundle.
+	BundleByName(name string) (*placement.Bundle, bool)
+	// RuleBundles returns all placement rule bundles.
+	RuleBundles() map[string]*placement.Bundle
+	// MockBundles is only used for TEST.
+	MockBundles(map[string]*placement.Bundle)
 }
 
 type sortedTables []table.Table
@@ -133,6 +94,9 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
+	// ruleBundleMap stores all placement rules
+	ruleBundleMap map[string]*placement.Bundle
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -162,6 +126,30 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for i := range result.sortedTablesBuckets {
 		sort.Sort(result.sortedTablesBuckets[i])
 	}
+	return result
+}
+
+// MockInfoSchemaWithSchemaVer only serves for test.
+func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
+	result := &infoSchema{}
+	result.schemaMap = make(map[string]*schemaTables)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	tableNames := &schemaTables{
+		dbInfo: dbInfo,
+		tables: make(map[string]table.Table),
+	}
+	result.schemaMap["test"] = tableNames
+	for _, tb := range tbList {
+		tbl := table.MockTableFromMeta(tb)
+		tableNames.tables[tb.Name.L] = tbl
+		bucketIdx := tableBucketIdx(tb.ID)
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
+	}
+	for i := range result.sortedTablesBuckets {
+		sort.Sort(result.sortedTablesBuckets[i])
+	}
+	result.schemaMetaVersion = schemaVer
 	return result
 }
 
@@ -197,6 +185,15 @@ func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok := tbNames.tables[table.L]; ok {
 			return t.Meta().IsView()
+		}
+	}
+	return false
+}
+
+func (is *infoSchema) TableIsSequence(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsSequence()
 		}
 	}
 	return false
@@ -248,7 +245,7 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	if !ok {
 		return nil, false
 	}
-	return tbl.AllAllocators(nil), true
+	return tbl.Allocators(nil), true
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {
@@ -276,11 +273,43 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	return
 }
 
+// FindTableByPartitionID finds the partition-table info by the partitionID.
+// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			pi := tbl.Meta().GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, p := range pi.Definitions {
+				if p.ID == partitionID {
+					return tbl, v.dbInfo, &p
+				}
+			}
+		}
+	}
+	return nil, nil, nil
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
+}
+
+// SequenceByName implements the interface of SequenceSchema defined in util package.
+// It could be used in expression package without import cycle problem.
+func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+	tbl, err := is.TableByName(schema, sequence)
+	if err != nil {
+		return nil, err
+	}
+	if !tbl.Meta().IsSequence() {
+		return nil, ErrWrongObject.GenWithStackByArgs(schema, sequence, "SEQUENCE")
+	}
+	return tbl.(util.SequenceTable), nil
 }
 
 // Handle handles information schema, including getting and setting.
@@ -318,33 +347,6 @@ func (h *Handle) EmptyClone() *Handle {
 }
 
 func init() {
-	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrDBCreateExists:         mysql.ErrDBCreateExists,
-		mysql.ErrDBDropExists:           mysql.ErrDBDropExists,
-		mysql.ErrAccessDenied:           mysql.ErrAccessDenied,
-		mysql.ErrBadDB:                  mysql.ErrBadDB,
-		mysql.ErrTableExists:            mysql.ErrTableExists,
-		mysql.ErrBadTable:               mysql.ErrBadTable,
-		mysql.ErrBadField:               mysql.ErrBadField,
-		mysql.ErrDupFieldName:           mysql.ErrDupFieldName,
-		mysql.ErrDupKeyName:             mysql.ErrDupKeyName,
-		mysql.ErrNonuniqTable:           mysql.ErrNonuniqTable,
-		mysql.ErrMultiplePriKey:         mysql.ErrMultiplePriKey,
-		mysql.ErrTooManyKeyParts:        mysql.ErrTooManyKeyParts,
-		mysql.ErrCantDropFieldOrKey:     mysql.ErrCantDropFieldOrKey,
-		mysql.ErrTableNotLockedForWrite: mysql.ErrTableNotLockedForWrite,
-		mysql.ErrTableNotLocked:         mysql.ErrTableNotLocked,
-		mysql.ErrNoSuchTable:            mysql.ErrNoSuchTable,
-		mysql.ErrKeyDoesNotExist:        mysql.ErrKeyDoesNotExist,
-		mysql.ErrCannotAddForeign:       mysql.ErrCannotAddForeign,
-		mysql.ErrWrongFkDef:             mysql.ErrWrongFkDef,
-		mysql.ErrDupIndex:               mysql.ErrDupIndex,
-		mysql.ErrBadUser:                mysql.ErrBadUser,
-		mysql.ErrUserAlreadyExists:      mysql.ErrUserAlreadyExists,
-		mysql.ErrTableLocked:            mysql.ErrTableLocked,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
-
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
@@ -383,13 +385,63 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 // GetInfoSchema gets TxnCtx InfoSchema if snapshot schema is not set,
 // Otherwise, snapshot schema is returned.
 func GetInfoSchema(ctx sessionctx.Context) InfoSchema {
-	sessVar := ctx.GetSessionVars()
+	return GetInfoSchemaBySessionVars(ctx.GetSessionVars())
+}
+
+// GetInfoSchemaBySessionVars gets TxnCtx InfoSchema if snapshot schema is not set,
+// Otherwise, snapshot schema is returned.
+func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 	var is InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(InfoSchema)
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
+		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
+			return nil
+		}
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
+}
+
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	t, r := is.ruleBundleMap[name]
+	return t, r
+}
+
+func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
+	return is.ruleBundleMap
+}
+
+func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
+	is.ruleBundleMap = ruleBundleMap
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	newRules := []*placement.Rule{}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+	}
+
+	id := int64(-1)
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }

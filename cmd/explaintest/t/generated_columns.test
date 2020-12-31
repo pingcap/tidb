@@ -2,6 +2,7 @@
 -- Most of the cases are ported from other tests to make sure generated columns behaves the same.
 
 -- Stored generated columns as indices
+set @@tidb_partition_prune_mode='dynamic-only';
 
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
@@ -128,3 +129,12 @@ EXPLAIN SELECT sum(b) FROM t1 GROUP BY a;
 EXPLAIN SELECT sum(b) FROM t1 GROUP BY c;
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY a;
 EXPLAIN SELECT sum(c) FROM t1 GROUP BY b;
+
+-- Virtual generated column for point get and batch point get
+DROP TABLE IF EXISTS tu;
+CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
+INSERT INTO tu(a, b) VALUES(1, 2);
+EXPLAIN SELECT * FROM tu WHERE c = 1;
+EXPLAIN SELECT a, c FROM tu WHERE c = 1;
+EXPLAIN SELECT * FROM tu WHERE c in(1, 2, 3);
+EXPLAIN SELECT c, a FROM tu WHERE c in(1, 2, 3);

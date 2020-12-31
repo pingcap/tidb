@@ -15,9 +15,12 @@ package aggregation
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"strings"
 
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -25,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -86,6 +89,10 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
+	case ast.AggFuncApproxCountDistinct:
+		a.typeInfer4ApproxCountDistinct(ctx)
+	case ast.AggFuncApproxPercentile:
+		return a.typeInfer4ApproxPercentile(ctx)
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx)
 	case ast.AggFuncAvg:
@@ -107,6 +114,10 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
+	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
+		a.typeInfer4PopOrSamp(ctx)
+	case ast.AggFuncJsonObjectAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -116,19 +127,71 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
+	a.RetTp.Decimal = 0
+	// count never returns null
+	a.RetTp.Flag |= mysql.NotNullFlag
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
+	a.typeInfer4Count(ctx)
+}
+
+func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error {
+	if len(a.Args) != 2 {
+		return errors.New("APPROX_PERCENTILE should take 2 arguments")
+	}
+
+	if !a.Args[1].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		return errors.New("APPROX_PERCENTILE should take a constant expression as percentage argument")
+	}
+	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
+	if err != nil {
+		return errors.New(fmt.Sprintf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String()))
+	}
+	if percent <= 0 || percent > 100 || isNull {
+		if isNull {
+			return errors.New("APPROX_PERCENTILE: Percentage value cannot be NULL")
+		}
+		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
+	}
+
+	switch a.Args[0].GetType().Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	case mysql.TypeNewDecimal:
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
+			a.RetTp.Decimal = mysql.MaxDecimalScale
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
+		a.RetTp = a.Args[0].GetType().Clone()
+	default:
+		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp.Flag &= ^mysql.NotNullFlag
+	}
+	return nil
 }
 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, 0
+		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
+		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+22), a.Args[0].GetType().Decimal
+		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
@@ -146,17 +209,23 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().Decimal < 0 {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = mysql.MaxDecimalWidth
+		a.RetTp.Flen = utils.MinInt(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
+		if a.Args[0].GetType().Flen < 0 {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, 4
 	default:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
@@ -188,7 +257,9 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
-	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
+	// issue #13027, #13961
+	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) &&
+		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
 }
@@ -199,6 +270,11 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+}
+
+func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
@@ -229,8 +305,14 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.
-		a.RetTp = expression.InferType4ControlFuncs(a.Args[0].GetType(), a.Args[2].GetType())
+		a.RetTp = expression.InferType4ControlFuncs(a.Args[0], a.Args[2])
 	}
+}
+
+func (a *baseFuncDesc) typeInfer4PopOrSamp(ctx sessionctx.Context) {
+	// var_pop/std/var_samp/stddev_samp's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 }
 
 // GetDefaultValue gets the default value when the function's input is null.
@@ -243,18 +325,22 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 // | t     | a       | int(11) |
 // +-------+---------+---------+
 //
-// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// Query: `select avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a), approx_count_distinct(a), approx_percentile(a, 50) from test.t;`
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
+// | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) | approx_count_distinct(a) | approx_percentile(a, 50) |
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
+// |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |                        0 |                     NULL |
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
 func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	switch a.Name {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
+	case ast.AggFuncApproxCountDistinct:
+		if a.RetTp.Tp != mysql.TypeString {
+			v = types.NewIntDatum(0)
+		}
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
-		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncApproxPercentile:
 		v = types.Datum{}
 	case ast.AggFuncBitAnd:
 		v = types.NewUintDatum(uint64(math.MaxUint64))
@@ -265,11 +351,26 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:    {},
-	ast.AggFuncMax:      {},
-	ast.AggFuncMin:      {},
-	ast.AggFuncFirstRow: {},
-	ast.WindowFuncNtile: {},
+	ast.AggFuncCount:               {},
+	ast.AggFuncApproxCountDistinct: {},
+	ast.AggFuncApproxPercentile:    {},
+	ast.AggFuncMax:                 {},
+	ast.AggFuncMin:                 {},
+	ast.AggFuncFirstRow:            {},
+	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonObjectAgg:       {},
+}
+
+// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
+// with a cast as decimal function. See issue #19426
+func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
+	if a.Name == ast.AggFuncGroupConcat {
+		for i := 0; i < len(a.Args)-1; i++ {
+			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			}
+		}
+	}
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.

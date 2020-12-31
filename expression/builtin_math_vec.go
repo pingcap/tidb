@@ -17,14 +17,12 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
-	"math/rand"
 	"strconv"
-	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
@@ -37,6 +35,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -59,6 +58,7 @@ func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -81,6 +81,7 @@ func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -476,6 +477,7 @@ func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])
@@ -708,17 +710,17 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	f64s := result.Float64s()
 	b.mu.Lock()
 	for i := range f64s {
-		f64s[i] = b.randGen.Float64()
+		f64s[i] = b.mysqlRng.Gen()
 	}
 	b.mu.Unlock()
 	return nil
 }
 
-func (b *builtinRandWithSeedSig) vectorized() bool {
+func (b *builtinRandWithSeedFirstGenSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -732,13 +734,14 @@ func (b *builtinRandWithSeedSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	result.ResizeFloat64(n, false)
 	i64s := buf.Int64s()
 	f64s := result.Float64s()
-	rander := rand.NewSource(time.Now().UnixNano())
-	randGen := rand.New(rander)
 	for i := 0; i < n; i++ {
+		// When the seed is null we need to use 0 as the seed.
+		// The behavior same as MySQL.
+		rng := NewWithSeed(0)
 		if !buf.IsNull(i) {
-			randGen = rand.New(rand.NewSource(i64s[i]))
+			rng = NewWithSeed(i64s[i])
 		}
-		f64s[i] = randGen.Float64()
+		f64s[i] = rng.Gen()
 	}
 	return nil
 }
@@ -800,13 +803,22 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		if buf64s[i] < 0 {
-			shift := int64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = i64s[i] / shift * shift
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
+				i64s[i] = 0
+			} else {
+				shift := int64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = i64s[i] / shift * shift
+			}
 		}
 	}
 	return nil
@@ -835,13 +847,23 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
+
 		if buf64s[i] < 0 {
-			shift := uint64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
+				i64s[i] = 0
+			} else {
+				shift := uint64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+			}
 		}
 	}
 	return nil
@@ -1048,7 +1070,8 @@ func (b *builtinSignSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 }
 
 func (b *builtinConvSig) vectorized() bool {
-	return true
+	// TODO: change the vecEval match hybrid type fixing. Then open the vectorized evaluation.
+	return false
 }
 
 func (b *builtinConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {

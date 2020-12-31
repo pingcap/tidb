@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 )
 
 var _ = Suite(&testCacheSuite{})
@@ -33,7 +35,7 @@ type testCacheSuite struct {
 }
 
 func (s *testCacheSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
@@ -59,11 +61,11 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(p.User), Equals, 0)
 
-	// Host | User | Password | Select_priv | Insert_priv | Update_priv | Delete_priv | Create_priv | Drop_priv | Process_priv | Grant_priv | References_priv | Alter_priv | Show_db_priv | Super_priv | Execute_priv | Index_priv | Create_user_priv | Trigger_priv
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Select_priv) VALUES ("%", "root", "", "Y")`)
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Insert_priv) VALUES ("%", "root1", "admin", "Y")`)
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	// Host | User | authentication_string | Select_priv | Insert_priv | Update_priv | Delete_priv | Create_priv | Drop_priv | Process_priv | Grant_priv | References_priv | Alter_priv | Show_db_priv | Super_priv | Execute_priv | Index_priv | Create_user_priv | Trigger_priv
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, authentication_string, Select_priv) VALUES ("%", "root", "", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, authentication_string, Insert_priv) VALUES ("%", "root1", "admin", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, authentication_string, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, authentication_string, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
@@ -85,7 +87,8 @@ func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
 	mustExec(c, se, "use mysql;")
 	mustExec(c, se, "truncate table global_priv")
 
-	mustExec(c, se, `INSERT INTO mysql.global_priv VALUES ("%", "tu", "{\"access\":0,\"plugin\":\"mysql_native_password\",\"ssl_type\":3, \"ssl_cipher\":\"cipher\",\"x509_subject\":\"\C=ZH1\", \"x509_issuer\":\"\C=ZH2\", \"password_last_changed\":1}")`)
+	mustExec(c, se, `INSERT INTO mysql.global_priv VALUES ("%", "tu", "{\"access\":0,\"plugin\":\"mysql_native_password\",\"ssl_type\":3,
+				\"ssl_cipher\":\"cipher\",\"x509_subject\":\"\C=ZH1\", \"x509_issuer\":\"\C=ZH2\", \"san\":\"\IP:127.0.0.1, IP:1.1.1.1, DNS:pingcap.com, URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1\", \"password_last_changed\":1}")`)
 
 	var p privileges.MySQLPrivilege
 	err = p.LoadGlobalPrivTable(se)
@@ -95,6 +98,10 @@ func (s *testCacheSuite) TestLoadGlobalPrivTable(c *C) {
 	c.Assert(p.Global["tu"][0].Priv.SSLType, Equals, privileges.SslTypeSpecified)
 	c.Assert(p.Global["tu"][0].Priv.X509Issuer, Equals, "C=ZH2")
 	c.Assert(p.Global["tu"][0].Priv.X509Subject, Equals, "C=ZH1")
+	c.Assert(p.Global["tu"][0].Priv.SAN, Equals, "IP:127.0.0.1, IP:1.1.1.1, DNS:pingcap.com, URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1")
+	c.Assert(len(p.Global["tu"][0].Priv.SANs[util.IP]), Equals, 2)
+	c.Assert(p.Global["tu"][0].Priv.SANs[util.DNS][0], Equals, "pingcap.com")
+	c.Assert(p.Global["tu"][0].Priv.SANs[util.URI][0], Equals, "spiffe://mesh.pingcap.com/ns/timesh/sa/me1")
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
@@ -186,7 +193,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (HOST, USER, Select_priv, Shutdown_priv) VALUES ("10.0.%", "root", "Y", "Y")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -199,7 +206,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification(activeRoles, "root", "10.0.1.118", "test", "", "", mysql.ShutdownPriv), IsTrue)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.user (HOST, USER, Select_priv, Shutdown_priv) VALUES ("", "root", "Y", "N")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -225,7 +232,7 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 	// Host name can be IPv4 address + netmask.
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (HOST, USER, authentication_string, Select_priv, Shutdown_priv) VALUES ("172.0.0.0/255.0.0.0", "root", "", "Y", "Y")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -250,7 +257,7 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 		"127%/%",
 	}
 	for _, IPMask := range cases {
-		sql := fmt.Sprintf(`INSERT INTO mysql.user VALUES ("%s", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`, IPMask)
+		sql := fmt.Sprintf(`INSERT INTO mysql.user (HOST, USER, Select_priv, Shutdown_priv) VALUES ("%s", "root", "Y", "Y")`, IPMask)
 		mustExec(c, se, sql)
 		p = privileges.MySQLPrivilege{}
 		err = p.LoadUserTable(se)
@@ -261,7 +268,7 @@ func (s *testCacheSuite) TestHostMatch(c *C) {
 	}
 
 	// Netmask notation cannot be used for IPv6 addresses.
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("2001:db8::/ffff:ffff::", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "N")`)
+	mustExec(c, se, `INSERT INTO mysql.user (HOST, USER, Select_priv, Shutdown_priv) VALUES ("2001:db8::/ffff:ffff::", "root", "Y", "Y")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -353,7 +360,7 @@ func (s *testCacheSuite) TestRoleGraphBFS(c *C) {
 }
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(0)
@@ -384,6 +391,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   Shutdown_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Process_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   File_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  Config_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Grant_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   References_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Index_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
@@ -419,7 +427,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
+	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
 `)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
@@ -501,4 +509,77 @@ func checkUserRecord(x, y []privileges.UserRecord, c *C) {
 		c.Assert(x[i].User, Equals, y[i].User)
 		c.Assert(x[i].Host, Equals, y[i].Host)
 	}
+}
+
+func (s *testCacheSuite) TestDBIsVisible(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "create database visdb")
+	p := privileges.MySQLPrivilege{}
+	err = p.LoadAll(se)
+	c.Assert(err, IsNil)
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Create_role_priv, Super_priv) VALUES ("%", "testvisdb", "Y", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible := p.DBIsVisible("testvisdb", "%", "visdb")
+	c.Assert(isVisible, IsFalse)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Select_priv) VALUES ("%", "testvisdb2", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb2", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Create_priv) VALUES ("%", "testvisdb3", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb3", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Insert_priv) VALUES ("%", "testvisdb4", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb4", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Update_priv) VALUES ("%", "testvisdb5", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb5", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Create_view_priv) VALUES ("%", "testvisdb6", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb6", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Trigger_priv) VALUES ("%", "testvisdb7", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb7", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, References_priv) VALUES ("%", "testvisdb8", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb8", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
+
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Execute_priv) VALUES ("%", "testvisdb9", "Y")`)
+	err = p.LoadUserTable(se)
+	c.Assert(err, IsNil)
+	isVisible = p.DBIsVisible("testvisdb9", "%", "visdb")
+	c.Assert(isVisible, IsTrue)
+	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 }

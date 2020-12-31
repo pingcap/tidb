@@ -43,7 +43,9 @@ explain select * from t1 order by c1 desc limit 1;
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 
 # explain select sum(t1.c1 in (select c1 from t2)) from t1;
+
 explain select 1 in (select c2 from t2) from t1;
+
 # explain select sum(6 in (select c2 from t2)) from t1;
 
 # explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;

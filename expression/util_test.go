@@ -48,8 +48,9 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	_, _, err := bf.evalInt(chunk.Row{})
+	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	c.Assert(err, check.IsNil)
+	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
 	c.Assert(err, check.NotNil)
@@ -102,13 +103,13 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinTiDBVersionSig{}, &builtinRowCountSig{}, &builtinJSONTypeSig{}, &builtinJSONQuoteSig{}, &builtinJSONUnquoteSig{},
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
-		&builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
+		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
 		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
 		&builtinFloorIntToIntSig{}, &builtinFloorDecToIntSig{}, &builtinFloorDecToDecSig{}, &builtinLog1ArgSig{}, &builtinLog2ArgsSig{},
-		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedSig{}, &builtinPowSig{},
+		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedFirstGenSig{}, &builtinPowSig{},
 		&builtinConvSig{}, &builtinCRC32Sig{}, &builtinSignSig{}, &builtinSqrtSig{}, &builtinAcosSig{},
 		&builtinAsinSig{}, &builtinAtan1ArgSig{}, &builtinAtan2ArgsSig{}, &builtinCosSig{}, &builtinCotSig{},
 		&builtinDegreesSig{}, &builtinExpSig{}, &builtinPISig{}, &builtinRadiansSig{}, &builtinSinSig{},
@@ -123,7 +124,8 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinUnaryMinusIntSig{}, &builtinDecimalIsNullSig{}, &builtinDurationIsNullSig{}, &builtinIntIsNullSig{}, &builtinRealIsNullSig{},
 		&builtinStringIsNullSig{}, &builtinTimeIsNullSig{}, &builtinUnaryNotRealSig{}, &builtinUnaryNotDecimalSig{}, &builtinUnaryNotIntSig{}, &builtinSleepSig{}, &builtinInIntSig{},
 		&builtinInStringSig{}, &builtinInDecimalSig{}, &builtinInRealSig{}, &builtinInTimeSig{}, &builtinInDurationSig{},
-		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
+		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetStringVarSig{}, &builtinSetIntVarSig{}, &builtinSetRealVarSig{}, &builtinSetDecimalVarSig{},
+		&builtinGetIntVarSig{}, &builtinGetRealVarSig{}, &builtinGetDecimalVarSig{}, &builtinGetStringVarSig{}, &builtinLockSig{},
 		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
 		&builtinValuesTimeSig{}, &builtinValuesDurationSig{}, &builtinValuesJSONSig{}, &builtinBitCountSig{}, &builtinGetParamStringSig{},
 		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftSig{},
@@ -256,13 +258,13 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ctx := mock.NewContext()
-	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
-	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
-	plus2 := newFunction(ast.Plus, plus, One)
+	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
@@ -283,18 +285,47 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunction(ast.EQ, col, One)
+	eqFunc := newFunction(ast.EQ, col, NewOne())
 	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
 	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
 	notFunc := newFunction(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunction(ast.NE, col, One)
+	neFunc := newFunction(ast.NE, col, NewOne())
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
+
+	// issue 15725
+	// (not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
+
+	// (not not (a+1)) should be optimized to (a+1 is true)
+	plusFunc := newFunction(ast.Plus, col, NewOne())
+	notFunc = newFunction(ast.UnaryNot, plusFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
+
+	// (not not not a) should be optimized to (not (a is true))
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
+
+	// (not not not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -341,7 +372,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = VecEval(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}
@@ -461,7 +492,7 @@ func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
-		return int64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -473,7 +504,7 @@ func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64,
 }
 func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
-		return string(x), false, m.err
+		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }
@@ -508,7 +539,7 @@ func (m *MockExpr) GetType() *types.FieldType                         { return m
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
@@ -517,3 +548,11 @@ func (m *MockExpr) ExplainNormalizedInfo() string                     { return "
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
 func (m *MockExpr) SupportReverseEval() bool                          { return false }
+func (m *MockExpr) HasCoercibility() bool                             { return false }
+func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                      {}
+
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+	return "", ""
+}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}

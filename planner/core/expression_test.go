@@ -72,6 +72,7 @@ func (s *testExpressionSuite) TestBetween(c *C) {
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
 		{exprStr: "'2001-04-10 12:34:56' between cast('2001-01-01 01:01:01' as datetime) and '01-05-01'", resultStr: "1"},
 		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 010501", resultStr: "0"},
+		{exprStr: "20010410123456 between cast('2001-01-01 01:01:01' as datetime) and 20010501123456", resultStr: "1"},
 	}
 	s.runTests(c, tests)
 }
@@ -99,8 +100,8 @@ func (s *testExpressionSuite) TestCaseWhen(c *C) {
 	s.runTests(c, tests)
 
 	// When expression value changed, result set back to null.
-	valExpr := ast.NewValueExpr(1)
-	whenClause := &ast.WhenClause{Expr: ast.NewValueExpr(1), Result: ast.NewValueExpr(1)}
+	valExpr := ast.NewValueExpr(1, "", "")
+	whenClause := &ast.WhenClause{Expr: ast.NewValueExpr(1, "", ""), Result: ast.NewValueExpr(1, "", "")}
 	caseExpr := &ast.CaseExpr{
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
@@ -119,7 +120,7 @@ func (s *testExpressionSuite) TestCast(c *C) {
 	f := types.NewFieldType(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
-		Expr: ast.NewValueExpr(1),
+		Expr: ast.NewValueExpr(1, "", ""),
 		Tp:   f,
 	}
 	ast.SetFlag(expr)
@@ -144,7 +145,7 @@ func (s *testExpressionSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum("1"))
 
-	expr.Expr = ast.NewValueExpr(nil)
+	expr.Expr = ast.NewValueExpr(nil, "", "")
 	v, err = evalAstExpr(s.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)

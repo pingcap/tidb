@@ -15,6 +15,7 @@ package privilege
 
 import (
 	"crypto/tls"
+
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,6 +48,9 @@ type Manager interface {
 
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
+
+	// GetAuthWithoutVerification uses to get auth name without verification.
+	GetAuthWithoutVerification(user, host string) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool

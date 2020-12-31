@@ -28,6 +28,13 @@ func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
+// CalcCost implements Implementation CalcCost interface.
+func (impl *ProjectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	proj := impl.plan.(*plannercore.PhysicalProjection)
+	impl.cost = proj.GetCost(children[0].GetPlan().Stats().RowCount) + children[0].GetCost()
+	return impl.cost
+}
+
 // ShowImpl is the Implementation of PhysicalShow.
 type ShowImpl struct {
 	baseImpl
@@ -87,8 +94,6 @@ func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implemen
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
-	// Inject extraProjection if the AggFuncs or GroupByItems contain ScalarFunction.
-	plannercore.InjectProjBelowAgg(hashAgg, hashAgg.AggFuncs, hashAgg.GroupByItems)
 	return agg
 }
 
@@ -183,6 +188,11 @@ func (impl *UnionAllImpl) CalcCost(outCount float64, children ...memo.Implementa
 	return impl.cost
 }
 
+// GetCostLimit implements Implementation interface.
+func (impl *UnionAllImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+	return costLimit
+}
+
 // NewUnionAllImpl creates a new UnionAllImpl.
 func NewUnionAllImpl(union *plannercore.PhysicalUnionAll) *UnionAllImpl {
 	return &UnionAllImpl{baseImpl{plan: union}}
@@ -196,9 +206,30 @@ type ApplyImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ApplyImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	apply := impl.plan.(*plannercore.PhysicalApply)
-	selfCost := apply.GetCost(children[0].GetPlan().Stats().RowCount, children[1].GetPlan().Stats().RowCount)
-	impl.cost = selfCost + children[0].GetCost()
+	impl.cost = apply.GetCost(
+		children[0].GetPlan().Stats().RowCount,
+		children[1].GetPlan().Stats().RowCount,
+		children[0].GetCost(),
+		children[1].GetCost())
 	return impl.cost
+}
+
+// GetCostLimit implements Implementation GetCostLimit interface.
+func (impl *ApplyImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+	if len(children) == 0 {
+		return costLimit
+	}
+	// The Cost of Apply is: selfCost + leftCost + leftCount * rightCost.
+	// If we have implemented the leftChild, the costLimit for the right
+	// side should be (costLimit - selfCost - leftCost)/leftCount. Since
+	// we haven't implement the rightChild, we cannot calculate the `selfCost`.
+	// So we just use (costLimit - leftCost)/leftCount here.
+	leftCount, leftCost := children[0].GetPlan().Stats().RowCount, children[0].GetCost()
+	apply := impl.plan.(*plannercore.PhysicalApply)
+	if len(apply.LeftConditions) > 0 {
+		leftCount *= plannercore.SelectionFactor
+	}
+	return (costLimit - leftCost) / leftCount
 }
 
 // NewApplyImpl creates a new ApplyImpl.

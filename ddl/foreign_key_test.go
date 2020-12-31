@@ -27,25 +27,25 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-var _ = Suite(&testForeighKeySuite{})
+var _ = Suite(&testForeignKeySuite{})
 
-type testForeighKeySuite struct {
+type testForeignKeySuite struct {
 	store  kv.Storage
 	dbInfo *model.DBInfo
 	d      *ddl
 	ctx    sessionctx.Context
 }
 
-func (s *testForeighKeySuite) SetUpSuite(c *C) {
+func (s *testForeignKeySuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_foreign")
 }
 
-func (s *testForeighKeySuite) TearDownSuite(c *C) {
+func (s *testForeignKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
-func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func (s *testForeignKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -110,9 +110,10 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := newDDL(
+func (s *testForeignKeySuite) TestForeignKey(c *C) {
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
@@ -161,8 +162,6 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
-	d.Stop()
-	d.start(context.Background(), nil)
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
@@ -204,8 +203,6 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		checkOK = true
 	}
 	d.SetHook(tc2)
-	d.Stop()
-	d.start(context.Background(), nil)
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
@@ -218,9 +215,6 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-
-	d.Stop()
-	d.start(context.Background(), nil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)

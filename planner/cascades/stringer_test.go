@@ -61,7 +61,7 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(defaultTransformationMap)
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
 	var input []string
 	var output []struct {
@@ -86,6 +86,6 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)
 		})
-		c.Assert(ToString(group), DeepEquals, output[i].Result)
+		c.Assert(ToString(group), DeepEquals, output[i].Result, Commentf("case:%v, sql:%s", i, sql))
 	}
 }

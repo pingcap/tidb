@@ -14,35 +14,16 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
-	errInvalidPluginID         = createPluginError(mysql.ErrInvalidPluginID)
-	errInvalidPluginManifest   = createPluginError(mysql.ErrInvalidPluginManifest)
-	errInvalidPluginName       = createPluginError(mysql.ErrInvalidPluginName)
-	errInvalidPluginVersion    = createPluginError(mysql.ErrInvalidPluginVersion)
-	errDuplicatePlugin         = createPluginError(mysql.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName = createPluginError(mysql.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail = createPluginError(mysql.ErrRequireVersionCheckFail)
+	errInvalidPluginID         = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
+	errInvalidPluginManifest   = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
+	errInvalidPluginName       = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
+	errInvalidPluginVersion    = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
+	errDuplicatePlugin         = dbterror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
+	errInvalidPluginSysVarName = dbterror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
+	errRequireVersionCheckFail = dbterror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
 )
-
-func createPluginError(code terror.ErrCode) *terror.Error {
-	return terror.ClassPlugin.New(code, mysql.MySQLErrName[uint16(code)])
-}
-
-func init() {
-	pluginMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrInvalidPluginID:            mysql.ErrInvalidPluginID,
-		mysql.ErrInvalidPluginManifest:      mysql.ErrInvalidPluginManifest,
-		mysql.ErrInvalidPluginName:          mysql.ErrInvalidPluginName,
-		mysql.ErrInvalidPluginVersion:       mysql.ErrInvalidPluginVersion,
-		mysql.ErrDuplicatePlugin:            mysql.ErrDuplicatePlugin,
-		mysql.ErrInvalidPluginSysVarName:    mysql.ErrInvalidPluginSysVarName,
-		mysql.ErrRequireVersionCheckFail:    mysql.ErrRequireVersionCheckFail,
-		mysql.ErrUnsupportedReloadPlugin:    mysql.ErrUnsupportedReloadPlugin,
-		mysql.ErrUnsupportedReloadPluginVar: mysql.ErrUnsupportedReloadPluginVar,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPlugin] = pluginMySQLErrCodes
-}

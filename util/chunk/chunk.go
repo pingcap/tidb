@@ -17,16 +17,16 @@ import (
 	"reflect"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
 // Chunk stores multiple rows of data in Apache Arrow format.
-// See https://arrow.apache.org/docs/memory_layout.html
+// See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
@@ -112,12 +112,28 @@ func renewColumns(oldCol []*Column, cap int) []*Column {
 	return columns
 }
 
-// MemoryUsage returns the total memory usage of a Chunk in B.
+// renewEmpty creates a new Chunk based on an existing Chunk
+// but keep columns empty.
+func renewEmpty(chk *Chunk) *Chunk {
+	newChk := &Chunk{
+		columns:        nil,
+		numVirtualRows: chk.numVirtualRows,
+		capacity:       chk.capacity,
+		requiredRows:   chk.requiredRows,
+	}
+	if chk.sel != nil {
+		newChk.sel = make([]int, len(chk.sel))
+		copy(newChk.sel, chk.sel)
+	}
+	return newChk
+}
+
+// MemoryUsage returns the total memory usage of a Chunk in bytes.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return
@@ -165,6 +181,17 @@ func (c *Chunk) SetRequiredRows(requiredRows, maxChunkSize int) *Chunk {
 // IsFull returns if this chunk is considered full.
 func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
+}
+
+// Prune creates a new Chunk according to `c` and prunes the columns
+// whose index is not in `usedColIdxs`
+func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
+	chk := renewEmpty(c)
+	chk.columns = make([]*Column, len(usedColIdxs))
+	for i, idx := range usedColIdxs {
+		chk.columns[i] = c.columns[idx]
+	}
+	return chk
 }
 
 // MakeRef makes Column in "dstColIdx" reference to Column in "srcColIdx".
@@ -256,13 +283,10 @@ func (c *Chunk) Reset() {
 
 // CopyConstruct creates a new chunk and copies this chunk's data into it.
 func (c *Chunk) CopyConstruct() *Chunk {
-	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*Column, len(c.columns))}
+	newChk := renewEmpty(c)
+	newChk.columns = make([]*Column, len(c.columns))
 	for i := range c.columns {
 		newChk.columns[i] = c.columns[i].CopyConstruct(nil)
-	}
-	if c.sel != nil {
-		newChk.sel = make([]int, len(c.sel))
-		copy(newChk.sel, c.sel)
 	}
 	return newChk
 }
@@ -326,7 +350,7 @@ func (c *Chunk) GetRow(idx int) Row {
 		//	logical 2 -> physical 6.
 		// Then when we iterate this Chunk according to Row, only selected rows will be
 		// accessed while all filtered rows will be ignored.
-		return Row{c: c, idx: int(c.sel[idx])}
+		return Row{c: c, idx: c.sel[idx]}
 	}
 	return Row{c: c, idx: idx}
 }
@@ -338,22 +362,54 @@ func (c *Chunk) AppendRow(row Row) {
 }
 
 // AppendPartialRow appends a row to the chunk.
-func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
-	c.appendSel(colIdx)
+func (c *Chunk) AppendPartialRow(colOff int, row Row) {
+	c.appendSel(colOff)
 	for i, rowCol := range row.c.columns {
-		chkCol := c.columns[colIdx+i]
-		chkCol.appendNullBitmap(!rowCol.IsNull(row.idx))
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			offset := row.idx * elemLen
-			chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-		} else {
-			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-			chkCol.offsets = append(chkCol.offsets, int64(len(chkCol.data)))
-		}
-		chkCol.length++
+		chkCol := c.columns[colOff+i]
+		appendCellByCell(chkCol, rowCol, row.idx)
 	}
+}
+
+// AppendRowByColIdxs appends a row by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
+	wide = c.AppendPartialRowByColIdxs(0, row, colIdxs)
+	c.numVirtualRows++
+	return
+}
+
+// AppendPartialRowByColIdxs appends a row by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
+	if colIdxs == nil {
+		c.AppendPartialRow(colOff, row)
+		return row.Len()
+	}
+
+	c.appendSel(colOff)
+	for i, colIdx := range colIdxs {
+		rowCol := row.c.columns[colIdx]
+		chkCol := c.columns[colOff+i]
+		appendCellByCell(chkCol, rowCol, row.idx)
+	}
+	return len(colIdxs)
+}
+
+// appendCellByCell appends the cell with rowIdx of src into dst.
+func appendCellByCell(dst *Column, src *Column, rowIdx int) {
+	dst.appendNullBitmap(!src.IsNull(rowIdx))
+	if src.isFixed() {
+		elemLen := len(src.elemBuf)
+		offset := rowIdx * elemLen
+		dst.data = append(dst.data, src.data[offset:offset+elemLen]...)
+	} else {
+		start, end := src.offsets[rowIdx], src.offsets[rowIdx+1]
+		dst.data = append(dst.data, src.data[start:end]...)
+		dst.offsets = append(dst.offsets, int64(len(dst.data)))
+	}
+	dst.length++
 }
 
 // preAlloc pre-allocates the memory space in a Chunk to store the Row.
@@ -532,7 +588,6 @@ func (c *Chunk) AppendBytes(colIdx int, b []byte) {
 }
 
 // AppendTime appends a Time value to the chunk.
-// TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)
@@ -639,4 +694,34 @@ func (c *Chunk) Reconstruct() {
 	}
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
+}
+
+// ToString returns all the values in a chunk.
+func (c *Chunk) ToString(ft []*types.FieldType) string {
+	var buf []byte
+	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+		row := c.GetRow(rowIdx)
+		buf = append(buf, row.ToString(ft)...)
+		buf = append(buf, '\n')
+	}
+	return string(buf)
+}
+
+// AppendRows appends multiple rows to the chunk.
+func (c *Chunk) AppendRows(rows []Row) {
+	c.AppendPartialRows(0, rows)
+	c.numVirtualRows += len(rows)
+}
+
+// AppendPartialRows appends multiple rows to the chunk.
+func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
+	columns := c.columns[colOff:]
+	for i, dstCol := range columns {
+		for _, srcRow := range rows {
+			if i == 0 {
+				c.appendSel(colOff)
+			}
+			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
+		}
+	}
 }

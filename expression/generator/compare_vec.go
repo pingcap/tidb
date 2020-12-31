@@ -90,7 +90,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
-		val := types.CompareString(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 {{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
 {{- else if eq .type.ETName "Datetime" }}
@@ -151,7 +151,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "String" }}
-		case types.CompareString(buf0.GetString(i), buf1.GetString(i)) == 0:
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation) == 0:
 {{- else if eq .type.ETName "Duration" }}
 		case types.CompareDuration(arg0[i], arg1[i]) == 0:
 {{- else if eq .type.ETName "Datetime" }}
@@ -171,7 +171,47 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// the vectorization falls back to the scalar execution.
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
 	{{ if .type.Fixed }}
+	x := result.{{ .type.TypeNameInColumn }}s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+		{{ if eq .type.TypeName "Decimal" }}
+			x[i] = *res
+		{{ else if eq .type.TypeName "Duration" }}
+			x[i] = res.Duration
+		{{ else }}
+			x[i] = res
+		{{ end }}
+	}
+	{{ else }}
+	result.Reserve{{ .type.TypeNameInColumn }}(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.Append{{ .type.TypeNameInColumn }}(res)
+	}
+	{{ end -}}
+	return nil
+}
+
+{{ if .type.Fixed }}
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.Resize{{ .type.TypeNameInColumn }}(n, true)
@@ -181,10 +221,16 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++{
-
-		if err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEval{{ .type.TypeName }}(input, result)
 		}
 		args := buf1.{{ .type.TypeNameInColumn }}s()
 		for i := 0; i < n; i++ {
@@ -202,7 +248,8 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
@@ -210,8 +257,12 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEval{{ .type.TypeName }}(b.ctx, input, buf)
-		if err != nil {
-			return err
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEval{{ .type.TypeName }}(input, result)
 		}
 		bufs[i]=buf
 	}
@@ -284,9 +335,9 @@ var builtinCoalesceCompareVecTestFunc = template.Must(template.New("").Parse(`
 	retEvalType: types.ET{{ .ETName }},
 	childrenTypes: []types.EvalType{types.ET{{ .ETName }}, types.ET{{ .ETName }}, types.ET{{ .ETName }}},
 	geners: []dataGenerator{
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
-		gener{defaultGener{eType: types.ET{{ .ETName }}, nullRation: 0.2}},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
+		gener{*newDefaultGener(0.2, types.ET{{ .ETName }})},
 	},
 },
 

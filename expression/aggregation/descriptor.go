@@ -14,13 +14,16 @@
 package aggregation
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -33,6 +36,8 @@ type AggFuncDesc struct {
 	Mode AggFunctionMode
 	// HasDistinct represents whether the aggregation function contains distinct attribute.
 	HasDistinct bool
+	// OrderByItems represents the order by clause used in GROUP_CONCAT
+	OrderByItems []*util.ByItems
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -44,10 +49,35 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
 }
 
+// String implements the fmt.Stringer interface.
+func (a *AggFuncDesc) String() string {
+	buffer := bytes.NewBufferString(a.Name)
+	buffer.WriteString("(")
+	if a.HasDistinct {
+		buffer.WriteString("distinct ")
+	}
+	for i, arg := range a.Args {
+		buffer.WriteString(arg.String())
+		if i+1 != len(a.Args) {
+			buffer.WriteString(", ")
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 // Equal checks whether two aggregation function signatures are equal.
 func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 	if a.HasDistinct != other.HasDistinct {
 		return false
+	}
+	if len(a.OrderByItems) != len(other.OrderByItems) {
+		return false
+	}
+	for i := range a.OrderByItems {
+		if !a.OrderByItems[i].Equal(ctx, other.OrderByItems[i]) {
+			return false
+		}
 	}
 	return a.baseFuncDesc.equal(ctx, &other.baseFuncDesc)
 }
@@ -56,6 +86,10 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a
 	clone.baseFuncDesc = *a.baseFuncDesc.clone()
+	clone.OrderByItems = make([]*util.ByItems, len(a.OrderByItems))
+	for i, byItem := range a.OrderByItems {
+		clone.OrderByItems[i] = byItem.Clone()
+	}
 	return &clone
 }
 
@@ -90,6 +124,13 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
+	case ast.AggFuncApproxCountDistinct:
+		args := make([]expression.Expression, 0, 1)
+		args = append(args, &expression.Column{
+			Index:   ordinal[0],
+			RetType: types.NewFieldType(mysql.TypeString),
+		})
+		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
@@ -97,7 +138,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
-		if finalAggDesc.Name == ast.AggFuncGroupConcat {
+		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
 			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
 		}
 	}
@@ -231,4 +272,44 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, sch
 		return types.NewDatum(0), true
 	}
 	return con.Value, true
+}
+
+// UpdateNotNullFlag4RetType checks if we should remove the NotNull flag for the return type of the agg.
+func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
+	var removeNotNull bool
+	switch a.Name {
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
+		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg,
+		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
+		removeNotNull = false
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		if !hasGroupBy {
+			removeNotNull = true
+		}
+	// `select max(a) from empty_tbl` returns `null`, while `select max(a) from empty_tbl group by b` returns empty.
+	case ast.AggFuncMax, ast.AggFuncMin:
+		if !hasGroupBy && a.RetTp.Tp != mysql.TypeBit {
+			removeNotNull = true
+		}
+	// `select distinct a from empty_tbl` returns empty
+	// `select a from empty_tbl group by b` returns empty
+	// `select a, max(a) from empty_tbl` returns `(null, null)`
+	// `select a, max(a) from empty_tbl group by b` returns empty
+	// `select a, count(a) from empty_tbl` returns `(null, 0)`
+	// `select a, count(a) from empty_tbl group by b` returns empty
+	case ast.AggFuncFirstRow:
+		if !allAggsFirstRow && !hasGroupBy {
+			removeNotNull = true
+		}
+	default:
+		return errors.Errorf("unsupported agg function: %s", a.Name)
+	}
+	if removeNotNull {
+		a.RetTp = a.RetTp.Clone()
+		a.RetTp.Flag &^= mysql.NotNullFlag
+	}
+	return nil
 }

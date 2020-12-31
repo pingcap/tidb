@@ -21,11 +21,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -171,10 +173,10 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 		Command: mysql.ComSleep,
 		Plan:    nil,
 		Time:    time.Now(),
-		State:   1,
+		State:   3,
 		Info:    "test",
 		StmtCtx: &stmtctx.StatementContext{
-			MemTracker: memory.NewTracker(stringutil.StringerStr(""), -1),
+			MemTracker: memory.NewTracker(-1, -1),
 		},
 	}
 	row := pi.ToRowForShow(false)
@@ -187,16 +189,41 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	c.Assert(row[3], Equals, pi.DB)
 	c.Assert(row[4], Equals, "Sleep")
 	c.Assert(row[5], Equals, uint64(0))
-	c.Assert(row[6], Equals, "1")
+	c.Assert(row[6], Equals, "in transaction; autocommit")
 	c.Assert(row[7], Equals, "test")
 
 	row3 := pi.ToRow(time.UTC)
 	c.Assert(row3[:8], DeepEquals, row)
-	c.Assert(row3[8], Equals, int64(0))
+	c.Assert(row3[9], Equals, int64(0))
 
 	// Test for RandomBuf.
-	buf := RandomBuf(5)
+	buf := fastrand.Buf(5)
 	c.Assert(len(buf), Equals, 5)
 	c.Assert(bytes.Contains(buf, []byte("$")), IsFalse)
 	c.Assert(bytes.Contains(buf, []byte{0}), IsFalse)
+}
+
+func (*testMiscSuite) TestToPB(c *C) {
+	column := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+		Hidden:       true,
+	}
+	column.Collate = "utf8mb4_general_ci"
+
+	column2 := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+		Hidden:       true,
+	}
+	column2.Collate = "utf8mb4_bin"
+
+	c.Assert(ColumnToProto(column).String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
+	c.Assert(ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
 }

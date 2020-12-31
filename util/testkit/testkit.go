@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
@@ -119,6 +120,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
+	}
+}
+
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	tk := NewTestKit(c, store)
@@ -129,23 +139,47 @@ func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 
 var connectionID uint64
 
+// GetConnectionID get the connection ID for tk.Se
+func (tk *TestKit) GetConnectionID() {
+	if tk.Se != nil {
+		id := atomic.AddUint64(&connectionID, 1)
+		tk.Se.SetConnectionID(id)
+	}
+}
+
 // Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = session.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
-		id := atomic.AddUint64(&connectionID, 1)
-		tk.Se.SetConnectionID(id)
+		tk.GetConnectionID()
 	}
 	ctx := context.Background()
 	if len(args) == 0 {
-		var rss []sqlexec.RecordSet
-		rss, err = tk.Se.Execute(ctx, sql)
-		if err == nil && len(rss) > 0 {
-			return rss[0], nil
+		sc := tk.Se.GetSessionVars().StmtCtx
+		prevWarns := sc.GetWarnings()
+		stmts, err := tk.Se.Parse(ctx, sql)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return nil, errors.Trace(err)
+		warns := sc.GetWarnings()
+		parserWarns := warns[len(prevWarns):]
+		var rs0 sqlexec.RecordSet
+		for i, stmt := range stmts {
+			rs, err := tk.Se.ExecuteStmt(ctx, stmt)
+			if i == 0 {
+				rs0 = rs
+			}
+			if err != nil {
+				tk.Se.GetSessionVars().StmtCtx.AppendError(err)
+				return nil, errors.Trace(err)
+			}
+		}
+		if len(parserWarns) > 0 {
+			tk.Se.GetSessionVars().StmtCtx.AppendWarnings(parserWarns)
+		}
+		return rs0, nil
 	}
 	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {
@@ -201,7 +235,7 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][3], "index:"+index+",") {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
 			return true
 		}
 	}
@@ -224,7 +258,7 @@ func (tk *TestKit) MustTableDual(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
 	tk.c.Assert(len(rs.rows), check.Equals, 1)
-	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue)
+	tk.c.Assert(strings.Contains(rs.rows[0][0], "Point_Get"), check.IsTrue, check.Commentf("plan %v", rs.rows[0][0]))
 	return tk.MustQuery(sql, args...)
 }
 
@@ -272,7 +306,7 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
-	sqlErr := tErr.ToSQLError()
+	sqlErr := terror.ToSQLError(tErr)
 	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 
@@ -301,4 +335,11 @@ func (tk *TestKit) GetTableID(tableName string) int64 {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	tk.c.Assert(err, check.IsNil)
 	return tbl.Meta().ID
+}
+
+// WithPruneMode run test case under prune mode.
+func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
+	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
+	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
+	f()
 }

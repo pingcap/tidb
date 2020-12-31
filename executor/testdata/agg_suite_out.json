@@ -3,11 +3,11 @@
     "Name": "TestInjectProjBelowTopN",
     "Cases": [
       [
-        "Projection_8 10000.00 root test.t.i",
-        "└─Sort_4 10000.00 root Column#3:asc",
-        "  └─Projection_9 10000.00 root test.t.i, plus(test.t.i, 1)->Column#3",
-        "    └─TableReader_7 10000.00 root data:TableScan_6",
-        "      └─TableScan_6 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        "Projection_10 10000.00 root  test.t.i",
+        "└─Sort_4 10000.00 root  Column#3",
+        "  └─Projection_11 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_8 10000.00 root  data:TableFullScan_7",
+        "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "1",
@@ -21,12 +21,12 @@
         "3"
       ],
       [
-        "Projection_15 2.00 root test.t.i",
-        "└─TopN_7 2.00 root Column#3:asc, offset:0, count:2",
-        "  └─Projection_16 2.00 root test.t.i, plus(test.t.i, 1)->Column#3",
-        "    └─TableReader_12 2.00 root data:TopN_11",
-        "      └─TopN_11 2.00 cop[tikv] plus(test.t.i, 1):asc, offset:0, count:2",
-        "        └─TableScan_10 10000.00 cop[tikv] table:t, range:[-inf,+inf], keep order:false, stats:pseudo"
+        "Projection_15 2.00 root  test.t.i",
+        "└─TopN_7 2.00 root  Column#3, offset:0, count:2",
+        "  └─Projection_16 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_12 2.00 root  data:TopN_11",
+        "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1), offset:0, count:2",
+        "        └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "1",
@@ -49,32 +49,32 @@
     "Name": "TestIssue12759HashAggCalledByApply",
     "Cases": [
       [
-        "Projection_28 1.00 root Column#3, Column#6, Column#9, Column#12",
-        "└─Apply_30 1.00 root CARTESIAN left outer join, inner:Projection_65",
-        "  ├─Apply_32 1.00 root CARTESIAN left outer join, inner:Projection_54",
-        "  │ ├─Apply_34 1.00 root CARTESIAN left outer join, inner:Projection_43",
-        "  │ │ ├─HashAgg_39 1.00 root funcs:sum(Column#22)->Column#3, funcs:firstrow(Column#23)->test.test.a",
-        "  │ │ │ └─TableReader_40 1.00 root data:HashAgg_35",
-        "  │ │ │   └─HashAgg_35 1.00 cop[tikv] funcs:sum(test.test.a)->Column#22, funcs:firstrow(test.test.a)->Column#23",
-        "  │ │ │     └─TableScan_38 10000.00 cop[tikv] table:tt, range:[-inf,+inf], keep order:false, stats:pseudo",
-        "  │ │ └─Projection_43 1.00 root <nil>->Column#6",
-        "  │ │   └─Limit_44 1.00 root offset:0, count:1",
-        "  │ │     └─TableReader_50 1.00 root data:Limit_49",
-        "  │ │       └─Limit_49 1.00 cop[tikv] offset:0, count:1",
-        "  │ │         └─Selection_48 1.00 cop[tikv] eq(test.test.a, test.test.a)",
-        "  │ │           └─TableScan_47 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo",
-        "  │ └─Projection_54 1.00 root <nil>->Column#9",
-        "  │   └─Limit_55 1.00 root offset:0, count:1",
-        "  │     └─TableReader_61 1.00 root data:Limit_60",
-        "  │       └─Limit_60 1.00 cop[tikv] offset:0, count:1",
-        "  │         └─Selection_59 1.00 cop[tikv] eq(test.test.a, test.test.a)",
-        "  │           └─TableScan_58 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo",
-        "  └─Projection_65 1.00 root <nil>->Column#12",
-        "    └─Limit_66 1.00 root offset:0, count:1",
-        "      └─TableReader_72 1.00 root data:Limit_71",
-        "        └─Limit_71 1.00 cop[tikv] offset:0, count:1",
-        "          └─Selection_70 1.00 cop[tikv] eq(test.test.a, test.test.a)",
-        "            └─TableScan_69 1000.00 cop[tikv] table:test, range:[-inf,+inf], keep order:false, stats:pseudo"
+        "Projection_28 1.00 root  Column#9, Column#10, Column#11, Column#12",
+        "└─Apply_30 1.00 root  CARTESIAN left outer join",
+        "  ├─Apply_32(Build) 1.00 root  CARTESIAN left outer join",
+        "  │ ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
+        "  │ │ ├─HashAgg_35(Build) 1.00 root  funcs:sum(Column#22)->Column#9, funcs:firstrow(Column#23)->test.test.a",
+        "  │ │ │ └─Projection_71 10000.00 root  cast(test.test.a, decimal(32,0) BINARY)->Column#22, test.test.a",
+        "  │ │ │   └─TableReader_37 10000.00 root  data:TableFullScan_36",
+        "  │ │ │     └─TableFullScan_36 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
+        "  │ │ └─Projection_38(Probe) 1.00 root  <nil>->Column#10",
+        "  │ │   └─Limit_39 1.00 root  offset:0, count:1",
+        "  │ │     └─TableReader_45 1.00 root  data:Limit_44",
+        "  │ │       └─Limit_44 1.00 cop[tikv]  offset:0, count:1",
+        "  │ │         └─Selection_43 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │ │           └─TableFullScan_42 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  │ └─Projection_49(Probe) 1.00 root  <nil>->Column#11",
+        "  │   └─Limit_50 1.00 root  offset:0, count:1",
+        "  │     └─TableReader_56 1.00 root  data:Limit_55",
+        "  │       └─Limit_55 1.00 cop[tikv]  offset:0, count:1",
+        "  │         └─Selection_54 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │           └─TableFullScan_53 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  └─Projection_60(Probe) 1.00 root  <nil>->Column#12",
+        "    └─Limit_61 1.00 root  offset:0, count:1",
+        "      └─TableReader_67 1.00 root  data:Limit_66",
+        "        └─Limit_66 1.00 cop[tikv]  offset:0, count:1",
+        "          └─Selection_65 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "            └─TableFullScan_64 1000.00 cop[tikv] table:test keep order:false, stats:pseudo"
       ]
     ]
   }

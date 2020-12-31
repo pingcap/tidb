@@ -15,6 +15,7 @@ package timeutil
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,14 +23,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
 func init() {
 	// We need set systemTZ when it is in testing process.
-	if systemTZ == "" {
-		systemTZ = "System"
+	if systemTZ.Load() == "" {
+		systemTZ.Store("System")
 	}
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
@@ -39,7 +41,7 @@ func init() {
 var locCa *locCache
 
 // systemTZ is current TiDB's system timezone name.
-var systemTZ string
+var systemTZ atomic.String
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
@@ -49,6 +51,22 @@ type locCache struct {
 	sync.RWMutex
 	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
+}
+
+// inferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
+// recursive final linked file of the path.
+func inferOneStepLinkForPath(path string) (string, error) {
+	fileInfo, err := os.Lstat(path)
+	if err != nil {
+		return path, err
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		path, err = os.Readlink(path)
+		if err != nil {
+			return path, err
+		}
+	}
+	return path, nil
 }
 
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
@@ -63,6 +81,13 @@ func InferSystemTZ() string {
 	case !ok:
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
+			if strings.Index(path, "posixrules") != -1 {
+				path, err1 = inferOneStepLinkForPath("/etc/localtime")
+				if err1 != nil {
+					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
+					return ""
+				}
+			}
 			name, err2 := inferTZNameFromFileName(path)
 			if err2 == nil {
 				return name
@@ -90,18 +115,18 @@ func inferTZNameFromFileName(path string) (string, error) {
 	substrMojave := "zoneinfo.default"
 
 	if idx := strings.Index(path, substrMojave); idx != -1 {
-		return string(path[idx+len(substrMojave)+1:]), nil
+		return path[idx+len(substrMojave)+1:], nil
 	}
 
 	if idx := strings.Index(path, substr); idx != -1 {
-		return string(path[idx+len(substr)+1:]), nil
+		return path[idx+len(substr)+1:], nil
 	}
 	return "", fmt.Errorf("path %s is not supported", path)
 }
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
 func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ)
+	loc, err := LoadLocation(systemTZ.Load())
 	if err != nil {
 		return time.Local
 	}
@@ -113,12 +138,13 @@ var setSysTZOnce sync.Once
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
 	setSysTZOnce.Do(func() {
-		systemTZ = name
+		systemTZ.Store(name)
 	})
 }
 
 // GetSystemTZ gets the value of systemTZ, an error is returned if systemTZ is not properly set.
 func GetSystemTZ() (string, error) {
+	systemTZ := systemTZ.Load()
 	if systemTZ == "System" || systemTZ == "" {
 		return "", fmt.Errorf("variable `systemTZ` is not properly set")
 	}

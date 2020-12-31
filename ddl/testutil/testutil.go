@@ -18,8 +18,12 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 )
 
 // SessionExecInGoroutine export for testing.
@@ -54,4 +58,24 @@ func ExecMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL [
 			done <- nil
 		}
 	}()
+}
+
+// ExtractAllTableHandles extracts all handles of a given table.
+func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64, error) {
+	dom := domain.GetDomain(se)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	if err != nil {
+		return nil, err
+	}
+	err = se.NewTxn(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	var allHandles []int64
+	err = tbl.IterRecords(se, tbl.FirstKey(), nil,
+		func(h kv.Handle, _ []types.Datum, _ []*table.Column) (more bool, err error) {
+			allHandles = append(allHandles, h.IntValue())
+			return true, nil
+		})
+	return allHandles, err
 }

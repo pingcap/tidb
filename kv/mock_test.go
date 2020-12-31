@@ -15,7 +15,9 @@ package kv
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -24,13 +26,12 @@ type testMockSuite struct {
 }
 
 func (s testMockSuite) TestInterface(c *C) {
-	storage := NewMockStorage()
+	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion()
+	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
-	snapshot, err := storage.GetSnapshot(version)
-	c.Check(err, IsNil)
+	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)
@@ -66,7 +67,6 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(transaction.Len(), Equals, 0)
 	c.Assert(transaction.Size(), Equals, 0)
 	c.Assert(transaction.GetMemBuffer(), IsNil)
-	transaction.SetCap(0)
 	transaction.Reset()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
@@ -100,7 +100,7 @@ func (s testMockSuite) TestIsPoint(c *C) {
 
 	kr = KeyRange{
 		StartKey: Key(""),
-		EndKey:   Key([]byte{0}),
+		EndKey:   []byte{0},
 	}
 	c.Check(kr.IsPoint(), IsTrue)
 }

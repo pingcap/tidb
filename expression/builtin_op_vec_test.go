@@ -26,7 +26,7 @@ import (
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
-	ast.IsTruth: {
+	ast.IsTruthWithoutNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
@@ -38,6 +38,8 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
 	},
 	ast.LogicXor: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
@@ -47,6 +49,8 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	},
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
 	},
 	ast.Or: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
@@ -76,7 +80,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 			retEvalType:        types.ETInt,
 			childrenTypes:      []types.EvalType{types.ETInt},
 			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
-			geners:             []dataGenerator{&rangeInt64Gener{0, math.MaxInt64}},
+			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
 	ast.IsNull: {
@@ -109,7 +113,7 @@ func (g *givenValsGener) gen() interface{} {
 func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
-	g.fallback = &defaultGener{0.2, eType}
+	g.fallback = newDefaultGener(0.2, eType)
 	return g
 }
 

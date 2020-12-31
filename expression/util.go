@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
@@ -214,6 +216,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		if v.InOperand {
 			newExpr = setExprColumnInOperand(newExpr)
 		}
+		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
@@ -225,8 +228,21 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
+		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
+			if collate.NewCollationEnabled() {
+				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
+				if changed {
+					changed = false
+					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
+					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
+					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
+					if coll == newColl {
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+					}
+				}
+			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
@@ -237,6 +253,27 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		}
 	}
 	return false, expr
+}
+
+// checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
+// return true iff `newFuncColl` is not weaker than `coll`
+func checkCollationStrictness(coll, newFuncColl string) bool {
+	collGroupID, ok1 := CollationStrictnessGroup[coll]
+	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
+
+	if ok1 && ok2 {
+		if collGroupID == newFuncCollGroupID {
+			return true
+		}
+
+		for _, id := range CollationStrictness[collGroupID] {
+			if newFuncCollGroupID == id {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
@@ -335,6 +372,24 @@ func timeZone2Duration(tz string) time.Duration {
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
+var logicalOps = map[string]struct{}{
+	ast.LT:                 {},
+	ast.GE:                 {},
+	ast.GT:                 {},
+	ast.LE:                 {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.UnaryNot:           {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.In:                 {},
+	ast.IsNull:             {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.Like:               {},
+}
+
 var oppositeOp = map[string]string{
 	ast.LT:       ast.GE,
 	ast.GE:       ast.LT,
@@ -368,12 +423,24 @@ func pushNotAcrossArgs(ctx sessionctx.Context, exprs []Expression, not bool) ([]
 	return newExprs, flag
 }
 
-// pushNotAcrossExpr try to eliminate the NOT expr in expression tree. It will records whether there's already NOT pushed.
-func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (Expression, bool) {
+// pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
+// Input `not` indicates whether there's a `NOT` be pushed down.
+// Output `changed` indicates whether the output expression differs from the
+// input `expr` because of the pushed-down-not.
+func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Expression, changed bool) {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			return pushNotAcrossExpr(f.GetCtx(), f.GetArgs()[0], !not)
+			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
+			if err != nil {
+				return expr, false
+			}
+			var childExpr Expression
+			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
+			if !changed && !not {
+				return expr, false
+			}
+			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
 				return NewFunctionInternal(f.GetCtx(), oppositeOp[f.FuncName.L], f.GetType(), f.GetArgs()...), true
@@ -717,6 +784,27 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	return notNull
 }
 
+// IsRuntimeConstExpr checks if a expr can be treated as a constant in **executor**.
+func IsRuntimeConstExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if !IsRuntimeConstExpr(arg) {
+				return false
+			}
+		}
+		return true
+	case *Column:
+		return false
+	case *Constant, *CorrelatedColumn:
+		return true
+	}
+	return false
+}
+
 // IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
 func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {
@@ -739,12 +827,17 @@ func IsMutableEffectsExpr(expr Expression) bool {
 }
 
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
-// are mutable or have side effects, we cannot remove it even if it has duplicates.
+// are mutable or have side effects, we cannot remove it even if it has duplicates;
+// if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
+		if ContainMutableConst(ctx, []Expression{expr}) {
+			res = append(res, expr)
+			continue
+		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -802,4 +895,138 @@ func ContainVirtualColumn(exprs []Expression) bool {
 		}
 	}
 	return false
+}
+
+// ContainCorrelatedColumn checks if the expressions contain a correlated column
+func ContainCorrelatedColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *CorrelatedColumn:
+			return true
+		case *ScalarFunction:
+			if ContainCorrelatedColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainMutableConst checks if the expressions contain a lazy constant.
+func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+	// Treat all constants immutable if plan cache is not enabled for this query.
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
+		return false
+	}
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil || v.DeferredExpr != nil {
+				return true
+			}
+		case *ScalarFunction:
+			if ContainMutableConst(ctx, v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const (
+	_   = iota
+	kib = 1 << (10 * iota)
+	mib = 1 << (10 * iota)
+	gib = 1 << (10 * iota)
+	tib = 1 << (10 * iota)
+	pib = 1 << (10 * iota)
+	eib = 1 << (10 * iota)
+)
+
+const (
+	nano    = 1
+	micro   = 1000 * nano
+	milli   = 1000 * micro
+	sec     = 1000 * milli
+	min     = 60 * sec
+	hour    = 60 * min
+	dayTime = 24 * hour
+)
+
+// GetFormatBytes convert byte count to value with units.
+func GetFormatBytes(bytes float64) string {
+	var divisor float64
+	var unit string
+
+	bytesAbs := math.Abs(bytes)
+	if bytesAbs >= eib {
+		divisor = eib
+		unit = "EiB"
+	} else if bytesAbs >= pib {
+		divisor = pib
+		unit = "PiB"
+	} else if bytesAbs >= tib {
+		divisor = tib
+		unit = "TiB"
+	} else if bytesAbs >= gib {
+		divisor = gib
+		unit = "GiB"
+	} else if bytesAbs >= mib {
+		divisor = mib
+		unit = "MiB"
+	} else if bytesAbs >= kib {
+		divisor = kib
+		unit = "KiB"
+	} else {
+		divisor = 1
+		unit = "bytes"
+	}
+
+	if divisor == 1 {
+		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
+	}
+	value := float64(bytes) / divisor
+	if math.Abs(value) >= 100000.0 {
+		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
+	}
+	return strconv.FormatFloat(value, 'f', 2, 64) + " " + unit
+}
+
+// GetFormatNanoTime convert time in nanoseconds to value with units.
+func GetFormatNanoTime(time float64) string {
+	var divisor float64
+	var unit string
+
+	timeAbs := math.Abs(time)
+	if timeAbs >= dayTime {
+		divisor = dayTime
+		unit = "d"
+	} else if timeAbs >= hour {
+		divisor = hour
+		unit = "h"
+	} else if timeAbs >= min {
+		divisor = min
+		unit = "min"
+	} else if timeAbs >= sec {
+		divisor = sec
+		unit = "s"
+	} else if timeAbs >= milli {
+		divisor = milli
+		unit = "ms"
+	} else if timeAbs >= micro {
+		divisor = micro
+		unit = "us"
+	} else {
+		divisor = 1
+		unit = "ns"
+	}
+
+	if divisor == 1 {
+		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
+	}
+	value := float64(time) / divisor
+	if math.Abs(value) >= 100000.0 {
+		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
+	}
+	return strconv.FormatFloat(value, 'f', 2, 64) + " " + unit
 }

@@ -22,14 +22,13 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/collate"
 	"golang.org/x/text/transform"
 )
 
@@ -41,19 +40,8 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 		return nil
 	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'A' && str[i] <= 'Z' {
-				str[i] += 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
 	}
 	return nil
 }
@@ -146,29 +134,23 @@ func (b *builtinStringIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
 
-Loop:
 	for i := 0; i < input.NumRows(); i++ {
-		str := result.GetBytes(i)
-		for _, c := range str {
-			if c >= utf8.RuneSelf {
-				continue Loop
-			}
-		}
-		for i := range str {
-			if str[i] >= 'a' && str[i] <= 'z' {
-				str[i] -= 'a' - 'A'
-			}
-		}
+		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
 	}
 	return nil
+}
+
+func (b *builtinUpperUTF8Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUpperSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinUpperSig) vectorized() bool {
@@ -382,7 +364,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -409,6 +391,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -429,8 +412,10 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			continue
 		}
 		slice := string([]rune(str)[pos:])
-		subStr = strings.ToLower(subStr)
-		slice = strings.ToLower(slice)
+		if ci {
+			subStr = strings.ToLower(subStr)
+			slice = strings.ToLower(slice)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
@@ -445,7 +430,7 @@ func (b *builtinHexStrArgSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinHexStrArgSig, corresponding to hex(str)
+// vecEvalString evals a builtinHexStrArgSig, corresponding to hex(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
 func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -472,7 +457,7 @@ func (b *builtinLTrimSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinLTrimSig
+// vecEvalString evals a builtinLTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
 func (b *builtinLTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -661,10 +646,10 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		}
 		str := strings.Join(strs[i], seps[i])
 		// todo check whether the length of result is larger than Flen
-		//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 		//	result.AppendNull()
 		//	continue
-		//}
+		// }
 		result.AppendString(str)
 	}
 	return nil
@@ -712,7 +697,7 @@ func (b *builtinSubstringIndexSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinSubstringIndexSig.
+// vecEvalString evals a builtinSubstringIndexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
 func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -826,7 +811,7 @@ func (b *builtinExportSet3ArgSig) vectorized() bool {
 	return true
 }
 
-// evalString evals EXPORT_SET(bits,on,off).
+// vecEvalString evals EXPORT_SET(bits,on,off).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet3ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1073,7 +1058,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		for j, strInSet := range strings.Split(strlistI, ",") {
-			if str.GetString(i) == strInSet {
+			if b.ctor.Compare(str.GetString(i), strInSet) == 0 {
 				res[i] = int64(j + 1)
 			}
 		}
@@ -1143,7 +1128,7 @@ func (b *builtinRTrimSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinRTrimSig
+// vecEvalString evals a builtinRTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1200,7 +1185,7 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i)))
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i), b.collation))
 	}
 	return nil
 }
@@ -1307,7 +1292,7 @@ func (b *builtinExportSet4ArgSig) vectorized() bool {
 	return true
 }
 
-// evalString evals EXPORT_SET(bits,on,off,separator).
+// vecEvalString evals EXPORT_SET(bits,on,off,separator).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1426,11 +1411,60 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 }
 
 func (b *builtinFormatWithLocaleSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, dBuf); err != nil {
+		return err
+	}
+	dInt64s := dBuf.Int64s()
+
+	localeBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(localeBuf)
+	if err := b.args[2].VecEvalString(b.ctx, input, localeBuf); err != nil {
+		return err
+	}
+
+	// decimal x
+	if b.args[0].GetType().EvalType() == types.ETDecimal {
+		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(xBuf)
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, xBuf); err != nil {
+			return err
+		}
+
+		result.ReserveString(n)
+		xBuf.MergeNulls(dBuf)
+		return formatDecimal(b.ctx, xBuf, dInt64s, result, localeBuf)
+	}
+
+	// real x
+	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(xBuf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, xBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	xBuf.MergeNulls(dBuf)
+	return formatReal(b.ctx, xBuf, dInt64s, result, localeBuf)
 }
 
 func (b *builtinSubstring2ArgsSig) vectorized() bool {
@@ -1484,7 +1518,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
+// vecEvalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1537,7 +1571,7 @@ func (b *builtinTrim2ArgsSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
+// vecEvalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1598,12 +1632,20 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
+	var strI string
+	var substrI string
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		strI := strings.ToLower(str.GetString(i))
-		substrI := strings.ToLower(substr.GetString(i))
+		if ci {
+			strI = strings.ToLower(str.GetString(i))
+			substrI = strings.ToLower(substr.GetString(i))
+		} else {
+			strI = str.GetString(i)
+			substrI = substr.GetString(i)
+		}
 		idx := strings.Index(strI, substrI)
 		if idx == -1 {
 			res[i] = 0
@@ -1792,7 +1834,7 @@ func (b *builtinExportSet5ArgSig) vectorized() bool {
 	return true
 }
 
-// evalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
+// vecEvalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -1858,7 +1900,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
+// vecEvalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2093,7 +2135,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2117,6 +2159,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2128,9 +2171,11 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			i64s[i] = 1
 			continue
 		}
-		slice := string([]rune(str))
-		slice = strings.ToLower(slice)
-		subStr = strings.ToLower(subStr)
+		slice := str
+		if ci {
+			slice = strings.ToLower(slice)
+			subStr = strings.ToLower(subStr)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1
@@ -2193,9 +2238,6 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	defer b.bufAllocator.put(bufstr)
-	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
-		return err
-	}
 	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
 	bufint := make([]([]int64), l-1)
@@ -2211,25 +2253,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			bigints = append(bigints, bufint[j][i])
 		}
 		tempString := string(b.convertToBytes(bigints))
-		charsetLable := strings.ToLower(bufstr.GetString(i))
-		if bufstr.IsNull(i) || charsetLable == "ascii" || strings.HasPrefix(charsetLable, "utf8") {
-			result.AppendString(tempString)
-		} else {
-			encoding, charsetName := charset.Lookup(charsetLable)
-			if encoding == nil {
-				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
-			}
-			oldStr := tempString
-			tempString, _, err := transform.String(encoding.NewDecoder(), tempString)
-			if err != nil {
-				logutil.BgLogger().Warn("change charset of string",
-					zap.String("string", oldStr),
-					zap.String("charset", charsetName),
-					zap.Error(err))
-				return err
-			}
-			result.AppendString(tempString)
-		}
+		result.AppendString(tempString)
 	}
 	return nil
 }
@@ -2238,7 +2262,7 @@ func (b *builtinReplaceSig) vectorized() bool {
 	return true
 }
 
-// evalString evals a builtinReplaceSig.
+// vecEvalString evals a builtinReplaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2290,7 +2314,7 @@ func (b *builtinMakeSetSig) vectorized() bool {
 	return true
 }
 
-// evalString evals MAKE_SET(bits,str1,str2,...).
+// vecEvalString evals MAKE_SET(bits,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
 func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
@@ -2396,12 +2420,11 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendNull()
 			continue
 		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-			result.AppendNull()
-			continue
+			b.tp.Flen = mysql.MaxBlobWidth
 		}
 
 		newStr := base64.StdEncoding.EncodeToString([]byte(str))
-		//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+		// A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
 		count := len(newStr)
 		if count > 76 {
 			newStr = strings.Join(splitToSubN(newStr, 76), "\n")
@@ -2563,11 +2586,53 @@ func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 }
 
 func (b *builtinFormatSig) vectorized() bool {
-	return false
+	return true
 }
 
+// vecEvalString evals FORMAT(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+
+	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dBuf)
+	if err := b.args[1].VecEvalInt(b.ctx, input, dBuf); err != nil {
+		return err
+	}
+	dInt64s := dBuf.Int64s()
+
+	// decimal x
+	if b.args[0].GetType().EvalType() == types.ETDecimal {
+		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(xBuf)
+		if err := b.args[0].VecEvalDecimal(b.ctx, input, xBuf); err != nil {
+			return err
+		}
+
+		result.ReserveString(n)
+		xBuf.MergeNulls(dBuf)
+		return formatDecimal(b.ctx, xBuf, dInt64s, result, nil)
+	}
+
+	// real x
+	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(xBuf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, xBuf); err != nil {
+		return err
+	}
+
+	result.ReserveString(n)
+	xBuf.MergeNulls(dBuf)
+	return formatReal(b.ctx, xBuf, dInt64s, result, nil)
 }
 
 func (b *builtinRightSig) vectorized() bool {
@@ -2615,7 +2680,7 @@ func (b *builtinSubstring3ArgsSig) vectorized() bool {
 	return true
 }
 
-// evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
+// vecEvalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2779,6 +2844,86 @@ func (b *builtinCharLengthUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.
 		}
 		str := buf.GetString(i)
 		i64s[i] = int64(len([]rune(str)))
+	}
+	return nil
+}
+
+func formatDecimal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	xDecimals := xBuf.Decimals()
+	for i := range xDecimals {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xDecimals[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		locale := "en_US"
+		if localeBuf == nil {
+			// FORMAT(x, d)
+		} else if localeBuf.IsNull(i) {
+			// FORMAT(x, d, NULL)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
+			// TODO: support other locales.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+		}
+
+		xStr := roundFormatArgs(x.String(), int(d))
+		dStr := strconv.FormatInt(d, 10)
+		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
+	}
+	return nil
+}
+
+func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, result *chunk.Column, localeBuf *chunk.Column) error {
+	xFloat64s := xBuf.Float64s()
+	for i := range xFloat64s {
+		if xBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+
+		x, d := xFloat64s[i], dInt64s[i]
+
+		if d < 0 {
+			d = 0
+		} else if d > formatMaxDecimals {
+			d = formatMaxDecimals
+		}
+
+		locale := "en_US"
+		if localeBuf == nil {
+			// FORMAT(x, d)
+		} else if localeBuf.IsNull(i) {
+			// FORMAT(x, d, NULL)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
+			// TODO: support other locales.
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+		}
+
+		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
+		dStr := strconv.FormatInt(d, 10)
+		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
+
+		formatString, err := localeFormatFunction(xStr, dStr)
+		if err != nil {
+			return err
+		}
+		result.AppendString(formatString)
 	}
 	return nil
 }

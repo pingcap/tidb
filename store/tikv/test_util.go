@@ -16,8 +16,9 @@ package tikv
 import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	pd "github.com/tikv/pd/client"
 )
 
 // NewTestTiKVStore creates a test store with Option
@@ -34,7 +35,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.New().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, nil)
+	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, &config.GetGlobalConfig().TiKVClient.CoprCache)
 
 	if txnLocalLatches > 0 {
 		tikvStore.EnableTxnLocalLatches(txnLocalLatches)

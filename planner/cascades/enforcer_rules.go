@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/planner/implementation"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 // Enforcer defines the interface for enforcer rules.
@@ -62,10 +63,10 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
 	childPlan := child.GetPlan()
 	sort := plannercore.PhysicalSort{
-		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
+		ByItems: make([]*util.ByItems, 0, len(reqProp.SortItems)),
 	}.Init(childPlan.SCtx(), childPlan.Stats(), childPlan.SelectBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
-	for _, item := range reqProp.Items {
-		item := &plannercore.ByItems{
+	for _, item := range reqProp.SortItems {
+		item := &util.ByItems{
 			Expr: item.Col,
 			Desc: item.Desc,
 		}
@@ -79,7 +80,7 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo
 func (e *OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
 	// We need a SessionCtx to calculate the cost of a sort.
 	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
-	sort := plannercore.PhysicalSort{}.Init(sctx, nil, 0, nil)
-	cost := sort.GetCost(g.Prop.Stats.RowCount)
+	sort := plannercore.PhysicalSort{}.Init(sctx, g.Prop.Stats, 0, nil)
+	cost := sort.GetCost(g.Prop.Stats.RowCount, g.Prop.Schema)
 	return cost
 }

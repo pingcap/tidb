@@ -45,7 +45,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"a >= '1.1'", "ge(a, 2)"},
 		{"a = '1.1'", "0"},
 		{"a <=> '1.1'", "0"},
-		{"a != '1.1'", "ne(cast(a), 1.1)"},
+		{"a != '1.1'", "ne(cast(a, double BINARY), 1.1)"},
 		{"'1' < a", "lt(1, a)"},
 		{"'1' <= a", "le(1, a)"},
 		{"'1' > a", "gt(1, a)"},
@@ -59,18 +59,17 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' >= a", "ge(1, a)"},
 		{"'1.1' = a", "0"},
 		{"'1.1' <=> a", "0"},
-		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'1.1' != a", "ne(1.1, cast(a, double BINARY))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		{"123456789123456789123456789.12345 > a", "1"},
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
@@ -82,7 +81,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
-	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
+	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
 	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
@@ -201,7 +200,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -234,6 +233,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
 		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		{types.MakeDatums(-1, 2333, nil), 0, false},
+		{types.MakeDatums(1, nil, nil, nil), 3, false},
+		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
+		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
@@ -255,7 +258,8 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
+// greatest/least function is compatible with MySQL 8.0
+func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -280,7 +284,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{"123a", "b", "c", 12},
-			float64(123), float64(0), false, false,
+			"c", "12", false, false,
 		},
 		{
 			[]interface{}{tm, "123"},
@@ -288,7 +292,19 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{tm, 123},
-			curTimeInt, int64(123), false, false,
+			curTimeString, "123", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, curTimeString, false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, curTimeString, false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
 		},
 		{
 			[]interface{}{duration, "123"},
@@ -301,6 +317,14 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		{
 			[]interface{}{errors.New("must error"), 123},
 			nil, nil, false, true,
+		},
+		{
+			[]interface{}{794755072.0, 4556, "2000-01-09"},
+			"794755072", "2000-01-09", false, false,
+		},
+		{
+			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
+			"905969664", "1990-06-16 17:22:56.005534", false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
@@ -331,8 +355,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{Zero, One})
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
-	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
 }

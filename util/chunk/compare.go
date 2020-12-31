@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/pingcap/parser/mysql"
@@ -38,7 +39,7 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 		return cmpFloat64
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return cmpString
+		return genCmpStringFunc(tp.Collate)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return cmpTime
 	case mysql.TypeDuration:
@@ -81,12 +82,18 @@ func cmpUint64(l Row, lCol int, r Row, rCol int) int {
 	return types.CompareUint64(l.GetUint64(lCol), r.GetUint64(rCol))
 }
 
-func cmpString(l Row, lCol int, r Row, rCol int) int {
+func genCmpStringFunc(collation string) func(l Row, lCol int, r Row, rCol int) int {
+	return func(l Row, lCol int, r Row, rCol int) int {
+		return cmpStringWithCollationInfo(l, lCol, r, rCol, collation)
+	}
+}
+
+func cmpStringWithCollationInfo(l Row, lCol int, r Row, rCol int, collation string) int {
 	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareString(l.GetString(lCol), r.GetString(rCol))
+	return types.CompareString(l.GetString(lCol), r.GetString(rCol), collation)
 }
 
 func cmpFloat32(l Row, lCol int, r Row, rCol int) int {
@@ -162,6 +169,7 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 }
 
 // Compare compares the value with ad.
+// We assume that the collation information of the column is the same with the datum.
 func Compare(row Row, colIdx int, ad *types.Datum) int {
 	switch ad.Kind() {
 	case types.KindNull:
@@ -184,8 +192,10 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		return types.CompareFloat64(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
 	case types.KindFloat64:
 		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
-	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
-		return types.CompareString(row.GetString(colIdx), ad.GetString())
+	case types.KindString:
+		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation())
+	case types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return bytes.Compare(row.GetBytes(colIdx), ad.GetBytes())
 	case types.KindMysqlDecimal:
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
 		return l.Compare(r)

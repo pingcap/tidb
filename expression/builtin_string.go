@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -84,6 +85,7 @@ var (
 	_ functionClass = &insertFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
+	_ functionClass = &weightStringFunctionClass{}
 )
 
 var (
@@ -100,6 +102,7 @@ var (
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
 	_ builtinFunc = &builtinSpaceSig{}
+	_ builtinFunc = &builtinUpperUTF8Sig{}
 	_ builtinFunc = &builtinUpperSig{}
 	_ builtinFunc = &builtinStrcmpSig{}
 	_ builtinFunc = &builtinReplaceSig{}
@@ -150,6 +153,7 @@ var (
 	_ builtinFunc = &builtinFieldRealSig{}
 	_ builtinFunc = &builtinFieldIntSig{}
 	_ builtinFunc = &builtinFieldStringSig{}
+	_ builtinFunc = &builtinWeightStringSig{}
 )
 
 func reverseBytes(origin []byte) []byte {
@@ -184,7 +188,10 @@ func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 10
 	sig := &builtinLengthSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Length)
@@ -219,7 +226,10 @@ func (c *asciiFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 3
 	sig := &builtinASCIISig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_ASCII)
@@ -261,7 +271,11 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -279,7 +293,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
@@ -330,7 +344,11 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTps = append(argTps, types.ETString)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 0
 
 	for i := range args {
 		argType := args[i].GetType()
@@ -357,7 +375,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
@@ -418,9 +436,9 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 
 	str := strings.Join(strs, sep)
 	// todo check whether the length of result is larger than Flen
-	//if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+	// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
 	//	return "", true, nil
-	//}
+	// }
 	return str, false, nil
 }
 
@@ -432,7 +450,10 @@ func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
@@ -514,7 +535,10 @@ func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
@@ -597,13 +621,16 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
@@ -660,7 +687,10 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
@@ -702,7 +732,10 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	retTp := *args[0].GetType()
 	retTp.Tp = mysql.TypeVarString
 	retTp.Decimal = types.UnspecifiedLength
@@ -768,12 +801,16 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
@@ -822,13 +859,43 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinUpperSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinUpperSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Upper)
+	} else {
+		sig = &builtinUpperUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
+	}
 	return sig, nil
+}
+
+type builtinUpperUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinUpperUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinUpperUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
+func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return strings.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -849,11 +916,7 @@ func (b *builtinUpperSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToUpper(d), false, nil
+	return d, false, nil
 }
 
 type strcmpFunctionClass struct {
@@ -864,7 +927,10 @@ func (c *strcmpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 2
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinStrcmpSig{bf}
@@ -899,7 +965,7 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	res := types.CompareString(left, right)
+	res := types.CompareString(left, right, b.collation)
 	return int64(res), false, nil
 }
 
@@ -911,7 +977,10 @@ func (c *replaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = c.fixLength(args)
 	for _, a := range args {
 		SetBinFlagOrBinStr(a.GetType(), bf.tp)
@@ -973,7 +1042,10 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 
 	charsetArg, ok := args[1].(*Constant)
 	if !ok {
@@ -988,7 +1060,6 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 	// Here in syntax CONVERT(expr USING transcoding_name), behavior is kept the same,
 	// picking the default collation of target charset.
-	var err error
 	bf.tp.Collate, err = charset.GetDefaultCollation(bf.tp.Charset)
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
@@ -1051,7 +1122,10 @@ func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
 
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
@@ -1240,7 +1314,10 @@ func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
@@ -1317,18 +1394,21 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if hasStartPos {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	var sig builtinFunc
-	// Loacte is multibyte safe, and is case-sensitive only if at least one argument is a binary string.
-	hasBianryInput := types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType())
+	// Locate is multibyte safe.
+	useBinary := bf.collation == charset.CollationBin
 	switch {
-	case hasStartPos && hasBianryInput:
+	case hasStartPos && useBinary:
 		sig = &builtinLocate3ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3Args)
 	case hasStartPos:
 		sig = &builtinLocate3ArgsUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate3ArgsUTF8)
-	case hasBianryInput:
+	case useBinary:
 		sig = &builtinLocate2ArgsSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2Args)
 	default:
@@ -1380,7 +1460,7 @@ func (b *builtinLocate2ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str), non case-sensitive.
+// evalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1394,10 +1474,13 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if int64(len([]rune(subStr))) == 0 {
 		return 1, false, nil
 	}
-	slice := string([]rune(strings.ToLower(str)))
-	ret, idx := 0, strings.Index(slice, strings.ToLower(subStr))
+	if collate.IsCICollation(b.collation) {
+		str = strings.ToLower(str)
+		subStr = strings.ToLower(subStr)
+	}
+	ret, idx := 0, strings.Index(str, subStr)
 	if idx != -1 {
-		ret = utf8.RuneCountInString(slice[:idx]) + 1
+		ret = utf8.RuneCountInString(str[:idx]) + 1
 	}
 	return int64(ret), false, nil
 }
@@ -1453,7 +1536,7 @@ func (b *builtinLocate3ArgsUTF8Sig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// evalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -1464,6 +1547,10 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if collate.IsCICollation(b.collation) {
+		subStr = strings.ToLower(subStr)
+		str = strings.ToLower(str)
+	}
 	pos, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	// Transfer the argument which starts from 1 to real index which starts from 0.
 	pos--
@@ -1471,13 +1558,13 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, isNull, err
 	}
 	subStrLen := len([]rune(subStr))
-	if pos < 0 || pos > int64(len([]rune(strings.ToLower(str)))-subStrLen) {
+	if pos < 0 || pos > int64(len([]rune(str))-subStrLen) {
 		return 0, false, nil
 	} else if subStrLen == 0 {
 		return pos + 1, false, nil
 	}
-	slice := string([]rune(strings.ToLower(str))[pos:])
-	idx := strings.Index(slice, strings.ToLower(subStr))
+	slice := string([]rune(str)[pos:])
+	idx := strings.Index(slice, subStr)
 	if idx != -1 {
 		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
 	}
@@ -1496,15 +1583,23 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		// Use UTF-8 as default
 		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
 		bf.tp.Flen = args[0].GetType().Flen * 2
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		sig := &builtinHexIntArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexIntArg)
 		return sig, nil
@@ -1579,7 +1674,10 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = retFlen
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinUnHexSig{bf}
@@ -1633,7 +1731,10 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	switch len(args) {
 	case 1:
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -1642,7 +1743,10 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return sig, nil
 
 	case 2:
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 		argType := args[0].GetType()
 		SetBinFlagOrBinStr(argType, bf.tp)
 		sig := &builtinTrim2ArgsSig{bf}
@@ -1650,7 +1754,10 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return sig, nil
 
 	case 3:
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
 		argType := args[0].GetType()
 		bf.tp.Flen = argType.Flen
 		SetBinFlagOrBinStr(argType, bf.tp)
@@ -1774,7 +1881,10 @@ func (c *lTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
@@ -1811,7 +1921,10 @@ func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	argType := args[0].GetType()
 	bf.tp.Flen = argType.Flen
 	SetBinFlagOrBinStr(argType, bf.tp)
@@ -1882,7 +1995,10 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
@@ -1890,7 +2006,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -2012,7 +2128,10 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
@@ -2020,7 +2139,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
@@ -2141,7 +2260,10 @@ func (c *bitLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 10
 	sig := &builtinBitLengthSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_BitLength)
@@ -2182,9 +2304,33 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		argTps = append(argTps, types.ETInt)
 	}
 	argTps = append(argTps, types.ETString)
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	// The last argument represents the charset name after "using".
+	if _, ok := args[len(args)-1].(*Constant); !ok {
+		// If we got there, there must be something wrong in other places.
+		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
+		return nil, errIncorrectArgs
+	}
+	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
+	if isNull {
+		// Use the default charset binary if it is nil.
+		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
+		bf.tp.Flag |= mysql.BinaryFlag
+	} else {
+		bf.tp.Charset = charsetName
+		defaultCollate, err := charset.GetDefaultCollation(charsetName)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.Collate = defaultCollate
+	}
 	bf.tp.Flen = 4 * (len(args) - 1)
-	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinCharSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Char)
@@ -2229,33 +2375,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	// The last argument represents the charset name after "using".
-	// Use default charset utf8 if it is nil.
-	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(b.ctx, row)
-	if err != nil {
-		return "", true, err
-	}
-
 	result := string(b.convertToBytes(bigints))
-	charsetLabel := strings.ToLower(argCharset)
-	if IsNull || charsetLabel == "ascii" || strings.HasPrefix(charsetLabel, "utf8") {
-		return result, false, nil
-	}
-
-	encoding, charsetName := charset.Lookup(charsetLabel)
-	if encoding == nil {
-		return "", true, errors.Errorf("unknown encoding: %s", argCharset)
-	}
-
-	oldStr := result
-	result, _, err = transform.String(encoding.NewDecoder(), result)
-	if err != nil {
-		logutil.BgLogger().Warn("change charset of string",
-			zap.String("string", oldStr),
-			zap.String("charset", charsetName),
-			zap.Error(err))
-		return "", true, err
-	}
 	return result, false, nil
 }
 
@@ -2267,7 +2387,10 @@ func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if argsErr := c.verifyArgs(args); argsErr != nil {
 		return nil, argsErr
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	if types.IsBinaryStr(args[0].GetType()) {
 		sig := &builtinCharLengthBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CharLength)
@@ -2326,7 +2449,10 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 3
 	sig := &builtinFindInSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
@@ -2363,7 +2489,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	for i, strInSet := range strings.Split(strlist, ",") {
-		if str == strInSet {
+		if b.ctor.Compare(str, strInSet) == 0 {
 			return int64(i + 1), false, nil
 		}
 	}
@@ -2396,7 +2522,10 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i, length := 0, len(args); i < length; i++ {
 		argTps[i] = argTp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	var sig builtinFunc
 	switch argTp {
 	case types.ETReal:
@@ -2492,7 +2621,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if err != nil {
 			return 0, true, err
 		}
-		if !isNull && str == stri {
+		if !isNull && b.ctor.Compare(str, stri) == 0 {
 			return int64(i), false, nil
 		}
 	}
@@ -2535,7 +2664,10 @@ func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	for i, length := 1, len(args); i < length; i++ {
 		argTps[i] = types.ETString
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	for i, length := 0, len(args); i < length; i++ {
 		SetBinFlagOrBinStr(args[i].GetType(), bf.tp)
 	}
@@ -2593,12 +2725,20 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	var sig builtinFunc
 	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
-		bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 		bf.tp.Flen, bf.tp.Decimal = 64, types.UnspecifiedLength
 		sig = &builtinOctStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctString)
@@ -2659,7 +2799,7 @@ func (b *builtinOctStringSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil {
 		numError, ok := err.(*strconv.NumError)
 		if !ok || numError.Err != strconv.ErrRange {
-			return "", true, err
+			return "", true, errors.Trace(err)
 		}
 		overflow = true
 	}
@@ -2677,7 +2817,10 @@ func (c *ordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 10
 	sig := &builtinOrdSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Ord)
@@ -2754,7 +2897,10 @@ func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	bf.tp.Flen = 2*args[0].GetType().Flen + 2
 	if bf.tp.Flen > mysql.MaxBlobWidth {
@@ -2822,7 +2968,11 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinBinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Bin)
@@ -2862,7 +3012,10 @@ func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	for i := 1; i < len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	for _, arg := range args[1:] {
 		argType := arg.GetType()
 		if types.IsBinaryStr(argType) {
@@ -2920,7 +3073,10 @@ func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) > 4 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	switch len(args) {
 	case 3:
@@ -3083,7 +3239,11 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = mysql.MaxBlobWidth
 	var sig builtinFunc
 	if len(args) == 3 {
@@ -3210,8 +3370,10 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 	}
 	if isNull {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
-		locale = "en_US"
+	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 	}
+	locale = "en_US"
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
@@ -3245,13 +3407,16 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	types.SetBinChsClnFlag(bf.tp)
@@ -3318,13 +3483,17 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
@@ -3382,13 +3551,13 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-		return "", true, nil
+		b.tp.Flen = mysql.MaxBlobWidth
 	}
 
-	//encode
+	// encode
 	strBytes := []byte(str)
 	result := base64.StdEncoding.EncodeToString(strBytes)
-	//A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
+	// A newline is added after each 76 characters of encoded output to divide long output into multiple lines.
 	count := len(result)
 	if count > 76 {
 		resultArr := splitToSubN(result, 76)
@@ -3417,7 +3586,10 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
@@ -3425,7 +3597,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsBinaryStr(args[0].GetType()) {
@@ -3550,9 +3722,12 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 11
-	if types.IsBinaryStr(bf.args[0].GetType()) || types.IsBinaryStr(bf.args[1].GetType()) {
+	if bf.collation == charset.CollationBin {
 		sig := &builtinInstrSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
@@ -3578,20 +3753,21 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals INSTR(str,substr), case insensitive
+// evalInt evals INSTR(str,substr).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	str = strings.ToLower(str)
-
 	substr, IsNull, err := b.args[1].EvalString(b.ctx, row)
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	substr = strings.ToLower(substr)
+	if collate.IsCICollation(b.collation) {
+		str = strings.ToLower(str)
+		substr = strings.ToLower(substr)
+	}
 
 	idx := strings.Index(str, substr)
 	if idx == -1 {
@@ -3600,7 +3776,7 @@ func (b *builtinInstrUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
-// evalInt evals INSTR(str,substr), case sensitive
+// evalInt evals INSTR(str,substr), case sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
 func (b *builtinInstrSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(b.ctx, row)
@@ -3626,4 +3802,162 @@ type loadFileFunctionClass struct {
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+}
+
+type weightStringPadding byte
+
+const (
+	// weightStringPaddingNone is used for WEIGHT_STRING(expr) if the expr is non-numeric.
+	weightStringPaddingNone weightStringPadding = iota
+	// weightStringPaddingAsChar is used for WEIGHT_STRING(expr AS CHAR(x)) and the expr is non-numeric.
+	weightStringPaddingAsChar
+	// weightStringPaddingAsBinary is used for WEIGHT_STRING(expr as BINARY(x)) and the expr is not null.
+	weightStringPaddingAsBinary
+	// weightStringPaddingNull is used for WEIGHT_STRING(expr [AS (CHAR|BINARY)]) for all other cases, it returns null always.
+	weightStringPaddingNull
+)
+
+type weightStringFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringPadding, int, error) {
+	padding := weightStringPaddingNone
+	l := len(args)
+	if l != 1 && l != 3 {
+		return weightStringPaddingNone, 0, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
+	}
+	if types.IsTypeNumeric(args[0].GetType().Tp) {
+		padding = weightStringPaddingNull
+	}
+	length := 0
+	if l == 3 {
+		if args[1].GetType().EvalType() != types.ETString {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		c1, ok := args[1].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		switch x := c1.Value.GetString(); x {
+		case "CHAR":
+			if padding == weightStringPaddingNone {
+				padding = weightStringPaddingAsChar
+			}
+		case "BINARY":
+			padding = weightStringPaddingAsBinary
+		default:
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(x, c.funcName)
+		}
+		if args[2].GetType().EvalType() != types.ETInt {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+		}
+		c2, ok := args[2].(*Constant)
+		if !ok {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+		}
+		length = int(c2.Value.GetInt64())
+		if length == 0 {
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+		}
+	}
+	return padding, length, nil
+}
+
+func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	padding, length, err := c.verifyArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, len(args))
+	argTps[0] = types.ETString
+
+	if len(args) == 3 {
+		argTps[1] = types.ETString
+		argTps[2] = types.ETInt
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	var sig builtinFunc
+	if padding == weightStringPaddingNull {
+		sig = &builtinWeightStringNullSig{bf}
+	} else {
+		sig = &builtinWeightStringSig{bf, padding, length}
+	}
+	return sig, nil
+}
+
+type builtinWeightStringNullSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinWeightStringNullSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringNullSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS CHAR|BINARY]) when the expr is numeric types, it always returns null.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, error) {
+	return "", true, nil
+}
+
+type builtinWeightStringSig struct {
+	baseBuiltinFunc
+
+	padding weightStringPadding
+	length  int
+}
+
+func (b *builtinWeightStringSig) Clone() builtinFunc {
+	newSig := &builtinWeightStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.padding = b.padding
+	newSig.length = b.length
+	return newSig
+}
+
+// evalString evals a WEIGHT_STRING(expr [AS (CHAR|BINARY)]) when the expr is non-numeric types.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_weight-string
+func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", false, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+
+	var ctor collate.Collator
+	// TODO: refactor padding codes after padding is implemented by all collators.
+	switch b.padding {
+	case weightStringPaddingAsChar:
+		runes := []rune(str)
+		lenRunes := len(runes)
+		if b.length < lenRunes {
+			str = string(runes[:b.length])
+		} else if b.length > lenRunes {
+			str += strings.Repeat(" ", b.length-lenRunes)
+		}
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
+	case weightStringPaddingAsBinary:
+		lenStr := len(str)
+		if b.length < lenStr {
+			tpInfo := fmt.Sprintf("BINARY(%d)", b.length)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
+			str = str[:b.length]
+		} else if b.length > lenStr {
+			str += strings.Repeat("\x00", b.length-lenStr)
+		}
+		ctor = collate.GetCollator(charset.CollationBin)
+	case weightStringPaddingNone:
+		ctor = collate.GetCollator(b.args[0].GetType().Collate)
+	default:
+		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
+	}
+	return string(ctor.Key(str)), false, nil
 }

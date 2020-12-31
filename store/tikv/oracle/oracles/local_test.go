@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
 
@@ -26,7 +27,7 @@ func TestLocalOracle(t *testing.T) {
 	defer l.Close()
 	m := map[uint64]struct{}{}
 	for i := 0; i < 100000; i++ {
-		ts, err := l.GetTimestamp(context.Background())
+		ts, err := l.GetTimestamp(context.Background(), &oracle.Option{})
 		if err != nil {
 			t.Error(err)
 		}
@@ -43,13 +44,13 @@ func TestIsExpired(t *testing.T) {
 	defer o.Close()
 	start := time.Now()
 	oracles.SetOracleHookCurrentTime(o, start)
-	ts, _ := o.GetTimestamp(context.Background())
+	ts, _ := o.GetTimestamp(context.Background(), &oracle.Option{})
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
-	expire := o.IsExpired(uint64(ts), 5)
+	expire := o.IsExpired(ts, 5, &oracle.Option{})
 	if !expire {
 		t.Error("should expired")
 	}
-	expire = o.IsExpired(uint64(ts), 200)
+	expire = o.IsExpired(ts, 200, &oracle.Option{})
 	if expire {
 		t.Error("should not expired")
 	}
@@ -60,9 +61,9 @@ func TestLocalOracle_UntilExpired(t *testing.T) {
 	defer o.Close()
 	start := time.Now()
 	oracles.SetOracleHookCurrentTime(o, start)
-	ts, _ := o.GetTimestamp(context.Background())
+	ts, _ := o.GetTimestamp(context.Background(), &oracle.Option{})
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
-	if o.UntilExpired(uint64(ts), 5) != -5 || o.UntilExpired(uint64(ts), 15) != 5 {
+	if o.UntilExpired(ts, 5, &oracle.Option{}) != -5 || o.UntilExpired(ts, 15, &oracle.Option{}) != 5 {
 		t.Error("until expired should be +-5")
 	}
 }

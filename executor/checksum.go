@@ -233,13 +233,18 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
 	}
 
-	ranges := ranger.FullIntRange(false)
+	var ranges []*ranger.Range
+	if c.TableInfo.IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
 
 	var builder distsql.RequestBuilder
-	return builder.SetTableRanges(tableID, ranges, nil).
+	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
-		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
+		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		Build()
 }
 
@@ -255,7 +260,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
-		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency).
+		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
 		Build()
 }
 

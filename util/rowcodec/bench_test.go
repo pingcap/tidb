@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -43,7 +44,7 @@ func BenchmarkEncode(b *testing.B) {
 func BenchmarkEncodeFromOldRow(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
-	oldRowData, err := tablecodec.EncodeRow(new(stmtctx.StatementContext), oldRow, []int64{1, 2, 3}, nil, nil)
+	oldRowData, err := tablecodec.EncodeOldRow(new(stmtctx.StatementContext), oldRow, []int64{1, 2, 3}, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -74,19 +75,15 @@ func BenchmarkDecode(b *testing.B) {
 	cols := make([]rowcodec.ColInfo, len(tps))
 	for i, tp := range tps {
 		cols[i] = rowcodec.ColInfo{
-			ID:      colIDs[i],
-			Tp:      int32(tp.Tp),
-			Flag:    int32(tp.Flag),
-			Flen:    tp.Flen,
-			Decimal: tp.Decimal,
-			Elems:   tp.Elems,
+			ID: colIDs[i],
+			Ft: tp,
 		}
 	}
-	decoder := rowcodec.NewChunkDecoder(cols, -1, nil, time.Local)
+	decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
 	for i := 0; i < b.N; i++ {
 		chk.Reset()
-		err = decoder.DecodeToChunk(xRowData, 1, chk)
+		err = decoder.DecodeToChunk(xRowData, kv.IntHandle(1), chk)
 		if err != nil {
 			b.Fatal(err)
 		}

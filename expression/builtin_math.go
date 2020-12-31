@@ -21,17 +21,16 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -89,7 +88,7 @@ var (
 	_ builtinFunc = &builtinLog2Sig{}
 	_ builtinFunc = &builtinLog10Sig{}
 	_ builtinFunc = &builtinRandSig{}
-	_ builtinFunc = &builtinRandWithSeedSig{}
+	_ builtinFunc = &builtinRandWithSeedFirstGenSig{}
 	_ builtinFunc = &builtinPowSig{}
 	_ builtinFunc = &builtinConvSig{}
 	_ builtinFunc = &builtinCRC32Sig{}
@@ -127,7 +126,10 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if argTp != types.ETInt && argTp != types.ETDecimal {
 		argTp = types.ETReal
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
+	if err != nil {
+		return nil, err
+	}
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
@@ -261,7 +263,10 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if len(args) > 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	argFieldTp := args[0].GetType()
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
@@ -269,6 +274,14 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+	if bf.tp.Decimal != types.UnspecifiedLength {
+		if argFieldTp.Decimal != types.UnspecifiedLength {
+			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
+		} else {
+			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+		}
+	}
 
 	var sig builtinFunc
 	if len(args) > 1 {
@@ -468,7 +481,10 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf := newBaseBuiltinFuncWithTp(ctx, args, retTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTp)
+	if err != nil {
+		return nil, err
+	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	argFieldTp := args[0].GetType()
 	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
@@ -627,9 +643,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	retTp, argTp = types.ETInt, fieldTp.EvalType()
 	switch argTp {
 	case types.ETInt:
-		if fieldTp.Tp == mysql.TypeLonglong {
-			retTp = types.ETDecimal
-		}
+		retTp = types.ETInt
 	case types.ETDecimal:
 		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal
@@ -643,7 +657,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
 func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
-	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
 	// TODO: when argument type is timestamp, add not null flag.
@@ -655,7 +669,10 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf := newBaseBuiltinFuncWithTp(ctx, args, retTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTp)
+	if err != nil {
+		return nil, err
+	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
 	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
 	switch argTp {
@@ -816,10 +833,17 @@ func (c *logFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		argsLen = len(args)
 	)
 
+	var err error
 	if argsLen == 1 {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if argsLen == 1 {
@@ -851,6 +875,7 @@ func (b *builtinLog1ArgSig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log(val), false, nil
@@ -880,6 +905,7 @@ func (b *builtinLog2ArgsSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 
 	if val1 <= 0 || val1 == 1 || val2 <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 
@@ -894,7 +920,10 @@ func (c *log2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinLog2Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Log2)
 	return sig, nil
@@ -918,6 +947,7 @@ func (b *builtinLog2Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log2(val), false, nil
@@ -931,7 +961,10 @@ func (c *log10FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinLog10Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Log10)
 	return sig, nil
@@ -955,6 +988,7 @@ func (b *builtinLog10Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log10(val), false, nil
@@ -973,11 +1007,13 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if len(args) > 0 {
 		argTps = []types.EvalType{types.ETInt}
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	bt := bf
 	if len(args) == 0 {
-		seed := time.Now().UnixNano()
-		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -989,12 +1025,14 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			return nil, err
 		}
 		if isNull {
-			seed = time.Now().UnixNano()
+			// When the seed is null we need to use 0 as the seed.
+			// The behavior same as MySQL.
+			seed = 0
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, rand.New(rand.NewSource(seed))}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
-		sig = &builtinRandWithSeedSig{bt}
+		sig = &builtinRandWithSeedFirstGenSig{bt}
 		sig.setPbCode(tipb.ScalarFuncSig_RandWithSeedFirstGen)
 	}
 	return sig, nil
@@ -1002,12 +1040,12 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu      *sync.Mutex
-	randGen *rand.Rand
+	mu       *sync.Mutex
+	mysqlRng *MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{randGen: b.randGen, mu: b.mu}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1016,38 +1054,38 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
 	b.mu.Lock()
-	res := b.randGen.Float64()
+	res := b.mysqlRng.Gen()
 	b.mu.Unlock()
 	return res, false, nil
 }
 
-type builtinRandWithSeedSig struct {
+type builtinRandWithSeedFirstGenSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRandWithSeedSig) Clone() builtinFunc {
-	newSig := &builtinRandWithSeedSig{}
+func (b *builtinRandWithSeedFirstGenSig) Clone() builtinFunc {
+	newSig := &builtinRandWithSeedFirstGenSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
 // evalReal evals RAND(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandWithSeedSig) evalReal(row chunk.Row) (float64, bool, error) {
+func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool, error) {
 	seed, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	// b.args[0] is promised to be a non-constant(such as a column name) in
-	// builtinRandWithSeedSig, the seed is initialized with the value for each
+	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var randGen *rand.Rand
+	var rng *MysqlRng
 	if !isNull {
-		randGen = rand.New(rand.NewSource(seed))
+		rng = NewWithSeed(seed)
 	} else {
-		randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+		rng = NewWithSeed(0)
 	}
-	return randGen.Float64(), false, nil
+	return rng.Gen(), false, nil
 }
 
 type powFunctionClass struct {
@@ -1058,7 +1096,10 @@ func (c *powFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinPowSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Pow)
 	return sig, nil
@@ -1105,7 +1146,11 @@ func (c *convFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinConvSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Conv)
@@ -1125,11 +1170,25 @@ func (b *builtinConvSig) Clone() builtinFunc {
 // evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return res, isNull, err
+	var str string
+	switch x := b.args[0].(type) {
+	case *Constant:
+		if x.Value.Kind() == types.KindBinaryLiteral {
+			str = x.Value.GetBinaryLiteral().ToBitLiteralString(true)
+		}
+	case *ScalarFunction:
+		if x.FuncName.L == ast.Cast {
+			arg0 := x.GetArgs()[0]
+			if arg0.GetType().Hybrid() || IsBinaryLiteral(arg0) {
+				str, isNull, err = arg0.EvalString(b.ctx, row)
+				if isNull || err != nil {
+					return str, isNull, err
+				}
+				d := types.NewStringDatum(str)
+				str = d.GetBinaryLiteral().ToBitLiteralString(true)
+			}
+		}
 	}
-
 	fromBase, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1138,6 +1197,17 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 	toBase, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	if len(str) == 0 {
+		str, isNull, err = b.args[0].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, err
+		}
+	} else {
+		str, isNull, err = b.conv(str[2:], 2, fromBase)
+		if err != nil {
+			return str, isNull, err
+		}
 	}
 	return b.conv(str, fromBase, toBase)
 }
@@ -1212,7 +1282,10 @@ func (c *crc32FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flen = 10
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinCRC32Sig{bf}
@@ -1249,7 +1322,10 @@ func (c *signFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinSignSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Sign)
 	return sig, nil
@@ -1289,7 +1365,10 @@ func (c *sqrtFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinSqrtSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Sqrt)
 	return sig, nil
@@ -1326,7 +1405,10 @@ func (c *acosFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinAcosSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Acos)
 	return sig, nil
@@ -1364,7 +1446,10 @@ func (c *asinFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinAsinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Asin)
 	return sig, nil
@@ -1409,10 +1494,17 @@ func (c *atanFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		argsLen = len(args)
 	)
 
+	var err error
 	if argsLen == 1 {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if argsLen == 1 {
@@ -1481,7 +1573,10 @@ func (c *cosFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinCosSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Cos)
 	return sig, nil
@@ -1515,7 +1610,10 @@ func (c *cotFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinCotSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Cot)
 	return sig, nil
@@ -1557,7 +1655,10 @@ func (c *degreesFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinDegreesSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Degrees)
 	return sig, nil
@@ -1592,7 +1693,10 @@ func (c *expFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinExpSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Exp)
 	return sig, nil
@@ -1636,7 +1740,11 @@ func (c *piFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig builtinFunc
 	)
 
-	bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETReal)
+	var err error
+	bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Decimal = 6
 	bf.tp.Flen = 8
 	sig = &builtinPISig{bf}
@@ -1668,7 +1776,10 @@ func (c *radiansFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinRadiansSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Radians)
 	return sig, nil
@@ -1702,7 +1813,10 @@ func (c *sinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinSinSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Sin)
 	return sig, nil
@@ -1736,7 +1850,10 @@ func (c *tanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinTanSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Tan)
 	return sig, nil
@@ -1776,7 +1893,10 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTp = types.ETReal
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
 	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
@@ -1878,6 +1998,9 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -1886,6 +2009,10 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
@@ -1908,6 +2035,9 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -1916,6 +2046,10 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil

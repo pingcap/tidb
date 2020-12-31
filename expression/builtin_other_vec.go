@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -154,11 +155,11 @@ func (b *builtinGetParamStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (b *builtinSetVarSig) vectorized() bool {
+func (b *builtinSetStringVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -180,6 +181,7 @@ func (b *builtinSetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	sessionVars := b.ctx.GetSessionVars()
 	sessionVars.UsersLock.Lock()
 	defer sessionVars.UsersLock.Unlock()
+	_, collation := sessionVars.GetCharsetInfo()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
@@ -187,8 +189,128 @@ func (b *builtinSetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetString(i)
-		sessionVars.Users[varName] = stringutil.Copy(res)
+		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen)
 		result.AppendString(res)
+	}
+	return nil
+}
+
+func (b *builtinSetIntVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		res := buf1.GetInt64(i)
+		sessionVars.Users[varName] = types.NewIntDatum(res)
+		i64s[i] = res
+	}
+	return nil
+}
+
+func (b *builtinSetRealVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeFloat64(n, false)
+	f64s := result.Float64s()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		res := buf1.GetFloat64(i)
+		sessionVars.Users[varName] = types.NewFloat64Datum(res)
+		f64s[i] = res
+	}
+	return nil
+}
+
+func (b *builtinSetDecimalVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETDecimal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalDecimal(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	decs := result.Decimals()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		res := buf1.GetDecimal(i)
+		sessionVars.Users[varName] = types.NewDecimalDatum(res)
+		decs[i] = *res
 	}
 	return nil
 }
@@ -201,11 +323,11 @@ func (b *builtinValuesDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 	return errors.Errorf("not implemented")
 }
 
-func (b *builtinGetVarSig) vectorized() bool {
+func (b *builtinGetStringVarSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -226,10 +348,112 @@ func (b *builtinGetVarSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.Users[varName]; ok {
-			result.AppendString(v)
+			result.AppendString(v.GetString())
 			continue
 		}
 		result.AppendNull()
+	}
+	return nil
+}
+
+func (b *builtinGetIntVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(buf0)
+	i64s := result.Int64s()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		if v, ok := sessionVars.Users[varName]; ok {
+			i64s[i] = v.GetInt64()
+			continue
+		}
+		result.SetNull(i, true)
+	}
+	return nil
+}
+
+func (b *builtinGetRealVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	result.ResizeFloat64(n, false)
+	result.MergeNulls(buf0)
+	f64s := result.Float64s()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		if v, ok := sessionVars.Users[varName]; ok {
+			f64s[i] = v.GetFloat64()
+			continue
+		}
+		result.SetNull(i, true)
+	}
+	return nil
+}
+
+func (b *builtinGetDecimalVarSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf0)
+	decs := result.Decimals()
+	sessionVars := b.ctx.GetSessionVars()
+	sessionVars.UsersLock.Lock()
+	defer sessionVars.UsersLock.Unlock()
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		varName := strings.ToLower(buf0.GetString(i))
+		if v, ok := sessionVars.Users[varName]; ok {
+			decs[i] = *v.GetMysqlDecimal()
+			continue
+		}
+		result.SetNull(i, true)
 	}
 	return nil
 }

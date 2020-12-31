@@ -27,9 +27,6 @@ type Implementation interface {
 	// AttachChildren is used to attach children implementations and returns it self.
 	AttachChildren(children ...Implementation) Implementation
 
-	// ScaleCostLimit scales costLimit by the Implementation's concurrency factor.
-	// Implementation like TiKVSingleGather may divide the cost by its scan concurrency,
-	// so when we pass the costLimit for pruning the search space, we have to scale
-	// the costLimit by its concurrency factor.
-	ScaleCostLimit(costLimit float64) float64
+	// GetCostLimit gets the costLimit for implementing the next childGroup.
+	GetCostLimit(costLimit float64, children ...Implementation) float64
 }

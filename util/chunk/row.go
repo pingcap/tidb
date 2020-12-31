@@ -14,12 +14,11 @@
 package chunk
 
 import (
-	"unsafe"
+	"strconv"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // Row represents a row of data, can be used to access values.
@@ -89,14 +88,7 @@ func (r Row) GetDuration(colIdx int, fillFsp int) types.Duration {
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	if start == end {
-		return "", 0
-	}
-	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
-	name := string(hack.String(col.data[start+8 : end]))
-	return name, val
+	return r.c.columns[colIdx].getNameValue(r.idx)
 }
 
 // GetEnum returns the Enum value with the colIdx.
@@ -156,8 +148,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetFloat64(r.GetFloat64(colIdx))
 		}
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString:
+		if !r.IsNull(colIdx) {
+			d.SetString(r.GetString(colIdx), tp.Collate)
+		}
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		if !r.IsNull(colIdx) {
 			d.SetBytes(r.GetBytes(colIdx))
 		}
@@ -186,11 +181,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx))
+			d.SetMysqlEnum(r.GetEnum(colIdx), tp.Collate)
 		}
 	case mysql.TypeSet:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx))
+			d.SetMysqlSet(r.GetSet(colIdx), tp.Collate)
 		}
 	case mysql.TypeBit:
 		if !r.IsNull(colIdx) {
@@ -219,4 +214,47 @@ func (r Row) CopyConstruct() Row {
 	newChk := renewWithCapacity(r.c, 1, 1)
 	newChk.AppendRow(r)
 	return newChk.GetRow(0)
+}
+
+// ToString returns all the values in a row.
+func (r Row) ToString(ft []*types.FieldType) string {
+	var buf []byte
+	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
+		if r.IsNull(colIdx) {
+			buf = append(buf, "nil, "...)
+			continue
+		}
+		switch ft[colIdx].EvalType() {
+		case types.ETInt:
+			buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
+		case types.ETString:
+			switch ft[colIdx].Tp {
+			case mysql.TypeEnum:
+				buf = append(buf, r.GetEnum(colIdx).String()...)
+			case mysql.TypeSet:
+				buf = append(buf, r.GetSet(colIdx).String()...)
+			default:
+				buf = append(buf, r.GetString(colIdx)...)
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			buf = append(buf, r.GetTime(colIdx).String()...)
+		case types.ETDecimal:
+			buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
+		case types.ETDuration:
+			buf = append(buf, r.GetDuration(colIdx, ft[colIdx].Decimal).String()...)
+		case types.ETJson:
+			buf = append(buf, r.GetJSON(colIdx).String()...)
+		case types.ETReal:
+			switch ft[colIdx].Tp {
+			case mysql.TypeFloat:
+				buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
+			case mysql.TypeDouble:
+				buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
+			}
+		}
+		if colIdx != r.Chunk().NumCols()-1 {
+			buf = append(buf, ", "...)
+		}
+	}
+	return string(buf)
 }

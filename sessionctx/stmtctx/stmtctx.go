@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/parser"
@@ -37,6 +38,13 @@ const (
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
 	WarnLevelNote = "Note"
 )
+
+var taskIDAlloc uint64
+
+// AllocateTaskID allocates a new unique ID for a statement execution
+func AllocateTaskID() uint64 {
+	return atomic.AddUint64(&taskIDAlloc, 1)
+}
 
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn struct {
@@ -59,6 +67,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -71,6 +80,7 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -137,25 +147,46 @@ type StatementContext struct {
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            string
+	encodedPlan           string
+	planHint              string
 	Tables                []TableEntry
-	PointExec             bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
-	LockKeysDuration      time.Duration
+	LockKeysDuration      int64
+	LockKeysCount         int32
+	TblInfo2UnionScan     map[*model.TableInfo]bool
+	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
 }
 
 // StmtHints are SessionVars related sql hints.
 type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
+	ApplyCacheCapacity      int64
+	MaxExecutionTime        uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	// EnableCascadesPlanner is use cascades planner for a single query only.
+	EnableCascadesPlanner bool
+	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
+	// -1 for disable.
+	ForceNthPlan int64
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
+	HasMaxExecutionTime            bool
+	HasEnableCascadesPlannerHint   bool
+	SetVars                        map[string]string
+}
+
+// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
+func (sh *StmtHints) TaskMapNeedBackUp() bool {
+	return sh.ForceNthPlan != -1
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -182,6 +213,13 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
 
+// InitSQLDigest sets the normalized and digest for sql.
+func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+	sc.digestMemo.Do(func() {
+		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
+	})
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 	return sc.planNormalized, sc.planDigest
@@ -190,6 +228,26 @@ func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
 	sc.planNormalized, sc.planDigest = normalized, planDigest
+}
+
+// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) GetEncodedPlan() string {
+	return sc.encodedPlan
+}
+
+// SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
+	sc.encodedPlan = encodedPlan
+}
+
+// GetPlanHint gets the hint string generated from the plan.
+func (sc *StatementContext) GetPlanHint() string {
+	return sc.planHint
+}
+
+// SetPlanHint sets the hint for the plan.
+func (sc *StatementContext) SetPlanHint(hint string) {
+	sc.planHint = hint
 }
 
 // TableEntry presents table in db.
@@ -312,6 +370,20 @@ func (sc *StatementContext) GetWarnings() []SQLWarn {
 	return warns
 }
 
+// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sz := len(sc.mu.warnings) - start
+	if sz <= 0 {
+		return nil
+	}
+	ret := make([]SQLWarn, sz)
+	copy(ret, sc.mu.warnings[start:])
+	sc.mu.warnings = sc.mu.warnings[:start]
+	return ret
+}
+
 // WarningCount gets warning count.
 func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
@@ -349,6 +421,15 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendWarnings appends some warnings.
+func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, warns...)
 	}
 	sc.mu.Unlock()
 }
@@ -428,22 +509,57 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.BaseRowID = 0
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
+	sc.TaskID = AllocateTaskID()
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if details != nil {
-		sc.mu.execDetails.ProcessTime += details.ProcessTime
-		sc.mu.execDetails.WaitTime += details.WaitTime
+		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.MergeScanDetail(details.ScanDetail)
+		sc.MergeTimeDetail(details.TimeDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
-	sc.mu.execDetails.CommitDetail = commitDetails
+	if commitDetails != nil {
+		if sc.mu.execDetails.CommitDetail == nil {
+			sc.mu.execDetails.CommitDetail = commitDetails
+		} else {
+			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
+}
+
+// MergeScanDetail merges scan details into self.
+func (sc *StatementContext) MergeScanDetail(scanDetail *execdetails.ScanDetail) {
+	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
+	if scanDetail == nil {
+		return
+	}
+	if sc.mu.execDetails.ScanDetail == nil {
+		sc.mu.execDetails.ScanDetail = &execdetails.ScanDetail{}
+	}
+	sc.mu.execDetails.ScanDetail.Merge(scanDetail)
+}
+
+// MergeTimeDetail merges time details into self.
+func (sc *StatementContext) MergeTimeDetail(timeDetail execdetails.TimeDetail) {
+	sc.mu.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
+	sc.mu.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
+}
+
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
 	sc.mu.Unlock()
 }
 
@@ -452,18 +568,16 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
-	details.LockKeysDuration = sc.LockKeysDuration
+	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	sc.mu.Unlock()
 	return details
 }
 
 // ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table` and `load data infile` statements, when not in strict SQL mode.
+// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
 func (sc *StatementContext) ShouldClipToZero() bool {
-	// TODO: Currently altering column of integer to unsigned integer is not supported.
-	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
@@ -522,21 +636,21 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	if n == 0 {
 		return d
 	}
-	d.AvgProcessTime = sc.mu.execDetails.ProcessTime / time.Duration(n)
-	d.AvgWaitTime = sc.mu.execDetails.WaitTime / time.Duration(n)
+	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
+	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].ProcessTime < sc.mu.allExecDetails[j].ProcessTime
+		return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
 	})
-	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].ProcessTime
-	d.MaxProcessTime = sc.mu.allExecDetails[n-1].ProcessTime
+	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
+	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].WaitTime < sc.mu.allExecDetails[j].WaitTime
+		return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
 	})
-	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].WaitTime
-	d.MaxWaitTime = sc.mu.allExecDetails[n-1].WaitTime
+	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
+	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
 	d.MaxWaitAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
 	// calculate backoff details
@@ -593,14 +707,15 @@ func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
 func (sc *StatementContext) GetLockWaitStartTime() time.Time {
-	if sc.lockWaitStartTime == nil {
-		curTime := time.Now()
-		sc.lockWaitStartTime = &curTime
+	startTime := atomic.LoadInt64(&sc.lockWaitStartTime)
+	if startTime == 0 {
+		startTime = time.Now().UnixNano()
+		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
-	return *sc.lockWaitStartTime
+	return time.Unix(0, startTime)
 }
 
-//CopTasksDetails collects some useful information of cop-tasks during execution.
+// CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
 
