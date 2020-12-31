@@ -152,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -164,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
@@ -373,6 +373,8 @@ const (
 	showStatement
 	globalOrderByClause
 	expressionClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -386,6 +388,8 @@ var clauseMsg = map[clauseCode]string{
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -458,6 +462,13 @@ type PlanBuilder struct {
 
 	// isSampling indicates whether the query is sampling.
 	isSampling bool
+
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
+	cachedResultSetNodes  map[*ast.Join]LogicalPlan
+	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 }
 
 type handleColHelper struct {
@@ -563,11 +574,14 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor: processor,
+		ctx:                   sctx,
+		is:                    is,
+		colMapper:             make(map[*ast.ColumnNameExpr]int),
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:         processor,
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
 	}, savedBlockNames
 }
 
@@ -1262,7 +1276,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}
@@ -2961,6 +2975,9 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
 		if err != nil {
 			return nil, err
+		}
+		if convertedDatum.IsNull() {
+			return nil, ErrBadNull.GenWithStackByArgs(handleColInfos[i].Name.O)
 		}
 		data = append(data, convertedDatum)
 	}

@@ -2697,6 +2697,8 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 
 func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_table_partition=nightly")
+	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition NIGHTLY"))
 	tk.MustExec("set tidb_enable_table_partition=off")
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition OFF"))
 
@@ -3270,7 +3272,6 @@ func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
 		return
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)
@@ -3284,115 +3285,136 @@ PARTITION BY RANGE (c) (
 	is.MockBundles(bundles)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-	for _, def := range partDefs {
-		if def.Name.String() == "p0" {
-			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"dc-1"},
-							},
+	setBundle := func(parName, dc string) {
+		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
+		c.Assert(err, IsNil)
+		groupID := placement.GroupID(pid)
+		oldBundle := &placement.Bundle{
+			ID: groupID,
+			Rules: []*placement.Rule{
+				{
+					GroupID: groupID,
+					Role:    placement.Leader,
+					Count:   1,
+					LabelConstraints: []placement.LabelConstraint{
+						{
+							Key:    placement.DCLabelKey,
+							Op:     placement.In,
+							Values: []string{dc},
 						},
 					},
 				},
-			}
-		} else if def.Name.String() == "p1" {
-			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"dc-2"},
-							},
-						},
-					},
-				},
-			}
-
+			},
 		}
+		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
 	}
+	setBundle("p0", "dc-1")
+	setBundle("p1", "dc-2")
 
 	// set txn_scope to global
 	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", oracle.GlobalTxnScope))
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-	// test global txn
-	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with global scope
-	result = tk.MustQuery("select * from t1")
+
+	// test global txn auto commit
+	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
+	result = tk.MustQuery("select * from t1")    // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 1)
+
+	// begin and commit with global txn scope
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, oracle.GlobalTxnScope)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
-	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with global scope
-	result = tk.MustQuery("select * from t1")
+	tk.MustExec("insert into t1 (c) values (1)") // write dc-1 with global scope
+	result = tk.MustQuery("select * from t1")    // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
 	result = tk.MustQuery("select * from t1")
 	c.Assert(len(result.Rows()), Equals, 2)
-	tk.MustExec("insert into t1 (c) values (101)") // in dc-2 with global scope
+
+	// begin and rollback with global txn scope
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, oracle.GlobalTxnScope)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
+	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("rollback")
 	result = tk.MustQuery("select * from t1")
+	c.Assert(len(result.Rows()), Equals, 2)
+
+	tk.MustExec("insert into t1 (c) values (101)") // write dc-2 with global scope
+	result = tk.MustQuery("select * from t1")      // read dc-1 and dc-2 with global scope
 	c.Assert(len(result.Rows()), Equals, 3)
 
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'dc-1';")
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows("dc-1"))
-	// test local txn
-	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 4)
+
+	// test local txn auto commit
+	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 3)
+
+	// begin and commit with dc-1 txn scope
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
-	tk.MustExec("insert into t1 (c) values (1)") // in dc-1 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 4)
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 4)
 
-	// test wrong scope local txn
-	_, err = tk.Exec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
-	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	// begin and rollback with dc-1 txn scope
 	tk.MustExec("begin")
 	txn, err = tk.Se.Txn(true)
 	c.Assert(err, IsNil)
-	c.Assert(txn.GetUnionStore().GetOption(kv.TxnScope), Equals, "dc-1")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
 	c.Assert(txn.Valid(), IsTrue)
-	tk.MustExec("insert into t1 (c) values (101)") // in dc-2 with dc-1 scope
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 6)
+	tk.MustExec("insert into t1 (c) values (1)")            // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 5)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("rollback")
+	result = tk.MustQuery("select * from t1 where c < 100")
+	c.Assert(len(result.Rows()), Equals, 4)
+
+	// test wrong scope local txn auto commit
+	_, err = tk.Exec("insert into t1 (c) values (101)") // write dc-2 with dc-1 scope
+	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+
+	// begin and commit reading & writing the data in dc-2 with dc-1 txn scope
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.TxnScope, Equals, "dc-1")
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("insert into t1 (c) values (101)")       // write dc-2 with dc-1 scope
+	err = tk.ExecToErr("select * from t1 where c > 100") // read dc-2 with dc-1 scope
+	c.Assert(err.Error(), Matches, ".*can not be read by.*")
+	tk.MustExec("insert into t1 (c) values (99)")           // write dc-1 with dc-1 scope
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(txn.Valid(), IsTrue)
 	_, err = tk.Exec("commit")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
 	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
-	result = tk.MustQuery("select * from t1")
-	c.Assert(len(result.Rows()), Equals, 5)
+	// Won't read the value 99 because the previous commit failed
+	result = tk.MustQuery("select * from t1 where c < 100") // read dc-1 with dc-1 scope
+	c.Assert(len(result.Rows()), Equals, 4)
 }
 
 func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
@@ -3827,4 +3849,19 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
+}
+
+func (s *testSessionSerialSuite) TestIssue21944(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk1.Exec("set @@tidb_current_ts=1;")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
+}
+
+func (s *testSessionSerialSuite) TestIssue21943(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk.Exec("set @@last_plan_from_binding='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_binding' is a read only variable")
+
+	_, err = tk.Exec("set @@last_plan_from_cache='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }

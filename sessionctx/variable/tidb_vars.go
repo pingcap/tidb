@@ -51,6 +51,14 @@ const (
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
+	// tidb_broadcast_join_threshold_size is used to limit the size of small table for mpp broadcast join.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
+	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
+
+	// tidb_broadcast_join_threshold_count is used to limit the count of small table for mpp broadcast join.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
+	TiDBBCJThresholdCount = "tidb_broadcast_join_threshold_count"
+
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
 	TiDBOptWriteRowID = "tidb_opt_write_row_id"
 
@@ -72,6 +80,9 @@ const (
 
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
+
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -134,8 +145,9 @@ const (
 	TiDBRowFormatVersion = "tidb_row_format_version"
 
 	// tidb_enable_table_partition is used to control table partition feature.
-	// The valid value include auto/on/off:
-	// on or auto: enable table partition if the partition type is implemented.
+	// The valid value include auto/on/off/nightly:
+	// on or auto: enable range/hash partition table.
+	// nightly: enable table partition if the partition type is implemented.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
@@ -355,6 +367,9 @@ const (
 	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
+	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -496,6 +511,9 @@ const (
 	// TiDBAnalyzeVersion indicates the how tidb collects the analyzed statistics and how use to it.
 	TiDBAnalyzeVersion = "tidb_analyze_version"
 
+	// TiDBEnableIndexMergeJoin indicates whether to enable index merge join.
+	TiDBEnableIndexMergeJoin = "tidb_enable_index_merge_join"
+
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 )
@@ -559,6 +577,8 @@ const (
 	DefTiDBConstraintCheckInPlace       = false
 	DefTiDBHashJoinConcurrency          = ConcurrencyUnset
 	DefTiDBProjectionConcurrency        = ConcurrencyUnset
+	DefBroadcastJoinThresholdSize       = 100 * 1024 * 1024
+	DefBroadcastJoinThresholdCount      = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel    = 0
 	DefTiDBAllowBatchCop                = 1
 	DefTiDBAllowMPPExecution            = false
@@ -572,6 +592,7 @@ const (
 	DefTiDBChangeColumnType             = false
 	DefTiDBChangeMultiSchema            = false
 	DefTiDBPointGetCache                = false
+	DefTiDBEnableAlterPlacement         = false
 	DefTiDBHashAggPartialConcurrency    = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency      = ConcurrencyUnset
 	DefTiDBWindowConcurrency            = ConcurrencyUnset
@@ -617,6 +638,7 @@ const (
 	DefTiDBEnable1PC                    = false
 	DefTiDBGuaranteeExternalConsistency = false
 	DefTiDBAnalyzeVersion               = 1
+	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
 )
 
@@ -644,3 +666,16 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
+
+// FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
+var FeatureSwitchVariables = []string{TiDBEnableChangeColumnType, TiDBEnablePointGetCache, TiDBEnableAlterPlacement, TiDBEnableChangeMultiSchema}
+
+// FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
+func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
+	for _, one := range FeatureSwitchVariables {
+		if one == sysVar.Name {
+			return true
+		}
+	}
+	return false
+}
