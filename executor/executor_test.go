@@ -7440,7 +7440,7 @@ func (s *testSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, `.*only support read only statement during read only time-bounded transaction.*`)
+			c.Assert(err.Error(), Matches, `.*only support read only statement during time-bounded read only transaction.*`)
 		}
 	}
 }
