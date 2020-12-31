@@ -477,7 +477,10 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(alterUserSQL)
 	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
 
-	tk.MustExec("create user `\ntest\n`@\nlocalhost\n`;")
+	tk.MustExec("create user `\ntest\n`@`\nlocalhost\n`;")
+	tk.MustQuery(`select user, host from mysql.user where user = 'test';`).Check(testkit.Rows("test localhost"))
+
+	tk.MustExec("create role `\ntestrole\n`@`\nlocalhost\n`;")
 	tk.MustQuery(`select user, host from mysql.user where user = 'test';`).Check(testkit.Rows("test localhost"))
 }
 
