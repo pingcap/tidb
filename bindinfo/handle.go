@@ -448,9 +448,6 @@ func (h *BindHandle) Size() int {
 
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
 func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	if record := h.bindInfo.Load().(cache).getBindRecordWithDB(hash, normdOrigSQL, db); record != nil {
-		return record
-	}
 	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
 }
 
@@ -568,24 +565,18 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 	return newMap
 }
 
-func (c cache) getBindRecordWithDB(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := c[hash]
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
-			return bindRecord
-		}
-	}
-	return nil
-}
-
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
+	var record *BindRecord
 	for _, bindRecord := range bindRecords {
 		if bindRecord.OriginalSQL == normdOrigSQL {
-			return bindRecord
+			if bindRecord.Db == db {
+				return bindRecord
+			}
+			record = bindRecord
 		}
 	}
-	return nil
+	return record
 }
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
