@@ -145,8 +145,8 @@ type TransactionContext struct {
 	shardRand    *rand.Rand
 
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistias updating.
-	// Note: for the partitionted table, it stores all the partition IDs.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
