@@ -141,7 +141,7 @@ add placement policy
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*missing the ROLE=xx field.*")
+	c.Assert(err, ErrorMatches, ".*ROLE is not specified.*")
 
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
