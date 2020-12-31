@@ -69,6 +69,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			output: []*placement.Rule{{
 				Role:  placement.Voter,
 				Count: 3,
+				LabelConstraints: []placement.LabelConstraint{},
 			}},
 		},
 
