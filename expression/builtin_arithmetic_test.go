@@ -598,8 +598,14 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		switch sig.(type) {
 		case *builtinArithmeticModRealSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModReal)
-		case *builtinArithmeticModIntSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModInt)
+		case *builtinArithmeticModIntUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedUnsigned)
+		case *builtinArithmeticModIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntUnsignedSigned)
+		case *builtinArithmeticModIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedUnsigned)
+		case *builtinArithmeticModIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModIntSignedSigned)
 		case *builtinArithmeticModDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_ModDecimal)
 		}
