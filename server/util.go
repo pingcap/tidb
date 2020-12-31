@@ -308,14 +308,14 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeFloat:
 			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
 			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
@@ -371,9 +371,9 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	}
 	isEFormat := false
 	if bitSize == 32 {
-		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
 	} else {
-		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
 	}
 	var out []byte
 	if isEFormat {

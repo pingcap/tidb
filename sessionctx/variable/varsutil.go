@@ -126,6 +126,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
@@ -285,8 +291,7 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply:
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	}
 }

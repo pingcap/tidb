@@ -1301,6 +1301,21 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	sessVars := se.sessionVars
+
+	// Record diagnostic information for DML statements
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
+		defer func() {
+			sessVars.LastQueryInfo = variable.QueryInfo{
+				TxnScope:    sessVars.TxnScope,
+				StartTS:     sessVars.TxnCtx.StartTS,
+				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+			}
+			if err != nil {
+				sessVars.LastQueryInfo.ErrMsg = err.Error()
+			}
+		}()
+	}
+
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
@@ -1309,21 +1324,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				se.StmtRollback()
-			} else {
-				se.StmtCommit()
-			}
-		}
-	}
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
@@ -1623,7 +1623,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		txnScope := s.GetSessionVars().TxnCtx.TxnScope
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1651,6 +1651,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.sessionVars.CheckAndGetTxnScope(),
 	}
 	return nil
 }
@@ -1893,6 +1894,21 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 	return 32 << 30, nil
 }
 
+func loadDefOOMAction(se *session) (string, error) {
+	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return config.GetGlobalConfig().OOMAction, nil
+		}
+		return config.GetGlobalConfig().OOMAction, err
+	}
+	if defOOMAction != config.OOMActionLog {
+		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
+			zap.String("value", defOOMAction))
+	}
+	return defOOMAction, nil
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 )
@@ -1973,6 +1989,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
 		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+	}
+	newOOMAction, err := loadDefOOMAction(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsOOMActionSetByUser {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = newOOMAction
+		})
 	}
 
 	dom := domain.GetDomain(se)
@@ -2132,8 +2157,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 }
 
 const (
-	notBootstrapped         = 0
-	currentBootstrapVersion = version56
+	notBootstrapped = 0
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2263,6 +2287,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowBatchCop,
 	variable.TiDBAllowMPPExecution,
 	variable.TiDBOptBCJ,
+	variable.TiDBBCJThresholdSize,
+	variable.TiDBBCJThresholdCount,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
@@ -2274,6 +2300,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2283,13 +2310,20 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
+	variable.TiDBEnableAlterPlacement,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
+	variable.TiDBEnableIndexMergeJoin,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (
@@ -2372,6 +2406,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().CheckAndGetTxnScope(),
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2414,7 +2449,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+	txn, err := s.store.BeginWithStartTS(s.GetSessionVars().CheckAndGetTxnScope(), startTS)
 	if err != nil {
 		return err
 	}
@@ -2511,7 +2546,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}

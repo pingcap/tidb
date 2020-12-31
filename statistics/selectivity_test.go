@@ -147,7 +147,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear4Test()
+	do.StatsHandle().Clear()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
@@ -606,6 +606,7 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")

@@ -65,7 +65,7 @@ Another solution for implement invisible indexes is: Indicate invisibility by DD
 
 ## Compatibility and Migration Plan
 
-This the a new feature and it's absolutly compatible with old TiDB versions, also, it does not impact any data migration.
+This the a new feature and it's absolutely compatible with old TiDB versions, also, it does not impact any data migration.
 The syntax and functions are basically compatible with MySQL expect:
 
 	When use invisible index in `SQL Hint`, and set `use_invisible_indexes = false`, MySQL allow use the invisible index.
@@ -76,7 +76,7 @@ The syntax and functions are basically compatible with MySQL expect:
 - Add syntax support in parser
 - Add a new column `IS_VISIBLE` in `information_schema.statistics`
 - Add a new column `VISIBLE` in `SHOW INDEX FROM table` statement
-- Show invisiable column infomations in `SHOW CREATE TABLE` statement
+- Show invisible column information in `SHOW CREATE TABLE` statement
 - Add `use_invisible_indexes` in system variable `@@optimizer_switch`
 - Add new error message `ERROR 3522 (HY000): A primary key index cannot be invisible`
 - Ignore invisible index in optimizer and add unit tests
