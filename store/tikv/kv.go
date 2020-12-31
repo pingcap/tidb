@@ -345,6 +345,14 @@ func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transa
 	return txn, nil
 }
 
+func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn, nil
+}
+
 func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
 	return snapshot
@@ -416,6 +424,19 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint6
 			return startTS, nil
 		}
 		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+}
+
+func (s *tikvStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
+	for {
+		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, txnScope, prevSec)
+		if err == nil {
+			return startTS, nil
+		}
+		err = bo.Backoff(BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
