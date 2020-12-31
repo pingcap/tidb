@@ -193,6 +193,7 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	// SysSchemaName is the `sys` database name.
 	SysSchemaName = model.NewCIStr("sys")
 )
 

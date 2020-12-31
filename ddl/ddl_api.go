@@ -1956,7 +1956,6 @@ func BuildTableInfoFromCreateViewAST(s *ast.CreateViewStmt) (*model.TableInfo, e
 			})
 		}
 	}
-	//s.Cols = make([]model.CIStr, len(schemaCols))
 	tblInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, mysql.DefaultCharset, "")
 	if err != nil {
 		return nil, err

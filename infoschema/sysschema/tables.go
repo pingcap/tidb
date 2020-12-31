@@ -14,7 +14,6 @@
 package sysschema
 
 import (
-	"fmt"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -54,20 +53,14 @@ func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table
 }
 
 func createSysTable(meta *model.TableInfo) *sysTable {
-	fmt.Println("[LEN]", len(meta.Columns))
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
-		fmt.Println("[col]", col)
-		fmt.Println("[colInfo]", colInfo)
 		columns = append(columns, col)
 	}
-	// TODO: Need Check
-	// tp := table.VirtualTable
 	t := &sysTable{
 		meta: meta,
 		cols: columns,
-		//tp: tp,
 	}
 	return t
 }

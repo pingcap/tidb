@@ -88,10 +88,6 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 		return true
 	}
 
-	fmt.Println("[user]", user)
-	fmt.Println("[db]", db)
-	fmt.Println("[table]", table)
-	fmt.Println("[column]", column)
 	if user == nil {
 		return false
 	}
@@ -101,10 +97,8 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
 		return true
 	}
+	// Skip check for sys database.
 	if strings.EqualFold(db, "sys") {
-		return true
-	}
-	if strings.EqualFold(table, "schema_index_usage") {
 		return true
 	}
 

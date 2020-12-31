@@ -40,12 +40,10 @@ func Init() {
 			if err != nil {
 				panic(err)
 			}
-			fmt.Printf("[stmt] %T", stmt)
 			meta, err := ddl.BuildTableInfoFromCreateViewAST(stmt.(*ast.CreateViewStmt))
 			if err != nil {
 				panic(err)
 			}
-			fmt.Println("[meta.]", len(meta.Columns))
 			tbls = append(tbls, meta)
 			var ok bool
 			meta.ID, ok = tableIDMap[meta.Name.O]
