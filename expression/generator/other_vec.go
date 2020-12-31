@@ -150,7 +150,6 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		{{- if $InputString }}
 			collator := collate.GetCollator(b.collation)
 		{{- end }}
-		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -205,7 +204,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	}
 	{{- end }}
 
+	{{- if not $InputJSON}}
+	for _, j := range b.nonConstArgsIdx {
+	{{- else }}
 	for j := 1; j < len(args); j++ {
+	{{- end }}
 		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}
