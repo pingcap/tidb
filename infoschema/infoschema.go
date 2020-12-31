@@ -57,7 +57,7 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
-	// SetBundle is only used for TEST
+	// SetBundle is used internally to update rule bundles or mock tests.
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
