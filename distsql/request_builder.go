@@ -271,11 +271,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
 		builder.txnScope = oracle.GlobalTxnScope
 	}
-<<<<<<< HEAD
 	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
-=======
-	if builder.txnScope == oracle.GlobalTxnScope {
->>>>>>> ddl: introduce new rule cache api
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -288,14 +284,8 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		}
 	}
 
-<<<<<<< HEAD
-	bundles := builder.is.RuleBundles()
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, bundles)
-=======
-	for tableID := range visitTableID {
-		valid := VerifyTxnScope(builder.txnScope, tableID, builder.is)
->>>>>>> ddl: introduce new rule cache api
+		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
