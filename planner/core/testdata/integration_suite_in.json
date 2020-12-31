@@ -242,5 +242,11 @@
       "explain select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2",
       "explain select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c'"
     ]
+  },
+  {
+    "name": "TestIssue22105",
+    "cases": [
+      "explain SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)"
+    ]
   }
 ]

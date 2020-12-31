@@ -1766,6 +1766,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
+	sc.IgnoreNoPartition = stmt.IgnoreErr
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
