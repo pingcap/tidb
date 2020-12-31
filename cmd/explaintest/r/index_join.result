@@ -18,6 +18,7 @@ IndexJoin_18	5.00	root		inner join, inner:IndexLookUp_17, outer key:test.t2.a, i
   └─TableRowIDScan_15(Probe)	5.00	cop[tikv]	table:t1	keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection_6	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
 └─HashJoin_23	5.00	root		inner join, equal:[eq(test.t2.a, test.t1.a)]
   ├─TableReader_34(Build)	1.00	root		data:Selection_33
@@ -26,6 +27,16 @@ Projection_6	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
   └─TableReader_40(Probe)	5.00	root		data:Selection_39
     └─Selection_39	5.00	cop[tikv]		not(isnull(test.t1.a))
       └─TableFullScan_38	5.00	cop[tikv]	table:t1	keep order:false
+=======
+Projection_8	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
+└─HashJoin_39	5.00	root		inner join, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader_50(Build)	1.00	root		data:Selection_49
+  │ └─Selection_49	1.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan_48	1.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader_56(Probe)	5.00	root		data:Selection_55
+    └─Selection_55	5.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_54	5.00	cop[tikv]	table:t1	keep order:false
+>>>>>>> 857e3da6e... planner: join reorder should not change the order of output columns (#16852)
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));

@@ -81,6 +81,7 @@ IndexJoin_19	5.00	root		inner join, inner:IndexLookUp_18, outer key:test.sgc2.a,
   └─TableRowIDScan_16(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
 EXPLAIN SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection_6	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
 └─HashJoin_24	5.00	root		inner join, equal:[eq(test.sgc2.a, test.sgc1.a)]
   ├─TableReader_43(Build)	1.00	root		data:Selection_42
@@ -89,6 +90,16 @@ Projection_6	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, te
   └─TableReader_52(Probe)	5.00	root		data:Selection_51
     └─Selection_51	5.00	cop[tikv]		not(isnull(test.sgc1.a))
       └─TableFullScan_50	5.00	cop[tikv]	table:sgc1	keep order:false
+=======
+Projection_8	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
+└─HashJoin_40	5.00	root		inner join, equal:[eq(test.sgc2.a, test.sgc1.a)]
+  ├─TableReader_59(Build)	1.00	root		data:Selection_58
+  │ └─Selection_58	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+  │   └─TableFullScan_57	1.00	cop[tikv]	table:sgc2	keep order:false
+  └─TableReader_68(Probe)	5.00	root		data:Selection_67
+    └─Selection_67	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+      └─TableFullScan_66	5.00	cop[tikv]	table:sgc1	keep order:false
+>>>>>>> 857e3da6e... planner: join reorder should not change the order of output columns (#16852)
 DROP TABLE IF EXISTS sgc3;
 CREATE TABLE sgc3 (
 j JSON,

@@ -6,6 +6,7 @@ create table lo(a int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (a)) ENGINE=InnoD
 load stats 's/explain_join_stats_lo.json';
 explain select count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 StreamAgg_13	1.00	root		funcs:count(1)->Column#5
 └─HashJoin_65	19977.00	root		inner join, equal:[eq(test.lo.a, test.e.a)]
   ├─TableReader_38(Build)	250.00	root		data:TableFullScan_37
@@ -14,6 +15,16 @@ StreamAgg_13	1.00	root		funcs:count(1)->Column#5
     ├─IndexRangeScan_46(Build)	19977.00	cop[tikv]	table:e, index:idx_b(b)	range:[22336,22336], keep order:false
     └─Selection_48(Probe)	19977.00	cop[tikv]		not(isnull(test.e.a))
       └─TableRowIDScan_47	19977.00	cop[tikv]	table:e	keep order:false
+=======
+StreamAgg_11	1.00	root		funcs:count(1)->Column#5
+└─HashJoin_89	19977.00	root		inner join, equal:[eq(test.lo.a, test.e.a)]
+  ├─TableReader_49(Build)	250.00	root		data:TableFullScan_48
+  │ └─TableFullScan_48	250.00	cop[tikv]	table:lo	keep order:false
+  └─IndexLookUp_60(Probe)	19977.00	root		
+    ├─IndexRangeScan_57(Build)	19977.00	cop[tikv]	table:e, index:idx_b(b)	range:[22336,22336], keep order:false
+    └─Selection_59(Probe)	19977.00	cop[tikv]		not(isnull(test.e.a))
+      └─TableRowIDScan_58	19977.00	cop[tikv]	table:e	keep order:false
+>>>>>>> 857e3da6e... planner: join reorder should not change the order of output columns (#16852)
 explain select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	estRows	task	access object	operator info
 StreamAgg_12	1.00	root		funcs:count(1)->Column#5
