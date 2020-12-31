@@ -48,7 +48,7 @@ type testPlanSuiteBase struct {
 func (s *testPlanSuiteBase) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 }
 
 type testPlanSerialSuite struct {
@@ -1039,6 +1039,9 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		PARTITION p0 VALUES LESS THAN (2),
 		PARTITION p1 VALUES LESS THAN (100)
 	);`)
+
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("CREATE TABLE `tc`(`timestamp` timestamp NULL DEFAULT NULL, KEY `idx_timestamp` (`timestamp`)) PARTITION BY RANGE ( UNIX_TIMESTAMP(`timestamp`) ) (PARTITION `p2020072312` VALUES LESS THAN (1595480400),PARTITION `p2020072313` VALUES LESS THAN (1595484000));")
 
 	tk.MustExec("drop table if exists ta")
 	tk.MustExec("create table ta(a int);")

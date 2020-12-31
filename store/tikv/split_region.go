@@ -213,11 +213,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	for {
-		opts := make([]pd.ScatterRegionOption, 0, 1)
+		opts := make([]pd.RegionsOption, 0, 1)
 		if tableID != nil {
 			opts = append(opts, pd.WithGroup(fmt.Sprintf("%v", *tableID)))
 		}
-		err := s.pdClient.ScatterRegionWithOption(bo.ctx, regionID, opts...)
+		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
 		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
 			if val.(bool) {

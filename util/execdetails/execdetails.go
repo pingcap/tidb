@@ -16,6 +16,7 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -42,8 +45,6 @@ var (
 type ExecDetails struct {
 	CalleeAddress    string
 	CopTime          time.Duration
-	ProcessTime      time.Duration
-	WaitTime         time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
 	BackoffSleep     map[string]time.Duration
@@ -51,7 +52,8 @@ type ExecDetails struct {
 	RequestCount     int
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
-	CopDetail        *CopDetails
+	ScanDetail       *ScanDetail
+	TimeDetail       TimeDetail
 }
 
 type stmtExecDetailKeyType struct{}
@@ -167,26 +169,118 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
-// CopDetails contains coprocessor detail information.
-type CopDetails struct {
-	TotalKeys                 int64
-	ProcessedKeys             int64
-	RocksdbDeleteSkippedCount uint64
-	RocksdbKeySkippedCount    uint64
-	RocksdbBlockCacheHitCount uint64
-	RocksdbBlockReadCount     uint64
-	RocksdbBlockReadByte      uint64
+// TimeDetail contains coprocessor time detail information.
+type TimeDetail struct {
+	// WaitWallTimeMs is the off-cpu wall time which is elapsed in TiKV side. Usually this includes queue waiting time and
+	// other kind of waitings in series.
+	ProcessTime time.Duration
+	// Off-cpu and on-cpu wall time elapsed to actually process the request payload. It does not
+	// include `wait_wall_time`.
+	// This field is very close to the CPU time in most cases. Some wait time spend in RocksDB
+	// cannot be excluded for now, like Mutex wait time, which is included in this field, so that
+	// this field is called wall time instead of CPU time.
+	WaitTime time.Duration
 }
 
-// Merge merges lock keys execution details into self.
-func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalKeys += copDetails.TotalKeys
-	cd.ProcessedKeys += copDetails.ProcessedKeys
-	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
-	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
-	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
-	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
-	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
+// String implements the fmt.Stringer interface.
+func (td *TimeDetail) String() string {
+	if td == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if td.ProcessTime > 0 {
+		buf.WriteString("total_process_time: ")
+		buf.WriteString(FormatDuration(td.ProcessTime))
+	}
+	if td.WaitTime > 0 {
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("total_wait_time: ")
+		buf.WriteString(FormatDuration(td.WaitTime))
+	}
+	return buf.String()
+}
+
+// MergeFromTimeDetail merges time detail from pb into itself.
+func (td *TimeDetail) MergeFromTimeDetail(timeDetail *kvrpcpb.TimeDetail) {
+	if timeDetail != nil {
+		td.WaitTime += time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+		td.ProcessTime += time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+	}
+}
+
+// ScanDetail contains coprocessor scan detail information.
+type ScanDetail struct {
+	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
+	// deleted versions, but does not include RocksDB tombstone keys.
+	TotalKeys int64
+	// ProcessedKeys is the number of user keys scanned from the storage.
+	// It does not include deleted version or RocksDB tombstone keys.
+	// For Coprocessor requests, it includes keys that has been filtered out by Selection.
+	ProcessedKeys int64
+	// RocksdbDeleteSkippedCount is the total number of deletes and single deletes skipped over during
+	// iteration, i.e. how many RocksDB tombstones are skipped.
+	RocksdbDeleteSkippedCount uint64
+	// RocksdbKeySkippedCount it the total number of internal keys skipped over during iteration.
+	RocksdbKeySkippedCount uint64
+	// RocksdbBlockCacheHitCount is the total number of RocksDB block cache hits.
+	RocksdbBlockCacheHitCount uint64
+	// RocksdbBlockReadCount is the total number of block reads (with IO).
+	RocksdbBlockReadCount uint64
+	// RocksdbBlockReadByte is the total number of bytes from block reads.
+	RocksdbBlockReadByte uint64
+}
+
+// Merge merges scan detail execution details into self.
+func (sd *ScanDetail) Merge(scanDetail *ScanDetail) {
+	atomic.AddInt64(&sd.TotalKeys, scanDetail.TotalKeys)
+	atomic.AddInt64(&sd.ProcessedKeys, scanDetail.ProcessedKeys)
+	atomic.AddUint64(&sd.RocksdbDeleteSkippedCount, scanDetail.RocksdbDeleteSkippedCount)
+	atomic.AddUint64(&sd.RocksdbKeySkippedCount, scanDetail.RocksdbKeySkippedCount)
+	atomic.AddUint64(&sd.RocksdbBlockCacheHitCount, scanDetail.RocksdbBlockCacheHitCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadCount, scanDetail.RocksdbBlockReadCount)
+	atomic.AddUint64(&sd.RocksdbBlockReadByte, scanDetail.RocksdbBlockReadByte)
+}
+
+// String implements the fmt.Stringer interface.
+func (sd *ScanDetail) String() string {
+	if sd == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString("scan_detail: {")
+	buf.WriteString("total_process_keys: ")
+	buf.WriteString(strconv.FormatInt(sd.ProcessedKeys, 10))
+	buf.WriteString(", total_keys: ")
+	buf.WriteString(strconv.FormatInt(sd.TotalKeys, 10))
+	buf.WriteString(", rocksdb: {")
+	buf.WriteString("delete_skipped_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbDeleteSkippedCount, 10))
+	buf.WriteString(", key_skipped_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbKeySkippedCount, 10))
+	buf.WriteString(", block: {")
+	buf.WriteString("cache_hit_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockCacheHitCount, 10))
+	buf.WriteString(", read_count: ")
+	buf.WriteString(strconv.FormatUint(sd.RocksdbBlockReadCount, 10))
+	buf.WriteString(", read_byte: ")
+	buf.WriteString(memory.FormatBytes(int64(sd.RocksdbBlockReadByte)))
+	buf.WriteString("}}}")
+	return buf.String()
+}
+
+// MergeFromScanDetailV2 merges scan detail from pb into itself.
+func (sd *ScanDetail) MergeFromScanDetailV2(scanDetail *kvrpcpb.ScanDetailV2) {
+	if scanDetail != nil {
+		sd.TotalKeys += int64(scanDetail.TotalVersions)
+		sd.ProcessedKeys += int64(scanDetail.ProcessedVersions)
+		sd.RocksdbDeleteSkippedCount += scanDetail.RocksdbDeleteSkippedCount
+		sd.RocksdbKeySkippedCount += scanDetail.RocksdbKeySkippedCount
+		sd.RocksdbBlockCacheHitCount += scanDetail.RocksdbBlockCacheHitCount
+		sd.RocksdbBlockReadCount += scanDetail.RocksdbBlockReadCount
+		sd.RocksdbBlockReadByte += scanDetail.RocksdbBlockReadByte
+	}
 }
 
 const (
@@ -248,11 +342,11 @@ func (d ExecDetails) String() string {
 	if d.CopTime > 0 {
 		parts = append(parts, CopTimeStr+": "+strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64))
 	}
-	if d.ProcessTime > 0 {
-		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.ProcessTime > 0 {
+		parts = append(parts, ProcessTimeStr+": "+strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64))
 	}
-	if d.WaitTime > 0 {
-		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64))
+	if d.TimeDetail.WaitTime > 0 {
+		parts = append(parts, WaitTimeStr+": "+strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64))
 	}
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
@@ -307,28 +401,28 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
-	copDetails := d.CopDetail
-	if copDetails != nil {
-		if copDetails.ProcessedKeys > 0 {
-			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
+	scanDetail := d.ScanDetail
+	if scanDetail != nil {
+		if scanDetail.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(scanDetail.ProcessedKeys, 10))
 		}
-		if copDetails.TotalKeys > 0 {
-			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
+		if scanDetail.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
-		if copDetails.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
+		if scanDetail.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
-		if copDetails.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
+		if scanDetail.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbKeySkippedCount, 10))
 		}
-		if copDetails.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
+		if scanDetail.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockCacheHitCount, 10))
 		}
-		if copDetails.RocksdbBlockReadCount > 0 {
-			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
+		if scanDetail.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadCount, 10))
 		}
-		if copDetails.RocksdbBlockReadByte > 0 {
-			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
+		if scanDetail.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -340,11 +434,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.CopTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(CopTimeStr), strconv.FormatFloat(d.CopTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.ProcessTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.ProcessTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessTimeStr), strconv.FormatFloat(d.TimeDetail.ProcessTime.Seconds(), 'f', -1, 64)+"s"))
 	}
-	if d.WaitTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.WaitTime.Seconds(), 'f', -1, 64)+"s"))
+	if d.TimeDetail.WaitTime > 0 {
+		fields = append(fields, zap.String(strings.ToLower(WaitTimeStr), strconv.FormatFloat(d.TimeDetail.WaitTime.Seconds(), 'f', -1, 64)+"s"))
 	}
 	if d.BackoffTime > 0 {
 		fields = append(fields, zap.String(strings.ToLower(BackoffTimeStr), strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64)+"s"))
@@ -352,11 +446,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.ScanDetail.TotalKeys, 10)))
 	}
-	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
+	if d.ScanDetail != nil && d.ScanDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ScanDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -412,7 +506,7 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats      map[string][]*BasicRuntimeStats
-	copDetails *CopDetails
+	scanDetail *ScanDetail
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -435,6 +529,20 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
+func (crs *CopRuntimeStats) writeField(buf *bytes.Buffer, field string, value int64) {
+	crs.writeFieldValue(buf, field, strconv.FormatInt(value, 10))
+}
+
+func (crs *CopRuntimeStats) writeFieldValue(buf *bytes.Buffer, field string, value string) {
+	bs := buf.Bytes()
+	if l := len(bs); l > 0 && bs[l-1] != '{' {
+		buf.WriteString(", ")
+	}
+	buf.WriteString(field)
+	buf.WriteString(": ")
+	buf.WriteString(value)
+}
+
 func (crs *CopRuntimeStats) String() string {
 	if len(crs.stats) == 0 {
 		return ""
@@ -451,23 +559,21 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
-	if crs.copDetails != nil {
-		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
-			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
-			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
-			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
-			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	if detail := crs.scanDetail; detail != nil {
+		buf.WriteString(", ")
+		buf.WriteString(detail.String())
 	}
-	return result
+	return buf.String()
 }
 
 const (
@@ -495,6 +601,10 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
+	TpHashAggRuntimeStat
+	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
+	TpIndexMergeRunTimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -610,7 +720,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
 
 // GetTime get the int64 total time
@@ -679,7 +789,10 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		copStats = &CopRuntimeStats{
+			stats:      make(map[string][]*BasicRuntimeStats),
+			scanDetail: &ScanDetail{},
+		}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -706,13 +819,10 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	copStats.RecordOneCopTask(address, summary)
 }
 
-// RecordCopDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
+// RecordScanDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, detail *ScanDetail) {
 	copStats := e.GetCopStats(planID)
-	if copStats.copDetails == nil {
-		copStats.copDetails = &CopDetails{}
-	}
-	copStats.copDetails.Merge(detail)
+	copStats.scanDetail.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
@@ -854,24 +964,24 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("commit_txn: {")
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
-			buf.WriteString(e.Commit.PrewriteTime.String())
+			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
 		}
 		if e.Commit.WaitPrewriteBinlogTime > 0 {
 			buf.WriteString(", wait_prewrite_binlog:")
-			buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+			buf.WriteString(FormatDuration(e.Commit.WaitPrewriteBinlogTime))
 		}
 		if e.Commit.GetCommitTsTime > 0 {
 			buf.WriteString(", get_commit_ts:")
-			buf.WriteString(e.Commit.GetCommitTsTime.String())
+			buf.WriteString(FormatDuration(e.Commit.GetCommitTsTime))
 		}
 		if e.Commit.CommitTime > 0 {
 			buf.WriteString(", commit:")
-			buf.WriteString(e.Commit.CommitTime.String())
+			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
 		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(commitBackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -882,7 +992,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -911,7 +1021,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("lock_keys: {")
 		if e.LockKeys.TotalTime > 0 {
 			buf.WriteString("time:")
-			buf.WriteString(e.LockKeys.TotalTime.String())
+			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
 		}
 		if e.LockKeys.RegionNum > 0 {
 			buf.WriteString(", region:")
@@ -923,11 +1033,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.LockKeys.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(time.Duration(e.LockKeys.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(e.LockKeys.BackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -970,4 +1080,42 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) stri
 	}
 	sort.Strings(tpArray)
 	return fmt.Sprintf("%v", tpArray)
+}
+
+// FormatDuration uses to format duration, this function will prune precision before format duration.
+// Pruning precision is for human readability. The prune rule is:
+// 1. if the duration was less than 1us, return the original string.
+// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//    9.412345ms  -> 9.41ms
+//    10.412345ms -> 10.4ms
+//    5.999s      -> 6s
+//    100.45µs    -> 100.5µs
+func FormatDuration(d time.Duration) string {
+	if d <= time.Microsecond {
+		return d.String()
+	}
+	unit := getUnit(d)
+	if unit == time.Nanosecond {
+		return d.String()
+	}
+	integer := (d / unit) * unit
+	decimal := float64(d%unit) / float64(unit)
+	if d < 10*unit {
+		decimal = math.Round(decimal*100) / 100
+	} else {
+		decimal = math.Round(decimal*10) / 10
+	}
+	d = integer + time.Duration(decimal*float64(unit))
+	return d.String()
+}
+
+func getUnit(d time.Duration) time.Duration {
+	if d >= time.Second {
+		return time.Second
+	} else if d >= time.Millisecond {
+		return time.Millisecond
+	} else if d >= time.Microsecond {
+		return time.Microsecond
+	}
+	return time.Nanosecond
 }

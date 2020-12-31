@@ -15,8 +15,12 @@ package executor
 
 import (
 	"context"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,7 +43,8 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t table.Table
+	t       table.Table
+	ignored bool
 }
 
 // encodeNewRow encodes a new row to value.
@@ -99,6 +104,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				result = append(result, toBeCheckedRow{ignored: true})
+				return result, nil
+			}
 			return nil, err
 		}
 	}
@@ -122,7 +132,21 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
 		fn := func() string {
-			return kv.GetDuplicateErrorHandleString(handle)
+			var str string
+			var err error
+			if t.Meta().IsCommonHandle {
+				data := make([]types.Datum, len(handleCols))
+				for i, col := range handleCols {
+					data[i] = row[col.Offset]
+				}
+				str, err = formatDataForDupError(data)
+			} else {
+				str, err = row[handleCols[0].Offset].ToString()
+			}
+			if err != nil {
+				return kv.GetDuplicateErrorHandleString(handle)
+			}
+			return str
 		}
 		handleKey = &keyValueWithDupInfo{
 			newKey: t.RecordKey(handle),
@@ -161,7 +185,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !distinct {
 			continue
 		}
-		colValStr, err1 := types.DatumsToString(colVals, false)
+		colValStr, err1 := formatDataForDupError(colVals)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -181,6 +205,18 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		t:          t,
 	})
 	return result, nil
+}
+
+func formatDataForDupError(data []types.Datum) (string, error) {
+	strs := make([]string, 0, len(data))
+	for _, datum := range data {
+		str, err := datum.ToString()
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		strs = append(strs, str)
+	}
+	return strings.Join(strs, "-"), nil
 }
 
 // getOldRow gets the table record row from storage for batch check.

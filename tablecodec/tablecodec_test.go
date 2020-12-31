@@ -108,7 +108,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// colMap may contains more columns than encoded row.
-	//colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	// colMap[4] = types.NewFieldType(mysql.TypeFloat)
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
