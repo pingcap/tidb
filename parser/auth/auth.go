@@ -39,10 +39,8 @@ func (user *UserIdentity) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CURRENT_USER")
 	} else {
 		ctx.WriteName(user.Username)
-		if user.Hostname != "" {
-			ctx.WritePlain("@")
-			ctx.WriteName(user.Hostname)
-		}
+		ctx.WritePlain("@")
+		ctx.WriteName(user.Hostname)
 	}
 	return nil
 }

@@ -530,6 +530,7 @@ var tokenMap = map[string]int{
 	"PROCESSLIST":              processlist,
 	"PROFILE":                  profile,
 	"PROFILES":                 profiles,
+	"PROXY":                    proxy,
 	"PUMP":                     pump,
 	"PURGE":                    purge,
 	"QUARTER":                  quarter,
