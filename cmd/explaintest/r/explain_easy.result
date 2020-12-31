@@ -431,14 +431,14 @@ id	estRows	task	access object	operator info
 TableDual_5	8000.00	root		rows:0
 explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	access object	operator info
-Projection_7	0.00	root		test.t.a, test.t.b, test.t.a, test.t.b
-└─HashJoin_9	0.00	root		inner join, equal:[eq(test.t.b, test.t.b)]
-  ├─TableReader_12(Build)	0.00	root		data:Selection_11
-  │ └─Selection_11	0.00	cop[tikv]		isnull(test.t.b), not(isnull(test.t.b))
-  │   └─TableFullScan_10	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader_18(Probe)	9990.00	root		data:Selection_17
-    └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t.b))
-      └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection_9	0.00	root		test.t.a, test.t.b, test.t.a, test.t.b
+└─HashJoin_11	0.00	root		inner join, equal:[eq(test.t.b, test.t.b)]
+  ├─TableReader_14(Build)	0.00	root		data:Selection_13
+  │ └─Selection_13	0.00	cop[tikv]		isnull(test.t.b), not(isnull(test.t.b))
+  │   └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_20(Probe)	9990.00	root		data:Selection_19
+    └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.b))
+      └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	estRows	task	access object	operator info
 HashJoin_9	8000.00	root		anti semi join, equal:[eq(test.t.b, test.t.b)]
