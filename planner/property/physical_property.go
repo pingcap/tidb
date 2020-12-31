@@ -30,6 +30,18 @@ type SortItem struct {
 	Desc bool
 }
 
+// PartitionType is the way to partition during mpp data exchanging.
+type PartitionType int
+
+const (
+	// AnyType will not require any special partition types.
+	AnyType PartitionType = iota
+	// BroadcastType requires current task to broadcast its data.
+	BroadcastType
+	// HashType requires current task to shuffle its data according to some columns.
+	HashType
+)
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
@@ -56,6 +68,12 @@ type PhysicalProperty struct {
 
 	// whether need to enforce property.
 	Enforced bool
+
+	// If the partition type is hash, the data should be reshuffled by partition cols.
+	PartitionCols []*expression.Column
+
+	// which types the exchange sender belongs to, only take effects when it's a mpp task.
+	PartitionTp PartitionType
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -77,6 +95,28 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 	return items
 }
 
+// IsSubsetOf check if the keys can match the needs of partition.
+func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
+	if len(p.PartitionCols) > len(keys) {
+		return nil
+	}
+	matches := make([]int, 0, len(keys))
+	for _, partCol := range p.PartitionCols {
+		found := false
+		for i, key := range keys {
+			if partCol.Equal(nil, key) {
+				found = true
+				matches = append(matches, i)
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	return matches
+}
+
 // AllColsFromSchema checks whether all the columns needed by this physical
 // property can be found in the given schema.
 func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
@@ -90,7 +130,7 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 
 // IsFlashProp return true if this physical property is only allowed to generate flash related task
 func (p *PhysicalProperty) IsFlashProp() bool {
-	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType
+	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType || p.TaskTp == MppTaskType
 }
 
 // GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.
@@ -142,6 +182,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	if p.TaskTp == MppTaskType {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
+		for _, col := range p.PartitionCols {
+			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+		}
+	}
 	return p.hashcode
 }
 
@@ -156,9 +202,12 @@ func (p *PhysicalProperty) String() string {
 // for children nodes.
 func (p *PhysicalProperty) Clone() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:   p.SortItems,
-		TaskTp:      p.TaskTp,
-		ExpectedCnt: p.ExpectedCnt,
+		SortItems:     p.SortItems,
+		TaskTp:        p.TaskTp,
+		ExpectedCnt:   p.ExpectedCnt,
+		Enforced:      p.Enforced,
+		PartitionTp:   p.PartitionTp,
+		PartitionCols: p.PartitionCols,
 	}
 	return prop
 }
