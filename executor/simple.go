@@ -702,6 +702,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	users := make([]string, 0, len(s.Specs))
 	privs := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		spec.User.Username = strings.TrimSpace(spec.User.Username)
+		spec.User.Hostname = strings.TrimSpace(spec.User.Hostname)
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
 			return err1
