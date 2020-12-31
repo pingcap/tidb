@@ -890,6 +890,9 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 			}
 			t = cop.convertToRootTask(p.ctx)
+			if t, ok := t.(*rootTask); ok {
+				t.cst = 0
+			}
 			sunk = p.sinkIntoIndexLookUp(t, false)
 		}
 	}
