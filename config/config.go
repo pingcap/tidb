@@ -853,6 +853,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 // is set by the user.
 var IsMemoryQuotaQuerySetByUser bool
 
+// IsOOMActionSetByUser indicates whether the config item mem-action is set by
+// the user.
+var IsOOMActionSetByUser bool
+
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
@@ -910,6 +914,9 @@ func (c *Config) Load(confFile string) error {
 	}
 	if metaData.IsDefined("mem-quota-query") {
 		IsMemoryQuotaQuerySetByUser = true
+	}
+	if metaData.IsDefined("oom-action") {
+		IsOOMActionSetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
