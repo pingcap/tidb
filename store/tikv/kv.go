@@ -94,7 +94,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
-	))
+	), pd.WithCustomTimeoutOption(time.Duration(tikvConfig.PDServerTimeout)*time.Second))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
