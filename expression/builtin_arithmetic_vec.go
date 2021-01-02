@@ -318,6 +318,320 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 	return nil
 }
 
+
+func (b *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if lh < 0 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		if rh < 0 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntUnsignedUnsignedSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticMinusIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if uint64(lh) < uint64(rh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if rh < 0 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntSignedUnsignedSig) vectorized() bool {
+	return false;
+}
+
+func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vectorized() bool {
+	return false;
+}
+
+func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if lh < 0 {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntUnsignedSignedSig) vectorized() bool {
+	return false;
+}
+
+func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if rh >= 0 && uint64(lh) < uint64(rh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+		if rh < 0 && uint64(lh) > math.MaxUint64-uint64(-rh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
+func (b *builtinArithmeticMinusIntSignedSignedSig) vectorized() bool {
+	return false;
+}
+
+func (b *builtinArithmeticMinusIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+	n := input.NumRows()
+	lh, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(lh)
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, lh); err != nil {
+		return err
+	}
+
+	if err := b.args[1].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	result.MergeNulls(lh)
+
+	rh := result
+	lhi64s := lh.Int64s()
+	rhi64s := rh.Int64s()
+	resulti64s := result.Int64s()
+
+	for i := 0; i < len(lhi64s); i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		lh, rh := lhi64s[i], rhi64s[i]
+
+		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		}
+
+		resulti64s[i] = lh - rh
+	}
+	return nil
+}
+
 func (b *builtinArithmeticMinusIntSig) vectorized() bool {
 	return true
 }
