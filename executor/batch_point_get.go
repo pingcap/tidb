@@ -202,6 +202,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 
+			e.memTracker.Consume(types.EstimatedMemUsage(idxVals, 1))
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
@@ -331,6 +332,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				tID = getPhysID(e.tblInfo, d.GetInt64())
 			}
 		}
+		e.memTracker.Consume(int64(cap(handle.Encoded())))
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
 	}
@@ -359,8 +361,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
-		// track memory
-		e.memTracker.Consume(int64(len(key)) + int64(len(val)))
+		e.memTracker.Consume(int64(cap(val)))
 
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {

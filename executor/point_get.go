@@ -257,7 +257,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	e.memTracker.Consume(int64(len(val)))
+	e.memTracker.Consume(int64(cap(val)))
 
 	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
