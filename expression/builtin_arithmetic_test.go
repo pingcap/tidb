@@ -192,14 +192,138 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	c.Assert(intResult, Equals, int64(9007199254740993))
 }
 
+func iterateTestCases(testCases []struct{
+	args []interface{}
+	expect []interface{}
+	}, c *C, s *testEvaluatorSuite){
+	for _, tc := range testCases {
+		sig, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		c.Assert(err, IsNil)
+		c.Assert(sig, NotNil)
+		val, err := evalBuiltinFunc(sig, chunk.Row{})
+
+		switch sig.(type){
+		case *builtinArithmeticMinusIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntForcedUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntUnsignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntForcedSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntForcedUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		case *builtinArithmeticMinusIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+		}
+
+		if tc.expect[1] == nil {
+			c.Assert(err, IsNil)
+			c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect[0]))
+		} else {
+			c.Assert(err, ErrorMatches, tc.expect[1])
+		}
+	}
+}
+
+
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
-	// case: 1
+	// case 1
+	testCasesWithUnsignedSubstraction := []struct{
+		args []interface{}
+		expect []interface{}
+	}{
+		{
+			args: []interface{}{int64(12), int64(1)},
+			expect: []interface{}{int64(11), nil},
+		},
+		{
+			args: []interface{}{int64(1), int64(12)},
+			expect: []interface{}{int64(-11), nil},
+		},
+		{
+			args: []interface{}{uint64(13), uint64(12)},
+			expect: []interface{}{int64(1), nil},
+		},
+		{
+			args: []interface{}{uint64(12), uint64(19)},
+			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 19\\)'"},
+		},
+		{
+			args: []interface{}{uint64(12), int64(17)},
+			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 17\\)'"},
+		},
+		{
+			args: []interface{}{uint64(14), int64(13)},
+			expect: []interface{}{int64(1), nil},
+		},
+		{
+			args: []interface{}{int64(12), uint64(15)},
+			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 15\\)'"},
+		},
+		{
+			args: []interface{}{int64(-12), uint64(13)},
+			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(-(12) - 13\\)'"},
+		},
+	}
+
+	s.ctx.GetSessionVars().SQLMode &= ^mysql.ModeNoUnsignedSubtraction
+	iterateTestCases(testCasesWithUnsignedSubstraction, c, s)
+
+	testCasesWithoutUnsignedSubstraction := []struct{
+		args []interface{}
+		expect []interface{}
+	}{
+		{
+			args: []interface{}{int64(12), int64(1)},
+			expect: []interface{}{int64(11), nil},
+		},
+		{
+			args: []interface{}{int64(1), int64(12)},
+			expect: []interface{}{int64(-11), nil},
+		},
+		{
+			args: []interface{}{uint64(13), uint64(12)},
+			expect: []interface{}{int64(1), nil},
+		},
+		{
+			args: []interface{}{uint64(5), uint64(13)},
+			expect: []interface{}{int64(-8), nil},
+		},
+		{
+			args: []interface{}{uint64(12), int64(14)},
+			expect: []interface{}{int64(-2), nil},
+		},
+		{
+			args: []interface{}{uint64(14), int64(13)},
+			expect: []interface{}{int64(1), nil},
+		},
+		{
+			args: []interface{}{int64(12), uint64(19)},
+			expect: []interface{}{int64(-7), nil},
+		},
+		{
+			args: []interface{}{int64(-12), uint64(13)},
+			expect: []interface{}{int64(-25), nil},
+		},
+	}
+
+	s.ctx.GetSessionVars().SQLMode |= mysql.ModeNoUnsignedSubtraction
+	c.Assert(s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode(), IsTrue)
+	iterateTestCases(testCasesWithoutUnsignedSubstraction, c, s)
+
+	// case: 1.1
 	args := []interface{}{int64(12), int64(1)}
 
+	s.ctx.GetSessionVars().SQLMode &= ^mysql.ModeNoUnsignedSubtraction
 	bf, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+
+	c.Assert(s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode(), IsFalse)
 	c.Assert(err, IsNil)
 	c.Assert(bf, NotNil)
-	intSig, ok := bf.(*builtinArithmeticMinusIntSig)
+	intSig, ok := bf.(*builtinArithmeticMinusIntSignedSignedSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(intSig, NotNil)
 

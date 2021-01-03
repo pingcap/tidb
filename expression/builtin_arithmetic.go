@@ -41,7 +41,13 @@ var (
 	_ builtinFunc = &builtinArithmeticPlusIntSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
-	_ builtinFunc = &builtinArithmeticMinusIntSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntForcedUnsignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntForcedUnsignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntForcedSignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntSignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntUnsignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntUnsignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticMinusIntSignedUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyRealSig{}
@@ -337,9 +343,45 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
-		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-		return sig, nil
+
+		forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+
+		switch {
+		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntForcedUnsignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntForcedUnsignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntForcedSignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntUnsignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntUnsignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticMinusIntSignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		default:
+			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			return sig, nil
+		}
 	}
 }
 
@@ -452,8 +494,8 @@ func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) evalInt(row chunk.R
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if uint64(a) < uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a - b, false, nil
@@ -480,7 +522,7 @@ func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row)(val 
 		return 0, isNull, err
 	}
 
-	if a < 0 || uint64(a) < uint64(b) {
+	if a < 0 || (a >= 0 && uint64(b) > uint64(a)) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
@@ -508,12 +550,12 @@ func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) evalInt(row chunk.Row
 		return 0, isNull, err
 	}
 
-	if b < 0 {
+	if b < 0 || b > math.MaxInt64 {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if a < 0 || uint64(a) < uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a - b, false, nil
@@ -568,11 +610,7 @@ func (s *builtinArithmeticMinusIntUnsignedSignedSig) evalInt(row chunk.Row)(val 
 		return 0, isNull, err
 	}
 
-	if b >= 0 && uint64(a) < uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-
-	if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
+	if (b < 0 && uint64(a) > math.MaxUint64-uint64(-b)) || (b >= 0 && uint64(a) < uint64(b)) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
@@ -600,80 +638,14 @@ func (s *builtinArithmeticMinusIntForcedUnsignedSignedSig) evalInt(row chunk.Row
 		return 0, isNull, err
 	}
 
-	if a < 0 {
+	if a < 0 || a > math.MaxInt64 {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if b >= 0 && uint64(a) < uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
-	if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-
-	return a - b, false, nil
-}
-
-type builtinArithmeticMinusIntSig struct {
-	baseBuiltinFunc
-}
-
-func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticMinusIntSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
-	return newSig
-}
-
-func (s *builtinArithmeticMinusIntSig) 	evalInt(row chunk.Row) (val int64, isNull bool, err error) {
-	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
-	}
-
-	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
-	}
-	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
-
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
-		if a < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
-		if b < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
-
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
-		if uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case isLHSUnsigned && !isRHSUnsigned:
-		if b >= 0 && uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-		if b < 0 && uint64(a) > math.MaxUint64-uint64(-b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case !isLHSUnsigned && isRHSUnsigned:
-		if a < 0 || uint64(a) < uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	case !isLHSUnsigned && !isRHSUnsigned:
-		// We need `(a >= 0 && b == math.MinInt64)` due to `-(math.MinInt64) == math.MinInt64`.
-		// If `a<0 && b<=0`: `a-b` will not overflow even though b==math.MinInt64.
-		// If `a<0 && b>0`: `a-b` will not overflow only if `math.MinInt64<=a-b` satisfied
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
 	return a - b, false, nil
 }
 
@@ -1125,46 +1097,9 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if mysql.HasUnsignedFlag(lhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-
-		forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-		isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[0].GetType().Flag)
-		isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[1].GetType().Flag)
-
-		switch {
-		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntForcedUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntForcedUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntForcedSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-			sig := &builtinArithmeticMinusIntSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		default:
-			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
-			return sig, nil
-		}
-
+		sig := &builtinArithmeticModIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ModInt)
+		return sig, nil
 	}
 }
 
