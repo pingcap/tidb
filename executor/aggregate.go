@@ -415,8 +415,16 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
-	for i := 0; i < numRows; i++ {
-		for j, af := range w.aggFuncs {
+	columnPartialResults := make([]aggfuncs.PartialResult, 0, numRows)
+	for j, af := range w.aggFuncs {
+		if af.Vectorized() {
+			columnPartialResults = zip(j, columnPartialResults[:0], partialResults)
+			if _, err := af.VecUpdatePartialResult(ctx, chk, columnPartialResults); err != nil {
+				return err
+			}
+			continue
+		}
+		for i := 0; i < numRows; i++ {
 			rows[0] = chk.GetRow(i)
 			if _, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
 				return err
@@ -502,6 +510,13 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		mapper[string(groupKey[i])] = partialResults[i]
 	}
 	return partialResults
+}
+
+func zip(idx int, results []aggfuncs.PartialResult, original [][]aggfuncs.PartialResult) []aggfuncs.PartialResult {
+	for i := 0; i < len(original); i++ {
+		results = append(results, original[i][idx])
+	}
+	return results
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
@@ -832,15 +847,32 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
-		for j := 0; j < e.childResult.NumRows(); j++ {
-			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
+		numRows := e.childResult.NumRows()
+		partialResults := make([][]aggfuncs.PartialResult, 0, numRows)
+		for i := 0; i < numRows; i++ {
+			groupKey := string(e.groupKeyBuffer[i]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
-			partialResults := e.getPartialResults(groupKey)
-			for i, af := range e.PartialAggFuncs {
-				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
+			rowPartialResults := e.getPartialResults(groupKey)
+			partialResults = append(partialResults, rowPartialResults)
+		}
+		rows := make([]chunk.Row, 1)
+		columnPartialResults := make([]aggfuncs.PartialResult, 0, numRows)
+		for j, af := range e.PartialAggFuncs {
+			if af.Vectorized() {
+				columnPartialResults = zip(j, columnPartialResults[:0], partialResults)
+				memDelta, err := af.VecUpdatePartialResult(e.ctx, e.childResult, columnPartialResults)
+				if err != nil {
+					return err
+				}
+				e.memTracker.Consume(memDelta)
+				continue
+			}
+			for i := 0; i < numRows; i++ {
+				rows[0] = e.childResult.GetRow(i)
+				memDelta, err := af.UpdatePartialResult(e.ctx, rows, partialResults[i][j])
 				if err != nil {
 					return err
 				}

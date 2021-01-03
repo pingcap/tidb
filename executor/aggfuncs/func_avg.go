@@ -16,6 +16,7 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -94,6 +95,35 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, input, newSum)
+		if err != nil {
+			return 0, err
+		}
+		p.sum = *newSum
+		p.count++
+	}
+	return 0, nil
+}
+
+func (e *avgOriginal4Decimal) Vectorized() bool {
+	return e.childrenVectorized()
+}
+
+func (e *avgOriginal4Decimal) VecUpdatePartialResult(sctx sessionctx.Context, chk *chunk.Chunk, prs []PartialResult) (memDelta int64, err error) {
+	n := chk.NumRows()
+	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), n)
+	err = e.args[0].VecEvalDecimal(sctx, chk, buf)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			continue
+		}
+
+		p := (*partialResult4AvgDecimal)(prs[i])
+		input := buf.GetDecimal(i)
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {

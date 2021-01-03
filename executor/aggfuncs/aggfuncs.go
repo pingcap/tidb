@@ -160,6 +160,10 @@ type AggFunc interface {
 	// usage.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
+	Vectorized() bool
+
+	VecUpdatePartialResult(sctx sessionctx.Context, input *chunk.Chunk, prs []PartialResult) (memDelta int64, err error)
+
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
@@ -187,6 +191,23 @@ type baseAggFunc struct {
 	// frac stores digits of the fractional part of decimals,
 	// which makes the decimal be the result of type inferring.
 	frac int
+}
+
+func (b *baseAggFunc) childrenVectorized() bool {
+	for i := range b.args {
+		if !b.args[i].Vectorized() {
+			return false
+		}
+	}
+	return true
+}
+
+func (*baseAggFunc) Vectorized() bool {
+	return false
+}
+
+func (*baseAggFunc) VecUpdatePartialResult(sctx sessionctx.Context, input *chunk.Chunk, prs []PartialResult) (memDelta int64, err error) {
+	return 0, nil
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
