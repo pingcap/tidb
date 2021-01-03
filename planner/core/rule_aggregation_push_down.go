@@ -444,7 +444,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
 				child = projChild
 			}
-			if union, ok1 := child.(*LogicalUnionAll); ok1 {
+			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				err := a.tryAggPushDownForUnion(union, agg)
 				if err != nil {
 					return nil, err
