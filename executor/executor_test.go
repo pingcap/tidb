@@ -3089,6 +3089,8 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
 	err = tk.ExecToErr("select * from (select * from v for update) t join t1")
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	err = tk.ExecToErr("select * from (select * from (select * from v ) t join t1) s for update")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
 }
 
 func (s *testSuite) TestEmptyEnum(c *C) {
