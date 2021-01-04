@@ -247,10 +247,11 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 		f32s := src.Float32s()
 		f64s := result.Float64s()
 		sel := input.Sel()
+		result.MergeNulls(src)
 		if sel != nil {
 			for i, j := range sel {
 				if src.IsNull(j) {
-					result.SetNull(i, true)
+					continue
 				} else {
 					f64s[i] = float64(f32s[j])
 				}
@@ -258,9 +259,8 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 			return nil
 		}
 		for i := range f32s {
-			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
 			if src.IsNull(i) {
-				result.SetNull(i, true)
+				continue
 			} else {
 				f64s[i] = float64(f32s[i])
 			}
