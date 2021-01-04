@@ -726,7 +726,7 @@ type Insert struct {
 
 	AllAssignmentsAreConstant bool
 
-	OrigSelectOutputLen int
+	RowLen int
 }
 
 // Update represents Update plan.

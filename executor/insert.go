@@ -335,7 +335,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 	extraLen := 0
 	if e.SelectExec != nil {
-		extraLen = e.SelectExec.Schema().Len() - e.origSelectOutputLen
+		extraLen = e.SelectExec.Schema().Len() - e.rowLen
 	}
 
 	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)

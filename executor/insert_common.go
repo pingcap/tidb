@@ -80,7 +80,7 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	origSelectOutputLen int
+	rowLen int
 
 	stats *InsertRuntimeStat
 }
@@ -444,7 +444,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if err != nil {
 				return err
 			}
-			extraColsInSel = append(extraColsInSel, innerRow[e.origSelectOutputLen:])
+			extraColsInSel = append(extraColsInSel, innerRow[e.rowLen:])
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
@@ -504,7 +504,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
-	for i := 0; i < e.origSelectOutputLen; i++ {
+	for i := 0; i < e.rowLen; i++ {
 		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
 		if e.handleErr(nil, &vals[i], 0, err) != nil {
 			return nil, err

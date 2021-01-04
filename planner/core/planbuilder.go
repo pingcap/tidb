@@ -2737,7 +2737,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	if actualColLen == -1 {
 		actualColLen = selectPlan.Schema().Len()
 	}
-	insertPlan.OrigSelectOutputLen = actualColLen
+	insertPlan.RowLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
