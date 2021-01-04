@@ -109,13 +109,13 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 }
 
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
-	if val, _err_ := failpoint.Eval(_curpkg_("MockSplitRegionTimeout")); _err_ == nil {
+	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
 				<-bo.ctx.Done()
 			}
 		}
-	}
+	})
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
@@ -219,11 +219,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 		}
 		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
-		if val, _err_ := failpoint.Eval(_curpkg_("MockScatterRegionTimeout")); _err_ == nil {
+		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
 			if val.(bool) {
 				err = ErrPDServerTimeout
 			}
-		}
+		})
 
 		if err == nil {
 			break

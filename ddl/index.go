@@ -877,25 +877,25 @@ var mockNotOwnerErrOnce uint32
 func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
 	cols := w.table.WritableCols()
 	sysZone := timeutil.SystemLocation()
-	if val, _err_ := failpoint.Eval(_curpkg_("MockGetIndexRecordErr")); _err_ == nil {
+	failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 		if valStr, ok := val.(string); ok {
 			switch valStr {
 			case "cantDecodeRecordErr":
-				return nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index",
-					errors.New("mock can't decode record error")))
+				failpoint.Return(nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index",
+					errors.New("mock can't decode record error"))))
 			case "modifyColumnNotOwnerErr":
 				if idxInfo.Name.O == "_Idx$_idx" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
-					return nil, errors.Trace(errNotOwner)
+					failpoint.Return(nil, errors.Trace(errNotOwner))
 				}
 			case "addIdxNotOwnerErr":
 				// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 				// First step, we need to exit "addPhysicalTableIndex".
 				if idxInfo.Name.O == "idx2" && handle.IntValue() == 6144 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 1, 2) {
-					return nil, errors.Trace(errNotOwner)
+					failpoint.Return(nil, errors.Trace(errNotOwner))
 				}
 			}
 		}
-	}
+	})
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
 	for j, v := range idxInfo.Columns {
@@ -1144,11 +1144,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("errorMockPanic")); _err_ == nil {
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
 		}
-	}
+	})
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
@@ -1253,7 +1253,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return true, nil
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateCachedSafePoint")); _err_ == nil {
+	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
 		if val.(bool) {
 			// 18 is for the logical time.
 			ts := oracle.GetPhysical(time.Now()) << 18
@@ -1261,7 +1261,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 			s.UpdateSPCache(uint64(ts), time.Now())
 			time.Sleep(time.Millisecond * 3)
 		}
-	}
+	})
 	currentVer, err := getValidCurrentVersion(reorg.d.store)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1356,11 +1356,11 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 }
 
 func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("errorMockPanic")); _err_ == nil {
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
 		}
-	}
+	})
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {

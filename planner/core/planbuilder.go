@@ -2666,10 +2666,10 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 	actualColLen := -1
-	// For MYSQL, it accept the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT CLAUSE
+	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
 	// but just in the table occurs in the SELECT CLAUSE.
-	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not one column of select' output,
-	//        just one column the the table b holds. MySQL won't throw error and will execute this SQL successfully.
+	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
+	//        MySQL won't throw error and will execute this SQL successfully.
 	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
 	if len(insert.OnDuplicate) > 0 {
 		if sel, ok := insert.Select.(*ast.SelectStmt); ok {

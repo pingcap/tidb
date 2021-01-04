@@ -431,11 +431,11 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		return nil, err
 	}
 	// enable by `curl -XPUT -d '1*return("[some-addr]")->return("")' http://host:port/github.com/pingcap/tidb/store/tikv/injectWrongStoreAddr`
-	if val, _err_ := failpoint.Eval(_curpkg_("injectWrongStoreAddr")); _err_ == nil {
+	failpoint.Inject("injectWrongStoreAddr", func(val failpoint.Value) {
 		if a, ok := val.(string); ok && len(a) > 0 {
 			addr = a
 		}
-	}
+	})
 	if store == nil || len(addr) == 0 {
 		// Store not found, region must be out of date.
 		cachedRegion.invalidate()

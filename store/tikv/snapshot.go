@@ -405,11 +405,11 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("snapshot-get-cache-fail")); _err_ == nil {
+	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		if bo.ctx.Value("TestSnapshotCache") != nil {
 			panic("cache miss")
 		}
-	}
+	})
 
 	cli := clientHelper{
 		LockResolver:      s.store.lockResolver,
@@ -587,12 +587,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("ErrMockRetryableOnly")); _err_ == nil {
+	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
 		}
-	}
+	})
 
 	if keyErr.Conflict != nil {
 		return newWriteConflictError(keyErr.Conflict)

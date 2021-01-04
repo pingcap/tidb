@@ -1246,12 +1246,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("exchangePartitionErr")); _err_ == nil {
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			return ver, errors.New("occur an error after updating partition id")
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
 		}
-	}
+	})
 
 	// recreate non-partition table meta info
 	err = t.DropTableOrView(job.SchemaID, nt.ID, true)

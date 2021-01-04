@@ -735,11 +735,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("parallelHashAggError")); _err_ == nil {
+	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("HashAggExec.parallelExec error")
+			failpoint.Return(errors.New("HashAggExec.parallelExec error"))
 		}
-	}
+	})
 
 	if e.executed {
 		return nil
@@ -816,11 +816,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return err
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("unparallelHashAggError")); _err_ == nil {
+		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("HashAggExec.unparallelExec error")
+				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
 			}
-		}
+		})
 
 		// no more data.
 		if e.childResult.NumRows() == 0 {

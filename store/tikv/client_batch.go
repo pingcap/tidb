@@ -255,10 +255,10 @@ func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err er
 			err = errors.SuspendStack(errors.New("batch conn recv paniced"))
 		}
 	}()
-	if _, _err_ := failpoint.Eval(_curpkg_("gotErrorInRecvLoop")); _err_ == nil {
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (resp *tikvpb.BatchCommandsResponse, err error) {
 		err = errors.New("injected error in batchRecvLoop")
 		return
-	}
+	})
 	// When `conn.Close()` is called, `client.Recv()` will return an error.
 	resp, err = c.client.Recv()
 	return
@@ -266,7 +266,7 @@ func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err er
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
 func (c *batchCommandsClient) failPendingRequests(err error) {
-	failpoint.Eval(_curpkg_("panicInFailPendingRequests"))
+	failpoint.Inject("panicInFailPendingRequests", nil)
 	c.batched.Range(func(key, value interface{}) bool {
 		id, _ := key.(uint64)
 		entry, _ := value.(*batchCommandsEntry)
@@ -475,11 +475,11 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 		a.batchSize.Observe(float64(len(requests)))
 
 		// curl -XPUT -d 'return(true)' http://0.0.0.0:10080/fail/github.com/pingcap/tidb/store/tikv/mockBlockOnBatchClient
-		if val, _err_ := failpoint.Eval(_curpkg_("mockBlockOnBatchClient")); _err_ == nil {
+		failpoint.Inject("mockBlockOnBatchClient", func(val failpoint.Value) {
 			if val.(bool) {
 				time.Sleep(1 * time.Hour)
 			}
-		}
+		})
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
