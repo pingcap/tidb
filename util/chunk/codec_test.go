@@ -101,24 +101,6 @@ func (s *testCodecSuite) TestEstimateTypeWidth(c *check.C) {
 	c.Assert(EstimateTypeWidth(colType), check.Equals, 32) // value after guessing
 }
 
-func (s *testCodecSuite) TestIssue7953(c *check.C) {
-	numCols := 4
-	numRows := 1024
-
-	chk := &Chunk{columns: make([]*Column, numCols)}
-	for i := 0; i < numCols; i++ {
-		chk.columns[i] = &Column{
-			length:     numRows,
-			nullBitmap: make([]byte, numRows/8+1),
-			data:       make([]byte, numRows*8),
-		}
-	}
-
-	codec := &Codec{}
-	encoded := codec.Encode(chk)
-	c.Assert(encoded, check.HasLen, 33312)
-}
-
 func BenchmarkEncodeChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
