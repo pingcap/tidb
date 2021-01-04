@@ -375,7 +375,8 @@ var noopSysVars = []*SysVar{
 	// See: https://github.com/pingcap/tidb/pull/6068 for details
 	{Scope: ScopeNone, Name: "explicit_defaults_for_timestamp", Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeNone, Name: "performance_schema_events_waits_history_size", Value: "10"},
-	{Scope: ScopeGlobal, Name: "log_syslog_tag", Value: ""}, {Scope: ScopeGlobal, Name: "innodb_undo_log_truncate", Value: ""},
+	{Scope: ScopeGlobal, Name: "log_syslog_tag", Value: ""},
+	{Scope: ScopeGlobal, Name: "innodb_undo_log_truncate", Value: ""},
 	{Scope: ScopeSession, Name: "innodb_create_intrinsic", Value: ""},
 	{Scope: ScopeGlobal, Name: "gtid_executed_compression_period", Value: ""},
 	{Scope: ScopeGlobal, Name: "ndb_log_empty_epochs", Value: ""},
