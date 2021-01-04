@@ -128,11 +128,11 @@ var SetSuccess = false
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
-	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("probeSetVars")); _err_ == nil {
 		if val.(bool) {
 			SetSuccess = true
 		}
-	})
+	}
 }
 
 func (txn *tikvTxn) GetVars() *kv.Variables {
@@ -217,12 +217,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError")); _err_ == nil {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(errors.New("mock commit error"))
+			return errors.New("mock commit error")
 		}
-	})
+	}
 
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
@@ -476,9 +476,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+					if _, _err_ := failpoint.Eval(_curpkg_("SingleStmtDeadLockRetrySleep")); _err_ == nil {
 						time.Sleep(300 * time.Millisecond)
-					})
+					}
 				}
 			}
 			if assignedPrimaryKey {
@@ -533,9 +533,9 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
-		failpoint.Inject("AsyncRollBackSleep", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("AsyncRollBackSleep")); _err_ == nil {
 			time.Sleep(100 * time.Millisecond)
-		})
+		}
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))

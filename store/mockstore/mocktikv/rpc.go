@@ -808,11 +808,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("rpcServerBusy")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
+			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
 		}
-	})
+	}
 
 	// increase coverage for mock tikv
 	_ = req.Type.String()
@@ -846,14 +846,14 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp = handler.handleKvScan(r)
 
 	case tikvrpc.CmdPrewrite:
-		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("rpcPrewriteResult")); _err_ == nil {
 			switch val.(string) {
 			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
+				return &tikvrpc.Response{
 					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+				}, nil
 			}
-		})
+		}
 
 		r := req.Prewrite()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -876,20 +876,20 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 		resp.Resp = handler.handleKvPessimisticRollback(r)
 	case tikvrpc.CmdCommit:
-		failpoint.Inject("rpcCommitResult", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("rpcCommitResult")); _err_ == nil {
 			switch val.(string) {
 			case "timeout":
-				failpoint.Return(nil, errors.New("timeout"))
+				return nil, errors.New("timeout")
 			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
+				return &tikvrpc.Response{
 					Resp: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+				}, nil
 			case "keyError":
-				failpoint.Return(&tikvrpc.Response{
+				return &tikvrpc.Response{
 					Resp: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
-				}, nil)
+				}, nil
 			}
-		})
+		}
 
 		r := req.Commit()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -897,11 +897,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.Resp = handler.handleKvCommit(r)
-		failpoint.Inject("rpcCommitTimeout", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("rpcCommitTimeout")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(nil, undeterminedErr)
+				return nil, undeterminedErr
 			}
-		})
+		}
 	case tikvrpc.CmdCleanup:
 		r := req.Cleanup()
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -1051,17 +1051,17 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 		resp.Resp = res
 	case tikvrpc.CmdBatchCop:
-		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("BatchCopCancelled")); _err_ == nil {
 			if value.(bool) {
-				failpoint.Return(nil, context.Canceled)
+				return nil, context.Canceled
 			}
-		})
+		}
 
-		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+		if value, _err_ := failpoint.Eval(_curpkg_("BatchCopRpcErr" + addr)); _err_ == nil {
 			if value.(string) == addr {
-				failpoint.Return(nil, errors.New("rpc error"))
+				return nil, errors.New("rpc error")
 			}
-		})
+		}
 		r := req.BatchCop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {
 			resp.Resp = &tikvrpc.BatchCopStreamResponse{

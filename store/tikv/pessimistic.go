@@ -91,10 +91,10 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
-		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
+		if _, _err_ := failpoint.Eval(_curpkg_("PessimisticLockErrWriteConflict")); _err_ == nil {
 			time.Sleep(300 * time.Millisecond)
 			return kv.ErrWriteConflict
-		})
+		}
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if action.LockCtx.Stats != nil {

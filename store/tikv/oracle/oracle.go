@@ -52,7 +52,7 @@ const (
 
 // ComposeTS creates a ts from physical and logical parts.
 func ComposeTS(physical, logical int64) uint64 {
-	failpoint.Inject("changeTSFromPD", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("changeTSFromPD")); _err_ == nil {
 		valInt, ok := val.(int)
 		if ok {
 			origPhyTS := physical
@@ -62,9 +62,9 @@ func ComposeTS(physical, logical int64) uint64 {
 			newTS := uint64((newPhyTs << physicalShiftBits) + logical)
 			logutil.BgLogger().Warn("ComposeTS failpoint", zap.Uint64("origTS", origTS),
 				zap.Int("valInt", valInt), zap.Uint64("ts", newTS))
-			failpoint.Return(newTS)
+			return newTS
 		}
-	})
+	}
 	return uint64((physical << physicalShiftBits) + logical)
 }
 

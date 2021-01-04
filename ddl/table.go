@@ -41,11 +41,11 @@ import (
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockExceedErrorLimit")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("mock do job error"))
+			return ver, errors.New("mock do job error")
 		}
-	})
+	}
 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
@@ -79,11 +79,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			return ver, errors.Trace(err)
 		}
 
-		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("checkOwnerCheckAllVersionsWaitTime")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(ver, errors.New("mock create table error"))
+				return ver, errors.New("mock create table error")
 			}
-		})
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -325,11 +325,11 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockRecoverTableCommitErr")); _err_ == nil {
 			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
 				kv.MockCommitErrorEnable()
 			}
-		})
+		}
 
 		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -468,12 +468,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	failpoint.Inject("truncateTableErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("truncateTableErr")); _err_ == nil {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after dropping table"))
+			return ver, errors.New("occur an error after dropping table")
 		}
-	})
+	}
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -528,11 +528,11 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockTruncateTableUpdateVersionError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("mock update version error"))
+			return ver, errors.New("mock update version error")
 		}
-	})
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -761,14 +761,14 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 		return ver, tblInfo, errors.Trace(err)
 	}
 
-	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("renameTableErr")); _err_ == nil {
 		if valStr, ok := val.(string); ok {
 			if tableName.L == valStr {
 				job.State = model.JobStateCancelled
-				failpoint.Return(ver, tblInfo, errors.New("occur an error after renaming table"))
+				return ver, tblInfo, errors.New("occur an error after renaming table")
 			}
 		}
-	})
+	}
 
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
@@ -1042,18 +1042,18 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 // updateVersionAndTableInfo updates the schema version and the table information.
 func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
-	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateVersionAndTableInfoErr")); _err_ == nil {
 		switch val.(int) {
 		case 1:
-			failpoint.Return(ver, errors.New("mock update version and tableInfo error"))
+			return ver, errors.New("mock update version and tableInfo error")
 		case 2:
 			// We change it cancelled directly here, because we want to get the original error with the job id appended.
 			// The job ID will be used to get the job from history queue and we will assert it's args.
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("mock update version and tableInfo error, jobID="+strconv.Itoa(int(job.ID))))
+			return ver, errors.New("mock update version and tableInfo error, jobID=" + strconv.Itoa(int(job.ID)))
 		default:
 		}
-	})
+	}
 	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {

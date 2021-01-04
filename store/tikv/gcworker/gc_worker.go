@@ -542,9 +542,9 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
-	failpoint.Inject("mockRunGCJobFail", func() {
-		failpoint.Return(errors.New("mock failure of runGCJoB"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRunGCJobFail")); _err_ == nil {
+		return errors.New("mock failure of runGCJoB")
+	}
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 	usePhysical, err := w.checkUsePhysicalScanLock()
 	if err != nil {
@@ -1017,12 +1017,12 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	var stat tikv.RangeTaskStat
 	key := startKey
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
-	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("setGcResolveMaxBackoff")); _err_ == nil {
 		sleep := v.(int)
 		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
-	})
+	}
 retryScanAndResolve:
 	for {
 		select {
@@ -1107,10 +1107,10 @@ retryScanAndResolve:
 			break
 		}
 		bo = tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
-		failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
+		if v, _err_ := failpoint.Eval(_curpkg_("setGcResolveMaxBackoff")); _err_ == nil {
 			sleep := v.(int)
 			bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
-		})
+		}
 	}
 	return stat, nil
 }
@@ -1158,7 +1158,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			return errors.Trace(err)
 		}
 
-		failpoint.Inject("beforeCheckLockObservers", func() {})
+		failpoint.Eval(_curpkg_("beforeCheckLockObservers"))
 
 		stores, err := w.getStoresMapForGC(ctx)
 		if err != nil {
@@ -1413,11 +1413,11 @@ func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint ui
 }
 
 func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.Lock) error {
-	failpoint.Inject("resolveLocksAcrossRegionsErr", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("resolveLocksAcrossRegionsErr")); _err_ == nil {
 		ms := v.(int)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-		failpoint.Return(errors.New("injectedError"))
-	})
+		return errors.New("injectedError")
+	}
 
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
 
@@ -1795,7 +1795,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("mockHistoryJobForGC")); _err_ == nil {
 		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{int64(v.(int))}})
 		if err1 != nil {
 			return
@@ -1805,7 +1805,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 			Type:    model.ActionDropTable,
 			RawArgs: args,
 		}
-	})
+	}
 	if historyJob == nil {
 		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
 			var err1 error

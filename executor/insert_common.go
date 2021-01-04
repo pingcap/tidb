@@ -505,7 +505,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i := 0; i < e.origSelectOutputLen; i++ {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
+		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
 		if e.handleErr(nil, &vals[i], 0, err) != nil {
 			return nil, err
 		}

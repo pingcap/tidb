@@ -65,12 +65,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		minCommitTS = c.startTS + 1
 	}
 
-	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockZeroCommitTS")); _err_ == nil {
 		// Should be val.(uint64) but failpoint doesn't support that.
 		if tmp, ok := val.(int); ok && uint64(tmp) == c.startTS {
 			minCommitTS = 0
 		}
-	})
+	}
 
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
@@ -84,11 +84,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
-	failpoint.Inject("invalidMaxCommitTS", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("invalidMaxCommitTS")); _err_ == nil {
 		if req.MaxCommitTs > 0 {
 			req.MaxCommitTs = minCommitTS - 1
 		}
-	})
+	}
 
 	if c.isAsyncCommit() {
 		if batch.isPrimary {

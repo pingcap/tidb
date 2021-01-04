@@ -433,12 +433,12 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError")); _err_ == nil {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
@@ -561,11 +561,11 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
-	failpoint.Inject("keepHistory", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("keepHistory")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(err)
+			return err
 		}
-	})
+	}
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
 }
@@ -730,12 +730,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		failpoint.Inject("preCommitHook", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("preCommitHook")); _err_ == nil {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
 				hook()
 			}
-		})
+		}
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
