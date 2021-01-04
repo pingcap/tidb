@@ -3081,16 +3081,49 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
+	tk1.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk1.MustExec(`create user 'test'@'%'`)
 	tk1.MustExec("create view v as select * from t")
-	defer tk1.MustExec("drop view v")
-	err = tk.ExecToErr("select * from v for update")
+	tk1.MustExec(`grant all on test.* to 'test'@'%'`)
+	defer func() {
+		tk1.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+		tk1.MustExec("drop view v")
+	}()
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil), IsTrue)
+
+	err = tk1.ExecToErr("select * from v for update")
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
-	err = tk.ExecToErr("select * from v lock in share mode")
+	err = tk1.ExecToErr("select * from v lock in share mode")
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
-	err = tk.ExecToErr("select * from (select * from v for update) t join t1")
+
+	// test subQuery in table-ref or join
+	err = tk1.ExecToErr("select * from (select * from v for update) t join t1")
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
-	err = tk.ExecToErr("select * from (select * from (select * from v ) t join t1) s for update")
+	err = tk1.ExecToErr("select * from (select s1.c1 from (select c1 from v) s1 join t1) s2 for update")
 	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+
+	// test subQuery in filter
+	tk1.MustQuery("select * from t where c1 in (select c1 from v) for update")
+	err = tk1.ExecToErr("select * from t where c1 in (select c1 from v for update)")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	tk1.MustQuery("select * from t where exists (select 1 from v where t.c1 = v.c1) for update")
+	tk1.MustQuery("select * from t where c1 = (select c2 from v where t.c1 = v.c1 limit 1) for update")
+	tk1.MustQuery("select * from t where c1 <> (select c2 from v where t.c1 = v.c1 limit 1) for update")
+	tk1.MustQuery("select (select c2 from v limit 1) c from t for update")
+	err = tk1.ExecToErr("select * from t where c1 = (select c2 from v limit 1 for update)")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+
+	// test subQuery in projection / having / sort
+	tk1.MustQuery("select (select c2 from v limit 1) c from t for update")
+	err = tk1.ExecToErr("select (select c2 from v limit 1 for update) c from t")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	tk1.MustQuery("select (select c2 from v limit 1) c from t for update")
+	err = tk1.ExecToErr("select c2 from t order by (select c1 from v limit 1 for update)")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	tk1.MustQuery("select c2 from t order by (select c1 from v limit 1) for update")
+	err = tk1.ExecToErr("select c2, count(1) c from t group by c2 having c > (select c1 from v limit 1 for update)")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	tk1.MustQuery("select c2, count(1) c from t group by c2 having c > (select c1 from v limit 1) for update")
 }
 
 func (s *testSuite) TestEmptyEnum(c *C) {

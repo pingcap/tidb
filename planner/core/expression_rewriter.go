@@ -322,6 +322,9 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 		}()
 	}
 
+	// "select for update" does not take affect on subQuery in project or filter.
+	ctx = context.WithValue(ctx, underSelLock{}, nil)
+
 	np, err := er.b.buildResultSetNode(ctx, subq.Query)
 	if err != nil {
 		return nil, err

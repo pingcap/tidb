@@ -2255,9 +2255,16 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 	if err != nil {
 		return err
 	}
+
+	ctx := r.ctx
+	// correlatedAggregateResolver will expand view and cache result in `PlanBuilder.cachedResultSetNodes`
+	// so it need check here instead of in `buildSubQuery` when subQuery inside project / sort / agg having
+	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		ctx = context.WithValue(ctx, underSelLock{}, struct{}{})
+	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
-	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	p, err := r.b.buildTableRefs(ctx, sel.From, useCache)
 	if err != nil {
 		return err
 	}
