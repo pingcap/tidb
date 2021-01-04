@@ -15,9 +15,9 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
