@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -402,6 +403,12 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 	}
 
 	if handle.IsInt() {
+		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
+			if mysql.HasUnsignedFlag(pkInfo.Flag) {
+				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
+				return c.genKeyExistsError(name, handleStr, nil)
+			}
+		}
 		return c.genKeyExistsError(name, handle.String(), nil)
 	}
 
