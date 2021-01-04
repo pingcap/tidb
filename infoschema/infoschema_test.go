@@ -369,7 +369,11 @@ func (*testSuite) TestGetBundle(c *C) {
 	bundles[placement.PDBundleID] = bundle
 
 	b := infoschema.GetBundle(is, []int64{})
-	c.Assert(b, DeepEquals, bundle)
+	c.Assert(b.Rules, DeepEquals, bundle.Rules)
+
+	// bundle itself is cloned
+	b.ID = "test"
+	c.Assert(bundle.ID, Equals, placement.PDBundleID)
 
 	ptID := placement.GroupID(3)
 	bundle = &placement.Bundle{
@@ -388,6 +392,10 @@ func (*testSuite) TestGetBundle(c *C) {
 	b = infoschema.GetBundle(is, []int64{2, 3})
 	c.Assert(b, DeepEquals, bundle)
 
+	// bundle itself is cloned
+	b.ID = "test"
+	c.Assert(bundle.ID, Equals, ptID)
+
 	ptID = placement.GroupID(1)
 	bundle = &placement.Bundle{
 		ID: ptID,
@@ -404,4 +412,8 @@ func (*testSuite) TestGetBundle(c *C) {
 
 	b = infoschema.GetBundle(is, []int64{1, 2, 3})
 	c.Assert(b, DeepEquals, bundle)
+
+	// bundle itself is cloned
+	b.ID = "test"
+	c.Assert(bundle.ID, Equals, ptID)
 }

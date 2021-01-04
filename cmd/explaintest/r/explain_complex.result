@@ -115,18 +115,19 @@ Projection_7	53.00	root		test.dt.ds, test.dt.p1, test.dt.p2, test.dt.p3, test.dt
           └─TableRowIDScan_14	2650.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext, gad.t as gtime from st gad join (select id, aid, pt, dic, ip, t from dd where pt = 'android' and bm = 0 and t > 1478143908) sdk on  gad.aid = sdk.aid and gad.ip = sdk.ip and sdk.t > gad.t where gad.t > 1478143908 and gad.pt = 'android' group by gad.aid, sdk.dic limit 2500;
 id	estRows	task	access object	operator info
-Projection_13	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
-└─Limit_16	1.00	root		offset:0, count:2500
-  └─HashAgg_17	1.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─HashJoin_31	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
-      ├─IndexLookUp_49(Build)	0.00	root		
-      │ ├─IndexRangeScan_46(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-      │ └─Selection_48(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
-      │   └─TableRowIDScan_47	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
-      └─IndexLookUp_38(Probe)	3.33	root		
-        ├─IndexRangeScan_35(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_37(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
-          └─TableRowIDScan_36	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
+Projection_14	1.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
+└─Limit_17	1.00	root		offset:0, count:2500
+  └─HashAgg_18	1.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
+    └─Projection_19	0.00	root		test.st.id, test.st.aid, test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t, test.dd.id, test.dd.dic, test.dd.ip, test.dd.t
+      └─HashJoin_33	0.00	root		inner join, equal:[eq(test.dd.aid, test.st.aid) eq(test.dd.ip, test.st.ip)], other cond:gt(test.dd.t, test.st.t)
+        ├─IndexLookUp_51(Build)	0.00	root		
+        │ ├─IndexRangeScan_48(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+        │ └─Selection_50(Probe)	0.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), not(isnull(test.dd.ip))
+        │   └─TableRowIDScan_49	3333.33	cop[tikv]	table:dd	keep order:false, stats:pseudo
+        └─IndexLookUp_40(Probe)	3.33	root		
+          ├─IndexRangeScan_37(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
+          └─Selection_39(Probe)	3.33	cop[tikv]		eq(test.st.pt, "android"), not(isnull(test.st.ip))
+            └─TableRowIDScan_38	3333.33	cop[tikv]	table:gad	keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
