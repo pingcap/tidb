@@ -289,6 +289,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	// Now we try to cover those still not covered DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
+	OUTER:
 		for i, expr := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
@@ -298,8 +299,20 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if !ok || scalarCond.FuncName.L != ast.LogicOr {
 				continue
 			}
+			// If there're columns not in stats, we won't handle them. This case might happen after DDL operations.
+			cols := expression.ExtractColumns(scalarCond)
+			for i := range cols {
+				if _, ok := coll.Columns[cols[i].ID]; !ok {
+					continue OUTER
+				}
+			}
+
 			dnfItems := expression.FlattenDNFConditions(scalarCond)
 			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+			// If the conditions only contains a single column, we won't handle them.
+			if len(dnfItems) <= 1 {
+				continue
+			}
 
 			selectivity := 0.0
 			for _, cond := range dnfItems {
