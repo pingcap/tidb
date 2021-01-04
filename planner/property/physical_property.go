@@ -197,7 +197,7 @@ func (p *PhysicalProperty) String() string {
 }
 
 // CloneEssentialFields returns a copy of PhysicalProperty. We only copy the essential fields that really indicate the
-// property.
+// property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
 		SortItems:     p.SortItems,
