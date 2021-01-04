@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -31,14 +32,15 @@ import (
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx sessionctx.Context
-	tps  []*types.FieldType
-	is   infoschema.InfoSchema
+	sctx   sessionctx.Context
+	tps    []*types.FieldType
+	is     infoschema.InfoSchema
+	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlanBuilder {
-	return &PBPlanBuilder{sctx: sctx, is: is}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
 // Build builds physical plan from dag protocol buffers.
@@ -107,7 +109,15 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
-		p.Extractor = &SlowQueryExtractor{}
+		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
+		if b.ranges != nil {
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.Extractor = extractor
 	}
 	return p, nil
 }
