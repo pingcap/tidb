@@ -1348,12 +1348,10 @@ func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now
 		collation := row.GetString(4)
 		originStmt, err := p.ParseOneStmt(original, charset, collation)
 		if err != nil {
-			debug.PrintStack()
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
 		bindStmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
-			debug.PrintStack()
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
 		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
