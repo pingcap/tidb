@@ -162,7 +162,7 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 			break
 		}
 	}
-
+	e.origSelectOutputLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
