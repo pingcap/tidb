@@ -5688,21 +5688,19 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
 			if cnt <= 0 {
-				err = errors.Errorf("count should be positive, but got %d", cnt)
-				break
+				return rules, errors.Errorf("count should be positive, but got %d", cnt)
 			}
 
 			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
-					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
-					break
+					return rules, errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
 				}
 			}
 
 			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
-				break
+				return rules, err
 			}
 			rules = append(rules, &placement.Rule{
 				Count:            cnt,
@@ -5751,6 +5749,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		}
 
 		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
+			origLen := len(bundle.Rules)
 			newRules := bundle.Rules[:0]
 			for _, r := range bundle.Rules {
 				if r.Role != role {
@@ -5761,6 +5760,11 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 
 			// alter == drop + add new rules
 			if spec.Tp == ast.PlacementDrop {
+				// error if no rules will be dropped
+				if len(bundle.Rules) == origLen {
+					err = errors.Errorf("no rule of role '%s' to drop", role)
+					break
+				}
 				continue
 			}
 		}

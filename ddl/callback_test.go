@@ -40,12 +40,23 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 
 type TestDDLCallback struct {
 	*BaseCallback
+	// We recommended to pass the domain parameter to the test ddl callback, it will ensure
+	// domain to reload schema before your ddl stepping into the next state change.
+	Do DomainReloader
 
 	onJobRunBefore         func(*model.Job)
 	OnJobRunBeforeExported func(*model.Job)
 	onJobUpdated           func(*model.Job)
 	OnJobUpdatedExported   func(*model.Job)
 	onWatched              func(ctx context.Context)
+}
+
+func (tc *TestDDLCallback) OnSchemaStateChanged() {
+	if tc.Do != nil {
+		if err := tc.Do.Reload(); err != nil {
+			log.Warn("reload failed on schema state changed", zap.Error(err))
+		}
+	}
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
@@ -91,4 +102,8 @@ func (s *testDDLSuite) TestCallback(c *C) {
 	cb.OnJobRunBefore(nil)
 	cb.OnJobUpdated(nil)
 	cb.OnWatched(context.TODO())
+}
+
+type DomainReloader interface {
+	Reload() error
 }

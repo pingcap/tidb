@@ -386,6 +386,31 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	c.Assert(commitTS2, Less, commitTS1)
 }
 
+// TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
+func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
+	// It requires setting placement rules to run with TiKV
+	if *WithTiKV {
+		return
+	}
+
+	localTxn := s.beginAsyncCommit(c)
+	err := localTxn.Set([]byte("a"), []byte("a1"))
+	localTxn.SetOption(kv.TxnScope, "bj")
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = localTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
+
+	globalTxn := s.beginAsyncCommit(c)
+	err = globalTxn.Set([]byte("b"), []byte("b1"))
+	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	err = globalTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(globalTxn.committer.isAsyncCommit(), IsTrue)
+}
+
 type mockResolveClient struct {
 	inner              Client
 	onResolveLock      func(*kvrpcpb.ResolveLockRequest) (*tikvrpc.Response, error)

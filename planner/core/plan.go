@@ -67,10 +67,16 @@ type Plan interface {
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+	if p.TaskTp == property.MppTaskType {
+		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
+			return mpp.enforceExchanger(p)
+		}
+		return &mppTask{}
+	}
 	if p.IsEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = finishCopTask(ctx, tsk)
+	tsk = tsk.convertToRootTask(ctx)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
