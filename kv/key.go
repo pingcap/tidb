@@ -225,7 +225,7 @@ func (ih IntHandle) String() string {
 }
 
 // MemoryUsage implements the Handle interface.
-func (ih *IntHandle) MemoryUsage() int64 {
+func (ih IntHandle) MemoryUsage() int64 {
 	return 8
 }
 
