@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,11 +36,15 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -449,9 +454,11 @@ const (
 	version58 = 58
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 restore all SQL bindings.
+	version60 = 60
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version60
 )
 
 var (
@@ -515,6 +522,7 @@ var (
 		upgradeToVer57,
 		upgradeToVer58,
 		upgradeToVer59,
+		upgradeToVer60,
 	}
 )
 
@@ -1286,6 +1294,90 @@ func upgradeToVer59(s Session, ver int64) {
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
 	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	h := &bindinfo.BindHandle{}
+	_, err := s.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return
+	}
+
+	defer func() {
+		if err != nil {
+			_, err1 := s.ExecuteInternal(context.Background(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = s.ExecuteInternal(context.Background(), "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+	_, err = s.ExecuteInternal(context.Background(), h.LockBindInfoSQL())
+	if err != nil {
+		return
+	}
+	var recordSets []sqlexec.RecordSet
+	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
+
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	if err != nil {
+		debug.PrintStack()
+		logutil.BgLogger().Fatal("upgradeToVer60 error", zap.Error(err))
+	}
+	req := recordSets[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = recordSets[0].Next(context.TODO(), req)
+		if err != nil {
+			debug.PrintStack()
+			logutil.BgLogger().Fatal("upgradeToVer60 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(s, iter, p, now.String())
+	}
+}
+
+func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		original := row.GetString(0)
+		bind := row.GetString(1)
+		db := row.GetString(2)
+		charset := row.GetString(3)
+		collation := row.GetString(4)
+		originStmt, err := p.ParseOneStmt(original, charset, collation)
+		if err != nil {
+			debug.PrintStack()
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		bindStmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			debug.PrintStack()
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
+		bindWithDB := utilparser.RestoreWithDefaultDB(bindStmt, db)
+		_, err = s.ExecuteInternal(context.Background(), fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
+			expression.Quote(originWithDB),
+			expression.Quote(bindWithDB),
+			expression.Quote(now),
+			expression.Quote(original)))
+		if err != nil {
+			debug.PrintStack()
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+	}
 }
 
 func writeMemoryQuotaQuery(s Session) {

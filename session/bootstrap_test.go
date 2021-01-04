@@ -505,3 +505,32 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("ON"))
 	c.Assert(r.Close(), IsNil)
 }
+
+func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	defer dom.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a > ?','select /*+ use_index(t, idxb) */ * from t where a > 1', 'test','using', '2021-01-04 14:50:58.257','2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+
+	upgradeToVer60(se, version59)
+	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "select * from test . t where a > ?")
+	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(t idxb)*/ * FROM test.t WHERE a > 1")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(r.Close(), IsNil)
+	mustExecSQL(c, se, `drop global binding for select * from test.t where a > 1`)
+	r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
+	c.Assert(r.Next(ctx, req), IsNil)
+	row = req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "select * from test . t where a > ?")
+	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(t idxb)*/ * FROM test.t WHERE a > 1")
+	c.Assert(row.GetString(2), Equals, "deleted")
+	mustExecSQL(c, se, `delete from mysql.bind_info where original_sql = 'select * from test . t where a > ?'`)
+}

@@ -372,18 +372,6 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, ""
 	}
 	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
-	// Here is the compatibility code.
-	// There may be some bindings that did not contain the DB name in the original SQL, so we need to use the previous matching method.
-	if bindRecord == nil {
-		stmtNode, normalizedSQL, hash = extractSelectAndNormalizeDigest(stmt, "")
-		if stmtNode == nil {
-			return nil, ""
-		}
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
-		if bindRecord == nil {
-			bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
-		}
-	}
 	return bindRecord, metrics.ScopeGlobal
 }
 
