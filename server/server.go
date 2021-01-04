@@ -192,10 +192,8 @@ func (s *Server) forwardUnixSocketToTCP() {
 		if uconn, err := s.socket.Accept(); err == nil {
 			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
-		} else {
-			if s.listener != nil {
-				logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
-			}
+		} else if s.listener != nil {
+			logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 		}
 	}
 }
@@ -225,7 +223,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
-
+	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
@@ -247,7 +245,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-		if s.listener, err = net.Listen("tcp", addr); err == nil {
+		tcpProto := "tcp"
+		if s.cfg.EnableTCP4Only {
+			tcpProto = "tcp4"
+		}
+		if s.listener, err = net.Listen(tcpProto, addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 			if cfg.Socket != "" {
 				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
@@ -296,6 +298,10 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
+}
+
+func setTxnScope() {
+	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
 }
 
 // Run runs the server.
@@ -520,9 +526,6 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -535,7 +538,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
-	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
+	if !ok {
 		return &util.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
@@ -554,7 +557,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	}
 
 	if !query {
-		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}

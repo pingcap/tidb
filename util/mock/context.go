@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -54,6 +55,14 @@ type wrapTxn struct {
 
 func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
+}
+
+// GetUnionStore implements GetUnionStore
+func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
+	if txn.Transaction == nil {
+		return nil
+	}
+	return txn.Transaction.GetUnionStore()
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
@@ -182,13 +191,18 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(startTS)
+		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
+}
+
+// NewTxnWithStalenessOption implements the sessionctx.Context interface.
+func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.

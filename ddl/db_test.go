@@ -291,7 +291,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -308,11 +308,14 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
+	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -415,6 +418,10 @@ LOOP:
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
+				// Don't delete this row, otherwise error message would change.
+				if n == defaultBatchSize*2-10 {
+					continue
+				}
 				tk.MustExec("delete from t1 where c1 = ?", n)
 				tk.MustExec("insert into t1 values (?, ?, ?)", i+10, i, i)
 			}
@@ -1920,11 +1927,11 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 		c.Assert(err, IsNil)
 		c.Assert(d, DeepEquals, val)
 	}
-	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) // pid
 	c.Assert(err, IsNil)
 	c.Assert(d.GetInt64(), Equals, pid)
 
-	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) // handle
 	c.Assert(err, IsNil)
 	h := kv.IntHandle(d.GetInt64())
 	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
@@ -1939,9 +1946,7 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 }
 
 func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
-	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
 		conf.EnableGlobalIndex = true
 	})
 	tk := testkit.NewTestKit(c, s.store)
@@ -2074,7 +2079,6 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
-				forceReloadDomain(tk.Se)
 				n := rand.Intn(num)
 				tk.MustExec("begin")
 				tk.MustExec("delete from t2 where c1 = ?", n)
@@ -2652,11 +2656,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testSerialDBSuite) TestRepairTable(c *C) {
-	// TODO: When AlterPrimaryKey is false, this test fails. Fix it later.
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -2942,6 +2941,35 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("insert into t_set value()")
 	tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
+}
+
+func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// It's for failure cases.
+	// The type of default value is string.
+	tk.MustExec("drop table if exists t_enum")
+	failedSQL := "create table t_enum (a enum('1', '4', '10') default '3');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default '');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// The type of default value is int.
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 0);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 8);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+
+	// The type of default value is int.
+	// It's for successful cases
+	tk.MustExec("drop table if exists t_enum")
+	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
+	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('2','3','4') DEFAULT '3'"), IsTrue)
+	tk.MustExec("drop table t_enum")
+	tk.MustExec("create table t_enum (a enum('a', 'c', 'd') default 2);")
+	ret = tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('a','c','d') DEFAULT 'c'"), IsTrue)
+	tk.MustExec("insert into t_enum value()")
+	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
 }
 
 func (s *testDBSuite2) TestTableForeignKey(c *C) {
@@ -3420,8 +3448,13 @@ out:
 			c.Assert(err, IsNil)
 			break out
 		default:
-			tk.MustExec("update tnn set c2 = c2 + 1 where c1 = 99")
-			updateCnt++
+			// Close issue #14636
+			// Because add column action is not amendable now, it causes an error when the schema is changed
+			// in the process of an insert statement.
+			_, err := tk.Exec("update tnn set c2 = c2 + 1 where c1 = 99")
+			if err == nil {
+				updateCnt++
+			}
 		}
 	}
 	expected := fmt.Sprintf("%d %d", updateCnt, 3)
@@ -3533,6 +3566,16 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
 	result = tk.MustQuery(`DESC test_gv_ddl`)
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+
+	// Test generated column `\\`.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('\\\\'));")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("\\"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('a\\\\b\\\\c\\\\'))")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a\\b\\c\\"))
 }
 
 func (s *testDBSuite4) TestComment(c *C) {
@@ -4004,7 +4047,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
-	//varchar to varchar
+	// varchar to varchar
 	tk.MustExec("drop table if exists tt;")
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
@@ -4173,7 +4216,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -4445,9 +4488,9 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 	}
 	// NOTE: this test case contains a bug, it should be uncommented after the bug is fixed.
 	// TODO: Fix bug https://github.com/pingcap/tidb/issues/12181
-	//s.mustExec(c, "delete from t where y = 2155")
-	//s.mustExec(c, "alter table t add index idx_y(y1)")
-	//s.mustExec(c, "alter table t drop index idx_y")
+	// s.mustExec(c, "delete from t where y = 2155")
+	// s.mustExec(c, "alter table t add index idx_y(y1)")
+	// s.mustExec(c, "alter table t drop index idx_y")
 
 	// Fix issue 9311.
 	tk.MustExec("drop table if exists gcai_table")
@@ -4674,7 +4717,6 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(tk, c, "drop table t_mcc;")
 
-	forceReloadDomain(tk.Se)
 	result := tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
@@ -4706,31 +4748,33 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
+	// Set time zone to UTC.
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
 		variable.SetDDLErrorCountLimit(limit)
 		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
-	//now := time.Now()
-	//now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	//nowLoc := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	now := time.Now().UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	timeToDate1 := now.Format("2006-01-02")
+	timeToDate2 := now.AddDate(0, 0, 30).Format("2006-01-02")
 
-	//timeToDate1 := nowLoc.Format("2006-01-02")
-	//timeToDate2 := nowLoc.AddDate(0, 0, 30).Format("2006-01-02")
+	timeToDatetime1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToDatetime3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
 
-	//timeToDatetime1 := nowLoc.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToDatetime2 := nowLoc.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	//timeToDatetime3 := nowLoc.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToDatetime4 := nowLoc.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToDatetime5 := nowLoc.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	currentYear := strconv.Itoa(time.Now().Year())
 
-	//timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	//timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	//timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-
-	// TESTED UNDER UTC+8
 	// 1. In conversion between date/time, fraction parts are taken into account
 	// Refer to doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-type-conversion.html
 	// 2. Failed tests are commentd to pass unit-test
@@ -4741,73 +4785,69 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		expect string
 		err    uint16
 	}{
-		// time to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"time", `"30 20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"200012"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `200012`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `0012`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `12`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"200012.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `200012.498`, "year", "", errno.ErrWarnDataOutOfRange},
+		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
+		{"time", `"30 20:00:12"`, "year", currentYear, 0},
+		{"time", `"30 20:00"`, "year", currentYear, 0},
+		{"time", `"30 20"`, "year", currentYear, 0},
+		{"time", `"20:00:12"`, "year", currentYear, 0},
+		{"time", `"20:00"`, "year", currentYear, 0},
+		{"time", `"12"`, "year", currentYear, 0},
+		{"time", `"200012"`, "year", currentYear, 0},
+		{"time", `200012`, "year", currentYear, 0},
+		{"time", `0012`, "year", currentYear, 0},
+		{"time", `12`, "year", currentYear, 0},
+		{"time", `"30 20:00:12.498"`, "year", currentYear, 0},
+		{"time", `"20:00:12.498"`, "year", currentYear, 0},
+		{"time", `"200012.498"`, "year", currentYear, 0},
+		{"time", `200012.498`, "year", currentYear, 0},
 
 		// time to date
-		// TODO: somewhat got one day earlier than expected
-		//{"time", `"30 20:00:12"`, "date", timeToDate2, 0},
-		//{"time", `"30 20:00"`, "date", timeToDate2, 0},
-		//{"time", `"30 20"`, "date", timeToDate2, 0},
-		//{"time", `"20:00:12"`, "date", timeToDate1, 0},
-		//{"time", `"20:00"`, "date", timeToDate1, 0},
-		//{"time", `"12"`, "date", timeToDate1, 0},
-		//{"time", `"200012"`, "date", timeToDate1, 0},
-		//{"time", `200012`, "date", timeToDate1, 0},
-		//{"time", `0012`, "date", timeToDate1, 0},
-		//{"time", `12`, "date", timeToDate1, 0},
-		//{"time", `"30 20:00:12.498"`, "date", timeToDate2, 0},
-		//{"time", `"20:00:12.498"`, "date", timeToDate1, 0},
-		//{"time", `"200012.498"`, "date", timeToDate1, 0},
-		//{"time", `200012.498`, "date", timeToDate1, 0},
+		{"time", `"30 20:00:12"`, "date", timeToDate2, 0},
+		{"time", `"30 20:00"`, "date", timeToDate2, 0},
+		{"time", `"30 20"`, "date", timeToDate2, 0},
+		{"time", `"20:00:12"`, "date", timeToDate1, 0},
+		{"time", `"20:00"`, "date", timeToDate1, 0},
+		{"time", `"12"`, "date", timeToDate1, 0},
+		{"time", `"200012"`, "date", timeToDate1, 0},
+		{"time", `200012`, "date", timeToDate1, 0},
+		{"time", `0012`, "date", timeToDate1, 0},
+		{"time", `12`, "date", timeToDate1, 0},
+		{"time", `"30 20:00:12.498"`, "date", timeToDate2, 0},
+		{"time", `"20:00:12.498"`, "date", timeToDate1, 0},
+		{"time", `"200012.498"`, "date", timeToDate1, 0},
+		{"time", `200012.498`, "date", timeToDate1, 0},
 
 		// time to datetime
-		// TODO: somewhat got one day earlier than expected
-		//{"time", `"30 20:00:12"`, "datetime", timeToDatetime4, 0},
-		//{"time", `"30 20:00"`, "datetime", timeToDatetime5, 0},
-		//{"time", `"30 20"`, "datetime", timeToDatetime5, 0},
-		//{"time", `"20:00:12"`, "datetime", timeToDatetime1, 0},
-		//{"time", `"20:00"`, "datetime", timeToDatetime2, 0},
-		//{"time", `"12"`, "datetime", timeToDatetime3, 0},
-		//{"time", `"200012"`, "datetime", timeToDatetime1, 0},
-		//{"time", `200012`, "datetime", timeToDatetime1, 0},
-		//{"time", `0012`, "datetime", timeToDatetime3, 0},
-		//{"time", `12`, "datetime", timeToDatetime3, 0},
-		//{"time", `"30 20:00:12.498"`, "datetime", timeToDatetime4, 0},
-		//{"time", `"20:00:12.498"`, "datetime", timeToDatetime1, 0},
-		//{"time", `"200012.498"`, "datetime", timeToDatetime1, 0},
-		//{"time", `200012.498`, "datetime", timeToDatetime1, 0},
+		{"time", `"30 20:00:12"`, "datetime", timeToDatetime4, 0},
+		{"time", `"30 20:00"`, "datetime", timeToDatetime5, 0},
+		{"time", `"30 20"`, "datetime", timeToDatetime5, 0},
+		{"time", `"20:00:12"`, "datetime", timeToDatetime1, 0},
+		{"time", `"20:00"`, "datetime", timeToDatetime2, 0},
+		{"time", `"12"`, "datetime", timeToDatetime3, 0},
+		{"time", `"200012"`, "datetime", timeToDatetime1, 0},
+		{"time", `200012`, "datetime", timeToDatetime1, 0},
+		{"time", `0012`, "datetime", timeToDatetime3, 0},
+		{"time", `12`, "datetime", timeToDatetime3, 0},
+		{"time", `"30 20:00:12.498"`, "datetime", timeToDatetime4, 0},
+		{"time", `"20:00:12.498"`, "datetime", timeToDatetime1, 0},
+		{"time", `"200012.498"`, "datetime", timeToDatetime1, 0},
+		{"time", `200012.498`, "datetime", timeToDatetime1, 0},
 
 		// time to timestamp
-		// TODO: result seems correct expect 8hrs earlier
-		//{"time", `"30 20:00:12"`, "timestamp", timeToTimestamp4, 0},
-		//{"time", `"30 20:00"`, "timestamp", timeToTimestamp5, 0},
-		//{"time", `"30 20"`, "timestamp", timeToTimestamp5, 0},
-		//{"time", `"20:00:12"`, "timestamp", timeToTimestamp1, 0},
-		//{"time", `"20:00"`, "timestamp", timeToTimestamp2, 0},
-		//{"time", `"12"`, "timestamp", timeToTimestamp3, 0},
-		//{"time", `"200012"`, "timestamp", timeToTimestamp1, 0},
-		//{"time", `200012`, "timestamp", timeToTimestamp1, 0},
-		//{"time", `0012`, "timestamp", timeToTimestamp3, 0},
-		//{"time", `12`, "timestamp", timeToTimestamp3, 0},
-		//{"time", `"30 20:00:12.498"`, "timestamp", timeToTimestamp4, 0},
-		//{"time", `"20:00:12.498"`, "timestamp", timeToTimestamp1, 0},
-		//{"time", `"200012.498"`, "timestamp", timeToTimestamp1, 0},
-		//{"time", `200012.498`, "timestamp", timeToTimestamp1, 0},
+		{"time", `"30 20:00:12"`, "timestamp", timeToTimestamp4, 0},
+		{"time", `"30 20:00"`, "timestamp", timeToTimestamp5, 0},
+		{"time", `"30 20"`, "timestamp", timeToTimestamp5, 0},
+		{"time", `"20:00:12"`, "timestamp", timeToTimestamp1, 0},
+		{"time", `"20:00"`, "timestamp", timeToTimestamp2, 0},
+		{"time", `"12"`, "timestamp", timeToTimestamp3, 0},
+		{"time", `"200012"`, "timestamp", timeToTimestamp1, 0},
+		{"time", `200012`, "timestamp", timeToTimestamp1, 0},
+		{"time", `0012`, "timestamp", timeToTimestamp3, 0},
+		{"time", `12`, "timestamp", timeToTimestamp3, 0},
+		{"time", `"30 20:00:12.498"`, "timestamp", timeToTimestamp4, 0},
+		{"time", `"20:00:12.498"`, "timestamp", timeToTimestamp1, 0},
+		{"time", `"200012.498"`, "timestamp", timeToTimestamp1, 0},
+		{"time", `200012.498`, "timestamp", timeToTimestamp1, 0},
 
 		// date to time
 		{"date", `"2019-01-02"`, "time", "00:00:00", 0},
@@ -4818,51 +4858,46 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `190102`, "time", "00:00:00", 0},
 
 		// date to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"date", `"2019-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"19-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"20190102"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"190102"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `20190102`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `190102`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `"2019-01-02"`, "year", "2019", 0},
+		{"date", `"19-01-02"`, "year", "2019", 0},
+		{"date", `"20190102"`, "year", "2019", 0},
+		{"date", `"190102"`, "year", "2019", 0},
+		{"date", `20190102`, "year", "2019", 0},
+		{"date", `190102`, "year", "2019", 0},
 
 		// date to datetime
-		// TODO: looks like 8hrs later than expected
-		//{"date", `"2019-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
-		//{"date", `"19-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
-		//{"date", `"20190102"`, "datetime", "2019-01-02 00:00:00", 0},
-		//{"date", `"190102"`, "datetime", "2019-01-02 00:00:00", 0},
-		//{"date", `20190102`, "datetime", "2019-01-02 00:00:00", 0},
-		//{"date", `190102`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `"2019-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `"19-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `"20190102"`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `"190102"`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `20190102`, "datetime", "2019-01-02 00:00:00", 0},
+		{"date", `190102`, "datetime", "2019-01-02 00:00:00", 0},
 
 		// date to timestamp
-		// TODO: looks like 8hrs later than expected
-		//{"date", `"2019-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
-		//{"date", `"19-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
-		//{"date", `"20190102"`, "timestamp", "2019-01-02 00:00:00", 0},
-		//{"date", `"190102"`, "timestamp", "2019-01-02 00:00:00", 0},
-		//{"date", `20190102`, "timestamp", "2019-01-02 00:00:00", 0},
-		//{"date", `190102`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `"2019-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `"19-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `"20190102"`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `"190102"`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `20190102`, "timestamp", "2019-01-02 00:00:00", 0},
+		{"date", `190102`, "timestamp", "2019-01-02 00:00:00", 0},
 
 		// timestamp to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"timestamp", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"2006-01-02 15:04:05"`, "year", "2006", 0},
+		{"timestamp", `"06-01-02 15:04:05"`, "year", "2006", 0},
+		{"timestamp", `"20060102150405"`, "year", "2006", 0},
+		{"timestamp", `"060102150405"`, "year", "2006", 0},
+		{"timestamp", `20060102150405`, "year", "2006", 0},
+		{"timestamp", `060102150405`, "year", "2006", 0},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
 
 		// timestamp to time
-		// TODO: looks like 8hrs earlier than expected
-		//{"timestamp", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
-		//{"timestamp", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
-		//{"timestamp", `"20060102150405"`, "time", "15:04:05", 0},
-		//{"timestamp", `"060102150405"`, "time", "15:04:05", 0},
-		//{"timestamp", `20060102150405`, "time", "15:04:05", 0},
-		//{"timestamp", `060102150405`, "time", "15:04:05", 0},
-		//{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
+		{"timestamp", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
+		{"timestamp", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
+		{"timestamp", `"20060102150405"`, "time", "15:04:05", 0},
+		{"timestamp", `"060102150405"`, "time", "15:04:05", 0},
+		{"timestamp", `20060102150405`, "time", "15:04:05", 0},
+		{"timestamp", `060102150405`, "time", "15:04:05", 0},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
 
 		// timestamp to date
 		{"timestamp", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
@@ -4871,36 +4906,28 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `"060102150405"`, "date", "2006-01-02", 0},
 		{"timestamp", `20060102150405`, "date", "2006-01-02", 0},
 		{"timestamp", `060102150405`, "date", "2006-01-02", 0},
-		// TODO: check the following case
-		// set @@timezone="+8:00"
-		// create table t (a timestamp)
-		// insert into t (a) values('2006-01-02 23:59:59.506')
-		// select cast(a as date) from t == 2006-01-03
-		// set @@timezone="+0:00"
-		// select cast(a as date) from t == 2006-01-02
-		//{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
 
 		// timestamp to datetime
-		// TODO: looks like 8hrs earlier than expected
-		//{"timestamp", `"2006-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `"06-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `"20060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `"060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `20060102150405`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `060102150405`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
+		{"timestamp", `"2006-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `"06-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `"20060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `"060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `20060102150405`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `060102150405`, "datetime", "2006-01-02 15:04:05", 0},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
 
 		// datetime to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"datetime", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"2006-01-02 15:04:05"`, "year", "2006", 0},
+		{"datetime", `"06-01-02 15:04:05"`, "year", "2006", 0},
+		{"datetime", `"20060102150405"`, "year", "2006", 0},
+		{"datetime", `"060102150405"`, "year", "2006", 0},
+		{"datetime", `20060102150405`, "year", "2006", 0},
+		{"datetime", `060102150405`, "year", "2006", 0},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
+		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
+		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
 
 		// datetime to time
 		{"datetime", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
@@ -4925,30 +4952,28 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `"9999-01-02 23:59:59"`, "date", "9999-01-02", 0},
 
 		// datetime to timestamp
-		// TODO: looks like 8hrs later than expected
-		//{"datetime", `"2006-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `"06-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `"20060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `"060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `20060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
-		//{"datetime", `"2006-01-02 23:59:59.506"`, "timestamp", "2006-01-02 23:59:59", 0},
-		//{"datetime", `"1000-01-02 23:59:59"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		//{"datetime", `"9999-01-02 23:59:59"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"datetime", `"2006-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `"06-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `"20060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `"060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `20060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "timestamp", "2006-01-03 00:00:00", 0},
+		{"datetime", `"1000-01-02 23:59:59"`, "timestamp", "1000-01-02 23:59:59", 0},
+		{"datetime", `"9999-01-02 23:59:59"`, "timestamp", "9999-01-02 23:59:59", 0},
 
 		// year to time
-		// TODO: ban conversion that maybe fail
 		// failed cases are not handled by TiDB
-		//{"year", `"2019"`, "time", "00:20:19", 0},
-		//{"year", `2019`, "time", "00:20:19", 0},
-		//{"year", `"00"`, "time", "00:20:00", 0},
-		//{"year", `"69"`, "time", "", errno.ErrTruncatedWrongValue},
-		//{"year", `"70"`, "time", "", errno.ErrTruncatedWrongValue},
-		//{"year", `"99"`, "time", "", errno.ErrTruncatedWrongValue},
-		//{"year", `00`, "time", "00:00:00", 0},
-		//{"year", `69`, "time", "", errno.ErrTruncatedWrongValue},
-		//{"year", `70`, "time", "", errno.ErrTruncatedWrongValue},
-		//{"year", `99`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `"2019"`, "time", "00:20:19", 0},
+		{"year", `2019`, "time", "00:20:19", 0},
+		{"year", `"00"`, "time", "00:20:00", 0},
+		{"year", `"69"`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `"70"`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `"99"`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `00`, "time", "00:00:00", 0},
+		{"year", `69`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `70`, "time", "", errno.ErrTruncatedWrongValue},
+		{"year", `99`, "time", "", errno.ErrTruncatedWrongValue},
 
 		// year to date
 		{"year", `"2019"`, "date", "", errno.ErrTruncatedWrongValue},
@@ -4957,7 +4982,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "date", "0000-00-00", 0},
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
@@ -4969,7 +4995,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -4981,7 +5008,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
 		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5600,6 +5628,78 @@ func (s *testDBSuite4) TestConcurrentLockTables(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
+func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	defer func() {
+		tk.MustExec("alter table t1 read write")
+		tk.MustExec("alter table t2 read write")
+		tk.MustExec("drop table if exists t1,t2")
+	}()
+	tk.MustExec("create table t1 (a int key, b int)")
+	tk.MustExec("create table t2 (a int key)")
+
+	tk.MustExec("alter table t1 read only")
+	tk.MustQuery("select * from t1")
+	tk2.MustQuery("select * from t1")
+	_, err := tk.Exec("insert into t1 set a=1, b=2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+
+	_, err = tk2.Exec("insert into t1 set a=1, b=2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("update t1 set a=1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("delete from t1")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk2.MustExec("alter table t1 read only")
+	_, err = tk2.Exec("insert into t1 set a=1, b=2")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("alter table t1 read write")
+
+	tk.MustExec("lock tables t1 read")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("lock tables t1 write")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("lock tables t1 write local")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("alter table t1 read only"), infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("unlock tables")
+
+	tk.MustExec("alter table t1 read only")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("lock tables t1 read"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("lock tables t1 read"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("lock tables t1 write"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("lock tables t1 write"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("lock tables t1 write local"), infoschema.ErrTableLocked), IsTrue)
+	c.Assert(terror.ErrorEqual(tk2.ExecToErr("lock tables t1 write local"), infoschema.ErrTableLocked), IsTrue)
+	tk.MustExec("admin cleanup table lock t1")
+	tk2.MustExec("insert into t1 set a=1, b=2")
+
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
+	tk2.MustExec("update t1 set b = 3")
+	tk2.MustExec("alter table t1 read only")
+	tk2.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 3"))
+	tk.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
+	tk.MustExec("update t1 set b = 4")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("commit"), domain.ErrInfoSchemaChanged), IsTrue)
+	tk2.MustExec("alter table t1 read write")
+}
+
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
@@ -5868,6 +5968,7 @@ func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
 func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	// Prepare work.
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")
 	tk.MustExec("use test_db")
@@ -5919,7 +6020,7 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			"insert into t2 values(11, 11, 11)",
 			"delete from t2 where c2 = 11",
 			"update t2 set c2 = 110 where c1 = 11"},
-			//"update t2 set c1 = 10 where c3 = 100"},
+			// "update t2 set c1 = 10 where c3 = 100"},
 			[]string{"alter table t1 add index k2(c2)",
 				"alter table t1 drop index k2",
 				"alter table t1 add index kk2(c2, c1)",
@@ -5939,7 +6040,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			false,
 			model.StateNone},
 		// Test unique index
-		/* TODO unique index is not supported now.
 		{[]string{"insert into t1 values(3, 30, 300)",
 			"insert into t1 values(4, 40, 400)",
 			"insert into t2 values(11, 11, 11)",
@@ -5983,7 +6083,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 				{"1 10 100", "2 20 200"}},
 			true,
 			model.StateWriteOnly},
-		*/
 	}
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
 
@@ -6368,4 +6467,60 @@ func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
 	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
+}
+
+func (s *testDBSuite4) TestAnonymousIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("create table t(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb int, b int);")
+	tk.MustExec("alter table t add index bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(b);")
+	tk.MustExec("alter table t add index (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);")
+	res := tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';")
+	c.Assert(len(res.Rows()), Equals, 1)
+	res = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2';")
+	c.Assert(len(res.Rows()), Equals, 1)
+}
+
+func (s *testDBSuite4) TestUnsupportedAlterTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6;")
+	tk.MustGetErrCode("alter table t pre_split_regions=6;", errno.ErrUnsupportedDDLOperation)
+}
+
+func (s *testDBSuite4) TestCreateTableWithDecimalWithDoubleZero(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	checkType := func(db, table, field string) {
+		ctx := tk.Se.(sessionctx.Context)
+		is := domain.GetDomain(ctx).InfoSchema()
+		tableInfo, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+		c.Assert(err, IsNil)
+		tblInfo := tableInfo.Meta()
+		for _, col := range tblInfo.Columns {
+			if col.Name.L == field {
+				c.Assert(col.Flen, Equals, 10)
+			}
+		}
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(d decimal(0, 0))")
+	checkType("test", "tt", "d")
+
+	tk.MustExec("drop table tt")
+	tk.MustExec("create table tt(a int)")
+	tk.MustExec("alter table tt add column d decimal(0, 0)")
+	checkType("test", "tt", "d")
+
+	/*
+		Currently not support change column to decimal
+		tk.MustExec("drop table tt")
+		tk.MustExec("create table tt(d int)")
+		tk.MustExec("alter table tt change column d d decimal(0, 0)")
+		checkType("test", "tt", "d")
+	*/
 }

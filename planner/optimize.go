@@ -138,6 +138,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
+	err = setFoundInBinding(sctx, true)
+	if err != nil {
+		return nil, nil, err
+	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
 	if len(bindRecord.Bindings) > 0 {
 		orgBinding := bindRecord.Bindings[0] // the first is the original binding
@@ -193,10 +197,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			bestPlanAmongHints = plan
 		}
 	}
-	// 1. If there is already a evolution task, we do not need to handle it again.
-	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
-	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
-	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
+	// 1. If it is a select query.
+	// 2. If there is already a evolution task, we do not need to handle it again.
+	// 3. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
+	// 4. If the best plan contain TiFlash hint, we should ignore the evolve task.
+	if _, ok := stmtNode.(*ast.SelectStmt); ok &&
+		sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
 		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
 		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
@@ -215,7 +221,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+	builder, _ := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -271,10 +277,24 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
-		case *ast.SelectStmt:
+		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
 			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := strings.Index(normalizeExplainSQL, "select")
+			idx := int(0)
+			switch n := x.Stmt.(type) {
+			case *ast.SelectStmt:
+				idx = strings.Index(normalizeExplainSQL, "select")
+			case *ast.DeleteStmt:
+				idx = strings.Index(normalizeExplainSQL, "delete")
+			case *ast.UpdateStmt:
+				idx = strings.Index(normalizeExplainSQL, "update")
+			case *ast.InsertStmt:
+				if n.IsReplace {
+					idx = strings.Index(normalizeExplainSQL, "replace")
+				} else {
+					idx = strings.Index(normalizeExplainSQL, "insert")
+				}
+			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash
@@ -290,7 +310,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash
 		}
-	case *ast.SelectStmt, *ast.SetOprStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
@@ -344,7 +364,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint)
+	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false)
 	if bindSQL == "" {
 		return
 	}
@@ -379,7 +399,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	builder, _ := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err
@@ -523,6 +543,12 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.ForceNthPlan = -1
 	}
 	return
+}
+
+func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
+	vars := sctx.GetSessionVars()
+	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
+	return err
 }
 
 func init() {

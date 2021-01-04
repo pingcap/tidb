@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -392,6 +393,7 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
@@ -457,6 +459,7 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
@@ -472,6 +475,23 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+}
+
+func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
+	gcfg := config.GetGlobalConfig()
+	etl := gcfg.EnableTableLock
+	gcfg.EnableTableLock = true
+	defer func() {
+		gcfg.EnableTableLock = etl
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbllock(id int, c int);")
+	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
+	tk.MustExec("lock table tbllock read;")
+	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
 }
 
 func (s *testPointGetSuite) TestIssue20692(c *C) {
@@ -517,4 +537,66 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	<-stop2
 	tk3.MustExec("commit;")
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
+}
+
+func (s *testPointGetSuite) TestPointGetWithInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, unique(c1))")
+	tk.MustExec("alter table t alter index c1 invisible")
+	tk.MustQuery("explain select * from t where c1 = 10").Check(testkit.Rows(
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.c1, 10)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
+
+func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, unique(c1))")
+	tk.MustExec("alter table t alter index c1 invisible")
+	tk.MustQuery("explain select * from t where c1 in (10, 20)").Check(testkit.Rows(
+		"TableReader_7 2.00 root  data:Selection_6",
+		"└─Selection_6 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
+
+func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
+	tk.MustExec("create table t1(id varchar(20) primary key)")
+	tk.MustExec("create table t2(id varchar(20), unique(id))")
+	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
+	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+	tk.MustExec("create table t5(id bit(64) primary key)")
+	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
+	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
+	tk.MustExec("insert into t5 values(48)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain " + sql)
+		res := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
+	}
 }

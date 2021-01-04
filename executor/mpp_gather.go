@@ -22,21 +22,16 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// Currently we only use mpp for broadcast join.
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().AllowMPPExecution {
 		return false
 	}
-	if tr.StoreType != kv.TiFlash {
-		return false
-	}
-	return true
+	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
+	return ok
 }
 
 // MPPGather dispatch MPP tasks and read data from root tasks.
@@ -47,47 +42,10 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 
-	allocTaskID int64
+	allocTaskID *int64
 	mppReqs     []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
-}
-
-func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *plannercore.Fragment) ([]*kv.MPPTask, error) {
-	if p.TableScan.Table.GetPartitionInfo() == nil {
-		return e.constructSinglePhysicalTable(ctx, p.TableScan.Table.ID, p.TableScan.Ranges)
-	}
-	tmp, _ := e.is.TableByID(p.TableScan.Table.ID)
-	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(e.ctx, tbl, p.TableScan.PartitionInfo.PruningConds, p.TableScan.PartitionInfo.PartitionNames, p.TableScan.PartitionInfo.Columns, p.TableScan.PartitionInfo.ColumnNames)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	allTasks := make([]*kv.MPPTask, 0)
-	for _, part := range partitions {
-		partTasks, err := e.constructSinglePhysicalTable(ctx, part.GetPhysicalID(), p.TableScan.Ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		allTasks = append(allTasks, partTasks...)
-	}
-	return allTasks, nil
-}
-
-// single physical table means a table without partitions or a single partition in a partition table.
-func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
-	kvRanges := distsql.TableRangesToKVRanges(tableID, ranges, nil)
-	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tasks := make([]*kv.MPPTask, 0, len(metas))
-	for _, meta := range metas {
-		e.allocTaskID++
-		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.allocTaskID, StartTs: e.startTS, TableID: tableID})
-	}
-	return tasks, nil
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.MPPTask, isRoot bool) error {
@@ -95,7 +53,7 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range pf.Schema().Columns {
+	for i := range pf.ExchangeSender.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	if !isRoot {
@@ -123,40 +81,28 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 		}
 		e.mppReqs = append(e.mppReqs, req)
 	}
-	return nil
-}
-
-func (e *MPPGather) constructMPPTasks(ctx context.Context, pf *plannercore.Fragment, isRoot bool) ([]*kv.MPPTask, error) {
-	tasks, err := e.constructMPPTasksImpl(ctx, pf)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	for _, client := range pf.ExchangeReceivers {
-		client.ChildPf.ExchangeSender.Tasks = tasks
-		client.Tasks, err = e.constructMPPTasks(ctx, client.ChildPf, false)
+	for _, r := range pf.ExchangeReceivers {
+		err = e.appendMPPDispatchReq(r.ChildPf, r.Tasks, false)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	err = e.appendMPPDispatchReq(pf, tasks, isRoot)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return tasks, nil
+	return nil
 }
 
 // Open decides the task counts and locations and generate exchange operators for every plan fragment.
 // Then dispatch tasks to tiflash stores. If any task fails, it would cancel the rest tasks.
-// TODO: We should retry when the request fails for pure rpc error.
-func (e *MPPGather) Open(ctx context.Context) error {
+func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
-	rootPf := plannercore.GetRootPlanFragments(e.ctx, e.originalPlan, e.startTS)
-	_, err := e.constructMPPTasks(ctx, rootPf, true)
+	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
+	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = e.appendMPPDispatchReq(sender.Fragment, rootTasks, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes)
 	if err != nil {
 		return errors.Trace(err)

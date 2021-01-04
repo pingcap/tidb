@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
@@ -41,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -57,11 +58,12 @@ import (
 )
 
 type visitInfo struct {
-	privilege mysql.PrivilegeType
-	db        string
-	table     string
-	column    string
-	err       error
+	privilege     mysql.PrivilegeType
+	db            string
+	table         string
+	column        string
+	err           error
+	alterWritable bool
 }
 
 type indexNestedLoopJoinTables struct {
@@ -150,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -162,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
@@ -371,6 +373,8 @@ const (
 	showStatement
 	globalOrderByClause
 	expressionClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -384,6 +388,8 @@ var clauseMsg = map[clauseCode]string{
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -393,9 +399,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
-	// collectUnderlyingViewName indicates whether to collect the underlying
-	// view names of a CreateViewStmt during plan building.
-	collectUnderlyingViewName
+	// renameView indicates a view is being renamed, so we cannot use the origin
+	// definition of that view.
+	renameView
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -445,12 +451,24 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-	// CreateView needs this information to check whether exists nested view.
-	underlyingViewNames set.StringSet
+	// buildingViewStack is used to check whether there is a recursive view.
+	buildingViewStack set.StringSet
+	// renamingViewName is the name of the view which is being renamed.
+	renamingViewName string
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
+
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
+	cachedResultSetNodes  map[*ast.Join]LogicalPlan
+	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 }
 
 type handleColHelper struct {
@@ -523,6 +541,11 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
+	if b.isSampling {
+		// Disable logical optimization to avoid the optimizer
+		// push down/eliminate operands like Selection, Limit or Sort.
+		return 0
+	}
 	return b.optFlag
 }
 
@@ -541,20 +564,25 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// PlannerSelectBlockAsName should be restored after using this builder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor: processor,
-	}
+		ctx:                   sctx,
+		is:                    is,
+		colMapper:             make(map[*ast.ColumnNameExpr]int),
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:         processor,
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
+	}, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
@@ -1000,7 +1028,12 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
-			p.SQLText = v.GetString()
+			var err error
+			p.SQLText, err = v.ToString()
+			if err != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				p.SQLText = "NULL"
+			}
 		} else {
 			p.SQLText = "NULL"
 		}
@@ -1243,7 +1276,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}
@@ -1687,25 +1720,44 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
+// CMSketchSizeLimit indicates the size limit of CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+
+var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
+}
+
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(statistics.AnalyzeOptionDefault))
-	for key, val := range statistics.AnalyzeOptionDefault {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
 		optMap[key] = val
 	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
-			if opt.Value > statistics.AnalyzeOptionLimit[opt.Type] {
-				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], statistics.AnalyzeOptionLimit[opt.Type])
+			if opt.Value > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		} else {
-			if opt.Value == 0 || opt.Value > statistics.AnalyzeOptionLimit[opt.Type] {
-				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], statistics.AnalyzeOptionLimit[opt.Type])
+			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 		}
 		optMap[opt.Type] = opt.Value
 	}
-	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > statistics.CMSketchSizeLimit {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", statistics.CMSketchSizeLimit)
+	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
+		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	return optMap, nil
 }
@@ -1978,7 +2030,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		p.setSchemaAndNames(buildShowNextRowID())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
 		return p, nil
-	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy:
+	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy, ast.ShowStatsTopN:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -2819,7 +2871,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	}
 	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
 	if err != nil {
-		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) {
+		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
 		}
 		valStr, err1 := value.ToString()
@@ -2924,6 +2976,9 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 		if err != nil {
 			return nil, err
 		}
+		if convertedDatum.IsNull() {
+			return nil, ErrBadNull.GenWithStackByArgs(handleColInfos[i].Name.O)
+		}
 		data = append(data, convertedDatum)
 	}
 	return data, nil
@@ -2980,6 +3035,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
+			} else if spec.Tp == ast.AlterTableWriteable {
+				b.visitInfo[0].alterWritable = true
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -3019,19 +3076,15 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		b.capFlag |= canExpandAST
-		b.capFlag |= collectUnderlyingViewName
+		b.capFlag |= canExpandAST | renameView
+		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
-			b.capFlag &= ^collectUnderlyingViewName
+			b.capFlag &= ^renameView
 		}()
-		b.underlyingViewNames = set.NewStringSet()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
-		}
-		if b.underlyingViewNames.Exist(v.ViewName.Schema.L + "." + v.ViewName.Name.L) {
-			return nil, ErrNoSuchTable.GenWithStackByArgs(v.ViewName.Schema.O, v.ViewName.Name.O)
 		}
 		schema := plan.Schema()
 		names := plan.OutputNames()
@@ -3426,6 +3479,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			"Repeats", "Lower_Bound", "Upper_Bound"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowStatsTopN:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Value", "Count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowStatsHealthy:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Healthy"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}

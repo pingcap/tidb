@@ -321,7 +321,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
-	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -1032,12 +1032,17 @@ func (s *testSuite3) TestDMLCast(c *C) {
 func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`drop table if exists t,t1;`)
 	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
 	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
 	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
 	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
 	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
+	tk.Exec("create table t1(id1 float,id2 float)")
+	tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
+	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
+	tk.MustExec("drop table if exists t,t1")
 }
 
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
@@ -1428,10 +1433,10 @@ func (s *testSuite10) TestInsertRuntimeStat(c *C) {
 		Prefetch:             1 * time.Second,
 	}
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
-	c.Assert(stats.String(), Equals, "prepare:3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "prepare:6s, check_insert:{total_time:4s, mem_insert_time:2s, prefetch:2s}")
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
 }
 
 func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
@@ -1440,7 +1445,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	for _, enable := range []int{0, 1} {
+	for _, enable := range []int{1, 0} {
 		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -1481,6 +1486,17 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
 		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
+		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+
+		tk.MustExec("begin pessimistic;")
+		tk.MustExec("insert into t values ('a7', 'a', 10);")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustExec("rollback;")
 	}
 }
 
@@ -1500,6 +1516,22 @@ func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSuite9) TestIssue10402(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table vctt (v varchar(4), c char(4))")
+	tk.MustExec("insert into vctt values ('ab  ', 'ab   ')")
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab   ab"))
+	tk.MustExec("delete from vctt")
+	tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
+	c.Check(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(4))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Check(fmt.Sprintf("%v", warns), Equals, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]")
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
+	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
+}
+
 func combination(items []string) func() []string {
 	current := 1
 	buf := make([]string, len(items))
@@ -1516,4 +1548,24 @@ func combination(items []string) func() []string {
 		current++
 		return buf
 	}
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h enum(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
 }

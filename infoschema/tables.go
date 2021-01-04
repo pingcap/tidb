@@ -261,19 +261,40 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
-	for _, c := range cs {
+	primaryIndices := make([]*model.IndexInfo, 0, 1)
+	tblInfo := &model.TableInfo{
+		Name:    model.NewCIStr(tableName),
+		State:   model.StatePublic,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+	}
+	for offset, c := range cs {
+		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
+			switch c.tp {
+			case mysql.TypeLong, mysql.TypeLonglong,
+				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+				tblInfo.PKIsHandle = true
+			default:
+				tblInfo.IsCommonHandle = true
+				index := &model.IndexInfo{
+					Name:    model.NewCIStr("primary"),
+					State:   model.StatePublic,
+					Primary: true,
+					Unique:  true,
+					Columns: []*model.IndexColumn{
+						{Name: model.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
+				}
+				primaryIndices = append(primaryIndices, index)
+				tblInfo.Indices = primaryIndices
+			}
+		}
 		cols = append(cols, buildColumnInfo(c))
 	}
 	for i, col := range cols {
 		col.Offset = i
 	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tableName),
-		Columns: cols,
-		State:   model.StatePublic,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
-	}
+	tblInfo.Columns = cols
+	return tblInfo
 }
 
 var schemataCols = []columnInfo{
@@ -719,7 +740,7 @@ var tableTiDBIndexesCols = []columnInfo{
 }
 
 var slowQueryCols = []columnInfo{
-	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6},
+	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.BinaryFlag},
 	{name: variable.SlowLogTxnStartTSStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
@@ -782,6 +803,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -970,7 +992,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
-	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1156,6 +1178,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
 	{name: "PLAN_IN_CACHE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
 	{name: "PLAN_CACHE_HITS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
+	{name: "PLAN_IN_BINDING", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement is matched with the hints in the binding"},
 	{name: "QUERY_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},

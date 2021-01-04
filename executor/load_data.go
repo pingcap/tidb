@@ -627,17 +627,19 @@ type fieldWriter struct {
 	term          string
 	enclosedChar  byte
 	fieldTermChar byte
+	escapeChar    byte
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
 }
 
-func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {
+func (w *fieldWriter) Init(enclosedChar, escapeChar, fieldTermChar byte, readBuf []byte, term string) {
 	w.isEnclosed = false
 	w.isLineStart = true
 	w.isFieldStart = true
 	w.ReadBuf = readBuf
 	w.enclosedChar = enclosedChar
+	w.escapeChar = escapeChar
 	w.fieldTermChar = fieldTermChar
 	w.term = term
 }
@@ -743,13 +745,12 @@ func (w *fieldWriter) GetField() (bool, field) {
 				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
 				w.putback()
 			}
-		} else if ch == '\\' {
-			// TODO: escape only support '\'
+		} else if ch == w.escapeChar {
 			// When the escaped character is interpreted as if
 			// it was not escaped, backslash is ignored.
 			flag, ch = w.getChar()
 			if flag {
-				w.OutputBuf = append(w.OutputBuf, '\\')
+				w.OutputBuf = append(w.OutputBuf, w.escapeChar)
 				w.OutputBuf = append(w.OutputBuf, ch)
 			}
 		} else {
@@ -771,10 +772,10 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		return fields, nil
 	}
 
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Escaped, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
 	for {
 		eol, f := reader.GetField()
-		f = f.escape()
+		f = f.escape(reader.escapeChar)
 		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
@@ -789,12 +790,11 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 
 // escape handles escape characters when running load data statement.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
-func (f *field) escape() field {
+func (f *field) escape(escapeChar byte) field {
 	pos := 0
 	for i := 0; i < len(f.str); i++ {
 		c := f.str[i]
-		if i+1 < len(f.str) && f.str[i] == '\\' {
+		if i+1 < len(f.str) && f.str[i] == escapeChar {
 			c = f.escapeChar(f.str[i+1])
 			i++
 		}

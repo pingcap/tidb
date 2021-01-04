@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -820,6 +821,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	// Test show list partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -1010,6 +1012,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
+func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1044,9 +1067,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	c.Assert(267, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[266][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
@@ -1151,6 +1174,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
 		// When ScopeSession only. `show global variables` must return empty.
 		if v.Scope == variable.ScopeSession {
 			showSQL = "show variables like '" + v.Name + "'"
@@ -1167,6 +1193,13 @@ func (s *testSuite5) TestShowVar(c *C) {
 			res = tk.MustQuery(showSQL)
 			c.Check(res.Rows(), HasLen, 1)
 		}
+	}
+	// Test for switch variable which shouldn't seen by users.
+	for _, one := range variable.FeatureSwitchVariables {
+		res := tk.MustQuery("show variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
+		res = tk.MustQuery("show global variables like '" + one + "'")
+		c.Check(res.Rows(), HasLen, 0)
 	}
 }
 

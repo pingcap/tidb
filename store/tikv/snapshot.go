@@ -61,9 +61,7 @@ type tikvSnapshot struct {
 	syncLog         bool
 	keyOnly         bool
 	vars            *kv.Variables
-	replicaRead     kv.ReplicaReadType
 	replicaReadSeed uint32
-	taskID          uint64
 	minCommitTSPushed
 
 	// Cache the result of BatchGet.
@@ -75,9 +73,12 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		hitCnt int64
-		cached map[string][]byte
-		stats  *SnapshotRuntimeStats
+		hitCnt      int64
+		cached      map[string][]byte
+		cachedSize  int
+		stats       *SnapshotRuntimeStats
+		replicaRead kv.ReplicaReadType
+		taskID      uint64
 	}
 	sampleStep uint32
 }
@@ -174,7 +175,23 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		s.mu.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
-		s.mu.cached[string(key)] = m[string(key)]
+		val := m[string(key)]
+		s.mu.cachedSize += len(key) + len(val)
+		s.mu.cached[string(key)] = val
+	}
+
+	const cachedSizeLimit = 10 << 30
+	if s.mu.cachedSize >= cachedSizeLimit {
+		for k, v := range s.mu.cached {
+			if _, needed := m[k]; needed {
+				continue
+			}
+			delete(s.mu.cached, k)
+			s.mu.cachedSize -= len(k) + len(v)
+			if s.mu.cachedSize < cachedSizeLimit {
+				break
+			}
+		}
 	}
 	s.mu.Unlock()
 
@@ -252,23 +269,27 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
 	}
+	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
+	s.mu.RUnlock()
 
 	pending := batch.keys
 	for {
+		s.mu.RLock()
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			TaskId:       s.taskID,
+			TaskId:       s.mu.taskID,
 		})
+		s.mu.RUnlock()
 
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
 
@@ -295,18 +316,31 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			lockedKeys [][]byte
 			locks      []*Lock
 		)
-		for _, pair := range batchGetResp.Pairs {
-			keyErr := pair.GetError()
-			if keyErr == nil {
-				collectF(pair.GetKey(), pair.GetValue())
-				continue
-			}
+		if keyErr := batchGetResp.GetError(); keyErr != nil {
+			// If a response-level error happens, skip reading pairs.
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			lockedKeys = append(lockedKeys, lock.Key)
 			locks = append(locks, lock)
+		} else {
+			for _, pair := range batchGetResp.Pairs {
+				keyErr := pair.GetError()
+				if keyErr == nil {
+					collectF(pair.GetKey(), pair.GetValue())
+					continue
+				}
+				lock, err := extractLockFromKeyErr(keyErr)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				lockedKeys = append(lockedKeys, lock.Key)
+				locks = append(locks, lock)
+			}
+		}
+		if batchGetResp.ExecDetailsV2 != nil {
+			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
@@ -319,7 +353,11 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 					return errors.Trace(err)
 				}
 			}
-			pending = lockedKeys
+			// Only reduce pending keys when there is no response-level error. Otherwise,
+			// lockedKeys may be incomplete.
+			if batchGetResp.GetError() == nil {
+				pending = lockedKeys
+			}
 			continue
 		}
 		return nil
@@ -380,22 +418,23 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		Client:            s.store.client,
 		resolveLite:       true,
 	}
+	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
-
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
+		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
-			TaskId:       s.taskID,
+			TaskId:       s.mu.taskID,
 		})
+	s.mu.RUnlock()
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
@@ -420,6 +459,9 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			return nil, errors.Trace(ErrBodyMissing)
 		}
 		cmdGetResp := resp.Resp.(*pb.GetResponse)
+		if cmdGetResp.ExecDetailsV2 != nil {
+			s.mergeExecDetail(cmdGetResp.ExecDetailsV2)
+		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
@@ -440,6 +482,22 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		return val, nil
 	}
+}
+
+func (s *tikvSnapshot) mergeExecDetail(detail *pb.ExecDetailsV2) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if detail == nil || s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.scanDetail == nil {
+		s.mu.stats.scanDetail = &execdetails.ScanDetail{}
+	}
+	if s.mu.stats.timeDetail == nil {
+		s.mu.stats.timeDetail = &execdetails.TimeDetail{}
+	}
+	s.mu.stats.scanDetail.MergeFromScanDetailV2(detail.ScanDetailV2)
+	s.mu.stats.timeDetail.MergeFromTimeDetail(detail.TimeDetail)
 }
 
 // Iter return a list of key-value pair after `k`.
@@ -471,9 +529,13 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.SnapshotTS:
 		s.setSnapshotTS(val.(uint64))
 	case kv.ReplicaRead:
-		s.replicaRead = val.(kv.ReplicaReadType)
+		s.mu.Lock()
+		s.mu.replicaRead = val.(kv.ReplicaReadType)
+		s.mu.Unlock()
 	case kv.TaskID:
-		s.taskID = val.(uint64)
+		s.mu.Lock()
+		s.mu.taskID = val.(uint64)
+		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
@@ -487,7 +549,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	switch opt {
 	case kv.ReplicaRead:
-		s.replicaRead = kv.ReplicaReadLeader
+		s.mu.Lock()
+		s.mu.replicaRead = kv.ReplicaReadLeader
+		s.mu.Unlock()
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = nil
@@ -545,6 +609,10 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 	if keyErr.CommitTsTooLarge != nil {
 		err := errors.Errorf("commit TS %v is too large", keyErr.CommitTsTooLarge.CommitTs)
 		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	if keyErr.TxnNotFound != nil {
+		err := errors.Errorf("txn %d not found", keyErr.TxnNotFound.StartTs)
 		return errors.Trace(err)
 	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
@@ -624,9 +692,12 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 }
 
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
+	s.mu.RLock()
 	if s.mu.stats == nil || bo.totalSleep == 0 {
+		s.mu.RUnlock()
 		return
 	}
+	s.mu.RUnlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
@@ -671,6 +742,8 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+	scanDetail     *execdetails.ScanDetail
+	timeDetail     *execdetails.TimeDetail
 }
 
 // Tp implements the RuntimeStats interface.
@@ -736,7 +809,18 @@ func (rs *SnapshotRuntimeStats) String() string {
 			buf.WriteByte(',')
 		}
 		ms := rs.backoffSleepMS[k]
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%d ms}", k.String(), v, ms))
+		d := time.Duration(ms) * time.Millisecond
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
+	}
+	timeDetail := rs.timeDetail.String()
+	if timeDetail != "" {
+		buf.WriteString(", ")
+		buf.WriteString(timeDetail)
+	}
+	scanDetail := rs.scanDetail.String()
+	if scanDetail != "" {
+		buf.WriteString(", ")
+		buf.WriteString(scanDetail)
 	}
 	return buf.String()
 }

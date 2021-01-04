@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -63,7 +64,7 @@ type TableReaderExecutor struct {
 	table table.Table
 
 	// The source of key ranges varies from case to case.
-	// It may be calculated from PyhsicalPlan by executorBuilder, or calculated from argument by dataBuilder;
+	// It may be calculated from PhysicalPlan by executorBuilder, or calculated from argument by dataBuilder;
 	// It may be calculated from ranger.Ranger, or calculated from handles.
 	// The table ID may also change because of the partition table, and causes the key range to change.
 	// So instead of keeping a `range` struct field, it's better to define a interface.
@@ -105,7 +106,7 @@ type TableReaderExecutor struct {
 	batchCop bool
 }
 
-// Open initialzes necessary variables for using this executor.
+// Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("TableReaderExecutor.Open", opentracing.ChildOf(span.Context()))
@@ -154,7 +155,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			e.feedback.Invalidate()
 		}
 	}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc)
+	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -239,10 +240,8 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return nil, err
 		}
 		reqBuilder = builder.SetKeyRanges(kvRange)
-	} else if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
-		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
 	} else {
-		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
+		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
@@ -254,6 +253,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err
