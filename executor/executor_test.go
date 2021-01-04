@@ -6787,7 +6787,7 @@ func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 3)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {num.*concurrency.*time.*}.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*")
 	indexExplain := fmt.Sprintf("%v", rows[1])
 	tableExplain := fmt.Sprintf("%v", rows[2])
 	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
@@ -7484,4 +7484,65 @@ func (s *testSuite) TestIssue21451(c *C) {
 func (s *testSuite) TestIssue15563(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select distinct 0.7544678906163867 /  0.68234634;").Check(testkit.Rows("1.10569639842486251190"))
+}
+
+func (s *testSuite) TestStalenessTransaction(c *C) {
+	testcases := []struct {
+		name             string
+		preSQL           string
+		sql              string
+		IsStaleness      bool
+		expectPhysicalTS int64
+		preSec           int64
+	}{
+		{
+			name:             "TimestampBoundReadTimestamp",
+			preSQL:           "begin",
+			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			IsStaleness:      true,
+			expectPhysicalTS: 1599321600000,
+		},
+		{
+			name:        "TimestampBoundExactStaleness",
+			preSQL:      "begin",
+			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
+			IsStaleness: true,
+			preSec:      20,
+		},
+		{
+			name:        "TimestampBoundExactStaleness",
+			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
+			IsStaleness: true,
+			preSec:      20,
+		},
+		{
+			name:        "begin",
+			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			sql:         "begin",
+			IsStaleness: false,
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(testcase.preSQL)
+		tk.MustExec(testcase.sql)
+		if testcase.expectPhysicalTS > 0 {
+			c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, testcase.expectPhysicalTS)
+		} else if testcase.preSec > 0 {
+			curSec := time.Now().Unix()
+			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
+			c.Assert(startTS, Greater, (curSec-testcase.preSec-2)*1000)
+			c.Assert(startTS, Less, (curSec-testcase.preSec+2)*1000)
+		} else if !testcase.IsStaleness {
+			curSec := time.Now().Unix()
+			startTS := oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS)
+			c.Assert(curSec*1000-startTS, Less, time.Second/time.Millisecond)
+			c.Assert(startTS-curSec*1000, Less, time.Second/time.Millisecond)
+		}
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
+		tk.MustExec("commit")
+	}
 }
