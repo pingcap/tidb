@@ -3899,4 +3899,12 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	result = tk.MustQuery("SELECT @@tikv_gc_concurrency;")
 	result.Check(testkit.Rows("-1")) // because auto_concurrency is turned on it takes precedence
 
+	_, err := tk.Exec("SET GLOBAL tikv_gc_run_interval = '9m'") // too small
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tikv_gc_run_interval'")
+
+	tk.MustExec("SET GLOBAL tikv_gc_run_interval = '700000000000ns'") // specified in ns, also valid
+
+	_, err = tk.Exec("SET GLOBAL tikv_gc_run_interval = '11mins'")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tikv_gc_run_interval'") // wrong format
+
 }
