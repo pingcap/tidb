@@ -74,7 +74,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -1074,11 +1073,15 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name,
-		stringutil.Escape(sVal, s.sessionVars.SQLMode),
-	)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(sVal))
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+// escape user supplied string for internal SQL. Not safe for all cases, since it doesn't
+// handle quote-type, sql-mode, character set breakout.
+func escapeUserString(str string) string {
+	return strings.ReplaceAll(str, `'`, `\'`)
 }
 
 // SetTiKVGlobalSysVar handles tikv_* sysvars which need to update mysql.tidb
@@ -1100,7 +1103,7 @@ func (s *session) SetTiKVGlobalSysVar(name, val string) error {
 	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
 		val = onOffToTrueFalse(val)
 		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
-			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, name, stringutil.Escape(val, s.sessionVars.SQLMode), gcVariableComments[name])
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, name, escapeUserString(val), gcVariableComments[name])
 		_, _, err := s.ExecRestrictedSQL(sql)
 		return err
 	}
@@ -1159,14 +1162,14 @@ func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 				zap.String("tblValue", tblValue),
 				zap.String("restoredValue", val))
 			sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
-			VALUES ('%s', '%s', '%s')`, name, stringutil.Escape(val, s.sessionVars.SQLMode), gcVariableComments[name])
+			VALUES ('%s', '%s', '%s')`, name, escapeUserString(val), gcVariableComments[name])
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return val, err
 		}
 		if validatedVal != val {
 			// The sysvar value is out of sync.
 			sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-				mysql.SystemDB, mysql.GlobalVariablesTable, name, stringutil.Escape(validatedVal, s.sessionVars.SQLMode))
+				mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(validatedVal))
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return validatedVal, err
 		}
