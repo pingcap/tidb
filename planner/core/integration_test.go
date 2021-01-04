@@ -1429,13 +1429,10 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)").Check(testkit.Rows(
-		"Projection_4 1.60 root  test.t.a, test.t.b",
-		"└─IndexMerge_9 1.60 root  ",
-		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection_8(Probe) 1.60 cop[tikv]  eq(length(cast(test.t.a)), 1), eq(length(cast(test.t.b)), 1)",
-		"    └─TableRowIDScan_7 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+		"TableReader_7 1.60 root  data:Selection_6",
+		"└─Selection_6 1.60 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
@@ -2356,6 +2353,43 @@ func (s *testIntegrationSuite) TestIssue22040(c *C) {
 	{
 		err := tk.ExecToErr("select * from t where (a,b) in ((1,2),1)")
 		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue22105(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t1 (
+  key1 int(11) NOT NULL,
+  key2 int(11) NOT NULL,
+  key3 int(11) NOT NULL,
+  key4 int(11) NOT NULL,
+  key5 int(11) DEFAULT NULL,
+  key6 int(11) DEFAULT NULL,
+  key7 int(11) NOT NULL,
+  key8 int(11) NOT NULL,
+  KEY i1 (key1),
+  KEY i2 (key2),
+  KEY i3 (key3),
+  KEY i4 (key4),
+  KEY i5 (key5),
+  KEY i6 (key6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
