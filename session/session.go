@@ -1766,7 +1766,6 @@ var builtinGlobalVariable = []string{
 	variable.AutoIncrementOffset,
 	variable.MaxExecutionTime,
 	variable.InnodbLockWaitTimeout,
-	variable.SQLSelectLimit,
 	variable.DefaultWeekFormat,
 
 	/* TiDB specific global variables: */
