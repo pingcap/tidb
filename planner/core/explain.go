@@ -65,7 +65,7 @@ func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalIndexScan) TP() string {
-	if p.isFullScan() {
+	if p.IsFullScan() {
 		return plancodec.TypeIndexFullScan
 	}
 	return plancodec.TypeIndexRangeScan
@@ -181,7 +181,7 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 func (p *PhysicalTableScan) TP() string {
 	if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
-	} else if p.isFullScan() {
+	} else if p.IsFullScan() {
 		return plancodec.TypeTableFullScan
 	}
 	return plancodec.TypeTableRangeScan
