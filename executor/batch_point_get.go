@@ -197,12 +197,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
+			e.memTracker.Consume(types.EstimatedMemUsage(idxVals, 1))
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
 			if datumsContainNull(idxVals) {
 				continue
 			}
 
-			e.memTracker.Consume(types.EstimatedMemUsage(idxVals, 1))
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
@@ -332,7 +332,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				tID = getPhysID(e.tblInfo, d.GetInt64())
 			}
 		}
-		e.memTracker.Consume(int64(cap(handle.Encoded())))
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
 	}
@@ -361,7 +360,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
-		e.memTracker.Consume(int64(cap(val)))
 
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
@@ -371,7 +369,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			continue
 		}
 		e.values = append(e.values, val)
+		e.memTracker.Consume(int64(cap(val)))
 		handles = append(handles, e.handles[i])
+		e.memTracker.Consume(e.handles[i].MemoryUsage())
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
 			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead

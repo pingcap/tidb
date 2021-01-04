@@ -151,6 +151,8 @@ type Handle interface {
 	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
+	// MemoryUsage returns the total memory usage of a Handle in bytes.
+	MemoryUsage() int64
 }
 
 // IntHandle implement the Handle interface for int64 type handle.
@@ -220,6 +222,11 @@ func (ih IntHandle) Data() ([]types.Datum, error) {
 // String implements the Handle interface.
 func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
+}
+
+// MemoryUsage implements the Handle interface.
+func (ih *IntHandle) MemoryUsage() int64 {
+	return 8
 }
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
@@ -339,6 +346,11 @@ func (ch *CommonHandle) String() string {
 		strs = append(strs, str)
 	}
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
+}
+
+// MemoryUsage implements the Handle interface.
+func (ch *CommonHandle) MemoryUsage() int64 {
+	return int64(cap(ch.encoded))
 }
 
 // HandleMap is the map for Handle.
