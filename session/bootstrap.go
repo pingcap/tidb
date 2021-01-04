@@ -1318,19 +1318,15 @@ func upgradeToVer60(s Session, ver int64) {
 			return
 		}
 	}()
-	_, err = s.ExecuteInternal(context.Background(), h.LockBindInfoSQL())
-	if err != nil {
-		return
-	}
+	mustExecute(s, h.LockBindInfoSQL())
 	var recordSets []sqlexec.RecordSet
 	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
-
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
-	}
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("upgradeToVer60 error", zap.Error(err))
+	}
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
 	}
 	req := recordSets[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
@@ -1368,15 +1364,11 @@ func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now
 		}
 		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
 		bindWithDB := utilparser.RestoreWithDefaultDB(bindStmt, db)
-		_, err = s.ExecuteInternal(context.Background(), fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
+		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
 			expression.Quote(originWithDB),
 			expression.Quote(bindWithDB),
 			expression.Quote(now),
 			expression.Quote(original)))
-		if err != nil {
-			debug.PrintStack()
-			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
-		}
 	}
 }
 
