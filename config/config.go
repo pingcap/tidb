@@ -124,6 +124,7 @@ type Config struct {
 	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   PDClient          `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
@@ -507,6 +508,12 @@ type ProxyProtocol struct {
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
+// PDClient is the config for PD client.
+type PDClient struct {
+	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
+	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
+}
+
 // TiKVClient is the config for tikv client.
 type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
@@ -520,8 +527,6 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// GrpcCompressionType is the compression type for gRPC channel: none or gzip.
 	GrpcCompressionType string `toml:"grpc-compression-type" json:"grpc-compression-type"`
-	// PDServerTimeout is the max time which PD client will wait for the PD server.
-	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
@@ -736,12 +741,14 @@ var defaultConf = Config{
 		},
 		Reporter: OpenTracingReporter{},
 	},
+	PDClient: PDClient{
+		PDServerTimeout: 3,
+	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		GrpcCompressionType:  "none",
-		PDServerTimeout:      3,
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
 			// FIXME: Find an appropriate default limit.
