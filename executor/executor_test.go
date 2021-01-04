@@ -7463,19 +7463,30 @@ func (s *testSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 		},
 		{
 			name:       "prepare",
-			sql:        `PREPARE stmt22048 FROM 'insert into t(id) values (?);';`,
-			IsReadOnly: true,
+			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
+			IsReadOnly: false,
 		},
 		{
 			name:       "prepare execute",
-			sql:        `EXECUTE stmt22048 USING @var;`,
+			sql:        `EXECUTE stmt2 USING @var;`,
 			IsReadOnly: false,
+		},
+		{
+			name:       "point get",
+			sql:        `select * from t where id = 1`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "batch point get",
+			sql:        `select * from t where id in (1,2,3);`,
+			IsReadOnly: true,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("set @var=5;")
+	tk.MustExec(`PREPARE stmt2 FROM 'insert into t(id) values (?);';`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)

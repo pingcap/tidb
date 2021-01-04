@@ -1276,16 +1276,9 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	}
 	// For the case executing:
 	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
-	// `prepare ...`
-	_, ok := stmtNode.(*ast.PrepareStmt)
-	if ok {
-		return nil
-	}
-	// For the case executing:
-	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
 	// `...`
 	// `commit`
-	_, ok = stmtNode.(*ast.CommitStmt)
+	_, ok := stmtNode.(*ast.CommitStmt)
 	if ok {
 		return nil
 	}
