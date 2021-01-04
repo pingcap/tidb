@@ -192,17 +192,17 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	c.Assert(intResult, Equals, int64(9007199254740993))
 }
 
-func iterateTestCases(testCases []struct{
-	args []interface{}
+func iterateTestCases(testCases []struct {
+	args   []interface{}
 	expect []interface{}
-	}, c *C, s *testEvaluatorSuite){
+}, c *C, s *testEvaluatorSuite) {
 	for _, tc := range testCases {
 		sig, err := funcs[ast.Minus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 
-		switch sig.(type){
+		switch sig.(type) {
 		case *builtinArithmeticMinusIntSignedSignedSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
 		case *builtinArithmeticMinusIntForcedUnsignedUnsignedSig:
@@ -228,43 +228,42 @@ func iterateTestCases(testCases []struct{
 	}
 }
 
-
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	// case 1
-	testCasesWithUnsignedSubstraction := []struct{
-		args []interface{}
+	testCasesWithUnsignedSubstraction := []struct {
+		args   []interface{}
 		expect []interface{}
 	}{
 		{
-			args: []interface{}{int64(12), int64(1)},
+			args:   []interface{}{int64(12), int64(1)},
 			expect: []interface{}{int64(11), nil},
 		},
 		{
-			args: []interface{}{int64(1), int64(12)},
+			args:   []interface{}{int64(1), int64(12)},
 			expect: []interface{}{int64(-11), nil},
 		},
 		{
-			args: []interface{}{uint64(13), uint64(12)},
+			args:   []interface{}{uint64(13), uint64(12)},
 			expect: []interface{}{int64(1), nil},
 		},
 		{
-			args: []interface{}{uint64(12), uint64(19)},
+			args:   []interface{}{uint64(12), uint64(19)},
 			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 19\\)'"},
 		},
 		{
-			args: []interface{}{uint64(12), int64(17)},
+			args:   []interface{}{uint64(12), int64(17)},
 			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 17\\)'"},
 		},
 		{
-			args: []interface{}{uint64(14), int64(13)},
+			args:   []interface{}{uint64(14), int64(13)},
 			expect: []interface{}{int64(1), nil},
 		},
 		{
-			args: []interface{}{int64(12), uint64(15)},
+			args:   []interface{}{int64(12), uint64(15)},
 			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(12 - 15\\)'"},
 		},
 		{
-			args: []interface{}{int64(-12), uint64(13)},
+			args:   []interface{}{int64(-12), uint64(13)},
 			expect: []interface{}{int64(0), "*BIGINT UNSIGNED value is out of range in '\\(-(12) - 13\\)'"},
 		},
 	}
@@ -272,40 +271,40 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 	s.ctx.GetSessionVars().SQLMode &= ^mysql.ModeNoUnsignedSubtraction
 	iterateTestCases(testCasesWithUnsignedSubstraction, c, s)
 
-	testCasesWithoutUnsignedSubstraction := []struct{
-		args []interface{}
+	testCasesWithoutUnsignedSubstraction := []struct {
+		args   []interface{}
 		expect []interface{}
 	}{
 		{
-			args: []interface{}{int64(12), int64(1)},
+			args:   []interface{}{int64(12), int64(1)},
 			expect: []interface{}{int64(11), nil},
 		},
 		{
-			args: []interface{}{int64(1), int64(12)},
+			args:   []interface{}{int64(1), int64(12)},
 			expect: []interface{}{int64(-11), nil},
 		},
 		{
-			args: []interface{}{uint64(13), uint64(12)},
+			args:   []interface{}{uint64(13), uint64(12)},
 			expect: []interface{}{int64(1), nil},
 		},
 		{
-			args: []interface{}{uint64(5), uint64(13)},
+			args:   []interface{}{uint64(5), uint64(13)},
 			expect: []interface{}{int64(-8), nil},
 		},
 		{
-			args: []interface{}{uint64(12), int64(14)},
+			args:   []interface{}{uint64(12), int64(14)},
 			expect: []interface{}{int64(-2), nil},
 		},
 		{
-			args: []interface{}{uint64(14), int64(13)},
+			args:   []interface{}{uint64(14), int64(13)},
 			expect: []interface{}{int64(1), nil},
 		},
 		{
-			args: []interface{}{int64(12), uint64(19)},
+			args:   []interface{}{int64(12), uint64(19)},
 			expect: []interface{}{int64(-7), nil},
 		},
 		{
-			args: []interface{}{int64(-12), uint64(13)},
+			args:   []interface{}{int64(-12), uint64(13)},
 			expect: []interface{}{int64(-25), nil},
 		},
 	}

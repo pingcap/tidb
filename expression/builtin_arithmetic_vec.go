@@ -318,12 +318,11 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 	return nil
 }
 
-
 func (b *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -373,7 +372,7 @@ func (b *builtinArithmeticMinusIntUnsignedUnsignedSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinArithmeticMinusIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -415,7 +414,7 @@ func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -458,10 +457,10 @@ func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vecEvalInt(input *chu
 }
 
 func (b *builtinArithmeticMinusIntSignedUnsignedSig) vectorized() bool {
-	return false;
+	return false
 }
 
-func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -500,10 +499,10 @@ func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chu
 }
 
 func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vectorized() bool {
-	return false;
+	return false
 }
 
-func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -546,10 +545,10 @@ func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chu
 }
 
 func (b *builtinArithmeticMinusIntUnsignedSignedSig) vectorized() bool {
-	return false;
+	return false
 }
 
-func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {
@@ -591,10 +590,10 @@ func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chu
 }
 
 func (b *builtinArithmeticMinusIntSignedSignedSig) vectorized() bool {
-	return false;
+	return false
 }
 
-func (b *builtinArithmeticMinusIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error{
+func (b *builtinArithmeticMinusIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	lh, err := b.bufAllocator.get(types.ETInt, n)
 	if err != nil {

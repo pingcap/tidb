@@ -437,7 +437,7 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row chunk.Row) (*types.My
 	return c, false, nil
 }
 
-type builtinArithmeticMinusIntUnsignedUnsignedSig struct{
+type builtinArithmeticMinusIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -447,7 +447,7 @@ func (s *builtinArithmeticMinusIntUnsignedUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -465,7 +465,7 @@ func (s *builtinArithmeticMinusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (v
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntForcedUnsignedUnsignedSig struct{
+type builtinArithmeticMinusIntForcedUnsignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -475,7 +475,7 @@ func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) Clone() builtinFunc
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -501,7 +501,7 @@ func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) evalInt(row chunk.R
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntSignedUnsignedSig struct{
+type builtinArithmeticMinusIntSignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -511,7 +511,7 @@ func (s *builtinArithmeticMinusIntSignedUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -529,7 +529,7 @@ func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row)(val 
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntForcedSignedUnsignedSig struct{
+type builtinArithmeticMinusIntForcedSignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -539,7 +539,7 @@ func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -561,7 +561,7 @@ func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) evalInt(row chunk.Row
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntSignedSignedSig struct{
+type builtinArithmeticMinusIntSignedSignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -571,7 +571,7 @@ func (s *builtinArithmeticMinusIntSignedSignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -589,7 +589,7 @@ func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row)(val in
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntUnsignedSignedSig struct{
+type builtinArithmeticMinusIntUnsignedSignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -599,7 +599,7 @@ func (s *builtinArithmeticMinusIntUnsignedSignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntUnsignedSignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntUnsignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -617,7 +617,7 @@ func (s *builtinArithmeticMinusIntUnsignedSignedSig) evalInt(row chunk.Row)(val 
 	return a - b, false, nil
 }
 
-type builtinArithmeticMinusIntForcedUnsignedSignedSig struct{
+type builtinArithmeticMinusIntForcedUnsignedSignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -627,7 +627,7 @@ func (s *builtinArithmeticMinusIntForcedUnsignedSignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntForcedUnsignedSignedSig) evalInt(row chunk.Row)(val int64, isNull bool, err error){
+func (s *builtinArithmeticMinusIntForcedUnsignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
