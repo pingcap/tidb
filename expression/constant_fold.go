@@ -16,6 +16,7 @@ package expression
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -177,7 +178,11 @@ func foldConstant(expr Expression) (Expression, bool) {
 			constArgs := make([]Expression, len(args))
 			for i, arg := range args {
 				if argIsConst[i] {
-					constArgs[i] = arg
+					// When sc.InNullRejectCheck is true, any constant with DeferredExpr we meets here must already be
+					// evaluated. Hence we set DeferredExpr to nil in order to avoid reevaluation.
+					c := arg.Clone().(*Constant)
+					c.DeferredExpr = nil
+					constArgs[i] = c
 				} else {
 					constArgs[i] = NewOne()
 				}
@@ -204,7 +209,38 @@ func foldConstant(expr Expression) (Expression, bool) {
 			}
 			return expr, isDeferredConst
 		}
-		value, err := x.Eval(chunk.Row{})
+		var value types.Datum
+		var err error
+		if sc.InNullRejectCheck {
+			constArgs := make([]Expression, len(args))
+			var hasDeferredExpr bool
+			for i, arg := range args {
+				if argIsConst[i] {
+					// When sc.InNullRejectCheck is true, any constant with DeferredExpr we meets here must already be
+					// evaluated. Hence we set DeferredExpr to nil in order to avoid reevaluation.
+					c := arg.Clone().(*Constant)
+					if c.DeferredExpr != nil {
+						c.DeferredExpr = nil
+						hasDeferredExpr = true
+					}
+					constArgs[i] = c
+				} else {
+					constArgs[i] = arg
+				}
+			}
+			if hasDeferredExpr {
+				var sf Expression
+				sf, err = NewFunctionBase(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
+				if err != nil {
+					return expr, isDeferredConst
+				}
+				value, err = sf.Eval(chunk.Row{})
+			} else {
+				value, err = x.Eval(chunk.Row{})
+			}
+		} else {
+			value, err = x.Eval(chunk.Row{})
+		}
 		if err != nil {
 			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.Error(err))
 			return expr, isDeferredConst
