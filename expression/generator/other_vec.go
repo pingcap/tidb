@@ -144,7 +144,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	{{- end }}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	{{- if not $InputJSON}}
 	if len(b.hashSet) != 0 {
 		{{- if $InputString }}
@@ -201,14 +201,14 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				{{- end }}
 			{{- end }}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 	{{- end }}
 
-	{{- if not $InputJSON}}
-	for _, j := range b.nonConstArgsIdx {
-	{{- else }}
-	for j := 1; j < len(args); j++ {
-	{{- end }}
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}

@@ -204,7 +204,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
@@ -214,11 +214,14 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -294,17 +297,20 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
+	args := b.args[1:]
 	collator := collate.GetCollator(b.collation)
 	if len(b.hashSet) != 0 {
 		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -363,15 +369,19 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -435,7 +445,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
+	args := b.args[1:]
 	key, err := arg0.ToHashKey()
 	if err != nil {
 		return 0, true, err
@@ -444,11 +454,14 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		if b.hashSet.Exist(string(key)) {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -507,15 +520,19 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -574,15 +591,19 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		if _, ok := b.hashSet[arg0.Duration]; ok {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, i := range b.nonConstArgsIdx {
-		arg := args[i]
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
 		if err != nil {
 			return 0, true, err

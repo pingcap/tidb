@@ -53,7 +53,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -72,8 +72,13 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 				}
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalInt(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -151,7 +156,7 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		}
 	}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		collator := collate.GetCollator(b.collation)
 		for i := 0; i < n; i++ {
@@ -165,8 +170,13 @@ func (b *builtinInStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 				result.SetNull(i, false)
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalString(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -228,7 +238,7 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		}
 	}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -245,8 +255,13 @@ func (b *builtinInDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 				result.SetNull(i, false)
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalDecimal(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -313,7 +328,7 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		}
 	}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -326,8 +341,13 @@ func (b *builtinInRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 				result.SetNull(i, false)
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalReal(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -391,7 +411,7 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		}
 	}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -404,8 +424,13 @@ func (b *builtinInTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 				result.SetNull(i, false)
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalTime(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -469,7 +494,7 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 		}
 	}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
@@ -482,8 +507,13 @@ func (b *builtinInDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 				result.SetNull(i, false)
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
-	for _, j := range b.nonConstArgsIdx {
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalDuration(b.ctx, input, buf1); err != nil {
 			return err
 		}
@@ -541,8 +571,9 @@ func (b *builtinInJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	}
 	hasNull := make([]bool, n)
 	var compareResult int
-	args := b.args
-	for j := 1; j < len(args); j++ {
+	args := b.args[1:]
+
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEvalJSON(b.ctx, input, buf1); err != nil {
 			return err
 		}
