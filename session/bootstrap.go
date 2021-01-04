@@ -1301,22 +1301,16 @@ func upgradeToVer60(s Session, ver int64) {
 		return
 	}
 	h := &bindinfo.BindHandle{}
-	_, err := s.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
-	if err != nil {
-		return
-	}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
 
 	defer func() {
 		if err != nil {
-			_, err1 := s.ExecuteInternal(context.Background(), "ROLLBACK")
-			terror.Log(err1)
+			mustExecute(s, "ROLLBACK")
 			return
 		}
 
-		_, err = s.ExecuteInternal(context.Background(), "COMMIT")
-		if err != nil {
-			return
-		}
+		mustExecute(s, "COMMIT")
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
 	var recordSets []sqlexec.RecordSet
