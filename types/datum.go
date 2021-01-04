@@ -1452,8 +1452,8 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	case KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
 	case KindString:
-		// To solve issue #18681, we need consider true, false, 0, 1.
-		// More situations, we also consider b'0', b'1' and so on.
+		// For single bit value, we take string like "true", "1" as 1, and "false", "0" as 0,
+		// this behavior is not documented in MySQL, but it behaves so, for more information, see issue #18681
 		s := BinaryLiteral(d.b).ToString()
 		if target.Flen == 1 {
 			switch strings.ToLower(s) {
