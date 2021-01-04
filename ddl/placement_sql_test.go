@@ -448,7 +448,7 @@ PARTITION BY RANGE (c) (
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
 			txnScope: "bj",
-			err:      fmt.Errorf(".*don't have placement policies with txn_scope.*"),
+			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with global txnScope",
