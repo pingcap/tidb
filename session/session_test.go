@@ -3456,3 +3456,49 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 }
+<<<<<<< HEAD
+=======
+
+// TestDefaultWeekFormat checks for issue #21510.
+func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("set @@global.default_week_format = 4;")
+	defer tk1.MustExec("set @@global.default_week_format = default;")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
+}
+
+func (s *testSessionSerialSuite) TestIssue21944(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk1.Exec("set @@tidb_current_ts=1;")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_current_ts' is a read only variable")
+}
+
+func (s *testSessionSerialSuite) TestIssue21943(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	_, err := tk.Exec("set @@last_plan_from_binding='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_binding' is a read only variable")
+
+	_, err = tk.Exec("set @@last_plan_from_cache='123';")
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
+}
+
+func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
+		wg.Done()
+	}()
+	time.Sleep(2 * time.Second)
+	pi := tk.Se.ShowProcess()
+	c.Assert(pi, NotNil)
+	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
+	c.Assert(pi.Plan, IsNil)
+	wg.Wait()
+}
+>>>>>>> 57cd69473... session: set process info before building plan (#22101)
