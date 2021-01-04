@@ -64,7 +64,7 @@ func (c *Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	}
 
 	// encode offsets.
-	if !col.isFixed() && len(col.offsets) > 0 {
+	if !col.isFixed() {
 		numOffsetBytes := (col.length + 1) * 8
 		offsetBytes := i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
