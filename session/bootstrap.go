@@ -298,16 +298,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -454,11 +452,13 @@ const (
 	version58 = 58
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
-	// version60 restore all SQL bindings.
+	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
+  // version61 restore all SQL bindings.
+  version61 = 61
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version60
+	currentBootstrapVersion = version61
 )
 
 var (
@@ -523,6 +523,7 @@ var (
 		upgradeToVer58,
 		upgradeToVer59,
 		upgradeToVer60,
+    upgradeToVer61,
 	}
 )
 
@@ -1298,6 +1299,14 @@ func upgradeToVer59(s Session, ver int64) {
 
 func upgradeToVer60(s Session, ver int64) {
 	if ver >= version60 {
+		return
+	}
+  mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
 		return
 	}
 	h := &bindinfo.BindHandle{}
