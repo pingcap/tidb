@@ -1935,6 +1935,21 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 	return 32 << 30, nil
 }
 
+func loadDefOOMAction(se *session) (string, error) {
+	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return config.GetGlobalConfig().OOMAction, nil
+		}
+		return config.GetGlobalConfig().OOMAction, err
+	}
+	if defOOMAction != config.OOMActionLog {
+		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
+			zap.String("value", defOOMAction))
+	}
+	return defOOMAction, nil
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 )
@@ -2015,6 +2030,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
 		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+	}
+	newOOMAction, err := loadDefOOMAction(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsOOMActionSetByUser {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = newOOMAction
+		})
 	}
 
 	dom := domain.GetDomain(se)
@@ -2174,8 +2198,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 }
 
 const (
-	notBootstrapped         = 0
-	currentBootstrapVersion = version57
+	notBootstrapped = 0
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2305,6 +2328,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowBatchCop,
 	variable.TiDBAllowMPPExecution,
 	variable.TiDBOptBCJ,
+	variable.TiDBBCJThresholdSize,
+	variable.TiDBBCJThresholdCount,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
@@ -2620,22 +2645,43 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		is := infoschema.GetInfoSchema(s)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
+			var tableName string
+			var partitionName string
+			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
+			if tblInfo != nil && partInfo != nil {
+				tableName = tblInfo.Meta().Name.String()
+				partitionName = partInfo.Name.String()
+			} else {
+				tblInfo, _ := is.TableByID(physicalTableID)
+				tableName = tblInfo.Meta().Name.String()
+			}
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v don't have placement policies with txn_scope %v",
-						physicalTableID, txnScope))
+				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
+					tableName, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
+						tableName, partitionName, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader placement policy is not defined", physicalTableID))
+				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			if dcLocation != txnScope {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
+				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
+						tableName, partitionName, dcLocation, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
@@ -2647,7 +2693,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("Partition %s of table %s can not be written by local transactions when its placement policy is being altered",
+						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
 				}
