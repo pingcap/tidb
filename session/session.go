@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -353,6 +354,9 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+		return
+	}
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
