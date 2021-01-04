@@ -1368,7 +1368,7 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 
 	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
 	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return domain.GetDomain(e.ctx).StatsHandle().InsertExtendedStats(s.StatsName, s.Table.Schema.L, colIDs, int(s.StatsType), tblInfo.ID, s.IfNotExists)
+	return domain.GetDomain(e.ctx).StatsHandle().InsertExtendedStats(s.StatsName, colIDs, int(s.StatsType), tblInfo.ID, s.IfNotExists)
 }
 
 func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
@@ -1381,7 +1381,7 @@ func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
 	}
 	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
 	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return domain.GetDomain(e.ctx).StatsHandle().MarkExtendedStatsDeleted(s.StatsName, db, -1)
+	return domain.GetDomain(e.ctx).StatsHandle().MarkExtendedStatsDeleted(s.StatsName, -1)
 }
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
