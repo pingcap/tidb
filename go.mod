@@ -94,3 +94,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/tikv/pd => github.com/tiancaiamao/pd v0.0.0-20210104085128-7ffa8715dc95
