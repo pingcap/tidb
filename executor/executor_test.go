@@ -7417,19 +7417,19 @@ func (s *testSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 		},
 		{
 			name:       "prepare",
-			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
+			sql:        `PREPARE stmt22048 FROM 'insert into t(id) values (?);';`,
 			IsReadOnly: true,
 		},
 		{
 			name:       "prepare execute",
-			sql:        `EXECUTE stmt1 USING @a;`,
+			sql:        `EXECUTE stmt22048 USING @var;`,
 			IsReadOnly: false,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
-	tk.MustExec("set @a=5;")
+	tk.MustExec("set @var=5;")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
