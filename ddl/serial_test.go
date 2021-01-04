@@ -622,7 +622,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point' )")
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")

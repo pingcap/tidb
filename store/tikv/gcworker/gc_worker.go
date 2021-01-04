@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,27 +110,63 @@ const (
 	booleanTrue  = "true"
 	booleanFalse = "false"
 
-	gcWorkerTickInterval       = time.Minute
-	gcWorkerLease              = time.Minute * 2
-	gcLeaderUUIDKey            = "tikv_gc_leader_uuid"
-	gcLeaderDescKey            = "tikv_gc_leader_desc"
-	gcLeaderLeaseKey           = "tikv_gc_leader_lease"
-	gcLastRunTimeKey           = "tikv_gc_last_run_time"
-	gcWaitTime                 = time.Minute * 1
-	gcRedoDeleteRangeDelay     = 24 * time.Hour
-	gcSafePointKey             = "tikv_gc_safe_point"
+	gcWorkerTickInterval = time.Minute
+	gcWorkerLease        = time.Minute * 2
+	gcLeaderUUIDKey      = "tikv_gc_leader_uuid"
+	gcLeaderDescKey      = "tikv_gc_leader_desc"
+	gcLeaderLeaseKey     = "tikv_gc_leader_lease"
+
+	gcLastRunTimeKey       = "tikv_gc_last_run_time"
+	gcRunIntervalKey       = "tikv_gc_run_interval"
+	gcDefaultRunInterval   = time.Minute * 10
+	gcWaitTime             = time.Minute * 1
+	gcRedoDeleteRangeDelay = 24 * time.Hour
+
+	gcLifeTimeKey        = "tikv_gc_life_time"
+	gcDefaultLifeTime    = time.Minute * 10
+	gcMinLifeTime        = time.Minute * 10
+	gcSafePointKey       = "tikv_gc_safe_point"
+	gcConcurrencyKey     = "tikv_gc_concurrency"
+	gcDefaultConcurrency = 2
+	gcMinConcurrency     = 1
+	gcMaxConcurrency     = 128
+	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
+	gcScanLockLimit = tikv.ResolvedCacheSize / 2
+
+	gcEnableKey          = "tikv_gc_enable"
+	gcDefaultEnableValue = true
+
+	gcModeKey         = "tikv_gc_mode"
+	gcModeCentral     = "central"
+	gcModeDistributed = "distributed"
+	gcModeDefault     = gcModeDistributed
+
+	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
+	gcScanLockModeLegacy   = "legacy"
+	gcScanLockModePhysical = "physical"
+	gcScanLockModeDefault  = gcScanLockModePhysical
+
+	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
+	gcDefaultAutoConcurrency = true
+
 	gcWorkerServiceSafePointID = "gc_worker"
-	gcScanLockLimit            = tikv.ResolvedCacheSize / 2
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
 
 var gcVariableComments = map[string]string{
-	gcLeaderUUIDKey:  "Current GC worker leader UUID. (DO NOT EDIT)",
-	gcLeaderDescKey:  "Host name and pid of current GC leader. (DO NOT EDIT)",
-	gcLeaderLeaseKey: "Current GC worker leader lease. (DO NOT EDIT)",
-	gcLastRunTimeKey: "The time when last GC starts. (DO NOT EDIT)",
-	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcLeaderUUIDKey:      "Current GC worker leader UUID. (DO NOT EDIT)",
+	gcLeaderDescKey:      "Host name and pid of current GC leader. (DO NOT EDIT)",
+	gcLeaderLeaseKey:     "Current GC worker leader lease. (DO NOT EDIT)",
+	gcLastRunTimeKey:     "The time when last GC starts. (DO NOT EDIT)",
+	gcRunIntervalKey:     "GC run interval, at least 10m, in Go format.",
+	gcLifeTimeKey:        "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	gcSafePointKey:       "All versions after safe point can be accessed. (DO NOT EDIT)",
+	gcConcurrencyKey:     "How many goroutines used to do GC parallel, [1, 128], default 2",
+	gcEnableKey:          "Current GC enable status",
+	gcModeKey:            "Mode of GC, \"central\" or \"distributed\"",
+	gcAutoConcurrencyKey: "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	gcScanLockModeKey:    "Mode of scanning locks, \"physical\" or \"legacy\"",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -195,8 +232,8 @@ func (w *GCWorker) tick(ctx context.Context) {
 		}
 	} else {
 		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
-		metrics.GCConfigGauge.WithLabelValues(variable.TiKVGCRunInterval).Set(0)
-		metrics.GCConfigGauge.WithLabelValues(variable.TiKVGCLifetime).Set(0)
+		metrics.GCConfigGauge.WithLabelValues(gcRunIntervalKey).Set(0)
+		metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(0)
 	}
 }
 
@@ -270,41 +307,12 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	return doGC, safePoint, errors.Trace(err)
 }
 
-func (w *GCWorker) initTableValues() error {
-
-	// This is a static set of data observed in TiDB on a default install *prior* to moving tikv values to sysVars.
-	// It is no longer needed, but some examples in the wild and in manual pages use "UPDATE".
-	// This requires a row to exist for the operation to succeed. Because the ON DUPLICATE KEY UPDATE
-	// action is UPDATE variable_name = variable_name, it is a noop if the row already exists.
-
-	stmt := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES
-	('tikv_gc_enable', 'true', 'Current GC enable status'),
-	('tikv_gc_run_interval', '10m0s', 'GC run interval, at least 10m, in Go format.'),
-	('tikv_gc_life_time', '10m0s', 'All versions within life time will not be collected by GC, at least 10m, in Go format.')
-	ON DUPLICATE KEY
-	UPDATE variable_name = variable_name`
-
-	se := createSession(w.store)
-	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
-	return err
-
-}
-
 func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	enable, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCEnable)
+	enable, err := w.checkGCEnable()
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-
-	if err := w.initTableValues(); err != nil { // preserve consistency
-		logutil.Logger(ctx).Warn("[gc worker] could not initialize mysql.tidb values.")
-		return false, 0, err
-	}
-
-	if !variable.TiDBOptOn(enable) {
+	if !enable {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
 	}
@@ -372,46 +380,77 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	return time.Unix(sec, nsec), nil
 }
 
+func (w *GCWorker) checkGCEnable() (bool, error) {
+	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
+}
+
+func (w *GCWorker) checkUseAutoConcurrency() (bool, error) {
+	return w.loadBooleanWithDefault(gcAutoConcurrencyKey, gcDefaultAutoConcurrency)
+}
+
+func (w *GCWorker) loadBooleanWithDefault(key string, defaultValue bool) (bool, error) {
+	str, err := w.loadValueFromSysTable(key)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str == "" {
+		// Save default value for gc enable key. The default value is always true.
+		defaultValueStr := booleanFalse
+		if defaultValue {
+			defaultValueStr = booleanTrue
+		}
+		err = w.saveValueToSysTable(key, defaultValueStr)
+		if err != nil {
+			return defaultValue, errors.Trace(err)
+		}
+		return defaultValue, nil
+	}
+	return strings.EqualFold(str, booleanTrue), nil
+}
+
 func (w *GCWorker) getGCConcurrency(ctx context.Context) (int, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	concurrencyStr, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCConcurrency)
+	useAutoConcurrency, err := w.checkUseAutoConcurrency()
 	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] could not fetch tikv_gc_concurrency")
-		return 2, nil
+		logutil.Logger(ctx).Error("[gc worker] failed to load config gc_auto_concurrency. use default value.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		useAutoConcurrency = gcDefaultAutoConcurrency
 	}
-	concurrency, err := strconv.ParseInt(concurrencyStr, 10, 32)
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] could not convert TiKVGCConcurrency!",
-			zap.String("concurrency", concurrencyStr))
-		return 2, nil // using previous default
-	}
-	if concurrency != -1 { // use an explicit value
-		return int(concurrency), nil
+	if !useAutoConcurrency {
+		return w.loadGCConcurrencyWithDefault()
 	}
 
-	// Calculate concurrency from an auto value (-1)
-	if stores, err := w.getStoresForGC(ctx); err == nil {
-		autoConcurrency := len(stores)
-		if autoConcurrency == 0 {
-			logutil.Logger(ctx).Error("[gc worker] no store is up",
-				zap.String("uuid", w.uuid))
-			return 0, errors.New("[gc worker] no store is up")
+	stores, err := w.getStoresForGC(ctx)
+	concurrency := len(stores)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] failed to get up stores to calculate concurrency. use config.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+
+		concurrency, err = w.loadGCConcurrencyWithDefault()
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to load gc concurrency from config. use default value.",
+				zap.String("uuid", w.uuid),
+				zap.Error(err))
+			concurrency = gcDefaultConcurrency
 		}
-		return autoConcurrency, nil
 	}
-	return 0, errors.New("[gc worker] Could not getStoresForGC")
+
+	if concurrency == 0 {
+		logutil.Logger(ctx).Error("[gc worker] no store is up",
+			zap.String("uuid", w.uuid))
+		return 0, errors.New("[gc worker] no store is up")
+	}
+
+	return concurrency, nil
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	runIntervalStr, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCRunInterval)
-	runInterval, err2 := strToDuration(runIntervalStr)
-	if err != nil || err2 != nil {
+	runInterval, err := w.loadDurationWithDefault(gcRunIntervalKey, gcDefaultRunInterval)
+	if err != nil {
 		return false, errors.Trace(err)
 	}
-	metrics.GCConfigGauge.WithLabelValues(variable.TiKVGCRunInterval).Set(runInterval.Seconds())
+	metrics.GCConfigGauge.WithLabelValues(gcRunIntervalKey).Set(runInterval.Seconds())
 	lastRun, err := w.loadTime(gcLastRunTimeKey)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -428,16 +467,30 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	return true, nil
 }
 
-func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	lifeTimeStr, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCLifetime)
-	lifeTime, err2 := strToDuration(lifeTimeStr)
-	if err != nil || err2 != nil {
-		return nil, 0, errors.Trace(err)
+// validateGCLifeTime checks whether life time is small than min gc life time.
+func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, error) {
+	if lifeTime >= gcMinLifeTime {
+		return lifeTime, nil
 	}
 
-	metrics.GCConfigGauge.WithLabelValues(variable.TiKVGCLifetime).Set(lifeTime.Seconds())
+	logutil.BgLogger().Info("[gc worker] invalid gc life time",
+		zap.Duration("get gc life time", lifeTime),
+		zap.Duration("min gc life time", gcMinLifeTime))
+
+	err := w.saveDuration(gcLifeTimeKey, gcMinLifeTime)
+	return gcMinLifeTime, err
+}
+
+func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	*lifeTime, err = w.validateGCLifeTime(*lifeTime)
+	if err != nil {
+		return nil, 0, err
+	}
+	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -827,31 +880,78 @@ func (w *GCWorker) getStoresMapForGC(ctx context.Context) (map[uint64]*metapb.St
 	return storesMap, nil
 }
 
+func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
+	str, err := w.loadValueFromSysTable(gcConcurrencyKey)
+	if err != nil {
+		return gcDefaultConcurrency, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
+		if err != nil {
+			return gcDefaultConcurrency, errors.Trace(err)
+		}
+		return gcDefaultConcurrency, nil
+	}
+
+	jobConcurrency, err := strconv.Atoi(str)
+	if err != nil {
+		return gcDefaultConcurrency, err
+	}
+
+	if jobConcurrency < gcMinConcurrency {
+		jobConcurrency = gcMinConcurrency
+	}
+
+	if jobConcurrency > gcMaxConcurrency {
+		jobConcurrency = gcMaxConcurrency
+	}
+
+	return jobConcurrency, nil
+}
+
 func (w *GCWorker) checkUseDistributedGC() (bool, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	str, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCMode)
+	str, err := w.loadValueFromSysTable(gcModeKey)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// str is validated by the sysVar system, it can only be 'DISTRIBUTED' (default) or 'CENTRAL'
-	if str == "CENTRAL" {
+	if str == "" {
+		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		str = gcModeDefault
+	}
+	if strings.EqualFold(str, gcModeDistributed) {
+		return true, nil
+	}
+	if strings.EqualFold(str, gcModeCentral) {
 		return false, nil
 	}
+	logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
+		zap.String("invalid gc mode", str))
 	return true, nil
 }
 
 func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
-	se := createSession(w.store)
-	defer se.Close()
-	str, err := se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCScanLockMode)
+	str, err := w.loadValueFromSysTable(gcScanLockModeKey)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// str is validated by sysVar system, it will be PHYSICAL or LEGACY (default)
-	if str == "PHYSICAL" {
+	if str == "" {
+		err = w.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		str = gcScanLockModeDefault
+	}
+	if strings.EqualFold(str, gcScanLockModePhysical) {
 		return true, nil
 	}
+	if strings.EqualFold(str, gcScanLockModeLegacy) {
+		return false, nil
+	}
+	logutil.BgLogger().Warn("[gc worker] legacy scan lock mode will be used",
+		zap.String("invalid scan lock mode", str))
 	return false, nil
 }
 
@@ -1610,7 +1710,16 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 	return &t, nil
 }
 
-func strToDuration(str string) (*time.Duration, error) {
+func (w *GCWorker) saveDuration(key string, d time.Duration) error {
+	err := w.saveValueToSysTable(key, d.String())
+	return errors.Trace(err)
+}
+
+func (w *GCWorker) loadDuration(key string) (*time.Duration, error) {
+	str, err := w.loadValueFromSysTable(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if str == "" {
 		return nil, nil
 	}
@@ -1619,6 +1728,21 @@ func strToDuration(str string) (*time.Duration, error) {
 		return nil, errors.Trace(err)
 	}
 	return &d, nil
+}
+
+func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time.Duration, error) {
+	d, err := w.loadDuration(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if d == nil {
+		err = w.saveDuration(key, def)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &def, nil
+	}
+	return d, nil
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
