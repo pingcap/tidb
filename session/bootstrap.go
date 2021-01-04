@@ -454,8 +454,8 @@ const (
 	version59 = 59
 	// version60 redesigns `mysql.stats_extended`
 	version60 = 60
-  // version61 restore all SQL bindings.
-  version61 = 61
+	// version61 restore all SQL bindings.
+	version61 = 61
 
 	// please make sure this is the largest version
 	currentBootstrapVersion = version61
@@ -523,7 +523,7 @@ var (
 		upgradeToVer58,
 		upgradeToVer59,
 		upgradeToVer60,
-    upgradeToVer61,
+		upgradeToVer61,
 	}
 )
 
@@ -1301,7 +1301,7 @@ func upgradeToVer60(s Session, ver int64) {
 	if ver >= version60 {
 		return
 	}
-  mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
