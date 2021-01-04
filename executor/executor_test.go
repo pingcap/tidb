@@ -3081,6 +3081,14 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
+	tk1.MustExec("create view v as select * from t")
+	defer tk1.MustExec("drop view v")
+	err = tk.ExecToErr("select * from v for update")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	err = tk.ExecToErr("select * from v lock in share mode")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
+	err = tk.ExecToErr("select * from (select * from v for update) t join t1")
+	c.Assert(err.Error(), Equals, "Unsupported lock on view: test.v")
 }
 
 func (s *testSuite) TestEmptyEnum(c *C) {

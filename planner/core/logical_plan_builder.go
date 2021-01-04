@@ -113,6 +113,8 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
+type underSelLock struct{}
+
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
 type aggOrderByResolver struct {
@@ -3290,6 +3292,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		projExprs                     []expression.Expression
 	)
 
+	selLock := sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone
+	if selLock {
+		ctx = context.WithValue(ctx, underSelLock{}, struct{}{})
+	}
+
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
@@ -3363,7 +3370,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
-	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+	if selLock {
 		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
@@ -3561,6 +3568,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tableInfo.IsView() {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
+		}
+		if ctx.Value(underSelLock{}) != nil {
+			return nil, errors.SuspendStack(errors.Errorf("Unsupported lock on view: %s.%s", dbName, tableInfo.Name))
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
