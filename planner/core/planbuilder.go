@@ -898,8 +898,11 @@ func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInf
 	}
 }
 
-func isForUpdateReadSelectLock(lock ast.SelectLockType) bool {
-	return lock == ast.SelectLockForUpdate || lock == ast.SelectLockForUpdateNoWait
+func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
+	if lock == nil {
+		return false
+	}
+	return lock.LockType == ast.SelectLockForUpdate || lock.LockType == ast.SelectLockForUpdateNoWait
 }
 
 func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {

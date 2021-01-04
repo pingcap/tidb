@@ -434,7 +434,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo.LockType)); fp != nil {
+		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}

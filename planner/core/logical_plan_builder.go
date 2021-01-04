@@ -3291,7 +3291,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	)
 
 	// set for update read to true before building result set node
-	if isForUpdateReadSelectLock(sel.LockInfo.LockType) {
+	if isForUpdateReadSelectLock(sel.LockInfo) {
 		b.isForUpdateRead = true
 	}
 
