@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -93,6 +94,8 @@ var (
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
+
+	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
 
 var gcVariableComments = map[string]string{
@@ -101,7 +104,7 @@ var gcVariableComments = map[string]string{
 	variable.TiKVGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
 	variable.TiKVGCEnable:       "Current GC enable status",
 	variable.TiKVGCMode:         "Mode of GC, \"central\" or \"distributed\"",
-	"tikv_gc_auto_concurrency":  "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
 	variable.TiKVGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
 }
 
@@ -1071,7 +1074,9 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name,
+		stringutil.Escape(sVal, s.sessionVars.SQLMode),
+	)
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
 }
@@ -1085,8 +1090,8 @@ func (s *session) SetTiKVGlobalSysVar(name, val string) error {
 		if val == "-1" {
 			autoConcurrency = "true"
 		}
-		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%s', '%s', '%s')
-			ON DUPLICATE KEY UPDATE variable_value = '%s'`, "tikv_gc_auto_concurrency", autoConcurrency, gcVariableComments[name], autoConcurrency)
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, tiKVGCAutoConcurrency, autoConcurrency, gcVariableComments[name])
 		_, _, err := s.ExecRestrictedSQL(sql)
 		if err != nil {
 			return err
@@ -1094,8 +1099,8 @@ func (s *session) SetTiKVGlobalSysVar(name, val string) error {
 		fallthrough
 	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
 		val = onOffToTrueFalse(val)
-		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%s', '%s', '%s')
-			ON DUPLICATE KEY UPDATE variable_value = '%s'`, name, val, gcVariableComments[name], val)
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, name, stringutil.Escape(val, s.sessionVars.SQLMode), gcVariableComments[name])
 		_, _, err := s.ExecRestrictedSQL(sql)
 		return err
 	}
@@ -1130,7 +1135,7 @@ func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 	switch name {
 	case variable.TiKVGCConcurrency:
 		// Check if autoconcurrency is set
-		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, "tikv_gc_auto_concurrency")
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, tiKVGCAutoConcurrency)
 		autoConcurrencyVal, err := s.getExecRet(s, sql)
 		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
 			return "-1", nil // convention for "AUTO"
@@ -1154,14 +1159,14 @@ func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 				zap.String("tblValue", tblValue),
 				zap.String("restoredValue", val))
 			sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
-			VALUES ('%s', '%s', '%s')`, name, val, gcVariableComments[name])
+			VALUES ('%s', '%s', '%s')`, name, stringutil.Escape(val, s.sessionVars.SQLMode), gcVariableComments[name])
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return val, err
 		}
 		if validatedVal != val {
 			// The sysvar value is out of sync.
 			sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-				mysql.SystemDB, mysql.GlobalVariablesTable, name, validatedVal)
+				mysql.SystemDB, mysql.GlobalVariablesTable, name, stringutil.Escape(validatedVal, s.sessionVars.SQLMode))
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return validatedVal, err
 		}
