@@ -3497,6 +3497,11 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+var (
+	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
+	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
+)
+
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -3519,6 +3524,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
+		pseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)
 	}
 
@@ -3527,7 +3533,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		tbl := *statsTbl
 		tbl.Pseudo = true
 		statsTbl = &tbl
-		metrics.PseudoEstimation.Inc()
+		pseudoEstimationOutdate.Inc()
 	}
 	return statsTbl
 }

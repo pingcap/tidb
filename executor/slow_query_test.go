@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -34,14 +33,17 @@ import (
 )
 
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
-	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
+	retriever.taskList = make(chan slowLogTask, 100)
 	ctx := context.Background()
-	retriever.parseSlowLog(ctx, sctx, reader, logNum)
-	slowLog := <-retriever.parsedSlowLogCh
-	rows, err := slowLog.rows, slowLog.err
-	if err == io.EOF {
-		err = nil
+	retriever.parseSlowLog(ctx, sctx, reader, 64)
+	task, ok := <-retriever.taskList
+	if !ok {
+		return nil, nil
 	}
+	var rows [][]types.Datum
+	var err error
+	result := <-task.resultCh
+	rows, err = result.rows, result.err
 	return rows, err
 }
 
@@ -294,8 +296,8 @@ select * from t;`)
 	slowLog = bytes.NewBufferString(
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227#
+select * from t;
 `)
-
 	scanner = bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, scanner, 64)
 	c.Assert(err, IsNil)
@@ -306,14 +308,6 @@ select * from t;`)
 }
 
 func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
-	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		c.Assert(err, IsNil)
-		_, err = f.Write([]byte(data))
-		c.Assert(f.Close(), IsNil)
-		c.Assert(err, IsNil)
-	}
-
 	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
@@ -332,20 +326,16 @@ select 5;
 select 6;
 # Time: 2020-04-15T18:00:05.299063744+08:00
 select 7;`
+	logData := []string{logData0, logData1, logData2, logData3}
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow.log"
-	writeFile(fileName0, logData0)
-	writeFile(fileName1, logData1)
-	writeFile(fileName2, logData2)
-	writeFile(fileName3, logData3)
+	fileNames := []string{fileName0, fileName1, fileName2, fileName3}
+	prepareLogs(c, logData, fileNames)
 	defer func() {
-		os.Remove(fileName0)
-		os.Remove(fileName1)
-		os.Remove(fileName2)
-		os.Remove(fileName3)
+		removeFiles(fileNames)
 	}()
 
 	cases := []struct {
@@ -445,9 +435,7 @@ select 7;`
 			c.Assert(err, IsNil)
 			endTime, err := ParseTime(cas.endTime)
 			c.Assert(err, IsNil)
-			extractor.StartTime = startTime
-			extractor.EndTime = endTime
-
+			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
 		err := retriever.initialize(context.Background(), sctx)
@@ -469,5 +457,146 @@ select 7;`
 			c.Assert(file.file.Close(), IsNil)
 		}
 		c.Assert(retriever.close(), IsNil)
+	}
+}
+
+func (s *testExecSuite) TestBatchLogForReversedScan(c *C) {
+	logData0 := ""
+	logData1 := `
+# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00`
+	logData2 := `select 3;
+# Time: 2020-02-16T18:00:01.000000+08:00
+select 4;
+# Time: 2020-02-16T18:00:05.000000+08:00
+select 5;`
+	logData3 := `
+# Time: 2020-02-16T19:00:00.000000+08:00
+select 6;
+# Time: 2020-02-17T18:00:05.000000+08:00
+select 7;
+# Time: 2020-04-15T18:00:05.299063744+08:00`
+	logData4 := `select 8;
+# Time: 2020-04-15T19:00:05.299063744+08:00
+select 9;`
+	logData := []string{logData0, logData1, logData2, logData3, logData4}
+
+	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
+	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
+	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
+	fileName3 := "tidb-slow-2020-02-17T19-04-05.01.log"
+	fileName4 := "tidb-slow.log"
+	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	prepareLogs(c, logData, fileNames)
+	defer func() {
+		removeFiles(fileNames)
+	}()
+
+	cases := []struct {
+		startTime string
+		endTime   string
+		files     []string
+		logs      [][]string
+	}{
+		{
+			startTime: "2020-02-15T18:00:00.000000+08:00",
+			endTime:   "2020-02-15T19:00:00.000000+08:00",
+			files:     []string{fileName1},
+			logs: [][]string{
+				{"# Time: 2020-02-15T19:00:05.000000+08:00",
+					"select 2;",
+					"# Time: 2020-02-15T18:00:01.000000+08:00",
+					"select 1;"},
+			},
+		},
+		{
+			startTime: "2020-02-15T20:00:05.000000+08:00",
+			endTime:   "2020-02-17T19:00:00.000000+08:00",
+			files:     []string{fileName1, fileName2, fileName3},
+			logs: [][]string{
+				{"# Time: 2020-02-17T18:00:05.000000+08:00",
+					"select 7;",
+					"# Time: 2020-02-16T19:00:00.000000+08:00",
+					"select 6;",
+					"# Time: 2020-02-16T18:00:05.000000+08:00",
+					"select 5;",
+					"# Time: 2020-02-16T18:00:01.000000+08:00",
+					"select 4;",
+					"# Time: 2020-02-16T18:00:01.000000+08:00",
+					"select 3;"},
+			},
+		},
+		{
+			startTime: "2020-02-16T19:00:00.000000+08:00",
+			endTime:   "2020-04-15T20:00:00.000000+08:00",
+			files:     []string{fileName3, fileName4},
+			logs: [][]string{
+				{"# Time: 2020-04-15T19:00:05.299063744+08:00",
+					"select 9;",
+					"Time: 2020-04-15T18:00:05.299063744+08:00",
+					"select 8;",
+					"# Time: 2020-02-17T18:00:05.000000+08:00",
+					"select 7;",
+					"# Time: 2020-02-16T19:00:00.000000+08:00",
+					"select 6;"},
+			},
+		},
+	}
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TimeZone = loc
+	sctx.GetSessionVars().SlowQueryFile = fileName3
+	for i, cas := range cases {
+		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0), Desc: true}
+		if extractor.Enable {
+			startTime, err := ParseTime(cas.startTime)
+			c.Assert(err, IsNil)
+			endTime, err := ParseTime(cas.endTime)
+			c.Assert(err, IsNil)
+			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
+		}
+		retriever := &slowQueryRetriever{extractor: extractor}
+		sctx.GetSessionVars().SlowQueryFile = fileName4
+		err := retriever.initialize(context.Background(), sctx)
+		c.Assert(err, IsNil)
+		comment := Commentf("case id: %v", i)
+		c.Assert(retriever.files, HasLen, len(cas.files), comment)
+		if len(retriever.files) > 0 {
+			reader := bufio.NewReader(retriever.files[0].file)
+			offset := &offset{length: 0, offset: 0}
+			rows, err := retriever.getBatchLogForReversedScan(context.Background(), reader, offset, 3)
+			c.Assert(err, IsNil)
+			for _, row := range rows {
+				for j, log := range row {
+					c.Assert(log, Equals, cas.logs[0][j], comment)
+				}
+			}
+		}
+		c.Assert(retriever.close(), IsNil)
+	}
+}
+
+func prepareLogs(c *C, logData []string, fileNames []string) {
+	writeFile := func(file string, data string) {
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		c.Assert(err, IsNil)
+		_, err = f.Write([]byte(data))
+		c.Assert(f.Close(), IsNil)
+		c.Assert(err, IsNil)
+	}
+
+	for i, log := range logData {
+		writeFile(fileNames[i], log)
+	}
+}
+
+func removeFiles(fileNames []string) {
+	for _, fileName := range fileNames {
+		os.Remove(fileName)
 	}
 }
