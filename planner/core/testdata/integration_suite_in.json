@@ -242,5 +242,12 @@
       "explain select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2",
       "explain select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c'"
     ]
+  },
+  {
+    "name": "TestInvalidHint",
+    "cases": [
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;",
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);"
+    ]
   }
 ]
