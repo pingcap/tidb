@@ -222,6 +222,9 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			continue
 		}
 
+		// Only try to decode handle when there is no corresponding column in the value.
+		// This is because the information in handle may be incomplete in some cases.
+		// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
 		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
 			continue
 		}
@@ -385,14 +388,17 @@ func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, h
 		tp := fieldType2Flag(col.Ft.Tp, col.Ft.Flag&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
-		if decoder.tryDecodeHandle(values, offset, col, handle, cacheBytes) {
-			continue
-		}
-
 		idx, isNil, notFound := r.findColID(colID)
 		if !notFound && !isNil {
 			val := r.getData(idx)
 			values[offset] = decoder.encodeOldDatum(tp, val)
+			continue
+		}
+
+		// Only try to decode handle when there is no corresponding column in the value.
+		// This is because the information in handle may be incomplete in some cases.
+		// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
+		if decoder.tryDecodeHandle(values, offset, col, handle, cacheBytes) {
 			continue
 		}
 
