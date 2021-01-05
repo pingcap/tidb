@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1783,4 +1786,64 @@ func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
 	for i := 0; i < c.N; i++ {
 		h.HandleAutoAnalyze(is)
 	}
+}
+
+// subtraction parses the number for counter and returns new - old.
+// string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
+func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
+	newStr := newMetric.String()
+	oldStr := oldMetric.String()
+	newIdx := strings.LastIndex(newStr, ":")
+	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
+	oldIdx := strings.LastIndex(oldStr, ":")
+	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
+	return newNum - oldNum
+}
+
+func (s *testStatsSuite) TestDisableFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(0.0)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 0)
+}
+
+func (s *testStatsSuite) TestFeedbackCounter(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(1)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
