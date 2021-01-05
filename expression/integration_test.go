@@ -8650,7 +8650,7 @@ func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
-	// For issue
+	// For issue 22179
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
