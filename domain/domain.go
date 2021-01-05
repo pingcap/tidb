@@ -374,18 +374,16 @@ func (do *Domain) Reload() error {
 		intervalOffset := reloadInterval - do.ddlLease/2
 		if intervalOffset >= 0 {
 			metrics.LoadSchemaIntervalBias.Observe(float64(intervalOffset.Milliseconds()))
-		}
-		if intervalOffset >= do.ddlLease {
-			// more than 2 * ddlLease
-			metrics.LoadSchemaIntervalWarning.WithLabelValues("one_ddl_lease").Inc()
-		} else if intervalOffset > do.ddlLease/2 {
-			// a little more than half ddlLease
-			metrics.LoadSchemaIntervalWarning.WithLabelValues("half_ddl_lease").Inc()
-		}
-		if intervalOffset >= 0 {
 			logutil.BgLogger().Debug(fmt.Sprintf("Reload Schema Interval: %v, bias: %v", reloadInterval, intervalOffset.Milliseconds()))
 		} else {
 			logutil.BgLogger().Debug(fmt.Sprintf("Reload Schema Interval: %v", reloadInterval))
+		}
+		if intervalOffset >= do.ddlLease {
+			// more than a ddlLease
+			metrics.LoadSchemaIntervalWarning.WithLabelValues("one_ddl_lease").Inc()
+		} else if intervalOffset > do.ddlLease/2 {
+			// more than half ddlLease
+			metrics.LoadSchemaIntervalWarning.WithLabelValues("half_ddl_lease").Inc()
 		}
 	}
 	var err error
@@ -546,7 +544,6 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
-	logutil.BgLogger().Info(fmt.Sprintf("[DEBUG] Lease time: %v", lease))
 	ticker := time.NewTicker(lease / 2)
 	defer func() {
 		ticker.Stop()
