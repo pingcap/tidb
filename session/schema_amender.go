@@ -190,8 +190,8 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 	return nil
 }
 
-// collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
-// TODO allow column change from nullable to not null, and generate keys check operation.
+// collectModifyColAmendOps is used to check if there is only column size increasing change.Other column type changes
+// such as column change from nullable to not null or column type change are not supported by now.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	for _, colAtCommit := range tblAtCommit.Cols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
