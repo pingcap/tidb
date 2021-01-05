@@ -289,8 +289,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
-			StaleRead:    s.isStaleness,
 		})
+		if s.isStaleness {
+			req.EnableStaleRead()
+		}
 		s.mu.RUnlock()
 
 		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
@@ -435,8 +437,10 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
-			StaleRead:    s.isStaleness,
 		})
+	if s.isStaleness {
+		req.EnableStaleRead()
+	}
 	s.mu.RUnlock()
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
