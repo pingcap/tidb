@@ -205,8 +205,8 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			// is newly added or modified from an original column.Report error to solve the issue
 			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
 			// and modifying columns at the same time.
-			return nil, errors.Trace(errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
-				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String()))
+			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
+				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
 	}
 	return nil, nil
