@@ -1325,7 +1325,6 @@ func upgradeToVer61(s Session, ver int64) {
 	var recordSets []sqlexec.RecordSet
 	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
 	if err != nil {
-		debug.PrintStack()
 		logutil.BgLogger().Fatal("upgradeToVer60 error", zap.Error(err))
 	}
 	if len(recordSets) > 0 {
