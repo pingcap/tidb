@@ -809,7 +809,7 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-var querySQL = string(`select distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+var querySQL = string(`select distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected
 					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
 					where tables.table_schema = idx.table_schema
 						AND tables.table_name = idx.table_name
@@ -1012,6 +1012,12 @@ func (s *testStatsSuite) TestIndexUsage4IndexMerge(c *C) {
 	))
 }
 
+var _ = SerialSuites(&statsSerialSuite{&testStatsSuite{}})
+
+type statsSerialSuite struct {
+	*testStatsSuite
+}
+
 func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -1022,7 +1028,7 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
-	querySQL := `select count(distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected) 
+	querySQL := `select count(distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected)
 					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
 					where tables.table_schema = idx.table_schema
 						AND tables.table_name = idx.table_name
