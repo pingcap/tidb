@@ -247,6 +247,9 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 		f32s := src.Float32s()
 		f64s := result.Float64s()
 		sel := input.Sel()
+		if len(f32s) != len(f64s){
+			panic(fmt.Sprintf("size does not equal, %v, %v", len(f32s),len(f64s)))
+		}
 		result.MergeNulls(src)
 		if sel != nil {
 			for i, j := range sel {
