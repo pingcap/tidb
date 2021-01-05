@@ -152,8 +152,10 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 
 type baseInSig struct {
 	baseBuiltinFunc
-	nonConstArgs []Expression
-	hasNull      bool
+	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).
+	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
+	nonConstArgsIdx []int
+	hasNull         bool
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -164,7 +166,7 @@ type builtinInIntSig struct {
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -178,7 +180,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().Flag)
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 	return nil
@@ -187,10 +189,8 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx sessionctx.Context) error
 func (b *builtinInIntSig) Clone() builtinFunc {
 	newSig := &builtinInIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -203,9 +203,8 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if isUnsigned, ok := b.hashSet[arg0]; ok {
 			if (isUnsigned0 && isUnsigned) || (!isUnsigned0 && !isUnsigned) {
 				return 1, false, nil
@@ -214,10 +213,14 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 				return 1, false, nil
 			}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalInt(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -255,7 +258,7 @@ type builtinInStringSig struct {
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
@@ -270,7 +273,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 			}
 			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 
@@ -280,10 +283,8 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx sessionctx.Context) er
 func (b *builtinInStringSig) Clone() builtinFunc {
 	newSig := &builtinInStringSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -295,17 +296,20 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
+	args := b.args[1:]
 	collator := collate.GetCollator(b.collation)
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
+		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
 		}
 	}
 
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalString(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -328,7 +332,7 @@ type builtinInRealSig struct {
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -342,7 +346,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 			}
 			b.hashSet.Insert(val)
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 
@@ -352,10 +356,8 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 func (b *builtinInRealSig) Clone() builtinFunc {
 	newSig := &builtinInRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -366,15 +368,19 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if b.hashSet.Exist(arg0) {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalReal(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -397,7 +403,7 @@ type builtinInDecimalSig struct {
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -415,7 +421,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 			}
 			b.hashSet.Insert(string(key))
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 
@@ -425,10 +431,8 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx sessionctx.Context) e
 func (b *builtinInDecimalSig) Clone() builtinFunc {
 	newSig := &builtinInDecimalSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -440,20 +444,23 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull0, err
 	}
 
-	args := b.args
+	args := b.args[1:]
 	key, err := arg0.ToHashKey()
 	if err != nil {
 		return 0, true, err
 	}
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if b.hashSet.Exist(string(key)) {
 			return 1, false, nil
+		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
 		}
 	}
 
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalDecimal(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -476,7 +483,7 @@ type builtinInTimeSig struct {
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -490,7 +497,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 			}
 			b.hashSet[val.CoreTime()] = struct{}{}
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 
@@ -500,10 +507,8 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 func (b *builtinInTimeSig) Clone() builtinFunc {
 	newSig := &builtinInTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -514,15 +519,19 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalTime(b.ctx, row)
 		if err != nil {
 			return 0, true, err
@@ -545,7 +554,7 @@ type builtinInDurationSig struct {
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
-	b.nonConstArgs = []Expression{b.args[0]}
+	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
@@ -559,7 +568,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 			}
 			b.hashSet[val.Duration] = struct{}{}
 		} else {
-			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
 
@@ -569,10 +578,8 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx sessionctx.Context) 
 func (b *builtinInDurationSig) Clone() builtinFunc {
 	newSig := &builtinInDurationSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.nonConstArgs = make([]Expression, 0, len(b.nonConstArgs))
-	for _, arg := range b.nonConstArgs {
-		newSig.nonConstArgs = append(newSig.nonConstArgs, arg.Clone())
-	}
+	newSig.nonConstArgsIdx = make([]int, len(b.nonConstArgsIdx))
+	copy(newSig.nonConstArgsIdx, b.nonConstArgsIdx)
 	newSig.hashSet = b.hashSet
 	newSig.hasNull = b.hasNull
 	return newSig
@@ -583,15 +590,19 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	args := b.args
+	args := b.args[1:]
 	if len(b.hashSet) != 0 {
-		args = b.nonConstArgs
 		if _, ok := b.hashSet[arg0.Duration]; ok {
 			return 1, false, nil
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
+
 	hasNull := b.hasNull
-	for _, arg := range args[1:] {
+	for _, arg := range args {
 		evaledArg, isNull, err := arg.EvalDuration(b.ctx, row)
 		if err != nil {
 			return 0, true, err
