@@ -249,6 +249,7 @@ import (
 	stored            "STORED"
 	terminated        "TERMINATED"
 	then              "THEN"
+	tidbStats         "TIDB_STATS"
 	tinyblobType      "TINYBLOB"
 	tinyIntType       "TINYINT"
 	tinytextType      "TINYTEXT"
@@ -1679,6 +1680,19 @@ AlterTableSpec:
 			Num:             getUint64FromNUM($6),
 		}
 	}
+|	"ADD" "TIDB_STATS" IfNotExists Identifier StatsType '(' ColumnNameList ')'
+	{
+		statsSpec := &ast.StatisticsSpec{
+			StatsName: $4,
+			StatsType: $5.(uint8),
+			Columns:   $7.([]*ast.ColumnName),
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableAddStatistics,
+			IfNotExists: $3.(bool),
+			Statistics:  statsSpec,
+		}
+	}
 |	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1732,6 +1746,17 @@ AlterTableSpec:
 			IfExists:       $3.(bool),
 			Tp:             ast.AlterTableDropPartition,
 			PartitionNames: $4.([]model.CIStr),
+		}
+	}
+|	"DROP" "TIDB_STATS" IfExists Identifier
+	{
+		statsSpec := &ast.StatisticsSpec{
+			StatsName: $4,
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableDropStatistics,
+			IfExists:   $3.(bool),
+			Statistics: statsSpec,
 		}
 	}
 |	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithValidationOpt
@@ -3206,28 +3231,28 @@ NumLiteral:
 |	decLit
 
 StatsType:
-	'(' "CARDINALITY" ')'
+	"CARDINALITY"
 	{
 		$$ = ast.StatsTypeCardinality
 	}
-|	'(' "DEPENDENCY" ')'
+|	"DEPENDENCY"
 	{
 		$$ = ast.StatsTypeDependency
 	}
-|	'(' "CORRELATION" ')'
+|	"CORRELATION"
 	{
 		$$ = ast.StatsTypeCorrelation
 	}
 
 CreateStatisticsStmt:
-	"CREATE" "STATISTICS" IfNotExists Identifier StatsType "ON" TableName '(' ColumnNameList ')'
+	"CREATE" "STATISTICS" IfNotExists Identifier '(' StatsType ')' "ON" TableName '(' ColumnNameList ')'
 	{
 		$$ = &ast.CreateStatisticsStmt{
 			IfNotExists: $3.(bool),
 			StatsName:   $4,
-			StatsType:   $5.(uint8),
-			Table:       $7.(*ast.TableName),
-			Columns:     $9.([]*ast.ColumnName),
+			StatsType:   $6.(uint8),
+			Table:       $9.(*ast.TableName),
+			Columns:     $11.([]*ast.ColumnName),
 		}
 	}
 
@@ -9292,6 +9317,12 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminReloadBindings,
+		}
+	}
+|	"ADMIN" "RELOAD" "TIDB_STATS"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminReloadStatistics,
 		}
 	}
 |	"ADMIN" "RELOAD" "STATISTICS"

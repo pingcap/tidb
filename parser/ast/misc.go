@@ -1572,6 +1572,13 @@ const (
 	StatsTypeCorrelation
 )
 
+// StatisticsSpec is the specification for ADD /DROP STATISTICS.
+type StatisticsSpec struct {
+	StatsName string
+	StatsType uint8
+	Columns   []*ColumnName
+}
+
 // CreateStatisticsStmt is a statement to create extended statistics.
 // Examples:
 //   CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
@@ -1947,7 +1954,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminResetTelemetryID:
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
-		ctx.WriteKeyWord("RELOAD STATISTICS")
+		ctx.WriteKeyWord("RELOAD TIDB_STATS")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
