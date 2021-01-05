@@ -293,16 +293,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -449,9 +447,11 @@ const (
 	version58 = 58
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version60
 )
 
 var (
@@ -1286,6 +1286,14 @@ func upgradeToVer59(s Session, ver int64) {
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
 	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
 }
 
 func writeMemoryQuotaQuery(s Session) {
