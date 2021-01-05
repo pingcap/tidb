@@ -155,6 +155,8 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 
 type baseInSig struct {
 	baseBuiltinFunc
+	// nonConstArgsIdx stores the indices of non-constant args in the baseBuiltinFunc.args (the first arg is not included).
+	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
 	hasNull         bool
 }
