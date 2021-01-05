@@ -1337,7 +1337,6 @@ func upgradeToVer61(s Session, ver int64) {
 	for {
 		err = recordSets[0].Next(context.TODO(), req)
 		if err != nil {
-			debug.PrintStack()
 			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
