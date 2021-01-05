@@ -1067,11 +1067,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-<<<<<<< HEAD
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
-=======
-		regionsInfo, err := c.pdClient.ScanRegions(ctx, startKey, endKey, limit)
->>>>>>> 16f53257c... store: trace `loadRegion` to see the PD region cache loading (#22092)
+		metas, leaders, err := c.pdClient.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
