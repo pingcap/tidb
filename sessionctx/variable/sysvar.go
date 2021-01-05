@@ -1217,7 +1217,7 @@ var defaultSysVars = []*SysVar{
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: 600000000000, MaxValue: math.MaxInt64}, /* min: 600s in nanoseconds */
+	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
 	{Scope: ScopeGlobal, Name: TiDBGCMode, Value: "DISTRIBUTED", Type: TypeEnum, PossibleValues: []string{"DISTRIBUTED", "CENTRAL"}},
