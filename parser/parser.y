@@ -4193,7 +4193,7 @@ TraceStmt:
 	{
 		$$ = &ast.TraceStmt{
 			Stmt:   $2,
-			Format: "json",
+			Format: "row",
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$2.SetText(string(parser.src[startOffset:]))
