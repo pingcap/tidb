@@ -8648,3 +8648,23 @@ func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
 	res = tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
 	c.Check(len(res.Rows()), Equals, 1)
 }
+
+func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
+	// For issue
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10))")
+	tk.MustExec("insert into t values('aaaaaaaaa'),('天王盖地虎宝塔镇河妖')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+
+	// check the collation of sub query of union statement.
+	tk.MustQuery("select collation(a) from (select null as a) aaa").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(a) from (select a from t limit 1) aaa").Check(testkit.Rows("utf8mb4_bin"))
+
+	// Reverse sub query of union statement.
+	tk.MustQuery("select * from (select null as a union all select a from t) aaa order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+	tk.MustExec("drop table if exists t")
+}
