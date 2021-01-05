@@ -9673,10 +9673,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_statistics_pseudo_estimation_total[1m]))",
+              "expr": "sum(rate(tidb_statistics_pseudo_estimation_total[30s])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Pseudo OPS",
+              "legendFormat": "{{type}}",
               "refId": "A",
               "step": 30
             }
