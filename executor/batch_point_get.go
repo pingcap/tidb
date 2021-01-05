@@ -115,8 +115,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
+		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
+			batchGetter = kv.NewCacheBatchGetter(e.ctx, e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
