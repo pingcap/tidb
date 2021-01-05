@@ -55,11 +55,11 @@ func Init() {
 			}
 		}
 		dbInfo := &model.DBInfo{
-			ID: dbID,
-			Name: util.SysSchemaName,
+			ID:      dbID,
+			Name:    util.SysSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
-			Tables: tbls,
+			Tables:  tbls,
 		}
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}

@@ -124,13 +124,13 @@ func (*testSuite) TestT(c *C) {
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(schemaNames, HasLen, 4)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, "Test"}), IsTrue)
+	c.Assert(schemaNames, HasLen, 5)
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{util.InformationSchemaName.O, util.MetricSchemaName.O, util.PerformanceSchemaName.O, util.SysSchemaName.O, "Test"}), IsTrue)
 
 	schemas := is.AllSchemas()
-	c.Assert(schemas, HasLen, 4)
+	c.Assert(schemas, HasLen, 5)
 	schemas = is.Clone()
-	c.Assert(schemas, HasLen, 4)
+	c.Assert(schemas, HasLen, 5)
 
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)

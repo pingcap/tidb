@@ -14,10 +14,10 @@
 package sysschema
 
 import (
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/table"
 )
 
 const (

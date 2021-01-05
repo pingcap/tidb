@@ -968,7 +968,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	var dbs []*model.DBInfo
 	err = decoder.Decode(&dbs)
 	c.Assert(err, IsNil)
-	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "sys", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L

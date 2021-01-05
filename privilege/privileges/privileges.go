@@ -58,7 +58,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
 	switch dbLowerName {
-	case util.InformationSchemaName.L:
+	case util.InformationSchemaName.L, util.SysSchemaName.L:
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
@@ -99,6 +99,12 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 	// Skip check for sys database.
 	if strings.EqualFold(db, "sys") {
+		return true
+	}
+	// When `select` the `sys.schema_unused_index` view, TiDB will use '@' as the user to select table mysql.schema_index_usage.
+	// We'll skip check for this case, because the result is `mysql.schema_index_usage join information_schema.tables join information_schema.tidb_indexes`,
+	// and access control has been done when accessing `tables` and `indexes`.
+	if strings.EqualFold(user.String(), "@") && strings.EqualFold(db, "mysql") && strings.EqualFold(table, "schema_index_usage") {
 		return true
 	}
 

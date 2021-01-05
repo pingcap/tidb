@@ -1147,6 +1147,37 @@ func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields R
 	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
+func (s *testPrivilegeSuite) TestSysSchemaPrivilege(c *C) {
+	rootSe := newSession(c, s.store, s.dbName)
+	mustExec(c, rootSe, `use test`)
+	mustExec(c, rootSe, `create table t(a int, index idx_a(a))`)
+	records, err := rootSe.Execute(context.Background(), `select * from sys.schema_unused_indexes`)
+	c.Assert(err, IsNil)
+	r := records[0]
+	req := r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "test")
+	c.Assert(row.GetString(1), Equals, "t")
+	c.Assert(row.GetString(2), Equals, "idx_a")
+
+	// User 'tester'@'localhost' has no permission
+	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	mustExec(c, rootSe, `flush privileges;`)
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	// `sys` schema is visibility for everyone.
+	mustExec(c, se, `use sys`)
+	records, err = se.Execute(context.Background(), `select * from sys.schema_unused_indexes`)
+	c.Assert(err, IsNil)
+	r = records[0]
+	req = r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	// The user cannot get the index information of the table without `select` permission.
+	c.Assert(req.NumRows(), Equals, 0)
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
