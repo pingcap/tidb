@@ -294,16 +294,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -369,6 +367,9 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
+	// The variable name in mysql.tidb table and it records the default value of
+	// oom-action when upgrade from v3.0.x to v4.0.11+.
+	tidbDefOOMAction = "default_oom_action"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -435,7 +436,7 @@ const (
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
 	version53 = 53
-	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
 	version54 = 54
 	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
 	version55 = 55
@@ -445,11 +446,15 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
-	// version59 add column ndv for mysql.stats_buckets.
+	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 add column ndv for mysql.stats_buckets.
+	version61 = 61
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version61
 )
 
 var (
@@ -513,6 +518,8 @@ var (
 		upgradeToVer57,
 		upgradeToVer58,
 		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
 	}
 )
 
@@ -1271,18 +1278,48 @@ func upgradeToVer58(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
+func upgradeToVer59(s Session, ver int64) {
+	if ver >= version59 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
 func writeMemoryQuotaQuery(s Session) {
-	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer59(s Session, ver int64) {
-	if ver >= version59 {
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
+}
+
+func writeOOMAction(s Session) {
+	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

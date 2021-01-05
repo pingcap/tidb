@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -424,12 +425,18 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
+			if tidbutil.IsMemDB(fp.dbName) {
+				return nil
+			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+				return nil
+			}
+			if tidbutil.IsMemDB(fp.dbName) {
 				return nil
 			}
 			if fp.IsTableDual {
@@ -619,11 +626,19 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
+			// if any item is `ValueExpr` type, `Expr` should contain only one column,
+			// otherwise column count doesn't match and no plan can be built.
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
