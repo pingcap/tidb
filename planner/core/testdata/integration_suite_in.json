@@ -225,6 +225,13 @@
     ]
   },
   {
+    "name": "TestInvalidHint",
+    "cases": [
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;",
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);"
+    ]
+  },
+  {
     "name": "TestApproxPercentile",
     "cases": [
       "select approx_percentile(a, 50) from t",

@@ -275,10 +275,8 @@
       {
         "SQL": "explain select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c",
         "Plan": [
-          "IndexMerge_8 10000.00 root  ",
-          "├─TableFullScan_5(Build) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "├─TableRangeScan_6(Build) 6666.67 cop[tikv] table:t range:[-inf,0), (0,+inf], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_7(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1245,6 +1243,31 @@
           "  ├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
           "  └─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestInvalidHint",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;",
+        "Plan": [
+          "IndexReader_6 20.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 20.00 cop[tikv] table:tt, index:a(a) range:[10,10], [20,20], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Warning 1105 IndexMerge is inapplicable or disabled"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);",
+        "Plan": [
+          "IndexReader_6 6666.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 6666.67 cop[tikv] table:tt, index:a(a) range:[-inf,10), [15,15], (20,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Warning 1105 IndexMerge is inapplicable or disabled"
         ]
       }
     ]
