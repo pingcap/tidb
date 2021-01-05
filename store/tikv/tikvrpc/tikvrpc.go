@@ -389,6 +389,13 @@ func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
+// EnableStaleRead enable the stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
 	switch req.Type {

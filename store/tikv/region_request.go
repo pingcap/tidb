@@ -222,6 +222,7 @@ func (s *RegionRequestSender) getRPCContext(
 	req *tikvrpc.Request,
 	regionID RegionVerID,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (*RPCContext, error) {
 	switch sType {
 	case kv.TiKV:
@@ -229,7 +230,7 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed, opts...)
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
@@ -246,6 +247,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	regionID RegionVerID,
 	timeout time.Duration,
 	sType kv.StoreType,
+	opts ...StoreSelectorOption,
 ) (
 	resp *tikvrpc.Response,
 	rpcCtx *RPCContext,
@@ -291,7 +293,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
 
-		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType, opts...)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -410,6 +411,8 @@ type Request struct {
 	TiDBServerID uint64
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels []*metapb.StoreLabel
 }
 
 // ResultSubset represents a result subset from a single storage unit.
