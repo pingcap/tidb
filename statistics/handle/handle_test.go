@@ -809,11 +809,16 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+var _ = SerialSuites(&statsSerialSuite{&testStatsSuite{}})
+
+type statsSerialSuite struct {
+	*testStatsSuite
+}
+
+func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_idx")
 	tk.MustExec("create table t_idx(a int, b int)")
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
@@ -847,4 +852,28 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 		"test t_idx idx_a 3 2",
 		"test t_idx idx_b 2 2",
 	))
+}
+
+func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustQuery("select a from t_idx where a=1")
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	querySQL := `select count(distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected) 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
+	tk.MustQuery(querySQL).Check(testkit.Rows("1"))
+	tk.MustExec("drop index `idx_a` on t_idx")
+	err = do.StatsHandle().GCIndexUsage()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
 }
