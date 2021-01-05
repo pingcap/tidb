@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -319,4 +320,30 @@ func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
 		return v, ""
 	}
 	return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
+}
+
+// convertToRole tries to convert elements of roleOrPrivList to RoleIdentity
+func convertToRole(roleOrPrivList []*ast.RoleOrPriv) ([]*auth.RoleIdentity, error) {
+	var roles []*auth.RoleIdentity
+	for _, elem := range roleOrPrivList {
+		role, err := elem.ToRole()
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, role)
+	}
+	return roles, nil
+}
+
+// convertToPriv tries to convert elements of roleOrPrivList to PrivElem
+func convertToPriv(roleOrPrivList []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
+	var privileges []*ast.PrivElem
+	for _, elem := range roleOrPrivList {
+		priv, err := elem.ToPriv()
+		if err != nil {
+			return nil, err
+		}
+		privileges = append(privileges, priv)
+	}
+	return privileges, nil
 }
