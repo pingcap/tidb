@@ -302,7 +302,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			// If there're columns not in stats, we won't handle them. This case might happen after DDL operations.
 			cols := expression.ExtractColumns(scalarCond)
 			for i := range cols {
-				if _, ok := coll.Columns[cols[i].ID]; !ok {
+				if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
 					continue OUTER
 				}
 			}
