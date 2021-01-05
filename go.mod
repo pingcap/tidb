@@ -8,7 +8,6 @@ require (
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
 	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
-	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
@@ -33,7 +32,6 @@ require (
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
-	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/onsi/ginkgo v1.11.0 // indirect
@@ -42,7 +40,7 @@ require (
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/br v4.0.9-0.20201215065036-804aa9087197+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20201029093017-5a7df2af2ac7
+	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
@@ -59,11 +57,9 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v1.1.0
-	github.com/spf13/cobra v1.0.0 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20190625010220-02440ea7a285 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/pd v1.1.0-beta.0.20200921100508-9ee41c4144f3
+	github.com/tikv/pd v0.0.0-20210105112549-e5be7fd38659
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.2.0+incompatible // indirect
@@ -94,5 +90,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/tikv/pd => github.com/tiancaiamao/pd v0.0.0-20210104085128-7ffa8715dc95
