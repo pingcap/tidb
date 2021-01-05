@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -63,6 +64,8 @@ type tikvSnapshot struct {
 	vars            *kv.Variables
 	replicaReadSeed uint32
 	isStaleness     bool
+	// MatchStoreLabels indicates the labels the store should be matched
+	matchStoreLabels []*metapb.StoreLabel
 	minCommitTSPushed
 
 	// Cache the result of BatchGet.
@@ -290,12 +293,15 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+		s.mu.RUnlock()
+		var ops []StoreSelectorOption
 		if s.isStaleness {
 			req.EnableStaleRead()
 		}
-		s.mu.RUnlock()
-
-		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "")
+		if len(s.matchStoreLabels) > 0 {
+			ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+		}
+		resp, _, _, err := cli.SendReqCtx(bo, req, batch.region, ReadTimeoutMedium, kv.TiKV, "", ops...)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -438,16 +444,20 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
 		})
+	s.mu.RUnlock()
+	var ops []StoreSelectorOption
 	if s.isStaleness {
 		req.EnableStaleRead()
 	}
-	s.mu.RUnlock()
+	if len(s.matchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(s.matchStoreLabels))
+	}
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
+		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "", ops...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -551,6 +561,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.sampleStep = val.(uint32)
 	case kv.IsStalenessReadOnly:
 		s.isStaleness = val.(bool)
+	case kv.MatchStoreLabels:
+		s.matchStoreLabels = val.([]*metapb.StoreLabel)
 	}
 }
 

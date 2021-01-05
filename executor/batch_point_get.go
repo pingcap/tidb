@@ -20,8 +20,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -113,7 +115,16 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	snapshot.SetOption(kv.IsStalenessReadOnly, e.ctx.GetSessionVars().TxnCtx.IsStaleness)
+	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
+	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
+	if isStaleness {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+			},
+		})
+	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		if e.lock {

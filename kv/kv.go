@@ -69,6 +69,8 @@ const (
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
+	// MatchStoreLabels indicates the labels the store should be matched
+	MatchStoreLabels
 )
 
 // Priority value for transaction priority.

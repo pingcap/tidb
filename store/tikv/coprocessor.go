@@ -886,7 +886,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
-	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
+	var ops []StoreSelectorOption
+	if len(worker.req.MatchStoreLabels) > 0 {
+		ops = append(ops, WithMatchLabels(worker.req.MatchStoreLabels))
+	}
+	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr, ops...)
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
