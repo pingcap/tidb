@@ -537,9 +537,12 @@ type SelectLockType int
 const (
 	SelectLockNone SelectLockType = iota
 	SelectLockForUpdate
-	SelectLockInShareMode
+	SelectLockForShare
 	SelectLockForUpdateNoWait
 	SelectLockForUpdateWaitN
+	SelectLockForShareNoWait
+	SelectLockForUpdateSkipLocked
+	SelectLockForShareSkipLocked
 )
 
 type SelectLockInfo struct {
@@ -554,12 +557,18 @@ func (n SelectLockType) String() string {
 		return "none"
 	case SelectLockForUpdate:
 		return "for update"
-	case SelectLockInShareMode:
-		return "in share mode"
+	case SelectLockForShare:
+		return "for share"
 	case SelectLockForUpdateNoWait:
 		return "for update nowait"
 	case SelectLockForUpdateWaitN:
-		return "for update wait seconds"
+		return "for update wait"
+	case SelectLockForShareNoWait:
+		return "for share nowait"
+	case SelectLockForUpdateSkipLocked:
+		return "for update skip locked"
+	case SelectLockForShareSkipLocked:
+		return "for share skip locked"
 	}
 	return "unsupported select lock type"
 }
@@ -1149,16 +1158,14 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	if n.LockInfo != nil {
+		ctx.WritePlain(" ")
 		switch n.LockInfo.LockType {
-		case SelectLockInShareMode:
-			ctx.WriteKeyWord(" LOCK ")
-			ctx.WriteKeyWord(n.LockInfo.LockType.String())
-		case SelectLockForUpdate, SelectLockForUpdateNoWait:
-			ctx.WritePlain(" ")
-			ctx.WriteKeyWord(n.LockInfo.LockType.String())
+		case SelectLockNone:
 		case SelectLockForUpdateWaitN:
-			ctx.WriteKeyWord(" FOR UPDATE WAIT ")
-			ctx.WritePlainf("%d", n.LockInfo.WaitSec)
+			ctx.WriteKeyWord(n.LockInfo.LockType.String())
+			ctx.WritePlainf(" %d", n.LockInfo.WaitSec)
+		default:
+			ctx.WriteKeyWord(n.LockInfo.LockType.String())
 		}
 	}
 
