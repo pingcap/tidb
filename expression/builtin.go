@@ -539,17 +539,32 @@ type baseFunctionClass struct {
 }
 
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
-	l := len(args)
+	return b.verifyArgsByCount(len(args))
+}
+
+func (b *baseFunctionClass) verifyArgsByCount(l int) error {
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
 		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
 	return nil
 }
 
+// VerifyArgsWrapper verifies a function by its name and the count of the arguments.
+// Note that this function assumes that the function is supported.
+func VerifyArgsWrapper(name string, l int) error {
+	f, ok := funcs[name]
+	if !ok {
+		return nil
+	}
+	return f.verifyArgsByCount(l)
+}
+
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	// verifyArgsByCount verifies the count of parameters.
+	verifyArgsByCount(l int) error
 }
 
 // funcs holds all registered builtin functions. When new function is added,
