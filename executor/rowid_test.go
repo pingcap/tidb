@@ -133,4 +133,6 @@ func (s *testSuite3) TestExplicitInsertRowID(c *C) {
 	tk.MustExec("SET sql_mode=(SELECT REPLACE(@@sql_mode,'NO_AUTO_VALUE_ON_ZERO',''));")
 	tk.MustExec("insert into t (a, _tidb_rowid) values (6, 0);")
 	tk.MustQuery("select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;").Check(testkit.Rows("5 0", "6 8"))
+	tk.MustExec("insert into t (_tidb_rowid, a) values (0, 7);")
+	tk.MustQuery("select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;").Check(testkit.Rows("5 0", "6 8", "7 9"))
 }
