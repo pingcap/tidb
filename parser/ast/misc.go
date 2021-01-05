@@ -135,7 +135,7 @@ type TraceStmt struct {
 // Restore implements Node interface.
 func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
-	if n.Format != "json" {
+	if n.Format != "row" {
 		ctx.WriteKeyWord("FORMAT")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Format)
