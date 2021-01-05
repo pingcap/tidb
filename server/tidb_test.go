@@ -144,6 +144,7 @@ func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
 	ts.runTestsOnNewDB(c, nil, "test", func(dbt *DBTest) {
 		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
 		ts.checkRows(c, rows, "300")
+		c.Assert(config.NewConfig(), DeepEquals, config.GetGlobalConfig())
 	})
 }
 
