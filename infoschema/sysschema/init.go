@@ -30,6 +30,13 @@ import (
 
 var once sync.Once
 
+// Init register the `sys` views.
+// It should be init(), and the ideal usage should be:
+//
+// import _ "github.com/pingcap/tidb/sysschema"
+//
+// This function depends on plan/core.init(), which initialize the expression.EvalAstExpr function.
+// The initialize order is a problem if init() is used as the function name.
 func Init() {
 	initOnce := func() {
 		p := parser.New()

@@ -1923,6 +1923,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 	return errors.Trace(err)
 }
 
+// BuildTableInfoFromCreateViewAST builds model.TableInfo from a CreateViewStmt statement.
 func BuildTableInfoFromCreateViewAST(s *ast.CreateViewStmt) (*model.TableInfo, error) {
 	ctx := mock.NewContext()
 	viewInfo, err := buildViewInfo(ctx, s)
