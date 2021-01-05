@@ -5831,6 +5831,9 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
+		// refer to tidb#22065.
+		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
+		// placement rules in SQL is not compatible with `set tiflash replica` yet
 		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
 			Op:     placement.NotIn,
 			Key:    placement.EngineLabelKey,
@@ -5846,6 +5849,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		if cnt <= 0 {
 			continue
 		}
+		// refer to tidb#22065.
 		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          string(role),
