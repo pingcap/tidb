@@ -124,6 +124,7 @@ type Config struct {
 	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   PDClient          `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
@@ -507,6 +508,12 @@ type ProxyProtocol struct {
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
+// PDClient is the config for PD client.
+type PDClient struct {
+	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
+	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
+}
+
 // TiKVClient is the config for tikv client.
 type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
@@ -733,6 +740,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	PDClient: PDClient{
+		PDServerTimeout: 3,
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount:  4,
