@@ -1981,18 +1981,50 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// RoleOrPriv is a temporary structure to be further processed into auth.RoleIdentity or PrivElem
+type RoleOrPriv struct {
+	Symbols string      // hold undecided symbols
+	Node    interface{} // hold auth.RoleIdentity or PrivElem that can be sure when parsing
+}
+
+func (n *RoleOrPriv) ToRole() (*auth.RoleIdentity, error) {
+	if n.Node != nil {
+		if r, ok := n.Node.(*auth.RoleIdentity); ok {
+			return r, nil
+		}
+		return nil, errors.Errorf("can't convert to RoleIdentity, type %T", n.Node)
+	}
+	return &auth.RoleIdentity{Username: n.Symbols, Hostname: "%"}, nil
+}
+
+func (n *RoleOrPriv) ToPriv() (*PrivElem, error) {
+	if n.Node != nil {
+		if p, ok := n.Node.(*PrivElem); ok {
+			return p, nil
+		}
+		return nil, errors.Errorf("can't convert to PrivElem, type %T", n.Node)
+	}
+	if len(n.Symbols) == 0 {
+		return nil, errors.New("symbols should not be length 0")
+	}
+	return &PrivElem{Priv: mysql.ExtendedPriv, Name: n.Symbols}, nil
+}
+
 // PrivElem is the privilege type and optional column list.
 type PrivElem struct {
 	node
 
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
+	Name string
 }
 
 // Restore implements Node interface.
 func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 	if n.Priv == mysql.AllPriv {
 		ctx.WriteKeyWord("ALL")
+	} else if n.Priv == mysql.ExtendedPriv {
+		ctx.WriteKeyWord(n.Name)
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
 		if ok {
