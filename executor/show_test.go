@@ -51,25 +51,25 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
 
-	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
-	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA and sys.
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "sys"))
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase", "sys"))
 
 	// The user can see t1 but not t2.
 	tk1.MustExec("use showdatabase")
 	tk1.MustQuery("show tables").Check(testkit.Rows("t1"))
 
-	// After revoke, show database result should be just except INFORMATION_SCHEMA.
+	// After revoke, show database result should be just except INFORMATION_SCHEMA and sys.
 	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "sys"))
 
 	// Grant any global privilege would make show databases available.
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	rows := tk1.MustQuery("show databases").Rows()
-	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
+	c.Assert(len(rows), GreaterEqual, 3) // At least INFORMATION_SCHEMA, showdatabase and sys
 
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
@@ -77,7 +77,7 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 
 func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "sys"))
 	tk.MustExec(`create user 'show'@'%'`)
 
 	tk.MustExec(`create database AAAA`)
@@ -90,7 +90,7 @@ func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.Se = se
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB", "sys"))
 
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec(`drop database AAAA`)
@@ -240,7 +240,7 @@ func (s *testSuite5) TestIssue10549(c *C) {
 	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil), IsTrue)
-	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
+	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb", "sys"))
 	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 }

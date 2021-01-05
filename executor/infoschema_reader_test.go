@@ -169,7 +169,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil), IsTrue)
-	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
