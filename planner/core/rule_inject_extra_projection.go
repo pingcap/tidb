@@ -149,7 +149,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	}
 
 	child := aggPlan.Children()[0]
-	prop := aggPlan.GetChildReqProps(0).Clone()
+	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
@@ -216,7 +216,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 		item.Expr = newArg
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
@@ -265,7 +265,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
 	}
 
-	childProp := p.GetChildReqProps(0).Clone()
+	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
 		Exprs:                bottomProjExprs,
 		AvoidColumnEvaluator: false,
