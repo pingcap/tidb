@@ -315,9 +315,16 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 	var ok bool
 	p, ok = b.cachedResultSetNodes[from.TableRefs]
 	if ok {
-		m := b.cachedHandleHelperMap[from.TableRefs]
-		b.handleHelper.pushMap(m)
-		return
+		if _, ok = p.(*LogicalSelection); ok {
+			var stmt *ast.SelectStmt
+			if stmt, ok = from.TableRefs.Left.(*ast.SelectStmt); ok {
+				if !isForUpdateReadSelectLock(stmt.LockInfo) {
+					m := b.cachedHandleHelperMap[from.TableRefs]
+					b.handleHelper.pushMap(m)
+					return
+				}
+			}
+		}
 	}
 	p, err = b.buildResultSetNode(ctx, from.TableRefs)
 	if err != nil {
@@ -3295,16 +3302,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	if sel.From != nil {
-		// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
-		// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
-		// existing ResultSetNode from the cache.
-		p, err = b.buildTableRefsWithCache(ctx, sel.From)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		p = b.buildTableDual()
+	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
+	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
+	// existing ResultSetNode from the cache.
+	p, err = b.buildTableRefsWithCache(ctx, sel.From)
+	if err != nil {
+		return nil, err
 	}
 
 	originalFields := sel.Fields.Fields

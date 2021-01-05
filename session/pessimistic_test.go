@@ -2289,13 +2289,15 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 
 	for _, partition := range []bool{false, true} {
 		//RC test
-		tk.MustExec("drop table if exists t")
+		tk.MustExec("drop table if exists t, t1")
 		createTable := "create table t (id int primary key, v int, index iv (v))"
 		if partition {
 			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
 		}
 		tk.MustExec(createTable)
 		tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+		tk.MustExec("create table t1(id int)")
+		tk.MustExec("insert into t1 values(1)")
 
 		tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 		tk.MustExec("begin pessimistic")
@@ -2370,8 +2372,14 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		// fast path
 		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
 		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
+		tk.MustQuery("select (select id from t where v = 23), id from t1").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id from t where v = 24), id from t1").Check(testkit.Rows("<nil> 1"))
+
 		tk.MustQuery("select * from t where v = 23 for update").Check(testkit.Rows())
 		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		tk.MustQuery("select (select id from t where v = 23 for update), id from t1").Check(testkit.Rows("<nil> 1"))
+		tk.MustQuery("select (select id from t where v = 24 for update), id from t1").Check(testkit.Rows("2 1"))
+
 		// test index look up
 		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
 		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
