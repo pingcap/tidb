@@ -514,3 +514,48 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).end = end
 	alloc.(*allocator).mu.Unlock()
 }
+<<<<<<< HEAD
+=======
+
+// ShardIDLayout is used to calculate the bits length of different segments in auto id.
+// Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
+// Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
+// the layout is like
+//  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+// Please always use NewShardIDLayout() to instantiate.
+type ShardIDLayout struct {
+	FieldType *types.FieldType
+	ShardBits uint64
+	// Derived fields.
+	TypeBitsLength  uint64
+	IncrementalBits uint64
+	HasSignBit      bool
+}
+
+// NewShardIDLayout create an instance of ShardIDLayout.
+func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+	incrementalBits := typeBitsLength - shardBits
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	if hasSignBit {
+		incrementalBits -= 1
+	}
+	return &ShardIDLayout{
+		FieldType:       fieldType,
+		ShardBits:       shardBits,
+		TypeBitsLength:  typeBitsLength,
+		IncrementalBits: incrementalBits,
+		HasSignBit:      hasSignBit,
+	}
+}
+
+// IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
+func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
+	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
+}
+
+// IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
+func (l *ShardIDLayout) IncrementalMask() int64 {
+	return (1 << l.IncrementalBits) - 1
+}
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)

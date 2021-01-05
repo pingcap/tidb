@@ -184,7 +184,29 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	sc.AddUpdatedRows(1)
 	sc.AddCopiedRows(1)
 
+<<<<<<< HEAD
 	return true, handleChanged, newHandle, nil
+=======
+	return true, nil
+}
+
+func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+	tableInfo := t.Meta()
+	if !tableInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	if err != nil {
+		return err
+	}
+	if recordID < 0 {
+		return nil
+	}
+	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	// Set bits except incremental_bits to zero.
+	recordID = recordID & (1<<layout.IncrementalBits - 1)
+	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

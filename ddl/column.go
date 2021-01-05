@@ -465,6 +465,16 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			}
 		}
 	}
+<<<<<<< HEAD
+=======
+	return nil
+}
+
+func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
+	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
+	schemaID := job.SchemaID
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)
 
 	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	if err != nil {

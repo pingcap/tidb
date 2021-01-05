@@ -121,7 +121,6 @@ func (e *InsertValues) initInsertColumns() error {
 				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 			}
 			e.hasExtraHandle = true
-			break
 		}
 	}
 
@@ -421,6 +420,24 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		}
 		return d, nil
 	}
+<<<<<<< HEAD
+=======
+	tblInfo := e.Table.Meta()
+	if ddl.IsAutoRandomColumnID(tblInfo, column.ID) {
+		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
+	if column.ID == model.ExtraHandleID && hasValue {
+		d, err := e.adjustImplicitRowID(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
 		if e.filterErr(err) != nil {
@@ -438,8 +455,20 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // Other statements like `insert select from` don't guarantee consecutive autoID.
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+<<<<<<< HEAD
 	gIdx := 0
 	for i, c := range e.Table.Cols() {
+=======
+	gCols := make([]*table.Column, 0)
+	tCols := e.Table.Cols()
+	if e.hasExtraHandle {
+		col := &table.Column{}
+		col.ColumnInfo = model.NewExtraHandleColInfo()
+		col.ColumnInfo.Offset = len(tCols)
+		tCols = append(tCols, col)
+	}
+	for i, c := range tCols {
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)
 		var err error
 		// Get the default value for all no value columns, the auto increment column is different from the others.
 		row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i])
@@ -706,6 +735,157 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	return recordID, nil
 }
 
+<<<<<<< HEAD
+=======
+func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	retryInfo := e.ctx.GetSessionVars().RetryInfo
+	if retryInfo.Retrying {
+		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
+		if ok {
+			d.SetAutoID(autoRandomID, c.Flag)
+			return d, nil
+		}
+	}
+
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		if err != nil {
+			return types.Datum{}, err
+		}
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
+		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
+		d.SetAutoID(recordID, c.Flag)
+		retryInfo.AddAutoRandomID(recordID)
+		return d, nil
+	}
+
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
+		// Cause autoID may be specified by user, judge only the first row is not suitable.
+		if e.lastInsertID == 0 {
+			e.lastInsertID = uint64(recordID)
+		}
+	}
+
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	retryInfo.AddAutoRandomID(recordID)
+	return d, nil
+}
+
+// allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
+func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
+	offset := e.ctx.GetSessionVars().AutoIncrementOffset
+	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
+	if err != nil {
+		return 0, err
+	}
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
+	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
+		return 0, autoid.ErrAutoRandReadFailed
+	}
+	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
+	autoRandomID |= shard
+	return autoRandomID, nil
+}
+
+func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+	if recordID < 0 {
+		return nil
+	}
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
+	tableInfo := e.Table.Meta()
+
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
+	autoRandomID := layout.IncrementalMask() & recordID
+
+	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+}
+
+func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID = d.GetInt64()
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowWriteRowID {
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		err = e.rebaseImplicitRowID(recordID)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetInt64(recordID)
+		return d, nil
+	}
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		intHandle, err := tables.AllocHandle(ctx, e.ctx, e.Table)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		recordID = intHandle.IntValue()
+	}
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return d, nil
+}
+
+func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
+	if recordID < 0 {
+		return nil
+	}
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
+	tableInfo := e.Table.Meta()
+
+	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
+	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+
+	return alloc.Rebase(tableInfo.ID, newTiDBRowIDBase, true)
+}
+
+>>>>>>> f55e8f2bf... table: fix insert into _tidb_rowid panic and rebase it if needed (#22062)
 func (e *InsertValues) handleWarning(err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
