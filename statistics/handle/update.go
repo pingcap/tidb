@@ -314,6 +314,16 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	return nil
 }
 
+// GCIndexUsage will delete the usage information of those indexes that do not exist.
+func (h *Handle) GCIndexUsage() error {
+	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
+	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
+	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	return err
+}
+
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
