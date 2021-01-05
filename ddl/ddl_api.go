@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -5653,23 +5653,19 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 }
 
 func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
-	var err error
-	cnstr = strings.TrimSpace(cnstr)
-	rules := make([]*placement.Rule, 0, 1)
-	if len(cnstr) > 0 && cnstr[0] == '[' {
+	rules := []*placement.Rule{}
+
+	cnstbytes := []byte(cnstr)
+
+	constraints1 := []string{}
+	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	if err1 == nil {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
-		constraints := []string{}
-
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
-
-		labelConstraints, err := placement.CheckLabelConstraints(constraints)
+		labelConstraints, err := placement.CheckLabelConstraints(constraints1)
 		if err != nil {
 			return rules, err
 		}
@@ -5678,15 +5674,16 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			Count:            int(replicas),
 			LabelConstraints: labelConstraints,
 		})
-	} else if len(cnstr) > 0 && cnstr[0] == '{' {
-		constraints := map[string]int{}
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
 
+		return rules, nil
+	}
+
+	constraints2 := map[string]int{}
+	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
+	if err2 == nil {
 		ruleCnt := int(replicas)
-		for labels, cnt := range constraints {
+
+		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
 				return rules, errors.Errorf("count should be positive, but got %d", cnt)
 			}
@@ -5702,20 +5699,23 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			if err != nil {
 				return rules, err
 			}
+
 			rules = append(rules, &placement.Rule{
 				Count:            cnt,
 				LabelConstraints: labelConstraints,
 			})
 		}
+
 		if ruleCnt > 0 {
 			rules = append(rules, &placement.Rule{
 				Count: ruleCnt,
 			})
 		}
-	} else {
-		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+
+		return rules, nil
 	}
-	return rules, err
+
+	return nil, errors.Errorf("constraint is neither an array of string, nor a string-to-number map, due to:\n%s\n%s", err1, err2)
 }
 
 func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
@@ -5742,7 +5742,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleVoter:
 			role = placement.Voter
 		default:
-			err = errors.Errorf("unknown role: %d", spec.Role)
+			err = errors.Errorf("ROLE is not specified")
 		}
 		if err != nil {
 			break
