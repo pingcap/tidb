@@ -521,18 +521,18 @@ const (
 // TiDB vars that have only global scope
 
 const (
-	// TiKVGCEnable description
-	TiKVGCEnable = "tikv_gc_enable"
-	// TiKVGCRunInterval description
-	TiKVGCRunInterval = "tikv_gc_run_interval"
-	// TiKVGCLifetime description
-	TiKVGCLifetime = "tikv_gc_life_time"
-	// TiKVGCConcurrency description
-	TiKVGCConcurrency = "tikv_gc_concurrency"
-	// TiKVGCMode description
-	TiKVGCMode = "tikv_gc_mode"
-	// TiKVGCScanLockMode description
-	TiKVGCScanLockMode = "tikv_gc_scan_lock_mode"
+	// TiDBGCEnable description
+	TiDBGCEnable = "tidb_gc_enable"
+	// TiDBGCRunInterval description
+	TiDBGCRunInterval = "tidb_gc_run_interval"
+	// TiDBGCLifetime description
+	TiDBGCLifetime = "tidb_gc_life_time"
+	// TiDBGCConcurrency description
+	TiDBGCConcurrency = "tidb_gc_concurrency"
+	// TiDBGCMode description
+	TiDBGCMode = "tidb_gc_mode"
+	// TiDBGCScanLockMode description
+	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 )
 
 // Default TiDB system variable values.

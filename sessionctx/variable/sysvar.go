@@ -1216,12 +1216,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
 
 	/* tikv gc metrics */
-	{Scope: ScopeGlobal, Name: TiKVGCEnable, Value: BoolOn, Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiKVGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: 600000000000, MaxValue: math.MaxInt64}, /* min: 600s in nanoseconds */
-	{Scope: ScopeGlobal, Name: TiKVGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal, Name: TiKVGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
-	{Scope: ScopeGlobal, Name: TiKVGCMode, Value: "DISTRIBUTED", Type: TypeEnum, PossibleValues: []string{"DISTRIBUTED", "CENTRAL"}},
-	{Scope: ScopeGlobal, Name: TiKVGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
+	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: 600000000000, MaxValue: math.MaxInt64}, /* min: 600s in nanoseconds */
+	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
+	{Scope: ScopeGlobal, Name: TiDBGCMode, Value: "DISTRIBUTED", Type: TypeEnum, PossibleValues: []string{"DISTRIBUTED", "CENTRAL"}},
+	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

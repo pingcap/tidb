@@ -99,13 +99,22 @@ var (
 )
 
 var gcVariableComments = map[string]string{
-	variable.TiKVGCRunInterval:  "GC run interval, at least 10m, in Go format.",
-	variable.TiKVGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
-	variable.TiKVGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
-	variable.TiKVGCEnable:       "Current GC enable status",
-	variable.TiKVGCMode:         "Mode of GC, \"central\" or \"distributed\"",
+	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiDBGCEnable:       "Current GC enable status",
+	variable.TiDBGCMode:         "Mode of GC, \"central\" or \"distributed\"",
 	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
-	variable.TiKVGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
+var gcVariableMap = map[string]string{
+	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
+	variable.TiDBGCLifetime:     "tikv_gc_life_time",
+	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
+	variable.TiDBGCEnable:       "tikv_gc_enable",
+	variable.TiDBGCMode:         "tikv_gc_mode",
+	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
 }
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -1092,7 +1101,7 @@ func escapeUserString(str string) string {
 // for backwards compatibility. Validation has already been performed.
 func (s *session) SetTiKVGlobalSysVar(name, val string) error {
 	switch name {
-	case variable.TiKVGCConcurrency:
+	case variable.TiDBGCConcurrency:
 		autoConcurrency := "false"
 		if val == "-1" {
 			autoConcurrency = "true"
@@ -1104,10 +1113,10 @@ func (s *session) SetTiKVGlobalSysVar(name, val string) error {
 			return err
 		}
 		fallthrough
-	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime, variable.TiKVGCMode, variable.TiKVGCScanLockMode:
+	case variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCMode, variable.TiDBGCScanLockMode:
 		val = onOffToTrueFalse(val)
 		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
-			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, name, escapeUserString(val), gcVariableComments[name])
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
 		_, _, err := s.ExecRestrictedSQL(sql)
 		return err
 	}
@@ -1140,7 +1149,7 @@ func onOffToTrueFalse(str string) string {
 // to read from mysql.tidb for backwards compatibility.
 func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 	switch name {
-	case variable.TiKVGCConcurrency:
+	case variable.TiDBGCConcurrency:
 		// Check if autoconcurrency is set
 		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, tiKVGCAutoConcurrency)
 		autoConcurrencyVal, err := s.getExecRet(s, sql)
@@ -1148,9 +1157,9 @@ func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 			return "-1", nil // convention for "AUTO"
 		}
 		fallthrough
-	case variable.TiKVGCEnable, variable.TiKVGCRunInterval, variable.TiKVGCLifetime,
-		variable.TiKVGCMode, variable.TiKVGCScanLockMode:
-		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, name)
+	case variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime,
+		variable.TiDBGCMode, variable.TiDBGCScanLockMode:
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, gcVariableMap[name])
 		tblValue, err := s.getExecRet(s, sql)
 		if err != nil {
 			return val, nil // mysql.tidb value does not exist.
@@ -1163,17 +1172,18 @@ func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
 			logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
 				zap.Error(err),
 				zap.String("name", name),
+				zap.String("tblName", gcVariableMap[name]),
 				zap.String("tblValue", tblValue),
 				zap.String("restoredValue", val))
 			sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
-			VALUES ('%s', '%s', '%s')`, name, escapeUserString(val), gcVariableComments[name])
+			VALUES ('%s', '%s', '%s')`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return val, err
 		}
 		if validatedVal != val {
 			// The sysvar value is out of sync.
 			sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-				mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(validatedVal))
+				mysql.SystemDB, mysql.GlobalVariablesTable, gcVariableMap[name], escapeUserString(validatedVal))
 			_, _, err = s.ExecRestrictedSQL(sql)
 			return validatedVal, err
 		}

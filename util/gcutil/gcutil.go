@@ -30,7 +30,7 @@ const (
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiKVGCEnable)
+	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBGCEnable)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -39,12 +39,12 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOff)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.BoolOff)
 }
 
 // EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiKVGCEnable, variable.BoolOn)
+	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBGCEnable, variable.BoolOn)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
