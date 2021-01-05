@@ -22,10 +22,12 @@ import (
 
 const (
 	viewNameUnusedIndexes = "schema_unused_indexes"
+	viewNameIndexUsage    = "schema_index_usage"
 )
 
 var tableIDMap = map[string]int64{
 	viewNameUnusedIndexes: autoid.SysSchemaDBID + 1,
+	viewNameIndexUsage:    autoid.SysSchemaDBID + 2,
 }
 
 type sysTable struct {

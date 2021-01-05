@@ -1150,7 +1150,7 @@ func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields R
 func (s *testPrivilegeSuite) TestSysSchemaPrivilege(c *C) {
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, `use test`)
-	mustExec(c, rootSe, `create table t(a int, index idx_a(a))`)
+	mustExec(c, rootSe, `create table t(a int, b int, unique index idx_a(a))`)
 	records, err := rootSe.Execute(context.Background(), `select * from sys.schema_unused_indexes`)
 	c.Assert(err, IsNil)
 	r := records[0]
@@ -1162,11 +1162,11 @@ func (s *testPrivilegeSuite) TestSysSchemaPrivilege(c *C) {
 	c.Assert(row.GetString(1), Equals, "t")
 	c.Assert(row.GetString(2), Equals, "idx_a")
 
-	// User 'tester'@'localhost' has no permission
-	mustExec(c, rootSe, `CREATE USER 'tester'@'localhost';`)
+	// User 'systester'@'localhost' has no permission
+	mustExec(c, rootSe, `CREATE USER 'systester'@'localhost';`)
 	mustExec(c, rootSe, `flush privileges;`)
 	se := newSession(c, s.store, s.dbName)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "systester", Hostname: "localhost"}, nil, nil), IsTrue)
 	// `sys` schema is visibility for everyone.
 	mustExec(c, se, `use sys`)
 	records, err = se.Execute(context.Background(), `select * from sys.schema_unused_indexes`)
@@ -1175,6 +1175,24 @@ func (s *testPrivilegeSuite) TestSysSchemaPrivilege(c *C) {
 	req = r.NewChunk()
 	c.Assert(r.Next(context.Background(), req), IsNil)
 	// The user cannot get the index information of the table without `select` permission.
+	c.Assert(req.NumRows(), Equals, 0)
+
+	// test for sys.schema_index_usage
+	mustExec(c, rootSe, `select a from t where a=1`)
+	err = s.dom.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	records, err = rootSe.Execute(context.Background(), "select table_schema, table_name, index_name, query_count, rows_selected from sys.schema_index_usage")
+	c.Assert(err, IsNil)
+	r = records[0]
+	req = r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+
+	records, err = se.Execute(context.Background(), "select table_schema, table_name, index_name, query_count, rows_selected from sys.schema_index_usage")
+	c.Assert(err, IsNil)
+	r = records[0]
+	req = r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
 }
 

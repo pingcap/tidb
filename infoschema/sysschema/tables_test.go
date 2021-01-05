@@ -59,4 +59,5 @@ func (s *testTableSuite) TestSysSchemaTables(c *C) {
 
 	tk.MustExec("use sys")
 	tk.MustQuery("select * from schema_unused_indexes").Check(testkit.Rows())
+	tk.MustQuery("select * from schema_index_usage").Check(testkit.Rows())
 }

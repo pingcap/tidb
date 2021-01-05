@@ -859,7 +859,7 @@ func (s *testStatsSuite) TestUnusedIndexes(c *C) {
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
 
-	tk.MustQuery("select * from sys.schema_unused_indexes").Check(testkit.Rows(
+	tk.MustQuery("select * from sys.schema_unused_indexes").Sort().Check(testkit.Rows(
 		"test t_idx idx_a",
 		"test t_idx idx_b",
 	))
@@ -871,5 +871,26 @@ func (s *testStatsSuite) TestUnusedIndexes(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustQuery("select * from sys.schema_unused_indexes").Check(testkit.Rows(
 		"test t_idx idx_b",
+	))
+}
+func (s *testStatsSuite) TestSysIndexUsageView(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+
+	tk.MustQuery("select * from sys.schema_index_usage").Check(testkit.Rows(
+		"test t_idx idx_a 0 0 <nil>",
+	))
+
+	// use idx_a
+	tk.MustQuery("select a from t_idx where a=1")
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery("select table_schema, table_name, index_name, query_count, rows_selected from sys.schema_index_usage").Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
 	))
 }
