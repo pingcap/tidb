@@ -1023,7 +1023,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
-		if v, err = s.GetTiKVGlobalSysVar(k, v); err != nil {
+		if v, err = s.checkForTiDBTableValue(k, v); err != nil {
 			ret[k] = v
 		}
 	}
@@ -1053,7 +1053,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", err
 	}
 	// Update mysql.tidb values if required
-	return s.GetTiKVGlobalSysVar(name, sysVar)
+	return s.checkForTiDBTableValue(name, sysVar)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1081,7 +1081,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	name = strings.ToLower(name)
 	// update mysql.tidb if required.
-	if err = s.SetTiKVGlobalSysVar(name, sVal); err != nil {
+	if err = s.setTiDBTableValue(name, sVal); err != nil {
 		return err
 	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
@@ -1097,9 +1097,9 @@ func escapeUserString(str string) string {
 	return strings.ReplaceAll(str, `'`, `\'`)
 }
 
-// SetTiKVGlobalSysVar handles tikv_* sysvars which need to update mysql.tidb
+// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
 // for backwards compatibility. Validation has already been performed.
-func (s *session) SetTiKVGlobalSysVar(name, val string) error {
+func (s *session) setTiDBTableValue(name, val string) error {
 	switch name {
 	case variable.TiDBGCConcurrency:
 		autoConcurrency := "false"
@@ -1145,9 +1145,9 @@ func onOffToTrueFalse(str string) string {
 	return str
 }
 
-// GetTiKVGlobalSysVar handles tikv_* sysvars which need
+// checkForTiDBTableValue handles tikv_* sysvars which need
 // to read from mysql.tidb for backwards compatibility.
-func (s *session) GetTiKVGlobalSysVar(name, val string) (string, error) {
+func (s *session) checkForTiDBTableValue(name, val string) (string, error) {
 	switch name {
 	case variable.TiDBGCConcurrency:
 		// Check if autoconcurrency is set
