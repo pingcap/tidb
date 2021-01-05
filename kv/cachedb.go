@@ -16,8 +16,6 @@ package kv
 import (
 	"context"
 	"sync"
-
-	"github.com/pingcap/tidb/sessionctx"
 )
 
 type (
@@ -81,36 +79,4 @@ func NewCacheDB() MemManager {
 	mm := new(cachedb)
 	mm.memTables = make(map[int64]*memdb)
 	return mm
-}
-
-type CacheBatchGetter struct {
-	ctx      sessionctx.Context
-	tid      int64
-	snapshot Snapshot
-}
-
-func (b *CacheBatchGetter) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
-	cacheDB := b.ctx.GetStore().GetMemCache()
-	vals := make(map[string][]byte)
-	for _, key := range keys {
-		val := cacheDB.Get(ctx, b.tid, key)
-		// key does not exist then get from snapshot and set to cache
-		if val == nil {
-			val, err := b.snapshot.Get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
-
-			err = cacheDB.Set(b.tid, key, val)
-			if err != nil {
-				return nil, err
-			}
-		}
-		vals[string(key)] = val
-	}
-	return vals, nil
-}
-
-func NewCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot Snapshot) *CacheBatchGetter {
-	return &CacheBatchGetter{ctx, tid, snapshot}
 }
