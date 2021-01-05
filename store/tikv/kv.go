@@ -51,8 +51,34 @@ type storeCache struct {
 
 var mc storeCache
 
+type DriverOption func(*Driver)
+
+// WithSecurity changes the config.Security used by tikv driver.
+func WithSecurity(s config.Security) DriverOption {
+	return func(c *Driver) {
+		c.security = s
+	}
+}
+
+// WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
+func WithTiKVClientConfig(client config.TiKVClient) DriverOption {
+	return func(c *Driver) {
+		c.tikvConfig = client
+	}
+}
+
+// WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
+func WithTxnLocalLatches(t config.TxnLocalLatches) DriverOption {
+	return func(c *Driver) {
+		c.txnLocalLatches = t
+	}
+}
+
 // Driver implements engine Driver.
 type Driver struct {
+	security        config.Security
+	tikvConfig      config.TiKVClient
+	txnLocalLatches config.TxnLocalLatches
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
@@ -74,25 +100,44 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 // Open opens or creates an TiKV storage with given path.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d Driver) Open(path string) (kv.Storage, error) {
+	tidbCfg := config.GetGlobalConfig()
+	return d.OpenWithOptions(path,
+		WithSecurity(tidbCfg.Security),
+		WithTiKVClientConfig(tidbCfg.TiKVClient),
+		WithTxnLocalLatches(tidbCfg.TxnLocalLatches),
+	)
+}
+
+func (d *Driver) setDefaultAndOptions(options ...DriverOption) {
+	defaultCfg := config.NewConfig()
+	d.security = defaultCfg.Security
+	d.tikvConfig = defaultCfg.TiKVClient
+	d.txnLocalLatches = defaultCfg.TxnLocalLatches
+	for _, f := range options {
+		f(d)
+	}
+}
+
+// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
+func (d Driver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
 
-	security := config.GetGlobalConfig().Security
-	tikvConfig := config.GetGlobalConfig().TiKVClient
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	d.setDefaultAndOptions(options...)
+
 	etcdAddrs, disableGC, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   security.ClusterSSLCA,
-		CertPath: security.ClusterSSLCert,
-		KeyPath:  security.ClusterSSLKey,
+		CAPath:   d.security.ClusterSSLCA,
+		CertPath: d.security.ClusterSSLCert,
+		KeyPath:  d.security.ClusterSSLKey,
 	}, pd.WithGRPCDialOptions(
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
 	))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
@@ -107,7 +152,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	tlsConfig, err := security.ToTLSConfig()
+	tlsConfig, err := d.security.ToTLSConfig()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -117,13 +162,13 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
+	coprCacheConfig := &d.tikvConfig.CoprCache
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(d.security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if txnLocalLatches.Enabled {
-		s.EnableTxnLocalLatches(txnLocalLatches.Capacity)
+	if d.txnLocalLatches.Enabled {
+		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
 	s.etcdAddrs = etcdAddrs
 	s.tlsConfig = tlsConfig
