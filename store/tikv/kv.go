@@ -51,6 +51,7 @@ type storeCache struct {
 
 var mc storeCache
 
+// DriverOption is a function that changes some config of Driver
 type DriverOption func(*Driver)
 
 // WithSecurity changes the config.Security used by tikv driver.
