@@ -309,7 +309,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 			dnfItems := expression.FlattenDNFConditions(scalarCond)
 			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
-			// If the conditions only contains a single column, we won't handle them.
+			// If the conditions only contain a single column, we won't handle them.
 			if len(dnfItems) <= 1 {
 				continue
 			}
