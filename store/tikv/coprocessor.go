@@ -877,6 +877,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
+		StaleRead:      worker.req.IsStaleness,
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()

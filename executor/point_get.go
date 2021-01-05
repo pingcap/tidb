@@ -148,6 +148,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.ctx.GetSessionVars().TxnCtx.IsStaleness)
 	return nil
 }
 

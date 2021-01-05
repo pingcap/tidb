@@ -90,3 +90,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/kvproto => github.com/NingLin-P/kvproto v0.0.0-20201223094132-da6446a7b9d6

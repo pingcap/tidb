@@ -234,6 +234,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
+	builder.IsStaleness = sv.TxnCtx.IsStaleness
 	return builder
 }
 

@@ -62,6 +62,7 @@ type tikvSnapshot struct {
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
+	isStaleness     bool
 	minCommitTSPushed
 
 	// Cache the result of BatchGet.
@@ -288,6 +289,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
+			StaleRead:    s.isStaleness,
 		})
 		s.mu.RUnlock()
 
@@ -433,6 +435,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.mu.taskID,
+			StaleRead:    s.isStaleness,
 		})
 	s.mu.RUnlock()
 	for {
@@ -542,6 +545,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.IsStalenessReadOnly:
+		s.isStaleness = val.(bool)
 	}
 }
 

@@ -113,6 +113,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	snapshot.SetOption(kv.IsStalenessReadOnly, e.ctx.GetSessionVars().TxnCtx.IsStaleness)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		if e.lock {
