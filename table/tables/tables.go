@@ -613,7 +613,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	} else {
 		ctx = context.Background()
 	}
-	var hasRecordID, hasExplicitRowID bool
+	var hasRecordID bool
 	cols := t.Cols()
 	// opt.IsUpdate is a flag for update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
@@ -622,7 +622,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
-		hasExplicitRowID = true
 	} else {
 		tblInfo := t.Meta()
 		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
@@ -665,9 +664,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		if err != nil {
 			return nil, err
 		}
-	} else if hasExplicitRowID {
-		// if _tidb_rowid is explicitly assigned, we need to rebase the allocator
-		err = t.RebaseAutoID(sctx, recordID.IntValue(), true, autoid.RowIDAllocType)
 	}
 
 	var colIDs, binlogColIDs []int64
