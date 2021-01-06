@@ -1207,10 +1207,10 @@ func BuildFinalModeAggregation(
 			finalAggFunc.HasDistinct = true
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
-			//if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount {
-			//	// TODO: only work when the count() can be pushed down.
-			//	finalAggFunc.Name = ast.AggFuncSum
-			//}
+			if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount {
+				// TODO: only work when the count() can be pushed down.
+				finalAggFunc.Name = ast.AggFuncSum
+			}
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				ft := types.NewFieldType(mysql.TypeLonglong)
 				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
@@ -1258,6 +1258,7 @@ func BuildFinalModeAggregation(
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
+
 				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
 			} else {
@@ -1282,6 +1283,33 @@ func (p *basePhysicalAgg) convertAvgForMPP() ([]uint16, *expression.Schema, []*a
 	originalAggFuncs := p.AggFuncs
 	newSchema := expression.NewSchema()
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
+
+	// add agg functions schema
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncAvg {
+			avgIndices = append(avgIndices, index)
+			index += 2
+			// inset a count(column)
+			avgCount := *aggFunc
+			avgCount.Name = ast.AggFuncCount
+			newAggFuncs = append(newAggFuncs, &avgCount)
+			ft := types.NewFieldType(mysql.TypeLonglong)
+			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+			newSchema.Append(&expression.Column{
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  ft,
+			})
+			// insert a sum(column)
+			avgSum := *aggFunc
+			avgSum.Name = ast.AggFuncSum
+			newAggFuncs = append(newAggFuncs, &avgSum)
+			newSchema.Append(p.schema.Columns[i])
+		} else {
+			index++
+			newAggFuncs = append(newAggFuncs, aggFunc)
+			newSchema.Append(p.schema.Columns[i])
+		}
+	}
 	// add groupby schema
 	for _, gbyExpr := range p.GroupByItems {
 		var gbyCol *expression.Column
@@ -1294,32 +1322,6 @@ func (p *basePhysicalAgg) convertAvgForMPP() ([]uint16, *expression.Schema, []*a
 			}
 		}
 		newSchema.Append(gbyCol)
-	}
-	// add agg functions schema
-	for i, aggFunc := range p.AggFuncs {
-		if aggFunc.Name == ast.AggFuncAvg {
-			avgIndices = append(avgIndices, index)
-			index += 2
-			// inset a count(column)
-			avgCount := aggFunc
-			avgCount.Name = ast.AggFuncCount
-			newAggFuncs = append(newAggFuncs, avgCount)
-			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
-			newSchema.Append(&expression.Column{
-				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  ft,
-			})
-			// insert a sum(column)
-			avgSum := aggFunc
-			avgSum.Name = ast.AggFuncSum
-			newAggFuncs = append(newAggFuncs, avgSum)
-			newSchema.Append(p.schema.Columns[i])
-		} else {
-			index++
-			newAggFuncs = append(newAggFuncs, aggFunc)
-			newSchema.Append(p.schema.Columns[i])
-		}
 	}
 	if len(avgIndices) > 0 {
 		fmt.Println(p.AggFuncs)
@@ -1584,7 +1586,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			finalAgg.SetChildren(newMpp.p)
 			newMpp.p = finalAgg
 			// generate a projection and set it on the top of aggregation
-			if len(avgIndex) < 0 {
+			if len(avgIndex) > 0 {
 				ft := types.NewFieldType(mysql.TypeLonglong)
 				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 				nullTp := types.NewFieldType(mysql.TypeNull)
@@ -1597,10 +1599,14 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 					Value:   types.NewDatum(0),
 					RetType: ft,
 				}
-				agg := finalAgg.(*basePhysicalAgg)
-				exprs := agg.GroupByItems
+				agg := finalAgg.(*PhysicalHashAgg)
+				exprs := make([]expression.Expression, 0, 2*len(agg.schema.Columns))
+				for _, col := range agg.schema.Columns {
+					exprs = append(exprs, col)
+				}
+				//exprs := agg.GroupByItems
 				j := 0
-				for i := 0; i < len(agg.AggFuncs); i++ {
+				for i := 0; i > len(agg.AggFuncs); i++ {
 					if avgIndex[j] == uint16(i) {
 						avgCount := &expression.Column{RetType: agg.AggFuncs[i].RetTp, UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID()}
 						avgSum := &expression.Column{RetType: agg.AggFuncs[i+1].RetTp, UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID()}
@@ -1618,6 +1624,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 						exprs = append(exprs, newCol)
 					}
 				}
+
 				proj := PhysicalProjection{
 					Exprs:                exprs,
 					CalculateNoDelay:     false,
