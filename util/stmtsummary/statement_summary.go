@@ -104,8 +104,11 @@ type stmtSummaryByDigestElement struct {
 	endTime   int64
 	// basic
 	sampleSQL   string
+	charset     string
+	collation   string
 	prevSQL     string
 	samplePlan  string
+	planHint    string
 	indexNames  []string
 	execCount   int64
 	sumErrors   int
@@ -200,11 +203,13 @@ type stmtSummaryByDigestElement struct {
 type StmtExecInfo struct {
 	SchemaName     string
 	OriginalSQL    string
+	Charset        string
+	Collation      string
 	NormalizedSQL  string
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
-	PlanGenerator  func() string
+	PlanGenerator  func() (string, string)
 	PlanDigest     string
 	PlanDigestGen  func() string
 	User           string
@@ -350,14 +355,23 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	return rows
 }
 
+// BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be
+// created binding on.
+type BindableStmt struct {
+	Schema    string
+	Query     string
+	PlanHint  string
+	Charset   string
+	Collation string
+}
+
 // GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than once.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() ([]string, []string) {
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() []*BindableStmt {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
 
-	schemas := make([]string, 0, len(values))
-	sqls := make([]string, 0, len(values))
+	stmts := make([]*BindableStmt, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
 		func() {
@@ -370,15 +384,26 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() ([]string, []
 
 					// Empty auth users means that it is an internal queries.
 					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
-						schemas = append(schemas, ssbd.schemaName)
-						sqls = append(sqls, ssElement.sampleSQL)
+						stmt := &BindableStmt{
+							Schema:    ssbd.schemaName,
+							Query:     ssElement.sampleSQL,
+							PlanHint:  ssElement.planHint,
+							Charset:   ssElement.charset,
+							Collation: ssElement.collation,
+						}
+						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
+						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
+						if ssElement.prepared {
+							stmt.Query = ssbd.normalizedSQL
+						}
+						stmts = append(stmts, stmt)
 					}
 					ssElement.Unlock()
 				}
 			}
 		}()
 	}
-	return schemas, sqls
+	return stmts
 }
 
 // SetEnabled enables or disables statement summary in global(cluster) or session(server) scope.
@@ -595,13 +620,17 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
+	samplePlan, planHint := sei.PlanGenerator()
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),
+		charset:   sei.Charset,
+		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:    sei.PlanGenerator(),
+		samplePlan:    samplePlan,
+		planHint:      planHint,
 		indexNames:    sei.StmtCtx.IndexNames,
 		minLatency:    sei.TotalLatency,
 		firstSeen:     sei.StartTime,
@@ -682,47 +711,47 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// TiKV
-	ssElement.sumProcessTime += sei.ExecDetail.ProcessTime
-	if sei.ExecDetail.ProcessTime > ssElement.maxProcessTime {
-		ssElement.maxProcessTime = sei.ExecDetail.ProcessTime
+	ssElement.sumProcessTime += sei.ExecDetail.TimeDetail.ProcessTime
+	if sei.ExecDetail.TimeDetail.ProcessTime > ssElement.maxProcessTime {
+		ssElement.maxProcessTime = sei.ExecDetail.TimeDetail.ProcessTime
 	}
-	ssElement.sumWaitTime += sei.ExecDetail.WaitTime
-	if sei.ExecDetail.WaitTime > ssElement.maxWaitTime {
-		ssElement.maxWaitTime = sei.ExecDetail.WaitTime
+	ssElement.sumWaitTime += sei.ExecDetail.TimeDetail.WaitTime
+	if sei.ExecDetail.TimeDetail.WaitTime > ssElement.maxWaitTime {
+		ssElement.maxWaitTime = sei.ExecDetail.TimeDetail.WaitTime
 	}
 	ssElement.sumBackoffTime += sei.ExecDetail.BackoffTime
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
 
-	if sei.ExecDetail.CopDetail != nil {
-		ssElement.sumTotalKeys += sei.ExecDetail.CopDetail.TotalKeys
-		if sei.ExecDetail.CopDetail.TotalKeys > ssElement.maxTotalKeys {
-			ssElement.maxTotalKeys = sei.ExecDetail.CopDetail.TotalKeys
+	if sei.ExecDetail.ScanDetail != nil {
+		ssElement.sumTotalKeys += sei.ExecDetail.ScanDetail.TotalKeys
+		if sei.ExecDetail.ScanDetail.TotalKeys > ssElement.maxTotalKeys {
+			ssElement.maxTotalKeys = sei.ExecDetail.ScanDetail.TotalKeys
 		}
-		ssElement.sumProcessedKeys += sei.ExecDetail.CopDetail.ProcessedKeys
-		if sei.ExecDetail.CopDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-			ssElement.maxProcessedKeys = sei.ExecDetail.CopDetail.ProcessedKeys
+		ssElement.sumProcessedKeys += sei.ExecDetail.ScanDetail.ProcessedKeys
+		if sei.ExecDetail.ScanDetail.ProcessedKeys > ssElement.maxProcessedKeys {
+			ssElement.maxProcessedKeys = sei.ExecDetail.ScanDetail.ProcessedKeys
 		}
-		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
-		if sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
-			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
+			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.ScanDetail.RocksdbDeleteSkippedCount
 		}
-		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
-		if sei.ExecDetail.CopDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
-			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
+		if sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
+			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.ScanDetail.RocksdbKeySkippedCount
 		}
-		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
-		if sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
-			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
+			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.ScanDetail.RocksdbBlockCacheHitCount
 		}
-		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.CopDetail.RocksdbBlockReadCount
-		if sei.ExecDetail.CopDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
-			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
+			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.ScanDetail.RocksdbBlockReadCount
 		}
-		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.CopDetail.RocksdbBlockReadByte
-		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
-			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
+		if sei.ExecDetail.ScanDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
+			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		}
 	}
 
@@ -828,7 +857,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 
 	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
 	if err != nil {
-		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
+		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.String("query", ssElement.sampleSQL), zap.Error(err))
 		plan = ""
 	}
 

@@ -786,6 +786,11 @@ error = '''
 No database selected
 '''
 
+["planner:1048"]
+error = '''
+Column '%-.192s' cannot be null
+'''
+
 ["planner:1051"]
 error = '''
 Unknown table '%-.100s'
