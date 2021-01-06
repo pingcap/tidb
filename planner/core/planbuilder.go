@@ -784,6 +784,9 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 		return true
 	}
 	for _, f := range sel.Fields.Fields {
+		if f.WildCard != nil {
+			continue
+		}
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
@@ -2639,24 +2642,29 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
-type colNameExtractor struct {
+type colNameInOnDupExtractor struct {
 	colNameMap map[types.FieldName]*ast.ColumnNameExpr
 }
 
-func (c *colNameExtractor) Enter(node ast.Node) (ast.Node, bool) {
-	if colName, ok := node.(*ast.ColumnNameExpr); ok {
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	switch x := node.(type) {
+	case *ast.ColumnNameExpr:
 		fieldName := types.FieldName{
-			DBName:  colName.Name.Schema,
-			TblName: colName.Name.Table,
-			ColName: colName.Name.Name,
+			DBName:  x.Name.Schema,
+			TblName: x.Name.Table,
+			ColName: x.Name.Name,
 		}
-		c.colNameMap[fieldName] = colName
+		c.colNameMap[fieldName] = x
 		return node, true
+	// We don't extract the column names from the sub select.
+	case *ast.SelectStmt, *ast.SetOprStmt:
+		return node, true
+	default:
+		return node, false
 	}
-	return node, false
 }
 
-func (c *colNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
+func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
@@ -2672,7 +2680,10 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	//        MySQL won't throw error and will execute this SQL successfully.
 	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
 	if len(insert.OnDuplicate) > 0 {
-		if sel, ok := insert.Select.(*ast.SelectStmt); ok {
+		// If the select has aggregation, it cannot see the columns not in the select field.
+		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.
+		//        insert into a select x from b group by x ON DUPLICATE KEY UPDATE  a.x=b.y; will report b.y not found.
+		if sel, ok := insert.Select.(*ast.SelectStmt); ok && !b.detectSelectAgg(sel) {
 			hasWildCard := false
 			for _, field := range sel.Fields.Fields {
 				if field.WildCard != nil {
@@ -2681,7 +2692,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 				}
 			}
 			if !hasWildCard {
-				colExtractor := &colNameExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
 				for _, assign := range insert.OnDuplicate {
 					assign.Expr.Accept(colExtractor)
 				}
