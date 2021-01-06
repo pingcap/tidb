@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"go.uber.org/zap"
 )
 
@@ -251,13 +252,26 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
+		if len(x.Text()) == 0 {
+			return x.Stmt, "", ""
+		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(x.Text())
+			var normalizeExplainSQL string
+			if specifiledDB != "" {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+			} else {
+				normalizeExplainSQL = parser.Normalize(x.Text())
+			}
 			idx := int(0)
 			switch n := x.Stmt.(type) {
 			case *ast.SelectStmt:
@@ -276,10 +290,42 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash
+<<<<<<< HEAD
+=======
+		case *ast.SetOprStmt:
+			plannercore.EraseLastSemicolon(x)
+			var normalizeExplainSQL string
+			if specifiledDB != "" {
+				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+			} else {
+				normalizeExplainSQL = parser.Normalize(x.Text())
+			}
+			idx := strings.Index(normalizeExplainSQL, "select")
+			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
+			if parenthesesIdx != -1 && parenthesesIdx < idx {
+				idx = parenthesesIdx
+			}
+			normalizeSQL := normalizeExplainSQL[idx:]
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		}
 	case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
-		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
+		// This function is only used to find bind record.
+		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
+		// but some of them do not want to obtain bind record.
+		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
+		// For these cases, we need return "" as normalize SQL and hash.
+		if len(x.Text()) == 0 {
+			return x, "", ""
+		}
+		var normalizedSQL, hash string
+		if specifiledDB != "" {
+			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB))
+		} else {
+			normalizedSQL, hash = parser.NormalizeDigest(x.Text())
+		}
 		return x, normalizedSQL, hash
 	}
 	return nil, "", ""
@@ -290,15 +336,17 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
+<<<<<<< HEAD
 	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
 	if selectStmt == nil {
+=======
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
+	if stmtNode == nil {
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
-	if bindRecord == nil {
-		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
-	}
+	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession
@@ -309,10 +357,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, ""
 	}
-	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
-	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
-	}
+	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
 	return bindRecord, metrics.ScopeGlobal
 }
 
@@ -331,7 +376,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
-	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false)
+	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false, br.Db)
 	if bindSQL == "" {
 		return
 	}

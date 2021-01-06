@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -34,11 +35,15 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -399,6 +404,34 @@ const (
 	version49 = 49
 	// version50 fixes the bug of concurrent create / drop binding
 	version50 = 50
+<<<<<<< HEAD
+=======
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
+	// version53 introduce Global variable tidb_enable_strict_double_type_check
+	version53 = 53
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
+	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
+	// version57 fixes the bug of concurrent create / drop binding
+	version57 = 57
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
+	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
+	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version61
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 )
 
 var (
@@ -452,6 +485,20 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
+<<<<<<< HEAD
+=======
+		upgradeToVer51,
+		upgradeToVer52,
+		upgradeToVer53,
+		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
+		upgradeToVer57,
+		upgradeToVer58,
+		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 	}
 )
 
@@ -1125,6 +1172,107 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+func upgradeToVer59(s Session, ver int64) {
+	if ver >= version59 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	h := &bindinfo.BindHandle{}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+
+		mustExecute(s, "COMMIT")
+	}()
+	mustExecute(s, h.LockBindInfoSQL())
+	var recordSets []sqlexec.RecordSet
+	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+	}
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	req := recordSets[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = recordSets[0].Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(s, iter, p, now.String())
+	}
+}
+
+func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		original := row.GetString(0)
+		bind := row.GetString(1)
+		db := row.GetString(2)
+		charset := row.GetString(3)
+		collation := row.GetString(4)
+		originStmt, err := p.ParseOneStmt(original, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		bindStmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
+		bindWithDB := utilparser.RestoreWithDefaultDB(bindStmt, db)
+		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
+			expression.Quote(originWithDB),
+			expression.Quote(bindWithDB),
+			expression.Quote(now),
+			expression.Quote(original)))
+	}
+}
+
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
