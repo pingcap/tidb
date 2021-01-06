@@ -7551,6 +7551,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	testcases := []struct {
 		name     string
