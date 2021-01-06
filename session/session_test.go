@@ -3878,98 +3878,53 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			isValidate: true,
 		},
 		{
-			name:       "ddl statement",
-			sql:        `create table t2 (id int);`,
+			name:       "explain statement",
+			sql:        `explain insert into t (id) values (1);`,
 			isValidate: true,
 		},
 		{
-			name:       "split table statement",
-			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
-			isValidate: true,
-		},
-		{
-			name:       "admin statement",
-			sql:        `ADMIN SHOW SLOW RECENT 5;`,
-			isValidate: true,
-		},
-		{
-			name:       "create user statement",
-			sql:        `CREATE USER 'newuser' IDENTIFIED BY 'newuserpassword';`,
-			isValidate: true,
-		},
-		{
-			name:       "alter user statement",
-			sql:        `ALTER USER 'newuser' IDENTIFIED BY 'newnewpassword';`,
-			isValidate: true,
-		},
-		{
-			name:       "begin statement",
-			sql:        `begin`,
-			isValidate: true,
-		},
-		{
-			name:       "commit statement",
-			sql:        `commit`,
-			isValidate: true,
-		},
-		{
-			name:       "prepare stmt",
-			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
-			isValidate: true,
-		},
-		{
-			name:       "prepare execute stmt",
-			sql:        `EXECUTE stmt1 USING @var;`,
+			name:       "explain analyze insert statement",
+			sql:        `explain analyze insert into t (id) values (1);`,
 			isValidate: false,
 		},
 		{
-			name:       "DeallocateStmt",
-			sql:        `DEALLOCATE PREPARE stmt1;`,
+			name:       "explain analyze select statement",
+			sql:        `explain analyze select * from t `,
 			isValidate: true,
 		},
 		{
-			name:       "grant stmt",
-			sql:        `GRANT ALL ON test.* TO 'newuser';`,
+			name:       "execute insert statement",
+			sql:        `EXECUTE stmt1;`,
+			isValidate: false,
+		},
+		{
+			name:       "execute select statement",
+			sql:        `EXECUTE stmt2;`,
 			isValidate: true,
 		},
 		{
-			name:       "rollback",
-			sql:        "rollback",
+			name:       "show statement",
+			sql:        `show tables;`,
 			isValidate: true,
 		},
 		{
-			name:       "SetPwdStmt",
-			sql:        `SET PASSWORD FOR newuser = 'test';`,
-			isValidate: true,
-		},
-		{
-			name:       "SetStmt",
-			sql:        `set @var=6;`,
-			isValidate: true,
-		},
-		{
-			name:       "UseStmt",
-			sql:        `use test`,
-			isValidate: true,
-		},
-		{
-			name:       "FlushStmt",
-			sql:        `FLUSH PRIVILEGES;`,
-			isValidate: true,
-		},
-		{
-			name:       "CreateBindingStmt",
-			sql:        `CREATE SESSION BINDING FOR SELECT * FROM t WHERE id = 123 USING SELECT * FROM t WHERE id = 123`,
-			isValidate: true,
-		},
-		{
-			name:       "DropBindingStmt",
-			sql:        `DROP SESSION BINDING FOR SELECT * FROM t WHERE id = 123;`,
+			name:       "set union",
+			sql:        `SELECT 1, 2 UNION SELECT 'a', 'b';`,
 			isValidate: true,
 		},
 		{
 			name:       "insert",
 			sql:        `insert into t (id) values (1);`,
+			isValidate: false,
+		},
+		{
+			name:       "delete",
+			sql:        `delete from t where id =1`,
+			isValidate: false,
+		},
+		{
+			name:       "update",
+			sql:        "update t set id =2 where id =1",
 			isValidate: false,
 		},
 		{
@@ -3986,7 +3941,8 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
-	tk.MustExec("set @var=5;")
+	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
+	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)

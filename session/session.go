@@ -1286,55 +1286,20 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	if !vars.TxnCtx.IsStaleness {
 		return nil
 	}
+	errMsg := "only support read only statement during time-bounded read only transaction"
 	switch stmtNode.(type) {
-	case *ast.IndexAdviseStmt:
-		return nil
-	case ast.DDLNode:
-		return nil
 	case *ast.SplitRegionStmt:
 		return nil
-	case *ast.AdminStmt:
-		return nil
-	case *ast.AlterUserStmt:
-		return nil
-	case *ast.BeginStmt:
-		return nil
-	case *ast.CommitStmt:
-		return nil
-	case *ast.CreateUserStmt:
-		return nil
-	case *ast.DeallocateStmt:
-		return nil
-	case *ast.GrantStmt:
-		return nil
-	case *ast.PrepareStmt:
-		return nil
-	case *ast.RollbackStmt:
-		return nil
-	case *ast.SetPwdStmt:
-		return nil
-	case *ast.SetRoleStmt:
-		return nil
-	case *ast.SetDefaultRoleStmt:
-		return nil
-	case *ast.SetStmt:
-		return nil
-	case *ast.UseStmt:
-		return nil
-	case *ast.FlushStmt:
-		return nil
-	case *ast.KillStmt:
-		return nil
-	case *ast.CreateBindingStmt:
-		return nil
-	case *ast.DropBindingStmt:
-		return nil
-	case *ast.ShutdownStmt:
+	case *ast.SelectStmt, *ast.ExecuteStmt, *ast.ExplainStmt, *ast.ShowStmt, *ast.SetOprStmt:
+		// covered by IsReadOnly
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
 		return nil
 	default:
 	}
-	if !planner.IsReadOnly(stmtNode, vars) {
-		return errors.New("only support read only statement during time-bounded read only transaction")
+	if _, ok := stmtNode.(ast.DMLNode); ok {
+		return errors.New(errMsg)
 	}
 	return nil
 }
