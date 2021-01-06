@@ -2260,3 +2260,24 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	err = <-errCh
 	c.Assert(err, Equals, nil)
 }
+
+func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_change_column_type = 1;")
+	defer func() {
+		tk.MustExec("set global tidb_enable_change_column_type = 0;")
+	}()
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	tk2.MustExec("drop table if exists t")
+	tk2.MustExec("create table t (id int primary key, v varchar(10));")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, \"123456789\")")
+	tk2.MustExec("alter table t modify column v varchar(5);")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+}
