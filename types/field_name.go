@@ -62,6 +62,7 @@ func (s NameSlice) Shallow() NameSlice {
 // EmptyName is to occupy the position in the name slice. If it's set, that column's name is hidden.
 var EmptyName = &FieldName{Hidden: true}
 
+// FindAstColName checks whether the given ast.ColumnName is appeared in this slice.
 func (s NameSlice) FindAstColName(name *ast.ColumnName) bool {
 	for _, fieldName := range s {
 		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.L) &&
