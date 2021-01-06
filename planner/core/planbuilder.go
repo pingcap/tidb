@@ -2687,6 +2687,10 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 				}
 				actualColLen = len(sel.Fields.Fields)
 				for _, colName := range colExtractor.colNameMap {
+					// If we found the name from the INSERT's table columns, we don't try to find it in select field anymore.
+					if insertPlan.tableColNames.FindAstColName(colName.Name) {
+						continue
+					}
 					found := false
 					for _, field := range sel.Fields.Fields {
 						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
