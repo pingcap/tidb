@@ -190,8 +190,8 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 	return nil
 }
 
-// collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
-// TODO allow column change from nullable to not null, and generate keys check operation.
+// collectModifyColAmendOps is used to check if there is only column size increasing change.Other column type changes
+// such as column change from nullable to not null or column type change are not supported by now.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	for _, colAtCommit := range tblAtCommit.Cols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
@@ -200,6 +200,13 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			// If the column could not be found in the original schema, it could not be decided if this column
+			// is newly added or modified from an original column.Report error to solve the issue
+			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
+			// and modifying columns at the same time.
+			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
+				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
 	}
 	return nil, nil
