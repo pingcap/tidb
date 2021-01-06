@@ -441,18 +441,9 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[str
 	cacheDB := b.ctx.GetStore().GetMemCache()
 	vals := make(map[string][]byte)
 	for _, key := range keys {
-		val := cacheDB.Get(ctx, b.tid, key)
-		// key does not exist then get from snapshot and set to cache
-		if val == nil {
-			val, err := b.snapshot.Get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
-
-			err = cacheDB.Set(b.tid, key, val)
-			if err != nil {
-				return nil, err
-			}
+		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
+		if err != nil {
+			return nil, err
 		}
 		vals[string(key)] = val
 	}
