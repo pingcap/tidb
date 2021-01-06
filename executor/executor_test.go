@@ -7547,3 +7547,32 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		tk.MustExec("commit")
 	}
 }
+
+func (s *testSerialSuite) TestStaleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key);")
+	testcases := []struct {
+		name     string
+		sql      string
+		path     string
+		txnScope string
+	}{
+		{
+			name:     "coprocessor read",
+			sql:      "select * from t",
+			path:     "github.com/pingcap/tidb/store/tikv/assertStoreLabels",
+			txnScope: "sh",
+		},
+	}
+
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(fmt.Sprintf("set txn_scope=%v", testcase.txnScope))
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
+		c.Assert(failpoint.Enable(testcase.path, fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
+		tk.MustExec(testcase.sql)
+		failpoint.Disable(testcase.path)
+		tk.MustExec(`commit`)
+	}
+}
