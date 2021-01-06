@@ -124,6 +124,7 @@ type Config struct {
 	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   PDClient          `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
@@ -507,6 +508,12 @@ type ProxyProtocol struct {
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
+// PDClient is the config for PD client.
+type PDClient struct {
+	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
+	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
+}
+
 // TiKVClient is the config for tikv client.
 type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
@@ -702,7 +709,7 @@ var defaultConf = Config{
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.05,
+		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
@@ -733,6 +740,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	PDClient: PDClient{
+		PDServerTimeout: 3,
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount:  4,
@@ -853,6 +863,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 // is set by the user.
 var IsMemoryQuotaQuerySetByUser bool
 
+// IsOOMActionSetByUser indicates whether the config item mem-action is set by
+// the user.
+var IsOOMActionSetByUser bool
+
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
@@ -910,6 +924,9 @@ func (c *Config) Load(confFile string) error {
 	}
 	if metaData.IsDefined("mem-quota-query") {
 		IsMemoryQuotaQuerySetByUser = true
+	}
+	if metaData.IsDefined("oom-action") {
+		IsOOMActionSetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
