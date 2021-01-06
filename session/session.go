@@ -1274,29 +1274,52 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	if !vars.TxnCtx.IsStaleness {
 		return nil
 	}
-	// For the case executing:
-	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
-	// `...`
-	// `commit`
-	_, ok := stmtNode.(*ast.CommitStmt)
-	if ok {
+	switch stmtNode.(type) {
+	case *ast.IndexAdviseStmt:
 		return nil
-	}
-	// For the case executing:
-	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
-	// `...`
-	// `rollback`
-	_, ok = stmtNode.(*ast.RollbackStmt)
-	if ok {
+	case ast.DDLNode:
 		return nil
-	}
-	// For the case executing:
-	// `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
-	// `...`
-	// `begin` or `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND ...`
-	_, ok = stmtNode.(*ast.BeginStmt)
-	if ok {
+	case *ast.SplitRegionStmt:
 		return nil
+	case *ast.AdminStmt:
+		return nil
+	case *ast.AlterUserStmt:
+		return nil
+	case *ast.BeginStmt:
+		return nil
+	case *ast.CommitStmt:
+		return nil
+	case *ast.CreateUserStmt:
+		return nil
+	case *ast.DeallocateStmt:
+		return nil
+	case *ast.GrantStmt:
+		return nil
+	case *ast.PrepareStmt:
+		return nil
+	case *ast.RollbackStmt:
+		return nil
+	case *ast.SetPwdStmt:
+		return nil
+	case *ast.SetRoleStmt:
+		return nil
+	case *ast.SetDefaultRoleStmt:
+		return nil
+	case *ast.SetStmt:
+		return nil
+	case *ast.UseStmt:
+		return nil
+	case *ast.FlushStmt:
+		return nil
+	case *ast.KillStmt:
+		return nil
+	case *ast.CreateBindingStmt:
+		return nil
+	case *ast.DropBindingStmt:
+		return nil
+	case *ast.ShutdownStmt:
+		return nil
+	default:
 	}
 	if !planner.IsReadOnly(stmtNode, vars) {
 		return errors.New("only support read only statement during time-bounded read only transaction")
