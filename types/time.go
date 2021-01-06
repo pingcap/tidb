@@ -786,7 +786,7 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	return prevParts == 2 && (c == ' ' || c == 'T')
+	return (prevParts == 2 && (c == ' ' || c == 'T')) || (prevParts == 5 && (c == ' ' || c == 'T'))
 }
 
 var validIdxCombinations = map[int]struct {
@@ -1098,7 +1098,16 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
+		if len(seps) > 6 {
+			seps = seps[:6]
+			// YYYY-MM-DD HH-MM-SS
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+			err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+			hhmmss = true
+		} else {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		}
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
