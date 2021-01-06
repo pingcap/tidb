@@ -7548,31 +7548,41 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestStaleRead(c *C) {
+func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key);")
 	testcases := []struct {
 		name     string
 		sql      string
-		path     string
 		txnScope string
 	}{
 		{
 			name:     "coprocessor read",
 			sql:      "select * from t",
-			path:     "github.com/pingcap/tidb/store/tikv/assertStoreLabels",
 			txnScope: "sh",
 		},
+		{
+			name:     "point get read",
+			sql:      "select * from t where id = 1",
+			txnScope: "bj",
+		},
+		{
+			name:     "batch point get read",
+			sql:      "select * from t where id in (1,2,3)",
+			txnScope: "hz",
+		},
 	}
-
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		tk.MustExec(fmt.Sprintf("set txn_scope=%v", testcase.txnScope))
+		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
+		// refresh txnScope's last TSO
+		tk.MustExec(`begin`)
+		tk.MustExec(`commit`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
-		c.Assert(failpoint.Enable(testcase.path, fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
 		tk.MustExec(testcase.sql)
-		failpoint.Disable(testcase.path)
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
 		tk.MustExec(`commit`)
 	}
 }
