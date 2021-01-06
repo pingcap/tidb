@@ -236,7 +236,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	}
 	builder.txnScope = sv.TxnCtx.TxnScope
 	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness {
+	if builder.IsStaleness && sv.TxnCtx.TxnScope != oracle.GlobalTxnScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,

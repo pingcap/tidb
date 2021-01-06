@@ -152,7 +152,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
 	e.snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness {
+	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
