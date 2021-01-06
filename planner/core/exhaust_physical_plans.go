@@ -2281,7 +2281,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		} else {
 			if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
 				matchedCols := chooseSubsetOfJoinKeys(groupByCols, matches)
-				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: matchedCols, Enforced: true}
+				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: matchedCols}
 				agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 				agg.SetSchema(la.schema.Clone())
 				hashAggs = append(hashAggs, agg)
@@ -2293,7 +2293,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			}
 			// TODO: permute various partition columns from group-by columns
 			// 1-phase
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols, Enforced: true}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			hashAggs = append(hashAggs, agg)

@@ -1515,7 +1515,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			if len(partitionCols) == 0 {
 				return invalidTask
 			}
-			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, Enforced: true}
+			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
 			newMpp := mpp.enforceExchangerImpl(prop)
 			finalAgg.SetChildren(newMpp.p)
 			newMpp.p = finalAgg
