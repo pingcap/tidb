@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
@@ -630,6 +631,12 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 		rpcCtx, *err = e.cache.GetRPCContext(bo, loc.Region)
 		if *err != nil {
 			return
+		}
+		if rpcCtx == nil {
+			logutil.Logger(context.TODO()).Warn(
+				fmt.Sprintf("region %d is invalid in region cache during fast analyze, ignore the samples in it",
+					loc.Region.GetID()))
+			continue
 		}
 		ctx := context.Background()
 		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
