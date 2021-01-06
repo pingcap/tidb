@@ -3937,6 +3937,11 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			sql:        `select * from t where id in (1,2,3);`,
 			isValidate: true,
 		},
+		{
+			name:       "split table",
+			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
+			isValidate: true,
+		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
