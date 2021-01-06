@@ -1402,6 +1402,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.rowData = append(e.rowData, row.GetRaw(i))
 		}
 
+		// Check the rest rows in the first chunk.
 		for startRow = 1; startRow < req.NumRows(); startRow++ {
 			for i := 0; i < req.NumCols(); i++ {
 				if !bytes.Equal(req.GetRow(startRow).GetRaw(i), e.rowData[i]) {
@@ -1411,23 +1412,22 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
+	// Check the rest rows in other chunks.
 	childChunk := newFirstChunk(e.children[0])
-
 	for {
-		for startRow = 0; startRow < childChunk.NumRows(); startRow++ {
-			for i := 0; i < childChunk.NumCols(); i++ {
-				if !bytes.Equal(childChunk.GetRow(startRow).GetRaw(i), e.rowData[i]) {
-					return ErrSubqueryNo1Row
-				}
-			}
-		}
-
 		err = Next(ctx, e.children[0], childChunk)
 		if err != nil {
 			return err
 		}
 		if childChunk.NumRows() == 0 {
 			return nil
+		}
+		for startRow = 0; startRow < childChunk.NumRows(); startRow++ {
+			for i := 0; i < childChunk.NumCols(); i++ {
+				if !bytes.Equal(childChunk.GetRow(startRow).GetRaw(i), e.rowData[i]) {
+					return ErrSubqueryNo1Row
+				}
+			}
 		}
 	}
 
