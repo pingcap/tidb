@@ -42,7 +42,6 @@ type JSONTable struct {
 
 type jsonExtendedStats struct {
 	StatsName  string  `json:"stats_name"`
-	DB         string  `json:"db"`
 	ColIDs     []int64 `json:"cols"`
 	Tp         uint8   `json:"type"`
 	ScalarVals float64 `json:"scalar_vals"`
@@ -54,10 +53,9 @@ func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*jsonExten
 		return nil
 	}
 	stats := make([]*jsonExtendedStats, 0, len(statsColl.Stats))
-	for key, item := range statsColl.Stats {
+	for name, item := range statsColl.Stats {
 		js := &jsonExtendedStats{
-			StatsName:  key.StatsName,
-			DB:         key.DB,
+			StatsName:  name,
 			ColIDs:     item.ColIDs,
 			Tp:         item.Tp,
 			ScalarVals: item.ScalarVals,
@@ -74,17 +72,13 @@ func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedS
 	}
 	stats := statistics.NewExtendedStatsColl()
 	for _, js := range statsColl {
-		key := statistics.ExtendedStatsKey{
-			StatsName: js.StatsName,
-			DB:        js.DB,
-		}
 		item := &statistics.ExtendedStatsItem{
 			ColIDs:     js.ColIDs,
 			Tp:         js.Tp,
 			ScalarVals: js.ScalarVals,
 			StringVals: js.StringVals,
 		}
-		stats.Stats[key] = item
+		stats.Stats[js.StatsName] = item
 	}
 	return stats
 }

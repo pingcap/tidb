@@ -3964,7 +3964,7 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 		},
 		{
 			name:       "DropBindingStmt",
-			sql: `DROP SESSION BINDING FOR SELECT * FROM t WHERE id = 123;`,
+			sql:        `DROP SESSION BINDING FOR SELECT * FROM t WHERE id = 123;`,
 			isValidate: true,
 		},
 		{
@@ -4000,4 +4000,22 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			c.Assert(err.Error(), Matches, `.*only support read only statement during time-bounded read only transaction.*`)
 		}
 	}
+}
+
+func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
+		wg.Done()
+	}()
+	time.Sleep(2 * time.Second)
+	pi := tk.Se.ShowProcess()
+	c.Assert(pi, NotNil)
+	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
+	c.Assert(pi.Plan, IsNil)
+	wg.Wait()
 }
