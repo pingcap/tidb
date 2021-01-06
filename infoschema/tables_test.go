@@ -272,7 +272,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		Hostname: "127.0.0.1",
 	}, nil, nil), IsTrue)
 
-	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA", "sys"))
+	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Sort().Check(testkit.Rows("INFORMATION_SCHEMA", "sys"))
 
 	// Fix issue 9836
 	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
