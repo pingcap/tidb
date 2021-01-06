@@ -290,25 +290,6 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash
-<<<<<<< HEAD
-=======
-		case *ast.SetOprStmt:
-			plannercore.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB))
-			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
-			}
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		}
 	case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
@@ -336,13 +317,8 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-<<<<<<< HEAD
-	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
+	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
 	if selectStmt == nil {
-=======
-	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
-	if stmtNode == nil {
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)

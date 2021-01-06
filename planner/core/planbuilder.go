@@ -732,21 +732,12 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-<<<<<<< HEAD
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-=======
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
-<<<<<<< HEAD
 	if v.HintedSel != nil {
-		p.BindSQL = v.HintedSel.Text()
-=======
-	if v.HintedNode != nil {
-		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB)
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -779,19 +770,14 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	// the HintedNode.Restore will be `select * from test . t`.
 	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
 	// So we need check here.
-	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+	if err := checkHintedSQL(v.HintedSel.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
 		return nil, err
 	}
 
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-<<<<<<< HEAD
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:      v.HintedSel.Text(),
-=======
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
-		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB),
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),

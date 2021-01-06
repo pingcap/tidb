@@ -404,34 +404,8 @@ const (
 	version49 = 49
 	// version50 fixes the bug of concurrent create / drop binding
 	version50 = 50
-<<<<<<< HEAD
-=======
-	// version51 introduces CreateTablespacePriv to mysql.user.
+	// version51 restore all SQL bindings.
 	version51 = 51
-	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
-	version52 = 52
-	// version53 introduce Global variable tidb_enable_strict_double_type_check
-	version53 = 53
-	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
-	version54 = 54
-	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
-	version55 = 55
-	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
-	version56 = 56
-	// version57 fixes the bug of concurrent create / drop binding
-	version57 = 57
-	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
-	version58 = 58
-	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
-	version59 = 59
-	// version60 redesigns `mysql.stats_extended`
-	version60 = 60
-	// version61 restore all SQL bindings.
-	version61 = 61
-
-	// please make sure this is the largest version
-	currentBootstrapVersion = version61
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 )
 
 var (
@@ -485,20 +459,7 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
-<<<<<<< HEAD
-=======
 		upgradeToVer51,
-		upgradeToVer52,
-		upgradeToVer53,
-		upgradeToVer54,
-		upgradeToVer55,
-		upgradeToVer56,
-		upgradeToVer57,
-		upgradeToVer58,
-		upgradeToVer59,
-		upgradeToVer60,
-		upgradeToVer61,
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 	}
 )
 
@@ -1172,42 +1133,8 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
-<<<<<<< HEAD
-=======
-func upgradeToVer58(s Session, ver int64) {
-	if ver >= version58 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
-}
-
-func upgradeToVer59(s Session, ver int64) {
-	if ver >= version59 {
-		return
-	}
-	// The oom-action default value is log by default in v3.0, and cancel by
-	// default in v4.0.11+.
-	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
-	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
-	// the default value of oom-action, and promise the compatibility even if
-	// the tidb-server restarts.
-	// If it's a newly deployed cluster, we do not need to write the value into
-	// mysql.tidb, since no compatibility problem will happen.
-	writeOOMAction(s)
-}
-
-func upgradeToVer60(s Session, ver int64) {
-	if ver >= version60 {
-		return
-	}
-	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
-	doReentrantDDL(s, CreateStatsExtended)
-}
-
-func upgradeToVer61(s Session, ver int64) {
-	if ver >= version61 {
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
 		return
 	}
 	h := &bindinfo.BindHandle{}
@@ -1272,7 +1199,6 @@ func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now
 	}
 }
 
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,

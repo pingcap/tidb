@@ -155,29 +155,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-<<<<<<< HEAD
 		EraseLastSemicolon(node.OriginSel)
 		EraseLastSemicolon(node.HintedSel)
-		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		p.checkBindGrammar(node.OriginSel, node.HintedSel, p.ctx.GetSessionVars().CurrentDB)
 		return in, true
 	case *ast.DropBindingStmt:
 		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
 			EraseLastSemicolon(node.HintedSel)
-			p.checkBindGrammar(node.OriginSel, node.HintedSel)
-=======
-		p.stmtTp = TypeCreate
-		EraseLastSemicolon(node.OriginNode)
-		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
-		return in, true
-	case *ast.DropBindingStmt:
-		p.stmtTp = TypeDrop
-		EraseLastSemicolon(node.OriginNode)
-		if node.HintedNode != nil {
-			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
->>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
+			p.checkBindGrammar(node.OriginSel, node.HintedSel, p.ctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:

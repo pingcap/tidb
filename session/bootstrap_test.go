@@ -440,7 +440,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a > ?','select /*+ use_index(t, idxb) */ * from t where a > 1', 'test','using', '2021-01-04 14:50:58.257','2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	upgradeToVer61(se, version60)
+	upgradeToVer51(se, version50)
 	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
