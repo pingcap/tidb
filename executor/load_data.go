@@ -118,6 +118,96 @@ type LoadDataInfo struct {
 	QuitCh          chan struct{}
 }
 
+<<<<<<< HEAD
+=======
+// FieldMapping inticates the relationship between input field and table column or user variable
+type FieldMapping struct {
+	Column  *table.Column
+	UserVar *ast.VariableExpr
+}
+
+// initLoadColumns sets columns which the input fields loaded to.
+func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
+	var cols []*table.Column
+	var missingColName string
+	var err error
+	tableCols := e.Table.Cols()
+
+	if len(columnNames) != len(tableCols) {
+		for _, v := range e.ColumnAssignments {
+			columnNames = append(columnNames, v.Column.Name.O)
+		}
+
+		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		}
+	} else {
+		cols = tableCols
+	}
+
+	for _, col := range cols {
+		if !col.IsGenerated() {
+			e.insertColumns = append(e.insertColumns, col)
+		}
+		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+			}
+			e.hasExtraHandle = true
+			break
+		}
+	}
+	e.rowLen = len(e.insertColumns)
+	// Check column whether is specified only once.
+	err = table.CheckOnce(cols)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
+// the slice's order is the same as the order of the input fields.
+// Returns a slice of same ordered column names without user defined variable names.
+func (e *LoadDataInfo) initFieldMappings() []string {
+	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
+	tableCols := e.Table.Cols()
+
+	if len(e.ColumnsAndUserVars) == 0 {
+		for _, v := range tableCols {
+			fieldMapping := &FieldMapping{
+				Column: v,
+			}
+			e.FieldMappings = append(e.FieldMappings, fieldMapping)
+			columns = append(columns, v.Name.O)
+		}
+
+		return columns
+	}
+
+	var column *table.Column
+
+	for _, v := range e.ColumnsAndUserVars {
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
+		} else {
+			column = nil
+		}
+
+		fieldMapping := &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
+		}
+		e.FieldMappings = append(e.FieldMappings, fieldMapping)
+	}
+
+	return columns
+}
+
+>>>>>>> c7165bc51... executor, planner: ON DUPLICATE UPDATE can refer to un-project col (#14412)
 // GetRows getter for rows
 func (e *LoadDataInfo) GetRows() [][]types.Datum {
 	return e.rows

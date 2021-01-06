@@ -765,6 +765,9 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 		return true
 	}
 	for _, f := range sel.Fields.Fields {
+		if f.WildCard != nil {
+			continue
+		}
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
@@ -2484,11 +2487,84 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+type colNameInOnDupExtractor struct {
+	colNameMap map[types.FieldName]*ast.ColumnNameExpr
+}
+
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	switch x := node.(type) {
+	case *ast.ColumnNameExpr:
+		fieldName := types.FieldName{
+			DBName:  x.Name.Schema,
+			TblName: x.Name.Table,
+			ColName: x.Name.Name,
+		}
+		c.colNameMap[fieldName] = x
+		return node, true
+	// We don't extract the column names from the sub select.
+	case *ast.SelectStmt, *ast.SetOprStmt:
+		return node, true
+	default:
+		return node, false
+	}
+}
+
+func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
 	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
+	}
+	actualColLen := -1
+	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
+	// but just in the table occurs in the SELECT CLAUSE.
+	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
+	//        MySQL won't throw error and will execute this SQL successfully.
+	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
+	if len(insert.OnDuplicate) > 0 {
+		// If the select has aggregation, it cannot see the columns not in the select field.
+		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.
+		//        insert into a select x from b group by x ON DUPLICATE KEY UPDATE  a.x=b.y; will report b.y not found.
+		if sel, ok := insert.Select.(*ast.SelectStmt); ok && !b.detectSelectAgg(sel) {
+			hasWildCard := false
+			for _, field := range sel.Fields.Fields {
+				if field.WildCard != nil {
+					hasWildCard = true
+					break
+				}
+			}
+			if !hasWildCard {
+				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				for _, assign := range insert.OnDuplicate {
+					assign.Expr.Accept(colExtractor)
+				}
+				actualColLen = len(sel.Fields.Fields)
+				for _, colName := range colExtractor.colNameMap {
+					// If we found the name from the INSERT's table columns, we don't try to find it in select field anymore.
+					if insertPlan.tableColNames.FindAstColName(colName.Name) {
+						continue
+					}
+					found := false
+					for _, field := range sel.Fields.Fields {
+						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
+							(colName.Name.Schema.L == "" || colField.Name.Schema.L == "" || colName.Name.Schema.L == colField.Name.Schema.L) &&
+							(colName.Name.Table.L == "" || colField.Name.Table.L == "" || colName.Name.Table.L == colField.Name.Table.L) &&
+							colName.Name.Name.L == colField.Name.Name.L {
+							found = true
+							break
+						}
+					}
+					if found {
+						continue
+					}
+					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
+				}
+			}
+		}
 	}
 	selectPlan, err := b.Build(ctx, insert.Select)
 	if err != nil {
@@ -2496,7 +2572,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
-	if selectPlan.Schema().Len() != len(affectedValuesCols) {
+	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
 		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
@@ -2519,12 +2595,17 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
+	if actualColLen == -1 {
+		actualColLen = selectPlan.Schema().Len()
+	}
+	insertPlan.RowLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+	for i := 0; i < actualColLen; i++ {
+		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
@@ -2540,8 +2621,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
-	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names4NewRow...)
+	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.tableSchema.Columns...)
+	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
+	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
+	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names[actualColLen:]...)
+	insertPlan.names4OnDuplicate = append(insertPlan.names4OnDuplicate, names4NewRow...)
 	return nil
 }
 

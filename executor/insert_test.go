@@ -195,6 +195,15 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(7))
 	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
 
+	tk.MustExec("drop table if exists a, b")
+	tk.MustExec("create table a(x int primary key)")
+	tk.MustExec("create table b(x int, y int)")
+	tk.MustExec("insert into a values(1)")
+	tk.MustExec("insert into b values(1, 2)")
+	tk.MustExec("insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)

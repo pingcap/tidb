@@ -167,10 +167,19 @@ func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheck
 }
 
 // updateDupRow updates a duplicate row to a new row.
+<<<<<<< HEAD
 func (e *InsertExec) updateDupRow(ctx context.Context, txn kv.Transaction, row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
+=======
+func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, onDuplicate []*expression.Assignment) error {
+>>>>>>> c7165bc51... executor, planner: ON DUPLICATE UPDATE can refer to un-project col (#14412)
 	oldRow, err := getOldRow(ctx, e.ctx, txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
+	}
+	// get the extra columns from the SELECT clause and get the final `oldRow`.
+	if len(e.ctx.GetSessionVars().CurrInsertBatchExtraCols) > 0 {
+		extraCols := e.ctx.GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
+		oldRow = append(oldRow, extraCols...)
 	}
 
 	_, _, _, err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, e.OnDuplicate)
@@ -217,7 +226,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err == nil {
 				continue
 			}
@@ -239,7 +248,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -285,6 +294,7 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *InsertExec) Close() error {
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.Row{}
+	e.ctx.GetSessionVars().CurrInsertBatchExtraCols = e.ctx.GetSessionVars().CurrInsertBatchExtraCols[0:0:0]
 	e.setMessage()
 	if e.SelectExec != nil {
 		return e.SelectExec.Close()
@@ -315,11 +325,19 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 	// Use writable columns for old row for update.
 	numWritableCols := len(e.Table.WritableCols())
 
-	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols)
+	extraLen := 0
+	if e.SelectExec != nil {
+		extraLen = e.SelectExec.Schema().Len() - e.rowLen
+	}
+
+	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
 		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+	}
+	if extraLen > 0 {
+		evalBufferTypes = append(evalBufferTypes, e.SelectExec.base().retFieldTypes[numWritableCols:]...)
 	}
 	for _, col := range e.Table.Cols() {
 		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
