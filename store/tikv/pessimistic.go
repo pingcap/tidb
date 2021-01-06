@@ -236,7 +236,7 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 					} else if action == "fail" {
 						logutil.Logger(bo.ctx).Info("[failpoint] injected failure at pessimistic lock",
 							zap.Uint64("txnStartTS", c.startTS))
-						failpoint.Return(errors.New("Injected failure at pessimistic lock"))
+						failpoint.Return(errors.New("injected failure at pessimistic lock"))
 					}
 				}
 			}

@@ -746,7 +746,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 					if s, ok := v.(string); !ok {
 						logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
-							zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
 						time.Sleep(2 * time.Second)
 					} else if s == "skip" {
 						logutil.Logger(bo.ctx).Info("[failpoint] injected skip committing secondaries",
