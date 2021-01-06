@@ -1407,6 +1407,9 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	defer func(begin time.Time) {
+		logutil.BgLogger().Info("[DEBUG] sql cost ", zap.String("sql", sql), zap.Duration("cost", time.Since(begin)), zap.Error(err))
+	}(time.Now())
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
