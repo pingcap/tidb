@@ -498,12 +498,14 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 
 type basicCopRuntimeStats struct {
 	BasicRuntimeStats
-	// threads
 	threads int32
 }
 
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
+	if e.threads == 0 {
+		return fmt.Sprintf("time:%v, loops:%d, threads:N/A", FormatDuration(time.Duration(e.consume)), e.loop)
+	}
 	return fmt.Sprintf("time:%v, loops:%d, threads:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.threads)
 }
 
@@ -545,15 +547,6 @@ type CopRuntimeStats struct {
 	scanDetail *ScanDetail
 }
 
-func getThreads(summary *tipb.ExecutorExecutionSummary) int32 {
-	if summary.Concurrency != nil {
-		return int32(*summary.Concurrency)
-	}
-	// tikv does not set this, just return 1 because tikv always handle
-	// cop request using 1 thread
-	return 1
-}
-
 // RecordOneCopTask records a specific cop tasks's execution detail.
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
@@ -562,7 +555,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)},
-			threads: getThreads(summary)})
+			threads: int32(summary.GetConcurrency())})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -609,13 +602,23 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d, threads:%d}", FormatDuration(procTimes[0]), totalIters, totalThreads))
+		if totalThreads == 0 {
+			buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d, threads:N/A}", FormatDuration(procTimes[0]), totalIters))
+		} else {
+			buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d, threads:%d}", FormatDuration(procTimes[0]), totalIters, totalThreads))
+		}
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v, threads:%v}",
-			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks, totalThreads))
+		if totalThreads == 0 {
+			buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v, threads:N/A}",
+				FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+				FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
+		} else {
+			buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v, threads:%v}",
+				FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+				FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks, totalThreads))
+		}
 	}
 	if detail := crs.scanDetail; detail != nil {
 		buf.WriteString(", ")
