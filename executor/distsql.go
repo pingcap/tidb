@@ -362,6 +362,8 @@ type IndexLookUpExecutor struct {
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
+	// canReorderHandles indicates if the handles can be reordered for TableScan.
+	canReorderHandles bool
 
 	stats *IndexLookUpRunTimeStats
 }
@@ -544,7 +546,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		plans:          e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, e.canReorderHandles)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err

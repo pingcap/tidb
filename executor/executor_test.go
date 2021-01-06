@@ -6411,6 +6411,27 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }
 
+func (s *testSuite) TestIssue17813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key a_idx(a));")
+	tk.MustExec("insert into t values (1, 1), (11, 11), (5, 12), (13, 7), (2, 2), (7, 7), (16, 16), (14, 14), (0, 0);")
+	tk.MustQuery("select * from t use index(a_idx) where b>10 order by a limit 1;").Check(testkit.Rows("5 12"))
+	tk.MustQuery("select * from t use index(a_idx) where b>10 order by a limit 2;").Check(testkit.Rows("5 12", "11 11"))
+	tk.MustQuery("select * from t use index(a_idx) where b>10 order by a limit 3;").Check(testkit.Rows("5 12", "11 11", "14 14"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("truncate t")
+	n := 10
+	for i := 1; i <= n; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	for i := 0; i < n; i++ {
+		res := tk.MustQuery(fmt.Sprintf("select * from t use index(a_idx) where b>%d order by a limit 1", i))
+		res.Check(testkit.Rows(fmt.Sprintf("%d %d", i+1, i+1)))
+	}
+}
+
 func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

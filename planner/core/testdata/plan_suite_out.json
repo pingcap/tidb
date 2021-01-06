@@ -632,7 +632,7 @@
       },
       {
         "SQL": "select * from t where b = 1 and c = 1 order by c limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Limit"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)])->Limit)->Limit"
       },
       {
         "SQL": "select * from t where c = 1 order by c limit 1",

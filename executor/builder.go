@@ -2523,6 +2523,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		colLens:           is.IdxColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
+		canReorderHandles: v.CanReorderHandles,
 		PushedLimit:       v.PushedLimit,
 	}
 
