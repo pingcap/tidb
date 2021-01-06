@@ -1205,19 +1205,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
 	}
 
-<<<<<<< HEAD
-=======
-	// Some executions are done in compile stage, so we reset them before compile.
-	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
-		return nil, err
-	}
-
-	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
-	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
-	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
-
-	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
->>>>>>> 57cd69473... session: set process info before building plan (#22101)
 	compiler := executor.Compiler{Ctx: s}
 	multiQuery := len(stmtNodes) > 1
 	for _, stmtNode := range stmtNodes {
@@ -1229,6 +1216,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
 		}
+
+		// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
+		cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+		s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
