@@ -3865,3 +3865,100 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	_, err = tk.Exec("set @@last_plan_from_cache='123';")
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
+
+func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+	testcases := []struct {
+		name       string
+		sql        string
+		IsReadOnly bool
+	}{
+		{
+			name:       "select statement",
+			sql:        `select * from t;`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "ddl statement",
+			sql:        `create table t2 (id int);`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "split table statement",
+			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "admin statement",
+			sql:        `ADMIN SHOW SLOW RECENT 5;`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "create user statement",
+			sql:        `CREATE USER 'newuser' IDENTIFIED BY 'newuserpassword';`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "alter user statement",
+			sql:        `ALTER USER 'newuser' IDENTIFIED BY 'newnewpassword';`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "begin statement",
+			sql:        `begin`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "commit statement",
+			sql:        `commit`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "prepare stmt",
+			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
+			IsReadOnly: false,
+		},
+		{
+			name:       "prepare execute stmt",
+			sql:        `EXECUTE stmt2 USING @var;`,
+			IsReadOnly: false,
+		},
+		{
+			name:       "DeallocateStmt",
+			sql:        `DEALLOCATE PREPARE stmt1;`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "insert",
+			sql:        `insert into t (id) values (1);`,
+			IsReadOnly: false,
+		},
+		{
+			name:       "point get",
+			sql:        `select * from t where id = 1`,
+			IsReadOnly: true,
+		},
+		{
+			name:       "batch point get",
+			sql:        `select * from t where id in (1,2,3);`,
+			IsReadOnly: true,
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("set @var=5;")
+	tk.MustExec(`PREPARE stmt2 FROM 'insert into t(id) values (?);';`)
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		if testcase.IsReadOnly {
+			_, err := tk.Exec(testcase.sql)
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+		} else {
+			err := tk.ExecToErr(testcase.sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, `.*only support read only statement during time-bounded read only transaction.*`)
+		}
+	}
+}
