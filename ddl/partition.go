@@ -1335,6 +1335,8 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		} else if len(pi.Columns) == 1 {
 			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
+	case model.PartitionTypeList:
+		sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s = %s limit 1", schemaName.L, tableName.L, pi.Columns[index], pi.Definitions[index].InValues[index][0])
 	default:
 		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
@@ -1358,6 +1360,16 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 }
 
 func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	if index == 0 {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index].LessThan[0])
+	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0])
+	} else {
+		return fmt.Sprintf("select 1 from `%s`.`%s` where %s < %s or %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index-1].LessThan[0], pi.Expr, pi.Definitions[index].LessThan[0])
+	}
+}
+
+func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
 	if index == 0 {
 		return fmt.Sprintf("select 1 from `%s`.`%s` where %s >= %s limit 1", schemaName.L, tableName.L, pi.Expr, pi.Definitions[index].LessThan[0])
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
