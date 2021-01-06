@@ -1290,50 +1290,73 @@ func BuildFinalModeAggregation(
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return
 }
-func (p *basePhysicalAgg) convertAvgForMPP() ([]uint16, *expression.Schema, []*aggregation.AggFuncDesc) {
-	if p.SCtx().GetSessionVars().AllowBCJ {
-		return nil, nil, nil
-	}
-	avgIndices := make([]uint16, 0, len(p.AggFuncs))
-	index := uint16(0)
-	originalSchema := p.schema
-	originalAggFuncs := p.AggFuncs
+func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *PhysicalProjection {
 	newSchema := expression.NewSchema()
+	newSchema.Keys = p.schema.Keys
+	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	newSchema.Keys = originalSchema.Keys
-	newSchema.UniqueKeys = originalSchema.UniqueKeys
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+	nullTp := types.NewFieldType(mysql.TypeNull)
+	nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+	paramNull := &expression.Constant{
+		Value:   types.NewDatum(nil),
+		RetType: nullTp,
+	}
+	paramZero := &expression.Constant{
+		Value:   types.NewDatum(0),
+		RetType: ft,
+	}
+	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
-			avgIndices = append(avgIndices, index)
-			index += 2
 			// inset a count(column)
 			avgCount := *aggFunc
 			avgCount.Name = ast.AggFuncCount
 			newAggFuncs = append(newAggFuncs, &avgCount)
-			ft := types.NewFieldType(mysql.TypeLonglong)
-			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			avgCount.RetTp = ft
-			newSchema.Append(&expression.Column{
+			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  ft,
-			})
+			}
+			newSchema.Append(avgCountCol)
 			// insert a sum(column)
 			avgSum := *aggFunc
 			avgSum.Name = ast.AggFuncSum
 			newAggFuncs = append(newAggFuncs, &avgSum)
 			newSchema.Append(p.schema.Columns[i])
+			avgSumCol := p.schema.Columns[i]
+			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol)
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, paramZero)
+			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, avgCountCol)
+			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, paramNull, divide)
+			exprs = append(exprs, funcIf)
 		} else {
-			index++
 			newAggFuncs = append(newAggFuncs, aggFunc)
 			newSchema.Append(p.schema.Columns[i])
+			exprs = append(exprs, p.schema.Columns[i])
 		}
 	}
-	if len(avgIndices) > 0 {
-		p.AggFuncs = newAggFuncs
-		p.schema = newSchema
+	// no avgs
+	if len(p.schema.Columns) == len(newSchema.Columns) {
+		return nil
 	}
-	return avgIndices, originalSchema, originalAggFuncs
+	// todo: surely?
+	for i := len(exprs); i < len(p.schema.Columns); i++ {
+		exprs = append(exprs, p.schema.Columns[i])
+	}
+	proj := PhysicalProjection{
+		Exprs:                exprs,
+		CalculateNoDelay:     false,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), prop)
+	proj.SetSchema(p.schema)
+
+	p.AggFuncs = newAggFuncs
+	p.schema = newSchema
+
+	return proj
 }
 
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
@@ -1572,8 +1595,12 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			return mpp
 		} else if len(p.GroupByItems) != 0 && mpp.partTp == property.AnyType {
 			/// 2-phase agg: partial + final agg with two types partitions: hash partition or merged partition
-
-			avgIndex, origSchema, originAggFuncs := p.convertAvgForMPP()
+			partitionCols := p.GetChildReqProps(0).PartitionCols
+			if len(partitionCols) == 0 {
+				return invalidTask
+			}
+			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
+			proj := p.convertAvgForMPP(prop)
 
 			partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 			if partialAgg == nil {
@@ -1581,64 +1608,19 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			}
 			partialAgg.SetChildren(mpp.p)
 			mpp.p = partialAgg
-			partitionCols := p.GetChildReqProps(0).PartitionCols
-			if len(partitionCols) == 0 {
-				return invalidTask
-			}
-			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
+
 			newMpp := mpp.enforceExchangerImpl(prop)
 			finalAgg.SetChildren(newMpp.p)
 			newMpp.p = finalAgg
-			// generate a projection and set it on the top of aggregation
-			if len(avgIndex) > 0 && p.SCtx().GetSessionVars().AllowBCJ {
-				ft := types.NewFieldType(mysql.TypeLonglong)
-				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
-				nullTp := types.NewFieldType(mysql.TypeNull)
-				nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
-				paramNull := &expression.Constant{
-					Value:   types.NewDatum(nil),
-					RetType: nullTp,
-				}
-				paramZero := &expression.Constant{
-					Value:   types.NewDatum(0),
-					RetType: ft,
-				}
-				agg := finalAgg.(*PhysicalHashAgg)
-				exprs := make([]expression.Expression, 0, 2*len(agg.schema.Columns))
-
-				j := 0
-				for i := 0; i < len(originAggFuncs); i++ {
-					if originAggFuncs[i].Name == ast.AggFuncAvg {
-						avgCount := agg.schema.Columns[j]
-						avgSum := agg.schema.Columns[j+1]
-						// if(avgCount = 0, NULL, avgSum/avgCount)
-						eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCount, paramZero)
-						divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSum.RetType, avgSum, avgCount)
-						funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSum.RetType, eq, paramNull, divide)
-						exprs = append(exprs, funcIf)
-						j++
-					} else {
-						exprs = append(exprs, origSchema.Columns[i])
-					}
-					j++
-				}
-				for i := len(exprs); i < len(origSchema.Columns); i++ {
-					exprs = append(exprs, origSchema.Columns[i])
-				}
+			if proj != nil {
 				if p.SCtx().GetSessionVars().AllowBCJ {
-					proj := PhysicalProjection{
-						Exprs:                exprs,
-						CalculateNoDelay:     false,
-						AvoidColumnEvaluator: false,
-					}.Init(p.SCtx(), p.stats, 0, prop)
-
-					proj.SetSchema(origSchema)
-					//proj.SetChildren(newMpp.p)
-					//newMpp.p = proj
 					t = newMpp.convertToRootTask(p.ctx)
 					attachPlan2Task(proj, t)
 					t.addCost(p.GetCost(t.count(), true))
 					return t
+				} else {
+					proj.SetChildren(newMpp.p)
+					newMpp.p = proj
 				}
 			}
 			// TODO: how to set 2-phase cost?
