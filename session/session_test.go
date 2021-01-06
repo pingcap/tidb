@@ -3870,88 +3870,127 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	testcases := []struct {
 		name       string
 		sql        string
-		IsReadOnly bool
+		isValidate bool
 	}{
 		{
 			name:       "select statement",
 			sql:        `select * from t;`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "ddl statement",
 			sql:        `create table t2 (id int);`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "split table statement",
 			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "admin statement",
 			sql:        `ADMIN SHOW SLOW RECENT 5;`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "create user statement",
 			sql:        `CREATE USER 'newuser' IDENTIFIED BY 'newuserpassword';`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "alter user statement",
 			sql:        `ALTER USER 'newuser' IDENTIFIED BY 'newnewpassword';`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "begin statement",
 			sql:        `begin`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "commit statement",
 			sql:        `commit`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "prepare stmt",
 			sql:        `PREPARE stmt1 FROM 'insert into t(id) values (?);';`,
-			IsReadOnly: false,
+			isValidate: true,
 		},
 		{
 			name:       "prepare execute stmt",
-			sql:        `EXECUTE stmt2 USING @var;`,
-			IsReadOnly: false,
+			sql:        `EXECUTE stmt1 USING @var;`,
+			isValidate: false,
 		},
 		{
 			name:       "DeallocateStmt",
 			sql:        `DEALLOCATE PREPARE stmt1;`,
-			IsReadOnly: true,
+			isValidate: true,
+		},
+		{
+			name:       "grant stmt",
+			sql:        `GRANT ALL ON test.* TO 'newuser';`,
+			isValidate: true,
+		},
+		{
+			name:       "rollback",
+			sql:        "rollback",
+			isValidate: true,
+		},
+		{
+			name:       "SetPwdStmt",
+			sql:        `SET PASSWORD FOR newuser = 'test';`,
+			isValidate: true,
+		},
+		{
+			name:       "SetStmt",
+			sql:        `set @var=6;`,
+			isValidate: true,
+		},
+		{
+			name:       "UseStmt",
+			sql:        `use test`,
+			isValidate: true,
+		},
+		{
+			name:       "FlushStmt",
+			sql:        `FLUSH PRIVILEGES;`,
+			isValidate: true,
+		},
+		{
+			name:       "CreateBindingStmt",
+			sql:        `CREATE SESSION BINDING FOR SELECT * FROM t WHERE id = 123 USING SELECT * FROM t WHERE id = 123`,
+			isValidate: true,
+		},
+		{
+			name:       "DropBindingStmt",
+			sql: `DROP SESSION BINDING FOR SELECT * FROM t WHERE id = 123;`,
+			isValidate: true,
 		},
 		{
 			name:       "insert",
 			sql:        `insert into t (id) values (1);`,
-			IsReadOnly: false,
+			isValidate: false,
 		},
 		{
 			name:       "point get",
 			sql:        `select * from t where id = 1`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 		{
 			name:       "batch point get",
 			sql:        `select * from t where id in (1,2,3);`,
-			IsReadOnly: true,
+			isValidate: true,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("set @var=5;")
-	tk.MustExec(`PREPARE stmt2 FROM 'insert into t(id) values (?);';`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
-		if testcase.IsReadOnly {
+		if testcase.isValidate {
 			_, err := tk.Exec(testcase.sql)
 			c.Assert(err, IsNil)
 			tk.MustExec("commit")
