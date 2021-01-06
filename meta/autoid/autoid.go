@@ -47,7 +47,7 @@ const (
 	// MetricSchemaDBID is the metrics_schema schema id, it's exported for test.
 	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
 	// SysSchemaDBID is the sys schema id, it's exported for test.
-	SysSchemaDBID    int64 = SystemSchemaIDFlag | 40000
+	SysSchemaDBID int64 = SystemSchemaIDFlag | 40000
 )
 
 const (
