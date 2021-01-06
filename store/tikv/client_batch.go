@@ -645,24 +645,21 @@ func sendBatchRequest(
 }
 
 func (c *rpcClient) recycleIdleConnArray() {
+	// Lock should be obtained before calling recycleIdleConnArray.
 	var addrs []string
-	c.RLock()
 	for _, conn := range c.conns {
 		if conn.batchConn != nil && conn.isIdle() {
 			addrs = append(addrs, conn.target)
 		}
 	}
-	c.RUnlock()
 
 	for _, addr := range addrs {
-		c.Lock()
 		conn, ok := c.conns[addr]
 		if ok {
 			delete(c.conns, addr)
 			logutil.BgLogger().Info("recycle idle connection",
 				zap.String("target", addr))
 		}
-		c.Unlock()
 		if conn != nil {
 			conn.Close()
 		}
