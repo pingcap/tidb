@@ -526,7 +526,6 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 	c.Assert(row.GetString(3), Equals, "using")
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, `drop global binding for select * from test.t where a > 1`)
-	c.Assert(r.Close(), IsNil)
 	r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 	c.Assert(r.Next(ctx, req), IsNil)
 	row = req.GetRow(0)
