@@ -103,7 +103,6 @@ var gcVariableComments = map[string]string{
 	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
 	variable.TiDBGCEnable:       "Current GC enable status",
-	variable.TiDBGCMode:         "Mode of GC, \"central\" or \"distributed\"",
 	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
 	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
 }
@@ -113,7 +112,6 @@ var gcVariableMap = map[string]string{
 	variable.TiDBGCLifetime:     "tikv_gc_life_time",
 	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
 	variable.TiDBGCEnable:       "tikv_gc_enable",
-	variable.TiDBGCMode:         "tikv_gc_mode",
 	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
 }
 
@@ -1011,7 +1009,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 
 func (s *session) varFromTiDBTable(name string) bool {
 	switch name {
-	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCMode, variable.TiDBGCScanLockMode:
+	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
 		return true
 	}
 	return false

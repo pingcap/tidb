@@ -521,17 +521,15 @@ const (
 // TiDB vars that have only global scope
 
 const (
-	// TiDBGCEnable description
+	// TiDBGCEnable turns garbage collection on or OFF
 	TiDBGCEnable = "tidb_gc_enable"
-	// TiDBGCRunInterval description
+	// TiDBGCRunInterval sets the interval that GC runs
 	TiDBGCRunInterval = "tidb_gc_run_interval"
-	// TiDBGCLifetime description
+	// TiDBGCLifetime sets the retention window of older versions
 	TiDBGCLifetime = "tidb_gc_life_time"
-	// TiDBGCConcurrency description
+	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
 	TiDBGCConcurrency = "tidb_gc_concurrency"
-	// TiDBGCMode description
-	TiDBGCMode = "tidb_gc_mode"
-	// TiDBGCScanLockMode description
+	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 )
 
