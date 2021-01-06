@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -1152,17 +1153,16 @@ func init() {
 			return nil, err
 		}
 		chk := newFirstChunk(exec)
-		for {
-			err = Next(ctx, exec, chk)
-			if err != nil {
-				return nil, err
-			}
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
-			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
-			return row, err
+
+		err = Next(ctx, exec, chk)
+		if err != nil {
+			return nil, err
 		}
+		if chk.NumRows() == 0 {
+			return nil, nil
+		}
+		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+		return row, err
 	}
 }
 
@@ -1363,6 +1363,7 @@ func (e *TableScanExec) Open(ctx context.Context) error {
 type MaxOneRowExec struct {
 	baseExecutor
 
+	rowData   [][]byte
 	evaluated bool
 }
 
@@ -1371,6 +1372,7 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	e.rowData = make([][]byte, 0)
 	e.evaluated = false
 	return nil
 }
@@ -1378,34 +1380,57 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if e.evaluated {
+
+	if e.evaluated && len(e.rowData) == 0 {
 		return nil
 	}
-	e.evaluated = true
 	err := Next(ctx, e.children[0], req)
 	if err != nil {
 		return err
 	}
-
-	if num := req.NumRows(); num == 0 {
-		for i := range e.schema.Columns {
-			req.AppendNull(i)
+	startRow := 0
+	if !e.evaluated {
+		e.evaluated = true
+		if num := req.NumRows(); num == 0 {
+			for i := range e.schema.Columns {
+				req.AppendNull(i)
+			}
+			return nil
 		}
-		return nil
-	} else if num != 1 {
-		return errors.New("subquery returns more than 1 row")
+		row := req.GetRow(0)
+		for i := 0; i < req.NumCols(); i++ {
+			e.rowData = append(e.rowData, row.GetRaw(i))
+		}
+
+		for startRow = 1; startRow < req.NumRows(); startRow++ {
+			for i := 0; i < req.NumCols(); i++ {
+				if !bytes.Equal(req.GetRow(startRow).GetRaw(i), e.rowData[i]) {
+					return ErrSubqueryNo1Row
+				}
+			}
+		}
 	}
 
 	childChunk := newFirstChunk(e.children[0])
-	err = Next(ctx, e.children[0], childChunk)
-	if err != nil {
-		return err
-	}
-	if childChunk.NumRows() != 0 {
-		return errors.New("subquery returns more than 1 row")
+
+	for {
+		for startRow = 0; startRow < childChunk.NumRows(); startRow++ {
+			for i := 0; i < childChunk.NumCols(); i++ {
+				if !bytes.Equal(childChunk.GetRow(startRow).GetRaw(i), e.rowData[i]) {
+					return ErrSubqueryNo1Row
+				}
+			}
+		}
+
+		err = Next(ctx, e.children[0], childChunk)
+		if err != nil {
+			return err
+		}
+		if childChunk.NumRows() == 0 {
+			return nil
+		}
 	}
 
-	return nil
 }
 
 // UnionExec pulls all it's children's result and returns to its parent directly.
