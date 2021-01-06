@@ -371,7 +371,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 func (h *BindHandle) lockBindInfoTable() error {
 	// h.sctx already locked.
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(context.TODO(), h.lockBindInfoSQL())
+	_, err := exec.ExecuteInternal(context.TODO(), h.LockBindInfoSQL())
 	return err
 }
 
@@ -537,7 +537,7 @@ func (c cache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 func (c cache) setBindRecord(hash string, meta *BindRecord) {
 	metas := c[hash]
 	for i := range metas {
-		if metas[i].Db == meta.Db && metas[i].OriginalSQL == meta.OriginalSQL {
+		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
 			return
 		}
@@ -566,7 +566,11 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
 	for _, bindRecord := range bindRecords {
+<<<<<<< HEAD
 		if bindRecord.OriginalSQL == normdOrigSQL && strings.EqualFold(bindRecord.Db, db) {
+=======
+		if bindRecord.OriginalSQL == normdOrigSQL {
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 			return bindRecord
 		}
 	}
@@ -575,9 +579,12 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	sql := fmt.Sprintf(
+<<<<<<< HEAD
 		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+=======
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s`,
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		expression.Quote(normdOrigSQL),
-		expression.Quote(db),
 	)
 	if bindSQL == "" {
 		return sql
@@ -599,8 +606,8 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 	)
 }
 
-// lockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) lockBindInfoSQL() string {
+// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
+func (h *BindHandle) LockBindInfoSQL() string {
 	return fmt.Sprintf("UPDATE mysql.bind_info SET source=%s WHERE original_sql=%s",
 		expression.Quote(Builtin),
 		expression.Quote(BuiltinPseudoSQL4BindLock))
@@ -608,11 +615,14 @@ func (h *BindHandle) lockBindInfoSQL() string {
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
 	updateTsStr := updateTs.String()
+<<<<<<< HEAD
 	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and update_time<%s`,
+=======
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and update_time<%s`,
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		expression.Quote(deleted),
 		expression.Quote(updateTsStr),
 		expression.Quote(originalSQL),
-		expression.Quote(db),
 		expression.Quote(updateTsStr))
 	if bindingSQL == "" {
 		return sql
@@ -633,6 +643,7 @@ func (h *BindHandle) CaptureBaselines() {
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
 		}
+<<<<<<< HEAD
 		normalizedSQL, digest := parser.NormalizeDigest(sqls[i])
 		dbName := utilparser.GetDefaultDB(stmt, schemas[i])
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
@@ -651,6 +662,14 @@ func (h *BindHandle) CaptureBaselines() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+=======
+		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
+		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+			continue
+		}
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 		if bindSQL == "" {
 			continue
 		}
@@ -690,7 +709,11 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
+<<<<<<< HEAD
 func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+=======
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool, defaultDB string) string {
+>>>>>>> 51794e9d3... *: rewrite origin SQL with default DB for SQL bindings (#21275)
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
@@ -707,6 +730,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	hint.BindHint(stmtNode, &hint.HintsSet{})
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	restoreCtx.DefaultDB = defaultDB
 	err := stmtNode.Restore(restoreCtx)
 	if err != nil {
 		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))

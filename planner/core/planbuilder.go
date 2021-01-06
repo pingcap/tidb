@@ -747,23 +747,52 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedNode != nil {
-		p.BindSQL = v.HintedNode.Text()
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
+func checkHintedSQL(sql, charset, collation, db string) error {
+	p := parser.New()
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
-		BindSQL:      v.HintedNode.Text(),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedNode,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
