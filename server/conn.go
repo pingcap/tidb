@@ -926,7 +926,16 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // dispatch handles client request based on command which is the first byte of the data.
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
-func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+func (cc *clientConn) dispatch(ctx context.Context, data []byte) (err error) {
+	defer func(begin time.Time) {
+		var sql string
+		if len(data) == 0 {
+			sql = "exit"
+		} else {
+			sql = string(data)
+		}
+		logutil.BgLogger().Info("[DEBUG] sql cost ", zap.String("sql", sql), zap.Duration("cost", time.Since(begin)), zap.Error(err))
+	}(time.Now())
 	defer func() {
 		// reset killed for each request
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
@@ -1407,9 +1416,6 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	defer func(begin time.Time) {
-		logutil.BgLogger().Info("[DEBUG] sql cost ", zap.String("sql", sql), zap.Duration("cost", time.Since(begin)), zap.Error(err))
-	}(time.Now())
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
