@@ -39,13 +39,6 @@ type sysTable struct {
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
 
-// RegisterTable registers a new table into TiDB.
-func RegisterTable(tableName, sql string,
-	tableFromMeta func(autoid.Allocators, *model.TableInfo) (table.Table, error)) {
-	sysSchemaTables = append(sysSchemaTables, sql)
-	pluginTable[tableName] = tableFromMeta
-}
-
 func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
