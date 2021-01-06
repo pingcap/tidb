@@ -2344,7 +2344,7 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		}
 		tk.MustExec("admin check table t") // check consistency out of txn
 
-		//RR test for non partition
+		// RR test for non partition
 		if partition {
 			continue
 		}
@@ -2372,11 +2372,10 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		// fast path
 		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
 		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
-		tk.MustQuery("select (select id from t where v = 23), id from t1").Check(testkit.Rows("2 1"))
-		tk.MustQuery("select (select id from t where v = 24), id from t1").Check(testkit.Rows("<nil> 1"))
-
 		tk.MustQuery("select * from t where v = 23 for update").Check(testkit.Rows())
 		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		tk.MustQuery("select (select id from t where v = 23), id from t1 for update").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id from t where v = 24), id from t1 for update").Check(testkit.Rows("<nil> 1"))
 		tk.MustQuery("select (select id from t where v = 23 for update), id from t1").Check(testkit.Rows("<nil> 1"))
 		tk.MustQuery("select (select id from t where v = 24 for update), id from t1").Check(testkit.Rows("2 1"))
 

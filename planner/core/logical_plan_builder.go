@@ -315,16 +315,9 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 	var ok bool
 	p, ok = b.cachedResultSetNodes[from.TableRefs]
 	if ok {
-		if _, ok = p.(*LogicalSelection); ok {
-			var stmt *ast.SelectStmt
-			if stmt, ok = from.TableRefs.Left.(*ast.SelectStmt); ok {
-				if !isForUpdateReadSelectLock(stmt.LockInfo) {
-					m := b.cachedHandleHelperMap[from.TableRefs]
-					b.handleHelper.pushMap(m)
-					return
-				}
-			}
-		}
+		m := b.cachedHandleHelperMap[from.TableRefs]
+		b.handleHelper.pushMap(m)
+		return
 	}
 	p, err = b.buildResultSetNode(ctx, from.TableRefs)
 	if err != nil {
@@ -2259,6 +2252,10 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
+	}
+	// do not use cache when for update read
+	if isForUpdateReadSelectLock(sel.LockInfo) {
+		useCache = false
 	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
