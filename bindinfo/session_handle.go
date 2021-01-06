@@ -14,6 +14,7 @@
 package bindinfo
 
 import (
+	"strings"
 	"time"
 
 	"github.com/pingcap/parser"
@@ -51,6 +52,7 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 	if err != nil {
 		return err
 	}
+	record.Db = strings.ToLower(record.Db)
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now
@@ -64,6 +66,7 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 
 // DropBindRecord drops a BindRecord in the cache.
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
+	db = strings.ToLower(db)
 	oldRecord := h.GetBindRecord(originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}

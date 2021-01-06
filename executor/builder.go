@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -80,6 +79,7 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -963,7 +963,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		return x
 	}
-	// If reader is union, it means a partitiont table and we should transfer as above.
+	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*UnionExec); ok {
 		for i, child := range x.children {
 			x.children[i] = b.buildUnionScanFromReader(child, v)
@@ -2021,7 +2021,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts: opts,
+		opts:       opts,
+		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2497,7 +2498,7 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	case 1:
 		for _, p := range v.TablePlans {
 			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalBroadCastJoin:
+			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
 				e.batchCop = true
 			}
 		}
@@ -2580,6 +2581,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }
@@ -3352,10 +3354,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
@@ -3363,7 +3361,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
-		SetTxnScope(extractTxnScope(txn)).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
@@ -3968,11 +3965,4 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 	return e
-}
-
-func extractTxnScope(txn kv.Transaction) string {
-	if txn == nil || txn.GetUnionStore() == nil {
-		return oracle.GlobalTxnScope
-	}
-	return txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 }

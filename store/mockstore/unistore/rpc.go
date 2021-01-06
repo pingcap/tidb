@@ -83,8 +83,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, context.Canceled
 	}
 
+	storeID, err := c.usSvr.GetStoreIdByAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+
 	resp := &tikvrpc.Response{}
-	var err error
 	switch req.Type {
 	case tikvrpc.CmdGet:
 		resp.Resp, err = c.usSvr.KvGet(ctx, req.Get())
@@ -236,9 +240,9 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
 	case tikvrpc.CmdMPPConn:
-		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout)
+		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
-		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask())
+		resp.Resp, err = c.handleDispatchMPPTask(ctx, req.DispatchMPPTask(), storeID)
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -282,9 +286,9 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 	}, nil
 }
 
-func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration) (*tikvrpc.MPPStreamResponse, error) {
+func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
-	err := c.usSvr.EstablishMPPConnection(r, mockServer)
+	err := c.usSvr.EstablishMPPConnectionWithStoreId(r, mockServer, storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,8 +305,8 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	return streamResp, nil
 }
 
-func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
-	return c.usSvr.DispatchMPPTask(ctx, r)
+func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
+	return c.usSvr.DispatchMPPTaskWithStoreId(ctx, r, storeID)
 }
 
 func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {

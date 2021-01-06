@@ -282,8 +282,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	if copStats.CopDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.CopDetail)
+	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.ScanDetail)
 	}
 
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
@@ -348,8 +348,8 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	if copStats.CopDetail != nil {
-		s.procKeys = append(s.procKeys, copStats.CopDetail.ProcessedKeys)
+	if copStats.ScanDetail != nil {
+		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
@@ -357,8 +357,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
-	s.totalProcessTime += copStats.ProcessTime
-	s.totalWaitTime += copStats.WaitTime
+	s.totalProcessTime += copStats.TimeDetail.ProcessTime
+	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
@@ -435,13 +435,13 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
-			if s.totalProcessTime > 0 {
-				buf.WriteString(", tot_proc: ")
-				buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
-				if s.totalWaitTime > 0 {
-					buf.WriteString(", tot_wait: ")
-					buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
-				}
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
 		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
