@@ -119,7 +119,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		if e.lock {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
-			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, e.snapshot)
+			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
