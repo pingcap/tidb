@@ -7547,3 +7547,9 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		tk.MustExec("commit")
 	}
 }
+
+func (s *testSuite) TestIssue22201(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated"))
+}

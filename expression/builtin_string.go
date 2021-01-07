@@ -3951,6 +3951,15 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
+			valStr, _ := b.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+			maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+			if err != nil {
+				return "", false, err
+			}
+			if b.length - lenStr > int(maxAllowedPacket) {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)
