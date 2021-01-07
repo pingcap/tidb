@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -199,7 +200,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan, prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
 	childTasks := make([]task, 0, len(p.children))
@@ -243,12 +244,13 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
+		// An optimal task could not satisfy the property, so it should be converted here.
+		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {
 			curTask = curTask.convertToRootTask(p.ctx)
 		}
 
 		// Enforce curTask property
-		if prop.Enforced {
+		if addEnforcer {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
@@ -265,7 +267,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			bestTask = curTask
 			break
 		}
-
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
@@ -289,6 +290,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		return bestTask, 1, nil
 	}
 
+	canAddEnforcer := prop.CanAddEnforcer
+
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
 		// Currently all plan cannot totally push down to TiKV.
 		p.storeTask(prop, invalidTask)
@@ -299,7 +302,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	cntPlan = 0
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
-	newProp := prop.Clone()
+	newProp := prop.CloneEssentialFields()
 	var plansFitsProp, plansNeedEnforce []PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
@@ -309,10 +312,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// If there is a hint in the plan and the hint cannot satisfy the property,
 		// we enforce this property and try to generate the PhysicalPlan again to
 		// make sure the hint can work.
-		newProp.Enforced = true
+		canAddEnforcer = true
 	}
 
-	if newProp.Enforced {
+	if canAddEnforcer {
 		// Then, we use the empty property to get physicalPlans and
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
@@ -327,7 +330,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 			// can work.
 			plansFitsProp = nil
 		}
-		if !hintCanWork && !hintWorksWithProp && !prop.Enforced {
+		if !hintCanWork && !hintWorksWithProp && !prop.CanAddEnforcer {
 			// If the original property is not enforced and hint cannot
 			// work anyway, we give up `plansNeedEnforce` for efficiency,
 			plansNeedEnforce = nil
@@ -335,10 +338,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		newProp = prop
 	}
 
-	newProp.Enforced = false
 	var cnt int64
 	var curTask task
-	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, planCounter); err != nil {
+	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -346,8 +348,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 
-	newProp.Enforced = true
-	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, planCounter)
+	curTask, cnt, err = p.enumeratePhysicalPlans4Task(plansNeedEnforce, newProp, true, planCounter)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -616,15 +617,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	var cnt int64
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldProp := prop.Clone()
-	if prop.Enforced {
+	oldProp := prop.CloneEssentialFields()
+	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
-		prop.Enforced = false
+		prop.CanAddEnforcer = false
 		t, cnt, err = ds.findBestTask(prop, planCounter)
 		if err != nil {
 			return nil, 0, err
 		}
-		prop.Enforced = true
+		prop.CanAddEnforcer = true
 		if t != invalidTask {
 			ds.storeTask(prop, t)
 			cntPlan = cnt
@@ -640,9 +641,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if err != nil {
 			return
 		}
-		if prop.Enforced {
+		if prop.CanAddEnforcer {
 			prop = oldProp
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
+			prop.CanAddEnforcer = true
 		}
 		ds.storeTask(prop, t)
 		if ds.SampleInfo != nil && !t.invalid() {
@@ -1543,6 +1545,10 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+		return invalidTask
+	}
+
+	if tidbutil.IsMemDB(ds.DBName.L) {
 		return invalidTask
 	}
 

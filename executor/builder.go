@@ -761,6 +761,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
+		rowLen:                    v.RowLen,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -963,7 +964,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		return x
 	}
-	// If reader is union, it means a partitiont table and we should transfer as above.
+	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*UnionExec); ok {
 		for i, child := range x.children {
 			x.children[i] = b.buildUnionScanFromReader(child, v)
