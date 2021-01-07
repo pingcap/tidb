@@ -1103,7 +1103,7 @@ retryScanAndResolve:
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
 				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
+				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
