@@ -106,6 +106,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"2018.01.01 00:00:00", "2018-01-01 00:00:00"},
 		{"2018/01/01-00:00:00", "2018-01-01 00:00:00"},
 		{"4710072", "2047-10-07 02:00:00"},
+		{"2016-06-01 00:00:00 00:00:00", "2016-06-01 00:00:00"},
+		{"2020-06-01 00:00:00ads!,?*da;dsx", "2020-06-01 00:00:00"},
 
 		// For issue 22231
 		{"2020-05-28 23:59:59 00:00:00", "2020-05-28 23:59:59"},
@@ -175,7 +177,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDatetime(sc, test)
-		c.Assert(err, NotNil)
+		c.Assert(err != nil || sc.WarningCount() > 0, Equals, true)
+		sc.SetWarnings(nil)
 	}
 }
 
@@ -1072,7 +1075,7 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		{"2011-11-11  10:10:10", []string{"2011", "11", "11", "10", "10", "10"}},
 		{"xx2011-11-11 10:10:10", nil},
 		{"T10:10:10", nil},
-		{"2011-11-11x", nil},
+		{"2011-11-11x", []string{"2011", "11", "11x"}},
 		{"xxx 10:10:10", nil},
 	}
 
