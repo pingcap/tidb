@@ -424,6 +424,17 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			}
 			partialPaths = append(partialPaths, partialPath)
 		}
+		// If all of the partialPaths use the same index, we will not use the indexMerge.
+		singlePath := true
+		for i := len(partialPaths) - 1; i >= 1; i-- {
+			if partialPaths[i].Index != partialPaths[i-1].Index {
+				singlePath = false
+				break
+			}
+		}
+		if singlePath {
+			continue
+		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
 			if possiblePath == nil {
