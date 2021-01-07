@@ -1286,7 +1286,7 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	if !vars.TxnCtx.IsStaleness {
 		return nil
 	}
-	errMsg := "only support read only statement during time-bounded read only transaction"
+	errMsg := "only support read-only statement during read-only staleness transactions"
 	switch stmtNode.(type) {
 	case *ast.SplitRegionStmt:
 		return nil

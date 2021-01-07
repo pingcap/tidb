@@ -3942,6 +3942,11 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
 			isValidate: true,
 		},
+		{
+			name:       "do statement",
+			sql:        `DO SLEEP(1);`,
+			isValidate: true,
+		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3958,7 +3963,7 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, `.*only support read only statement during time-bounded read only transaction.*`)
+			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
 		}
 	}
 }
