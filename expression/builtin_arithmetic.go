@@ -48,7 +48,10 @@ var (
 	_ builtinFunc = &builtinArithmeticMultiplyDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyIntSig{}
-	_ builtinFunc = &builtinArithmeticIntDivideIntSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntUnsignedUnsignedSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntUnsignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntSignedSignedSig{}
+	_ builtinFunc = &builtinArithmeticIntDivideIntSignedUnsignedSig{}
 	_ builtinFunc = &builtinArithmeticIntDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticModIntSig{}
 	_ builtinFunc = &builtinArithmeticModRealSig{}
@@ -711,12 +714,30 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+		if isLHSUnsigned || isRHSUnsigned {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		sig := &builtinArithmeticIntDivideIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
-		return sig, nil
+
+		switch {
+		case isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticIntDivideIntUnsignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			return sig, nil
+		case isLHSUnsigned && !isRHSUnsigned:
+			sig := &builtinArithmeticIntDivideIntUnsignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			return sig, nil
+		case !isLHSUnsigned && isRHSUnsigned:
+			sig := &builtinArithmeticIntDivideIntSignedUnsignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			return sig, nil
+		default:
+			sig := &builtinArithmeticIntDivideIntSignedSignedSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			return sig, nil
+		}
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDecimal, types.ETDecimal)
 	if err != nil {
@@ -730,27 +751,21 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 	return sig, nil
 }
 
-type builtinArithmeticIntDivideIntSig struct{ baseBuiltinFunc }
+type builtinArithmeticIntDivideIntUnsignedUnsignedSig struct{
+	baseBuiltinFunc
+}
 
-func (s *builtinArithmeticIntDivideIntSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticIntDivideIntSig{}
+func (s *builtinArithmeticIntDivideIntUnsignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticIntDivideIntUnsignedUnsignedSig{}
 	newSig.cloneFrom(&s.baseBuiltinFunc)
 	return newSig
 }
 
-type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
-
-func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
-	newSig := &builtinArithmeticIntDivideDecimalSig{}
-	newSig.cloneFrom(&s.baseBuiltinFunc)
-	return newSig
-}
-
-func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideIntUnsignedUnsignedSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return s.evalIntWithCtx(s.ctx, row)
 }
 
-func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideIntUnsignedUnsignedSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	b, isNull, err := s.args[1].EvalInt(sctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -765,27 +780,119 @@ func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Contex
 		return 0, isNull, err
 	}
 
-	var (
-		ret int64
-		val uint64
-	)
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	ret := int64(uint64(a) / uint64(b))
 
-	switch {
-	case isLHSUnsigned && isRHSUnsigned:
-		ret = int64(uint64(a) / uint64(b))
-	case isLHSUnsigned && !isRHSUnsigned:
-		val, err = types.DivUintWithInt(uint64(a), b)
-		ret = int64(val)
-	case !isLHSUnsigned && isRHSUnsigned:
-		val, err = types.DivIntWithUint(a, uint64(b))
-		ret = int64(val)
-	case !isLHSUnsigned && !isRHSUnsigned:
-		ret, err = types.DivInt64(a, b)
+	return ret, false, nil
+}
+
+type builtinArithmeticIntDivideIntSignedUnsignedSig struct{
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticIntDivideIntSignedUnsignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticIntDivideIntSignedUnsignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticIntDivideIntSignedUnsignedSig) evalInt(row chunk.Row) (int64, bool, error) {
+	return s.evalIntWithCtx(s.ctx, row)
+}
+
+func (s *builtinArithmeticIntDivideIntSignedUnsignedSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	b, isNull, err := s.args[1].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
 	}
 
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(sctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	val, err := types.DivIntWithUint(a, uint64(b))
+
+	return int64(val), err != nil, err
+}
+
+type builtinArithmeticIntDivideIntSignedSignedSig struct{
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticIntDivideIntSignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticIntDivideIntSignedSignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticIntDivideIntSignedSignedSig) evalInt(row chunk.Row) (int64, bool, error) {
+	return s.evalIntWithCtx(s.ctx, row)
+}
+
+func (s *builtinArithmeticIntDivideIntSignedSignedSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	b, isNull, err := s.args[1].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(sctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	ret, err := types.DivInt64(a, b)
+
 	return ret, err != nil, err
+}
+
+type builtinArithmeticIntDivideIntUnsignedSignedSig struct{
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticIntDivideIntUnsignedSignedSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticIntDivideIntUnsignedSignedSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticIntDivideIntUnsignedSignedSig) evalInt(row chunk.Row) (int64, bool, error) {
+	return s.evalIntWithCtx(s.ctx, row)
+}
+
+func (s *builtinArithmeticIntDivideIntUnsignedSignedSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	b, isNull, err := s.args[1].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	if b == 0 {
+		return 0, true, handleDivisionByZeroError(sctx)
+	}
+
+	a, isNull, err := s.args[0].EvalInt(sctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+
+	val, err := types.DivUintWithInt(uint64(a), b)
+
+	return int64(val), err != nil, err
+}
+
+type builtinArithmeticIntDivideDecimalSig struct{ baseBuiltinFunc }
+
+func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticIntDivideDecimalSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {

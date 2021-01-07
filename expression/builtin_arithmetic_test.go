@@ -367,7 +367,13 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		switch sig.(type) {
-		case *builtinArithmeticIntDivideIntSig:
+		case *builtinArithmeticIntDivideIntSignedUnsignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
+		case *builtinArithmeticIntDivideIntSignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
+		case *builtinArithmeticIntDivideIntUnsignedSignedSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
+		case *builtinArithmeticIntDivideIntUnsignedUnsignedSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideInt)
 		case *builtinArithmeticIntDivideDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
