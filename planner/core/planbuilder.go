@@ -898,13 +898,18 @@ func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInf
 	}
 }
 
+// isForUpdateReadSelectLock checks if the lock type need to use forUpdateRead
 func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 	if lock == nil {
 		return false
 	}
-	return lock.LockType == ast.SelectLockForUpdate || lock.LockType == ast.SelectLockForUpdateNoWait
+	return lock.LockType == ast.SelectLockForUpdate ||
+		lock.LockType == ast.SelectLockForUpdateNoWait ||
+		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
+// getLatestIndexInfo gets the index info of latest schema version from given table id,
+// it returns nil if the schema version is not changed
 func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
 	dom := domain.GetDomain(ctx)
 	if dom == nil {
