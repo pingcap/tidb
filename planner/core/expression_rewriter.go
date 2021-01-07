@@ -1482,8 +1482,8 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
@@ -1943,6 +1943,9 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
 		}
 
+		if len(handleColIDs) != handle.NumCols() {
+			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
+		}
 		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -1951,7 +1954,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID, dt := range datumMap {
-			dtStr, err := dt.ToString()
+			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -2030,7 +2033,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := ds[i].ToString()
+			dtStr, err := datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -2056,4 +2059,11 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		return "", errors.Trace(err)
 	}
 	return string(retStr), nil
+}
+
+func datumToJSONObject(d *types.Datum) (interface{}, error) {
+	if d.IsNull() {
+		return nil, nil
+	}
+	return d.ToString()
 }

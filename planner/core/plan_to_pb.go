@@ -111,6 +111,31 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	exprs, err := expression.ExpressionsToPBList(sc, p.Exprs, client)
+	if err != nil {
+		return nil, err
+	}
+	projExec := &tipb.Projection{
+		Exprs: exprs,
+	}
+	executorID := ""
+	if storeType == kv.TiFlash {
+		var err error
+		projExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		executorID = p.ExplainID().String()
+	} else {
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
@@ -198,6 +223,73 @@ func findColumnInfoByID(infos []*model.ColumnInfo, id int64) *model.ColumnInfo {
 	return nil
 }
 
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	hashCols := make([]expression.Expression, 0, len(e.HashCols))
+	for _, col := range e.HashCols {
+		hashCols = append(hashCols, col)
+	}
+	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ecExec := &tipb.ExchangeSender{
+		Tp:              e.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		PartitionKeys:   hashColPb,
+		Child:           child,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:             tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: ecExec,
+		ExecutorId:     &executorID,
+	}, nil
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
+	for _, column := range e.Schema().Columns {
+		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
+	}
+	ecExec := &tipb.ExchangeReceiver{
+		EncodedTaskMeta: encodedTask,
+		FieldTypes:      fieldTypes,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:               tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: ecExec,
+		ExecutorId:       &executorID,
+	}, nil
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
@@ -231,7 +323,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))

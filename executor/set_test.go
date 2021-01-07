@@ -510,6 +510,10 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+
+	// Test issue #22145
+	tk.MustExec(`set global sync_relay_log = "'"`)
+
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -755,10 +759,10 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("7"))
 
 	_, err = tk.Exec("set @@error_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@warning_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set time_zone='SySTeM'")
 	result = tk.MustQuery("select @@time_zone;")

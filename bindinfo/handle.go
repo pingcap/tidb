@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -182,6 +181,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
@@ -242,6 +242,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err
 	}
 
+	record.Db = strings.ToLower(record.Db)
 	oldRecord := h.GetBindRecord(parser.DigestNormalized(record.OriginalSQL), record.OriginalSQL, record.Db)
 	var duplicateBinding *Binding
 	if oldRecord != nil {
@@ -314,6 +315,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 
 // DropBindRecord drops a BindRecord to the storage and BindRecord int the cache.
 func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (err error) {
+	db = strings.ToLower(db)
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
@@ -371,7 +373,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 func (h *BindHandle) lockBindInfoTable() error {
 	// h.sctx already locked.
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(context.TODO(), h.lockBindInfoSQL())
+	_, err := exec.ExecuteInternal(context.TODO(), h.LockBindInfoSQL())
 	return err
 }
 
@@ -471,7 +473,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
-		Db:          row.GetString(2),
+		Db:          strings.ToLower(row.GetString(2)),
 		Bindings:    []Binding{hint},
 	}
 	hash := parser.DigestNormalized(bindRecord.OriginalSQL)
@@ -537,7 +539,7 @@ func (c cache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 func (c cache) setBindRecord(hash string, meta *BindRecord) {
 	metas := c[hash]
 	for i := range metas {
-		if metas[i].Db == meta.Db && metas[i].OriginalSQL == meta.OriginalSQL {
+		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
 			return
 		}
@@ -566,7 +568,7 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	bindRecords := c[hash]
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL && strings.EqualFold(bindRecord.Db, db) {
+		if bindRecord.OriginalSQL == normdOrigSQL {
 			return bindRecord
 		}
 	}
@@ -575,9 +577,8 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 
 func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
 	sql := fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
+		`DELETE FROM mysql.bind_info WHERE original_sql=%s`,
 		expression.Quote(normdOrigSQL),
-		expression.Quote(db),
 	)
 	if bindSQL == "" {
 		return sql
@@ -599,8 +600,8 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 	)
 }
 
-// lockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) lockBindInfoSQL() string {
+// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
+func (h *BindHandle) LockBindInfoSQL() string {
 	return fmt.Sprintf("UPDATE mysql.bind_info SET source=%s WHERE original_sql=%s",
 		expression.Quote(Builtin),
 		expression.Quote(BuiltinPseudoSQL4BindLock))
@@ -608,11 +609,10 @@ func (h *BindHandle) lockBindInfoSQL() string {
 
 func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
 	updateTsStr := updateTs.String()
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and update_time<%s`,
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and update_time<%s`,
 		expression.Quote(deleted),
 		expression.Quote(updateTsStr),
 		expression.Quote(originalSQL),
-		expression.Quote(db),
 		expression.Quote(updateTsStr))
 	if bindingSQL == "" {
 		return sql
@@ -623,34 +623,22 @@ func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs t
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
-	schemas, sqls := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
-	for i := range sqls {
-		stmt, err := parser4Capture.ParseOneStmt(sqls[i], "", "")
+	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
+	for _, bindableStmt := range bindableStmts {
+		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
 		}
-		normalizedSQL, digest := parser.NormalizeDigest(sqls[i])
-		dbName := utilparser.GetDefaultDB(stmt, schemas[i])
+		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
-		h.sctx.Lock()
-		h.sctx.GetSessionVars().CurrentDB = schemas[i]
-		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
-		// TODO: support all engines plan hint in capture baselines.
-		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
-		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
-		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
-		h.sctx.Unlock()
-		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] generate hints failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
-			continue
-		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
 		if bindSQL == "" {
 			continue
 		}
@@ -665,7 +653,7 @@ func (h *BindHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", sqls[i]), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
@@ -690,23 +678,26 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
 	}
-	paramChecker := &paramMarkerChecker{}
-	stmtNode.Accept(paramChecker)
-	// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
-	// so just ignore them now.
-	if paramChecker.hasParamMarker {
-		return ""
+	if !captured {
+		paramChecker := &paramMarkerChecker{}
+		stmtNode.Accept(paramChecker)
+		// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+		// so just ignore them now.
+		if paramChecker.hasParamMarker {
+			return ""
+		}
 	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
 	hint.BindHint(stmtNode, &hint.HintsSet{})
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	restoreCtx.DefaultDB = defaultDB
 	err := stmtNode.Restore(restoreCtx)
 	if err != nil {
 		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))

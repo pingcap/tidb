@@ -2220,4 +2220,64 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
 	*/
+
+	// Test pessimistic retry for unique index amend.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 1), (2, 2);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c)")
+	tk.MustExec("insert into t values(3, 5)")
+	tk.MustExec("update t set c = 4 where c = 2")
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		err = tk2.ExecToErr("begin pessimistic")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("insert into t values(5, 5)")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("delete from t where id = 5")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		// let commit in tk start.
+		errCh <- err
+		time.Sleep(time.Millisecond * 100)
+		err = tk2.ExecToErr("commit")
+		errCh <- err
+	}()
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+}
+
+func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_change_column_type = 1;")
+	defer func() {
+		tk.MustExec("set global tidb_enable_change_column_type = 0;")
+	}()
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	tk2.MustExec("drop table if exists t")
+	tk2.MustExec("create table t (id int primary key, v varchar(10));")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, \"123456789\")")
+	tk2.MustExec("alter table t modify column v varchar(5);")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
 }
