@@ -446,6 +446,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
 		tp = types.ETString
+	} else if tp == types.ETDuration {
+		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		tp = types.ETString
@@ -471,10 +473,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
-	case types.ETString:
+	case types.ETString, types.ETDuration:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
@@ -661,7 +663,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
 		tp = types.ETString
-	}  else if tp == types.ETDuration {
+	} else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
