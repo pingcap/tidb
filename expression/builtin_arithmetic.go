@@ -751,7 +751,7 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 	return sig, nil
 }
 
-type builtinArithmeticIntDivideIntUnsignedUnsignedSig struct{
+type builtinArithmeticIntDivideIntUnsignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -785,7 +785,7 @@ func (s *builtinArithmeticIntDivideIntUnsignedUnsignedSig) evalIntWithCtx(sctx s
 	return ret, false, nil
 }
 
-type builtinArithmeticIntDivideIntSignedUnsignedSig struct{
+type builtinArithmeticIntDivideIntSignedUnsignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -819,7 +819,7 @@ func (s *builtinArithmeticIntDivideIntSignedUnsignedSig) evalIntWithCtx(sctx ses
 	return int64(val), err != nil, err
 }
 
-type builtinArithmeticIntDivideIntSignedSignedSig struct{
+type builtinArithmeticIntDivideIntSignedSignedSig struct {
 	baseBuiltinFunc
 }
 
@@ -853,7 +853,7 @@ func (s *builtinArithmeticIntDivideIntSignedSignedSig) evalIntWithCtx(sctx sessi
 	return ret, err != nil, err
 }
 
-type builtinArithmeticIntDivideIntUnsignedSignedSig struct{
+type builtinArithmeticIntDivideIntUnsignedSignedSig struct {
 	baseBuiltinFunc
 }
 
