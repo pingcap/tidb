@@ -655,6 +655,11 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -771,6 +776,11 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer tk.MustExec("drop table if exists tk")
