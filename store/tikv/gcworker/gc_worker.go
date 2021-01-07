@@ -1066,10 +1066,16 @@ retryScanAndResolve:
 		if w.testingKnobs.scanLocks != nil {
 			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
+		locForResolve := loc
 		for {
-			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+			var (
+				ok   bool
+				err1 error
+			)
 			if w.testingKnobs.resolveLocks != nil {
 				ok, err1 = w.testingKnobs.resolveLocks(locks, loc.Region)
+			} else {
+				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}
 			if err1 != nil {
 				return stat, errors.Trace(err1)
@@ -1083,9 +1089,8 @@ retryScanAndResolve:
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
-				if stillInSame && bytes.Compare(loc.EndKey, refreshedLoc.EndKey) >= 0 {
-					// avoid re-scan lock when all locks in original region and original region's EndKey <= new region's EndKey
-					loc = refreshedLoc
+				if stillInSame {
+					locForResolve = refreshedLoc
 					continue
 				}
 				continue retryScanAndResolve

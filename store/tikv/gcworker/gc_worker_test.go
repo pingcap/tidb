@@ -40,10 +40,10 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -80,6 +80,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	}
 
 	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.MockTiKV),
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
@@ -885,7 +886,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 	var (
 		firstAccess    = true
 		firstAccessRef = &firstAccess
-		resolvedLock   []*tikv.Lock
+		resolvedLock   [][]byte
 	)
 
 	// key range: ['' - 'm' - 'z']
@@ -907,19 +908,14 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
-			oldR1, _ := s.store.GetRegionCache().GetTiKVRPCContext(tikv.NewNoopBackoff(context.Background()), regionID, kv.ReplicaReadLeader, 0)
-			// mock tikv return a new merged region1 ("" ~ "z") when first access regions
-			mergedR1 := metapb.Region{
-				Id:          1,
-				RegionEpoch: &metapb.RegionEpoch{Version: regionID.GetVer(), ConfVer: regionID.GetConfVer() + 1},
-				StartKey:    codec.EncodeBytes(nil, []byte("")),
-				EndKey:      codec.EncodeBytes(nil, []byte("z")),
-				Peers:       oldR1.Meta.Peers,
-			}
+			// merge region2 into region1 and return EpochNotMatch error.
+			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster.Merge(s.initRegion.regionID, region2)
+			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			s.store.GetRegionCache().OnRegionEpochNotMatch(
 				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
-				[]*metapb.Region{&mergedR1})
+				[]*metapb.Region{regionMeta})
 			// also let region1 contains all 4 locks
 			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 				if regionID == s.initRegion.regionID {
@@ -934,13 +930,19 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			}
 			return false, nil
 		}
-		resolvedLock = append(resolvedLock, locks...)
+		for _, lock := range locks {
+			resolvedLock = append(resolvedLock, lock.Key)
+		}
 		return true, nil
 	}
 
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
 	c.Assert(err, IsNil)
-	c.Assert(len(resolvedLock), Equals, 4)
+	c.Assert(len(resolvedLock), Equals, 6)
+	expects := [][]byte{[]byte("a"), []byte("b"), []byte("a"), []byte("b"), []byte("o"), []byte("p")}
+	for i, l := range resolvedLock {
+		c.Assert(l, BytesEquals, expects[i])
+	}
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
