@@ -714,8 +714,10 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	}()
 
 	timeoutErr := <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
 	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 	timeoutErr = <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
 	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
