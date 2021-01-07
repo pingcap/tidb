@@ -498,7 +498,7 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 
 type basicCopRuntimeStats struct {
 	BasicRuntimeStats
-	threads int32
+	threads   int32
 	storeType string
 }
 
@@ -515,7 +515,7 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	return &basicCopRuntimeStats{
 		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
 		threads:           e.threads,
-		storeType: e.storeType,
+		storeType:         e.storeType,
 	}
 }
 
@@ -559,7 +559,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)},
-			threads: int32(summary.GetConcurrency()),
+			threads:   int32(summary.GetConcurrency()),
 			storeType: crs.storeType})
 }
 
@@ -864,7 +864,7 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *Co
 		copStats = &CopRuntimeStats{
 			stats:      make(map[string][]*basicCopRuntimeStats),
 			scanDetail: &ScanDetail{},
-			storeType: storeType,
+			storeType:  storeType,
 		}
 		e.copStats[planID] = copStats
 	}

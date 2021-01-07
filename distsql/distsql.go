@@ -51,7 +51,7 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		encodeType: encodeType,
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
-		storeType: kv.TiFlash,
+		storeType:  kv.TiFlash,
 	}, nil
 
 }
@@ -114,7 +114,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
 		encodeType: encodetype,
-		storeType: kvReq.StoreType,
+		storeType:  kvReq.StoreType,
 	}, nil
 }
 
@@ -150,7 +150,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    label,
 		encodeType: tipb.EncodeType_TypeDefault,
-		storeType: kvReq.StoreType,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }
@@ -169,7 +169,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    metrics.LblGeneral,
 		encodeType: tipb.EncodeType_TypeDefault,
-		storeType: kvReq.StoreType,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }

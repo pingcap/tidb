@@ -15,9 +15,9 @@ package distsql
 
 import (
 	"context"
-	"github.com/pingcap/tidb/kv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/execdetails"
