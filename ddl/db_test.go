@@ -308,15 +308,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	_, checkErr = tk1.Exec("use test_db")
 
 	d := s.dom.DDL()
-<<<<<<< HEAD
-	hook := &ddl.TestDDLCallback{}
-=======
 	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var currJob *model.Job
-	ctx := mock.NewContext()
-	ctx.Store = s.store
-	times := 0
->>>>>>> 18d3135b6... test: stable TestTransactionWithWriteOnlyColumn (#22226)
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			if checkErr != nil {
@@ -729,13 +721,8 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	s.mustExec(c, "use test_drop_schema_table")
 	s.mustExec(c, "create table t(c1 int, c2 int)")
 	var checkErr error
-<<<<<<< HEAD
-	hook := &ddl.TestDDLCallback{}
-	dbInfo := testGetSchemaByName(c, s.tk.Se, "test_drop_schema_table")
-=======
 	hook := &ddl.TestDDLCallback{Do: s.dom}
-	dbInfo := testGetSchemaByName(c, tk.Se, "test_drop_schema_table")
->>>>>>> 18d3135b6... test: stable TestTransactionWithWriteOnlyColumn (#22226)
+	dbInfo := testGetSchemaByName(c, s.tk.Se, "test_drop_schema_table")
 	done := false
 	var wg sync.WaitGroup
 	tk2 := testkit.NewTestKit(c, s.store)
@@ -1478,115 +1465,6 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
-<<<<<<< HEAD
-=======
-			c.Assert(idx1, IsNil)
-			c.Assert(err1, IsNil)
-			c.Assert(checkErr, NotNil)
-			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			// Check index is deleted
-			ctx := s.s.(sessionctx.Context)
-			checkDelRangeDone(c, ctx, c3idx)
-		}
-	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
-	s.mustExec(tk, c, "alter table test_drop_column drop column c3")
-}
-
-// TestCancelDropColumns tests cancel ddl job which type is drop multi-columns.
-func (s *testDBSuite3) TestCancelDropColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	s.mustExec(tk, c, "drop table if exists test_drop_column")
-	s.mustExec(tk, c, "create table test_drop_column(c1 int, c2 int)")
-	defer s.mustExec(tk, c, "drop table test_drop_column;")
-	testCases := []struct {
-		needAddColumn  bool
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{true, model.JobStateNone, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var jobID int64
-	testCase := &testCases[0]
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-
-	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	var err1 error
-	var c3idx table.Index
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddColumn {
-			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
-			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
-			tt := s.testGetTable(c, "test_drop_column")
-			for _, idx := range tt.Indices() {
-				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-					c3idx = idx
-					break
-				}
-			}
-		}
-		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
-		t := s.testGetTable(c, "test_drop_column")
-		col3 := table.FindCol(t.Cols(), "c3")
-		col4 := table.FindCol(t.Cols(), "c4")
-		var idx3 table.Index
-		for _, idx := range t.Indices() {
-			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-				idx3 = idx
-				break
-			}
-		}
-		if testCase.cancelSucc {
-			c.Assert(checkErr, IsNil)
-			c.Assert(col3, NotNil)
-			c.Assert(col4, NotNil)
-			c.Assert(idx3, NotNil)
-			c.Assert(col3.Name.L, Equals, "c3")
-			c.Assert(col4.Name.L, Equals, "c4")
-			c.Assert(idx3.Meta().Name.L, Equals, "idx_c3")
-			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-		} else {
-			c.Assert(col3, IsNil)
-			c.Assert(col4, IsNil)
-			c.Assert(idx3, IsNil)
->>>>>>> 18d3135b6... test: stable TestTransactionWithWriteOnlyColumn (#22226)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
@@ -3439,147 +3317,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-<<<<<<< HEAD
 	s.mustExec(c, "drop table t1")
-=======
-	s.mustExec(tk, c, "drop table t1")
-}
-
-func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2), index idx1(c1, c2));")
-
-	sql := "alter table t1 change c2 c2 mediumint;"
-	// defaultBatchSize is equal to ddl.defaultBatchSize
-	base := defaultBatchSize * 8
-	// add some rows
-	batchInsert(tk, "t1", 0, base)
-	// Make sure the count of regions more than backfill workers.
-	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
-
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
-	tbl := s.testGetTable(c, "t1")
-	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
-	// Check insert null before job first update.
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var checkErr error
-	var currJob *model.Job
-	var elements []*meta.Element
-	ctx := mock.NewContext()
-	ctx.Store = s.store
-	times := 0
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
-			return
-		}
-		if job.Type == model.ActionModifyColumn {
-			if times == 0 {
-				times++
-				return
-			}
-			currJob = job
-			var (
-				newCol                *model.ColumnInfo
-				oldColName            *model.CIStr
-				modifyColumnTp        byte
-				updatedAutoRandomBits uint64
-				changingCol           *model.ColumnInfo
-				changingIdxs          []*model.IndexInfo
-			)
-			pos := &ast.ColumnPosition{}
-			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements(changingCol, changingIdxs)
-		}
-		if job.Type == model.ActionAddIndex {
-			if times == 1 {
-				times++
-				return
-			}
-			tbl := s.testGetTable(c, "t1")
-			indexInfo := tbl.Meta().FindIndexByName("idx2")
-			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-		}
-	}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`), IsNil)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err := tk.Exec(sql)
-	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
-	c.Assert(checkErr, IsNil)
-	// Check whether the reorg information is cleaned up when executing "modify column" failed.
-	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
-		for i, e := range gotElements {
-			c.Assert(e, DeepEquals, expectedElements[i])
-		}
-		err := ctx.NewTxn(context.Background())
-		c.Assert(err, IsNil)
-		txn, err := ctx.Txn(true)
-		c.Assert(err, IsNil)
-		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
-		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
-		c.Assert(e, IsNil)
-		c.Assert(start, IsNil)
-		c.Assert(end, IsNil)
-		c.Assert(physicalID, Equals, int64(0))
-	}
-	expectedEles := []*meta.Element{
-		{ID: 4, TypeKey: meta.ColumnElementKey},
-		{ID: 3, TypeKey: meta.IndexElementKey},
-		{ID: 4, TypeKey: meta.IndexElementKey}}
-	checkReorgHandle(elements, expectedEles)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
-	tk.MustExec("admin check table t1")
-
-	// Check whether the reorg information is cleaned up when executing "modify column" successfully.
-	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("modifyColumnNotOwnerErr")`), IsNil)
-	tk.MustExec(sql)
-	expectedEles = []*meta.Element{
-		{ID: 5, TypeKey: meta.ColumnElementKey},
-		{ID: 5, TypeKey: meta.IndexElementKey},
-		{ID: 6, TypeKey: meta.IndexElementKey}}
-	checkReorgHandle(elements, expectedEles)
-	tk.MustExec("admin check table t1")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
-
-	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
-	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`), IsNil)
-	tk.MustExec("alter table t1 add index idx2(c1)")
-	expectedEles = []*meta.Element{
-		{ID: 7, TypeKey: meta.IndexElementKey}}
-	checkReorgHandle(elements, expectedEles)
-	tk.MustExec("admin check table t1")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
-}
-
-func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
-	}()
-
-	tk.MustExec("drop table if exists tt;")
-	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
-	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
-	_, err := tk.Exec("alter table tt modify a int not null;")
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
-	tk.MustExec("drop table tt")
->>>>>>> 18d3135b6... test: stable TestTransactionWithWriteOnlyColumn (#22226)
 }
 
 func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
@@ -3606,13 +3344,8 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 
 	// Check insert null before job first update.
 	times := 0
-<<<<<<< HEAD
-	hook := &ddl.TestDDLCallback{}
-	s.tk.MustExec("delete from t1")
-=======
 	hook := &ddl.TestDDLCallback{Do: s.dom}
-	tk.MustExec("delete from t1")
->>>>>>> 18d3135b6... test: stable TestTransactionWithWriteOnlyColumn (#22226)
+	s.tk.MustExec("delete from t1")
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
