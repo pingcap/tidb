@@ -692,12 +692,13 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	// Parallel the blocking tests to accelerate CI.
 	var wg sync.WaitGroup
 	wg.Add(2)
+	timeoutErrCh := make(chan error, 2)
 	go func() {
 		defer wg.Done()
 		// tk3 try lock c1 = 1 timeout 1sec
 		tk3.MustExec("begin pessimistic")
 		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk3.MustExec("commit")
 	}()
 
@@ -708,9 +709,14 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk5.MustExec("set innodb_lock_wait_timeout = 2")
 		tk5.MustExec("begin pessimistic")
 		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk5.MustExec("rollback")
 	}()
+
+	timeoutErr := <- timeoutErrCh
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	timeoutErr = <- timeoutErrCh
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
