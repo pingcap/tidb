@@ -1406,7 +1406,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for startRow = 1; startRow < req.NumRows(); startRow++ {
 			for i := 0; i < req.NumCols(); i++ {
 				if !bytes.Equal(req.GetRow(startRow).GetRaw(i), e.rowData[i]) {
-					return ErrSubqueryNo1Row
+					return ErrSubqueryMoreThan1Row
 				}
 			}
 		}
@@ -1425,7 +1425,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for startRow = 0; startRow < childChunk.NumRows(); startRow++ {
 			for i := 0; i < childChunk.NumCols(); i++ {
 				if !bytes.Equal(childChunk.GetRow(startRow).GetRaw(i), e.rowData[i]) {
-					return ErrSubqueryNo1Row
+					return ErrSubqueryMoreThan1Row
 				}
 			}
 		}
