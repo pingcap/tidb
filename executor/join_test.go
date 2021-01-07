@@ -1553,7 +1553,7 @@ func (s *testSuiteJoin3) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_16 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"MergeJoin_20 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
 		"├─TableReader_14(Build) 6666.67 root  data:TableRangeScan_13",
 		"│ └─TableRangeScan_13 6666.67 cop[tikv] table:t2 range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 		"└─TableReader_12(Probe) 10000.00 root  data:TableFullScan_11",
