@@ -1944,7 +1944,7 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
         "Plan": [
-          "MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
           "│ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
           "└─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
@@ -1959,9 +1959,9 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
         "Plan": [
-          "Projection_20 12487.50 root  test.t.a",
-          "└─Projection_19 12487.50 root  test.t.a, plus(test.t.a, 1)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "Projection_24 12487.50 root  test.t.a",
+          "└─Projection_23 12487.50 root  test.t.a, plus(test.t.a, 1)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "    ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
           "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
           "    └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
@@ -1976,9 +1976,9 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
         "Plan": [
-          "Projection_20 12487.50 root  test.t.a",
-          "└─Projection_19 12487.50 root  test.t.a, minus(test.t.a, 1)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "Projection_24 12487.50 root  test.t.a",
+          "└─Projection_23 12487.50 root  test.t.a, minus(test.t.a, 1)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "    ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
           "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
           "    └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
@@ -1993,13 +1993,13 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
         "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, unaryminus(test.t.a)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "    ├─IndexReader_22(Build) 9990.00 root  index:IndexFullScan_21",
-          "    │ └─IndexFullScan_21 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "    └─IndexReader_20(Probe) 9990.00 root  index:IndexFullScan_19",
-          "      └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+          "Projection_32 12487.50 root  test.t.a",
+          "└─Projection_31 12487.50 root  test.t.a, unaryminus(test.t.a)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
+          "    │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
+          "      └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -2010,13 +2010,13 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
         "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "    ├─IndexReader_22(Build) 9990.00 root  index:IndexFullScan_21",
-          "    │ └─IndexFullScan_21 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "    └─IndexReader_20(Probe) 9990.00 root  index:IndexFullScan_19",
-          "      └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+          "Projection_32 12487.50 root  test.t.a",
+          "└─Projection_31 12487.50 root  test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
+          "    │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
+          "      └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -2027,9 +2027,9 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
         "Plan": [
-          "Projection_20 12487.50 root  test.t.a",
-          "└─Projection_19 12487.50 root  test.t.a, plus(1, test.t.a)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "Projection_24 12487.50 root  test.t.a",
+          "└─Projection_23 12487.50 root  test.t.a, plus(1, test.t.a)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "    ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
           "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
           "    └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
@@ -2044,13 +2044,13 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
         "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, minus(1, test.t.a)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "    ├─IndexReader_22(Build) 9990.00 root  index:IndexFullScan_21",
-          "    │ └─IndexFullScan_21 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "    └─IndexReader_20(Probe) 9990.00 root  index:IndexFullScan_19",
-          "      └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+          "Projection_32 12487.50 root  test.t.a",
+          "└─Projection_31 12487.50 root  test.t.a, minus(1, test.t.a)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
+          "    │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
+          "      └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -2061,13 +2061,13 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
         "Plan": [
-          "Projection_24 12487.50 root  test.t.a",
-          "└─Projection_23 12487.50 root  test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
-          "    ├─IndexReader_22(Build) 9990.00 root  index:IndexFullScan_21",
-          "    │ └─IndexFullScan_21 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
-          "    └─IndexReader_20(Probe) 9990.00 root  index:IndexFullScan_19",
-          "      └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+          "Projection_32 12487.50 root  test.t.a",
+          "└─Projection_31 12487.50 root  test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader_26(Build) 9990.00 root  index:IndexFullScan_25",
+          "    │ └─IndexFullScan_25 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader_24(Probe) 9990.00 root  index:IndexFullScan_23",
+          "      └─IndexFullScan_23 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2",
@@ -2078,9 +2078,9 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
         "Plan": [
-          "Projection_20 12487.50 root  test.t.a",
-          "└─Projection_19 12487.50 root  test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
-          "  └─MergeJoin_17 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "Projection_24 12487.50 root  test.t.a",
+          "└─Projection_23 12487.50 root  test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
+          "  └─MergeJoin_21 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "    ├─IndexReader_15(Build) 9990.00 root  index:IndexFullScan_14",
           "    │ └─IndexFullScan_14 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
           "    └─IndexReader_13(Probe) 9990.00 root  index:IndexFullScan_12",
@@ -2095,9 +2095,9 @@
       {
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
         "Plan": [
-          "Projection_15 12487.50 root  test.t.a",
+          "Projection_19 12487.50 root  test.t.a",
           "└─Sort_7 12487.50 root  Column#7",
-          "  └─Projection_16 12487.50 root  test.t.a, mul(3, test.t.a)->Column#7",
+          "  └─Projection_20 12487.50 root  test.t.a, mul(3, test.t.a)->Column#7",
           "    └─MergeJoin_9 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_14(Build) 9990.00 root  index:IndexFullScan_13",
           "      │ └─IndexFullScan_13 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",

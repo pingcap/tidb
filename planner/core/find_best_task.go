@@ -244,7 +244,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
+		// An optimal task could not satisfy the property, so it should be converted here.
+		if _, ok := curTask.(*rootTask); !ok && prop.TaskTp == property.RootTaskType {
 			curTask = curTask.convertToRootTask(p.ctx)
 		}
 
@@ -266,7 +267,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			bestTask = curTask
 			break
 		}
-
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
@@ -600,14 +600,13 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(propp *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
 	// and set inner child prop nil, so here we do nothing.
-	if propp == nil {
+	if prop == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
-	prop := propp.Clone()
 
 	t = ds.getTask(prop)
 	if t != nil {
