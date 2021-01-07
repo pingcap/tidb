@@ -1478,6 +1478,55 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
+	t := tasks[0].copy()
+	mpp, ok := t.(*mppTask)
+	if !ok {
+		return invalidTask
+	}
+	inputRows := mpp.count()
+	switch p.MppRunMode {
+	case Mpp1Phase:
+		/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+		/// only push down the original agg
+		p.self.SetChildren(mpp.p)
+		mpp.p = p.self
+		mpp.addCost(p.GetCost(inputRows, false))
+		return mpp
+	case Mpp2Phase:
+		/// 2-phase agg: partial + final agg for hash partition
+		if len(p.PartitionCols) == 0 {
+			return invalidTask
+		}
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+		if partialAgg == nil {
+			return invalidTask
+		}
+		partialAgg.SetChildren(mpp.p)
+		mpp.p = partialAgg
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.PartitionCols}
+		newMpp := mpp.enforceExchangerImpl(prop)
+		finalAgg.SetChildren(newMpp.p)
+		newMpp.p = finalAgg
+		// TODO: how to set 2-phase cost?
+		newMpp.addCost(p.GetCost(inputRows/2, false))
+		return newMpp
+	case MppTiDB:
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+		if partialAgg != nil {
+			partialAgg.SetChildren(mpp.p)
+			mpp.p = partialAgg
+		}
+		t = mpp.convertToRootTask(p.ctx)
+		inputRows = t.count()
+		attachPlan2Task(finalAgg, t)
+		t.addCost(p.GetCost(inputRows, true))
+		return t
+	default:
+		return invalidTask
+	}
+}
+
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
@@ -1511,6 +1560,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
+		return p.attach2TaskForMpp(tasks...)
 		switch p.MppRunMode {
 		case Mpp1Phase:
 			/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
