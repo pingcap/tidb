@@ -3924,6 +3924,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.padding = b.padding
 	newSig.length = b.length
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
