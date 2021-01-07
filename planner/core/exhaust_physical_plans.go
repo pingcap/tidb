@@ -2246,7 +2246,7 @@ func (la *LogicalAggregation) getHashAggsForMPP(prop *property.PhysicalProperty)
 		if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
 			matchedCols := chooseSubsetOfJoinKeys(groupByCols, matches)
 			// 1-phase
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: matchedCols}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: matchedCols, CanAddEnforcer: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -2263,7 +2263,7 @@ func (la *LogicalAggregation) getHashAggsForMPP(prop *property.PhysicalProperty)
 		if len(groupByCols) != 0 {
 			// TODO: permute various partition columns from group-by columns
 			// 1-phase
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols, CanAddEnforcer: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
