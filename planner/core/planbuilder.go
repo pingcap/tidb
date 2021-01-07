@@ -152,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -164,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
@@ -373,6 +373,8 @@ const (
 	showStatement
 	globalOrderByClause
 	expressionClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -386,6 +388,8 @@ var clauseMsg = map[clauseCode]string{
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -747,23 +751,52 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedNode != nil {
-		p.BindSQL = v.HintedNode.Text()
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
+func checkHintedSQL(sql, charset, collation, db string) error {
+	p := parser.New()
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
-		BindSQL:      v.HintedNode.Text(),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedNode,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
@@ -780,6 +813,9 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 		return true
 	}
 	for _, f := range sel.Fields.Fields {
+		if f.WildCard != nil {
+			continue
+		}
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
@@ -1272,7 +1308,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}
@@ -2635,10 +2671,83 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+type colNameInOnDupExtractor struct {
+	colNameMap map[types.FieldName]*ast.ColumnNameExpr
+}
+
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	switch x := node.(type) {
+	case *ast.ColumnNameExpr:
+		fieldName := types.FieldName{
+			DBName:  x.Name.Schema,
+			TblName: x.Name.Table,
+			ColName: x.Name.Name,
+		}
+		c.colNameMap[fieldName] = x
+		return node, true
+	// We don't extract the column names from the sub select.
+	case *ast.SelectStmt, *ast.SetOprStmt:
+		return node, true
+	default:
+		return node, false
+	}
+}
+
+func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
+	}
+	actualColLen := -1
+	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
+	// but just in the table occurs in the SELECT CLAUSE.
+	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
+	//        MySQL won't throw error and will execute this SQL successfully.
+	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
+	if len(insert.OnDuplicate) > 0 {
+		// If the select has aggregation, it cannot see the columns not in the select field.
+		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.
+		//        insert into a select x from b group by x ON DUPLICATE KEY UPDATE  a.x=b.y; will report b.y not found.
+		if sel, ok := insert.Select.(*ast.SelectStmt); ok && !b.detectSelectAgg(sel) {
+			hasWildCard := false
+			for _, field := range sel.Fields.Fields {
+				if field.WildCard != nil {
+					hasWildCard = true
+					break
+				}
+			}
+			if !hasWildCard {
+				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				for _, assign := range insert.OnDuplicate {
+					assign.Expr.Accept(colExtractor)
+				}
+				actualColLen = len(sel.Fields.Fields)
+				for _, colName := range colExtractor.colNameMap {
+					// If we found the name from the INSERT's table columns, we don't try to find it in select field anymore.
+					if insertPlan.tableColNames.FindAstColName(colName.Name) {
+						continue
+					}
+					found := false
+					for _, field := range sel.Fields.Fields {
+						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
+							(colName.Name.Schema.L == "" || colField.Name.Schema.L == "" || colName.Name.Schema.L == colField.Name.Schema.L) &&
+							(colName.Name.Table.L == "" || colField.Name.Table.L == "" || colName.Name.Table.L == colField.Name.Table.L) &&
+							colName.Name.Name.L == colField.Name.Name.L {
+							found = true
+							break
+						}
+					}
+					if found {
+						continue
+					}
+					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
+				}
+			}
+		}
 	}
 	selectPlan, err := b.Build(ctx, insert.Select)
 	if err != nil {
@@ -2646,7 +2755,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
-	if selectPlan.Schema().Len() != len(affectedValuesCols) {
+	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
 		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
@@ -2669,12 +2778,17 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
+	if actualColLen == -1 {
+		actualColLen = selectPlan.Schema().Len()
+	}
+	insertPlan.RowLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+	for i := 0; i < actualColLen; i++ {
+		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
@@ -2690,8 +2804,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
-	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names4NewRow...)
+	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.tableSchema.Columns...)
+	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
+	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
+	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names[actualColLen:]...)
+	insertPlan.names4OnDuplicate = append(insertPlan.names4OnDuplicate, names4NewRow...)
 	return nil
 }
 
@@ -2971,6 +3088,9 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 		convertedDatum, err := b.convertValue(v, mockTablePlan, handleColInfos[i])
 		if err != nil {
 			return nil, err
+		}
+		if convertedDatum.IsNull() {
+			return nil, ErrBadNull.GenWithStackByArgs(handleColInfos[i].Name.O)
 		}
 		data = append(data, convertedDatum)
 	}

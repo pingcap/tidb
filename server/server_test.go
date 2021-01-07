@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,6 +51,12 @@ var (
 )
 
 func TestT(t *testing.T) {
+	defaultConfig := config.NewConfig()
+	globalConfig := config.GetGlobalConfig()
+	// Test for issue 22162. the global config shouldn't be changed by other pkg init function.
+	if !reflect.DeepEqual(defaultConfig, globalConfig) {
+		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
+	}
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
@@ -522,6 +530,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
 		dbt.mustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -549,13 +558,14 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
 		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -569,6 +579,7 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
 		dbt.mustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
 		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
     	partition p0 values in (3,5,6,9,17),
@@ -596,13 +607,14 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
 		rows = dbt.mustQuery("select id,name from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
 		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -616,6 +628,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
 		dbt.mustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -643,13 +656,14 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
+		rows = dbt.mustQuery("select id,name from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -663,6 +677,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
 	}, "load_data_list_partition", func(dbt *DBTest) {
+		dbt.mustExec("set @@session.tidb_enable_table_partition = nightly")
 		dbt.mustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
     	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
@@ -682,22 +697,27 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.checkRows(c, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
 		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows,
+			"Warning 1526 Table has no partition for value from column_list",
+			"Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
 }
 

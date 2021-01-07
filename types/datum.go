@@ -902,8 +902,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
 		return 0, overflow(f, target.Tp)
+	}
+	if target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
+		if f > 0 {
+			return math.MaxFloat32, overflow(f, target.Tp)
+		}
+		return -math.MaxFloat32, overflow(f, target.Tp)
 	}
 	return f, nil
 }
@@ -2011,17 +2017,6 @@ func (ds *datumsSorter) Less(i, j int) bool {
 
 func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
-	if sc.IgnoreTruncate {
-		return nil
-	}
-	if !sc.TruncateAsWarning {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
 }
 
 // DatumsToString converts several datums to formatted string.
