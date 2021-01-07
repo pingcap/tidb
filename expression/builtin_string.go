@@ -3914,8 +3914,8 @@ func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, er
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
 
-	padding weightStringPadding
-	length  int
+	padding          weightStringPadding
+	length           int
 	maxAllowedPacket uint64
 }
 
