@@ -274,13 +274,21 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, txnScope string, prevS
 	ts, ok := o.getLastTS(txnScope)
 	if !ok {
 		// If we didn't find lastTS, try to directly request tso
-		o.getTimestamp(ctx, txnScope)
+		ts, err := o.getTimestamp(ctx, txnScope)
+		if err != nil {
+			return 0, err
+		}
+		o.setLastTS(ts, txnScope)
 		return 0, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTS, ok := o.getLastArrivalTS(txnScope)
 	if !ok {
 		// If we didn't find last arrival ts, try to directly request tso
-		o.getTimestamp(ctx, txnScope)
+		ts, err := o.getTimestamp(ctx, txnScope)
+		if err != nil {
+			return 0, err
+		}
+		o.setLastTS(ts, txnScope)
 		return 0, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
