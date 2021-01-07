@@ -5376,10 +5376,9 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec("recover table t_recover")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	// Should recover, and we can drop it straight away.
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("drop table t_recover")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
