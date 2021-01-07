@@ -913,11 +913,25 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// the running mode of aggregation in MPP
+type AggMppRunMode int
+
+const (
+	// only 1 phase when match its parent's partition property
+	Mpp1Phase AggMppRunMode = iota
+	// partial agg + final agg with hash partition
+	Mpp2Phase
+	// maybe 1 phase or 2 phase when run the final agg on TiDB
+	MppTiDB
+)
+
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
+	AggFuncs      []*aggregation.AggFuncDesc
+	GroupByItems  []expression.Expression
+	MppRunMode    AggMppRunMode
+	PartitionCols []*expression.Column
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

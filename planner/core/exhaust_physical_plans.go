@@ -2227,10 +2227,13 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	return streamAggs
 }
 
-// TODO: support more later
+// TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
 		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow {
+			return false
+		}
+		if agg.HasDistinct {
 			return false
 		}
 	}
@@ -2273,23 +2276,20 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	// TODO: We haven't supported the agg algo with repartition.
 	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
 		groupByCols := la.GetGroupByCols()
-		if len(groupByCols) == 0 {
-			// TODO: push down scalar agg later after introducing merge exchange
-			childProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: property.MppTaskType}
-			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-			agg.SetSchema(la.schema.Clone())
-			hashAggs = append(hashAggs, agg)
-		} else {
+		if len(groupByCols) != 0 {
 			if matches := prop.IsSubsetOf(groupByCols); len(matches) != 0 {
 				matchedCols := chooseSubsetOfJoinKeys(groupByCols, matches)
 				childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: matchedCols}
 				agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 				agg.SetSchema(la.schema.Clone())
+				agg.MppRunMode = Mpp1Phase
 				hashAggs = append(hashAggs, agg)
 				// 2-phase
-				childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType, PartitionCols: matchedCols}
+				childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
 				agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 				agg.SetSchema(la.schema.Clone())
+				agg.MppRunMode = Mpp2Phase
+				agg.PartitionCols = matchedCols
 				hashAggs = append(hashAggs, agg)
 			}
 			// TODO: permute various partition columns from group-by columns
@@ -2297,13 +2297,23 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: groupByCols}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = Mpp1Phase
 			hashAggs = append(hashAggs, agg)
 			// 2-phase
-			childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType, PartitionCols: groupByCols}
+			childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
 			agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = Mpp2Phase
+			agg.PartitionCols = groupByCols
 			hashAggs = append(hashAggs, agg)
 		}
+		// TODO: support running scalar agg in MPP, merge the final result to one node
+		// 2-phase, a final agg is on TiDB, and another is on TiFlash
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = MppTiDB
+		hashAggs = append(hashAggs, agg)
 	}
 	return hashAggs
 }
