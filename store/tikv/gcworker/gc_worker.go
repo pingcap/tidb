@@ -1073,7 +1073,7 @@ retryScanAndResolve:
 				err1 error
 			)
 			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(locks, loc.Region)
+				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
 			} else {
 				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}

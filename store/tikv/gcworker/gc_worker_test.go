@@ -919,11 +919,16 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			// also let region1 contains all 4 locks
 			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 				if regionID == s.initRegion.regionID {
-					return []*tikv.Lock{
+					locks := []*tikv.Lock{
 						{Key: []byte("a")},
 						{Key: []byte("b")},
 						{Key: []byte("o")},
 						{Key: []byte("p")},
+					}
+					for i, lock := range locks {
+						if bytes.Compare(key, lock.Key) <= 0 {
+							return locks[i:]
+						}
 					}
 				}
 				return []*tikv.Lock{}
@@ -938,8 +943,8 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
 	c.Assert(err, IsNil)
-	c.Assert(len(resolvedLock), Equals, 6)
-	expects := [][]byte{[]byte("a"), []byte("b"), []byte("a"), []byte("b"), []byte("o"), []byte("p")}
+	c.Assert(len(resolvedLock), Equals, 4)
+	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
 	for i, l := range resolvedLock {
 		c.Assert(l, BytesEquals, expects[i])
 	}
