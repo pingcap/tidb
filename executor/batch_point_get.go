@@ -115,8 +115,11 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
+		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
+			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
 		} else {
 			batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
 		}
@@ -426,4 +429,27 @@ func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
 	}
 	partIdx := math.Abs(intVal % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
+}
+
+type cacheBatchGetter struct {
+	ctx      sessionctx.Context
+	tid      int64
+	snapshot kv.Snapshot
+}
+
+func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	cacheDB := b.ctx.GetStore().GetMemCache()
+	vals := make(map[string][]byte)
+	for _, key := range keys {
+		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
+		if err != nil {
+			return nil, err
+		}
+		vals[string(key)] = val
+	}
+	return vals, nil
+}
+
+func newCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
+	return &cacheBatchGetter{ctx, tid, snapshot}
 }
