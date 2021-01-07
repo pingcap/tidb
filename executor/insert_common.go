@@ -80,6 +80,8 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
+	rowLen int
+
 	stats *InsertRuntimeStat
 }
 
@@ -421,7 +423,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
 	memUsageOfRows := int64(0)
+	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
+	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -439,15 +443,20 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			if err != nil {
 				return err
 			}
+			extraColsInSel = append(extraColsInSel, innerRow[e.rowLen:])
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
 				memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
-				memTracker.Consume(memUsageOfRows)
+				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
+				memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+				e.ctx.GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
 				rows = rows[:0]
+				extraColsInSel = extraColsInSel[:0]
 				memTracker.Consume(-memUsageOfRows)
+				memTracker.Consume(-memUsageOfExtraCols)
 				memUsageOfRows = 0
 				if err = e.doBatchInsert(ctx); err != nil {
 					return err
@@ -457,14 +466,18 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 		if len(rows) != 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
-			memTracker.Consume(memUsageOfRows)
+			memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
+			memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+			e.ctx.GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 		}
 		err = base.exec(ctx, rows)
 		if err != nil {
 			return err
 		}
 		rows = rows[:0]
+		extraColsInSel = extraColsInSel[:0]
 		memTracker.Consume(-memUsageOfRows)
+		memTracker.Consume(-memUsageOfExtraCols)
 		memTracker.Consume(-chkMemUsage)
 	}
 	return nil
@@ -490,9 +503,9 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
-	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
-		if e.handleErr(nil, &v, 0, err) != nil {
+	for i := 0; i < e.rowLen; i++ {
+		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
+		if e.handleErr(nil, &vals[i], 0, err) != nil {
 			return nil, err
 		}
 
