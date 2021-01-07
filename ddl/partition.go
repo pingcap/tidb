@@ -1336,7 +1336,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
 		}
 	case model.PartitionTypeList:
-		sql = fmt.Sprintf("select 1 from `%s`.`%s` where %s = %s limit 1", schemaName.L, tableName.L, pi.Columns[index], pi.Definitions[index].InValues[index][0])
+		sql = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
 	default:
 		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
@@ -1378,6 +1378,15 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 	} else {
 		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s or `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0], colName, pi.Definitions[index].LessThan[0])
 	}
+}
+
+func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
+	for _, inValue := range pi.Definitions[index].InValues {
+		inValues = append(inValues, inValue...)
+	}
+	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s not in (%s) limit 1", schemaName.L, tableName.L, pi.Columns[index], strings.Join(inValues, ","))
+	return sql
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
