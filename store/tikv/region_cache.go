@@ -430,7 +430,7 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 			}
 		}
 		if v != value {
-			panic("StoreSelectorOption's label is wrong")
+			panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
 		}
 	})
 	switch replicaRead {
