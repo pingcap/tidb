@@ -3885,7 +3885,12 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		sig = &builtinWeightStringSig{bf, padding, length}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
 }
@@ -3911,6 +3916,7 @@ type builtinWeightStringSig struct {
 
 	padding weightStringPadding
 	length  int
+	maxAllowedPacket uint64
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -3951,14 +3957,8 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
-			sc := b.ctx.GetSessionVars().StmtCtx
-			valStr, _ := b.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-			maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-			if err != nil {
-				return "", false, errors.Trace(err)
-			}
-			if uint64(b.length-lenStr) > maxAllowedPacket {
-				sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
+			if uint64(b.length-lenStr) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
 				return "", true, nil
 			}
 			str += strings.Repeat("\x00", b.length-lenStr)
