@@ -510,6 +510,10 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+
+	// Test issue #22145
+	tk.MustExec(`set global sync_relay_log = "'"`)
+
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
