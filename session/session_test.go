@@ -3866,6 +3866,28 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
 
+func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
+	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
+	result.Check(testkit.Rows("bogus_var acdc"))
+	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")
+	result.Check(testkit.Rows("acdc"))
+	tk.MustExec("SET GLOBAL bogus_var = 'newvalue'")
+
+	// unregister
+	variable.UnregisterSysVar("bogus_var")
+
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
+	result.Check(testkit.Rows()) // empty
+	_, err := tk.Exec("SET GLOBAL bogus_var = 'newvalue'")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
+	_, err = tk.Exec("SELECT @@GLOBAL.bogus_var")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
+
+}
+
 func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -3898,6 +3920,12 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk.MustExec("UPDATE mysql.tidb SET variable_value = 'true' WHERE variable_name='tikv_gc_auto_concurrency'")
 	result = tk.MustQuery("SELECT @@tidb_gc_concurrency;")
 	result.Check(testkit.Rows("-1")) // because auto_concurrency is turned on it takes precedence
+
+	tk.MustExec("REPLACE INTO mysql.tidb (variable_value, variable_name) VALUES ('15m', 'tikv_gc_run_interval')")
+	result = tk.MustQuery("SELECT @@GLOBAL.tidb_gc_run_interval;")
+	result.Check(testkit.Rows("15m0s"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
 
 	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'")
