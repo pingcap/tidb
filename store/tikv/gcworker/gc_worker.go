@@ -64,8 +64,8 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte) []*tikv.Lock
-		resolveLocks func(regionID tikv.RegionVerID) (ok bool, err error)
+		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
+		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	}
 }
 
@@ -1064,12 +1064,12 @@ retryScanAndResolve:
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key)...)
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
 		for {
 			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
 			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
+				ok, err1 = w.testingKnobs.resolveLocks(locks, loc.Region)
 			}
 			if err1 != nil {
 				return stat, errors.Trace(err1)
@@ -1083,7 +1083,8 @@ retryScanAndResolve:
 				if err != nil {
 					return stat, errors.Trace(err)
 				}
-				if stillInSame {
+				if stillInSame && bytes.Compare(loc.EndKey, refreshedLoc.EndKey) >= 0 {
+					// avoid re-scan lock when all locks in original region and original region's EndKey <= new region's EndKey
 					loc = refreshedLoc
 					continue
 				}
