@@ -703,9 +703,9 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 	result.Check(testkit.Rows(
+		"config storage.block-cache.capacity tikv 192.168.3.36  1048576 > 5368709120 warning There are 1 TiKV server in 192.168.3.36 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1 * total node memory)",
 		"config storage.block-cache.capacity tikv 192.168.3.34  1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.37  2097152 > 5368709120 warning There are 2 TiKV server in 192.168.3.37 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1 * total node memory)",
 		"config storage.block-cache.capacity tikv 192.168.3.33  32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
-		"config storage.block-cache.capacity tikv 192.168.3.36  1048576 > 5368709120 warning There are 1 TiKV server in 192.168.3.36 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
-		"config storage.block-cache.capacity tikv 192.168.3.37  2097152 > 5368709120 warning There are 2 TiKV server in 192.168.3.37 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
 	))
 }
