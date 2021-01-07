@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -421,13 +422,20 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer cancel()
 	}
 
+	var connID uint64
+	if v := bo.ctx.Value(sessionctx.ConnID); v != nil {
+		connID = v.(uint64)
+	}
+
 	injectFailOnSend := false
-	failpoint.Inject("rpcFailOnSend", func() {
-		logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
-			zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-		injectFailOnSend = true
-		err = errors.New("injected RPC error on send")
-	})
+	if connID > 0 {
+		failpoint.Inject("rpcFailOnSend", func() {
+			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
+				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+			injectFailOnSend = true
+			err = errors.New("injected RPC error on send")
+		})
+	}
 
 	if !injectFailOnSend {
 		start := time.Now()
@@ -445,12 +453,14 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			})
 		}
 
-		failpoint.Inject("rpcFailOnRecv", func() {
-			logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
-				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-			err = errors.New("injected RPC error on recv")
-			resp = nil
-		})
+		if connID > 0 {
+			failpoint.Inject("rpcFailOnRecv", func() {
+				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
+					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+				err = errors.New("injected RPC error on recv")
+				resp = nil
+			})
+		}
 
 		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
 			if val.(bool) {
@@ -485,10 +495,6 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
-
-		failpoint.Inject("rpcFailNoRetry", func() {
-			failpoint.Return(nil, false, errors.Trace(err))
-		})
 		return nil, true, nil
 	}
 	return
