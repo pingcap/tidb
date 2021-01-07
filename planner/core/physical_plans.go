@@ -913,7 +913,7 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
-// the running mode of aggregation in MPP
+// AggMppRunMode means the running mode of aggregation in MPP
 type AggMppRunMode int
 
 const (
