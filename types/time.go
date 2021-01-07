@@ -643,8 +643,8 @@ func ParseDateFormat(format string) []string {
 		return nil
 	}
 
-	// Date format must start and end with number.
-	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+	// Date format must start with number.
+	if !isDigit(format[0]) {
 		return nil
 	}
 
@@ -690,7 +690,14 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	return prevParts == 2 && (c == ' ' || c == 'T')
+	if prevParts == 2 && (c == ' ' || c == 'T') {
+		return true
+	}
+
+	if prevParts > 4 && !isDigit(c) {
+		return true
+	}
+	return false
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -718,6 +725,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	seps, fracStr := splitDateTime(str)
 	var truncatedOrIncorrect bool
 	switch len(seps) {
+	case 0:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 1:
 		l := len(seps[0])
 		// Values specified as numbers
@@ -808,6 +817,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			err = nil
 		}
 	case 2:
+<<<<<<< HEAD
 		// YYYY-MM is not valid
 		if len(fracStr) == 0 {
 			return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
@@ -816,6 +826,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		// YYYY-MM.DD, DD is treat as fracStr
 		err = scanTimeArgs(append(seps, fracStr), &year, &month, &day)
 		fracStr = ""
+=======
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+>>>>>>> d1d5cc433... time: fix parse datetime won't truncate the reluctant string (#22232)
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -831,7 +844,18 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
+<<<<<<< HEAD
 		return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
+=======
+		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
+		seps = seps[:6]
+		// YYYY-MM-DD HH-MM-SS
+		if sc != nil {
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+		}
+		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
+>>>>>>> d1d5cc433... time: fix parse datetime won't truncate the reluctant string (#22232)
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
