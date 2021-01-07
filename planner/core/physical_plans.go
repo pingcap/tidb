@@ -917,11 +917,11 @@ type PhysicalUnionAll struct {
 type AggMppRunMode int
 
 const (
-	// only 1 phase when match its parent's partition property
+	// Mpp1Phase runs only 1 phase when match its parent's partition property
 	Mpp1Phase AggMppRunMode = iota
-	// partial agg + final agg with hash partition
+	// Mpp2Phase runs partial agg + final agg with hash partition
 	Mpp2Phase
-	// maybe 1 phase or 2 phase when run the final agg on TiDB
+	// MppTiDB have 1 phase or 2 phase when run the final agg on TiDB
 	MppTiDB
 )
 
