@@ -1370,8 +1370,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
-		// TODO: Do we need to rollback txn?
-		s.RollbackTxn(ctx)
 		return nil, err
 	}
 
