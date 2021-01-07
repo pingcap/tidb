@@ -3480,6 +3480,9 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 			return
 		}
 		// do transaction.
+		// The transaction may see schema change if the ddl sync is timed out, which may lead to commit failure.
+		// As the ddlLease cannot be changed here, sleep some time to make the transaction begin using newest version.
+		time.Sleep(500 * time.Millisecond)
 		for _, transaction := range transactions {
 			for _, sql := range transaction {
 				if _, checkErr = s.tk.Exec(sql); checkErr != nil {
@@ -3492,7 +3495,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
+	go backgroundExec(s.store, "alter table t1 add column c int", done)
 	err := <-done
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
