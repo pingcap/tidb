@@ -7553,6 +7553,7 @@ func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
+	defer tk.MustExec(`drop table if exists t`)
 	testcases := []struct {
 		name     string
 		sql      string
