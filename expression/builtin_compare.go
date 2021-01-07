@@ -407,12 +407,14 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
-			if types.IsTemporalWithDate(item.Tp) {
-				temporalItem = item
+			if types.IsTemporal(item.Tp) {
+				if temporalItem == nil || temporalItem.Tp == mysql.TypeDatetime {
+					temporalItem = item
+				}
 			}
 		}
 
-		if !types.IsTemporalWithDate(aggType.Tp) && temporalItem != nil {
+		if !types.IsTemporal(aggType.Tp) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
 		}
 		// TODO: String charset, collation checking are needed.
@@ -472,7 +474,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-	case types.ETDatetime, types.ETTimestamp:
+	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
@@ -656,8 +658,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	tp := resolveType4Extremum(args)
 	cmpAsDatetime := false
-	if tp == types.ETDatetime {
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
+		tp = types.ETString
+	}  else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -684,10 +688,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
-	case types.ETString:
+	case types.ETString, types.ETDuration:
 		sig = &builtinLeastStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
