@@ -412,6 +412,8 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 				detail = fmt.Sprintf("There are %v TiKV server in %v node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
 					ipToCount[ip], ip)
 				expected = fmt.Sprintf("> %.0f", memorySize*0.1)
+			} else {
+				continue
 			}
 			results = append(results, inspectionResult{
 				tp:       "tikv",
