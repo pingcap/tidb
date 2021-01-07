@@ -725,6 +725,8 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	AllAssignmentsAreConstant bool
+
+	RowLen int
 }
 
 // Update represents Update plan.
