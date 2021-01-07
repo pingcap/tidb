@@ -713,9 +713,9 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk5.MustExec("rollback")
 	}()
 
-	timeoutErr := <- timeoutErrCh
+	timeoutErr := <-timeoutErrCh
 	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
-	timeoutErr = <- timeoutErrCh
+	timeoutErr = <-timeoutErrCh
 	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
