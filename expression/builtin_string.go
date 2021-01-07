@@ -3956,7 +3956,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			if err != nil {
 				return "", false, err
 			}
-			if b.length - lenStr > int(maxAllowedPacket) {
+			if b.length-lenStr > int(maxAllowedPacket) {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
 				return "", true, nil
 			}
