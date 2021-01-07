@@ -39,10 +39,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/store/mockstore/cluster"
->>>>>>> bedd599e0... gcworker: fix gc miss locks when region merged during scanning & resolving locks (#22252)
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -55,17 +51,8 @@ func TestT(t *testing.T) {
 }
 
 type testGCWorkerSuite struct {
-<<<<<<< HEAD
-	store    tikv.Storage
-	cluster  *mocktikv.Cluster
-	oracle   *mockoracle.MockOracle
-	gcWorker *GCWorker
-	dom      *domain.Domain
-	client   *testGCWorkerClient
-	pdClient pd.Client
-=======
 	store      tikv.Storage
-	cluster    cluster.Cluster
+	cluster    *mocktikv.Cluster
 	oracle     *mockoracle.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
@@ -76,7 +63,6 @@ type testGCWorkerSuite struct {
 		peerIDs  []uint64
 		regionID uint64
 	}
->>>>>>> bedd599e0... gcworker: fix gc miss locks when region merged during scanning & resolving locks (#22252)
 }
 
 var _ = Suite(&testGCWorkerSuite{})
@@ -92,27 +78,11 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 		return client
 	}
 
-<<<<<<< HEAD
 	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiStores(s.cluster, 3)
+	s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
 	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithHijackClient(hijackClient))
-=======
-	store, err := mockstore.NewMockStore(
-		mockstore.WithStoreType(mockstore.MockTiKV),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
-			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
-			s.cluster = c
-		}),
-		mockstore.WithClientHijacker(hijackClient),
-		mockstore.WithPDClientHijacker(func(c pd.Client) pd.Client {
-			s.pdClient = c
-			return c
-		}),
-	)
-	c.Assert(err, IsNil)
->>>>>>> bedd599e0... gcworker: fix gc miss locks when region merged during scanning & resolving locks (#22252)
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
@@ -924,7 +894,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster := s.cluster
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			s.store.GetRegionCache().OnRegionEpochNotMatch(
