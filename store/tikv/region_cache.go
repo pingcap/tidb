@@ -421,16 +421,18 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		op(options)
 	}
 	failpoint.Inject("assertStoreLabels", func(val failpoint.Value) {
-		value := val.(string)
-		v := ""
-		for _, label := range options.labels {
-			if label.Key == placement.DCLabelKey {
-				v = label.Value
-				break
+		if len(opts) > 0 {
+			value := val.(string)
+			v := ""
+			for _, label := range options.labels {
+				if label.Key == placement.DCLabelKey {
+					v = label.Value
+					break
+				}
 			}
-		}
-		if v != value {
-			panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
+			if v != value {
+				panic(fmt.Sprintf("StoreSelectorOption's label %v is not %v", v, value))
+			}
 		}
 	})
 	switch replicaRead {

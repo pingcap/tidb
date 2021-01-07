@@ -7583,7 +7583,7 @@ func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
 		tk.MustExec(`commit`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
-		tk.MustExec(testcase.sql)
+		tk.MustQuery(testcase.sql)
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
 		tk.MustExec(`commit`)
 	}
