@@ -678,6 +678,9 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 			types.MakeDatums("tikv", "192.168.3.33:26700", "storage.block-cache.capacity", "20GiB"),
 			types.MakeDatums("tikv", "192.168.3.34:26600", "storage.block-cache.capacity", "1TiB"),
 			types.MakeDatums("tikv", "192.168.3.35:26700", "storage.block-cache.capacity", "20GiB"),
+			types.MakeDatums("tikv", "192.168.3.36:26700", "storage.block-cache.capacity", "1MiB"),
+			types.MakeDatums("tikv", "192.168.3.37:26600", "storage.block-cache.capacity", "1MiB"),
+			types.MakeDatums("tikv", "192.168.3.37:26700", "storage.block-cache.capacity", "1MiB"),
 		},
 	}
 
@@ -687,6 +690,8 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.33:26600", 50.0*1024*1024*1024),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.34:26600", 50.0*1024*1024*1024),
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.35:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.36:26600", 50.0*1024*1024*1024),
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "192.168.3.37:26600", 50.0*1024*1024*1024),
 		},
 	}
 
@@ -700,5 +705,7 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	result.Check(testkit.Rows(
 		"config storage.block-cache.capacity tikv 192.168.3.34  1099511627776 < 24159191040 warning There are 1 TiKV server in 192.168.3.34 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
 		"config storage.block-cache.capacity tikv 192.168.3.33  32212254720 < 24159191040 warning There are 2 TiKV server in 192.168.3.33 node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.36  1048576 > 24159191040 warning There are 1 TiKV server in 192.168.3.36 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
+		"config storage.block-cache.capacity tikv 192.168.3.37  2097152 > 24159191040 warning There are 2 TiKV server in 192.168.3.37 node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
 	))
 }

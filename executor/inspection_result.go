@@ -401,21 +401,27 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 	}
 
 	var results []inspectionResult
+	var detail, expected string
 	for ip, blockSize := range ipToBlockSize {
 		if memorySize, ok := ipToMemorySize[ip]; ok {
 			if float64(blockSize) > memorySize*0.45 {
-				detail := fmt.Sprintf("There are %v TiKV server in %v node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
+				detail = fmt.Sprintf("There are %v TiKV server in %v node, the total 'storage.block-cache.capacity' of TiKV is more than (0.45 * total node memory)",
 					ipToCount[ip], ip)
-				results = append(results, inspectionResult{
-					tp:       "tikv",
-					instance: ip,
-					item:     item,
-					actual:   fmt.Sprintf("%v", blockSize),
-					expected: fmt.Sprintf("< %.0f", memorySize*0.45),
-					severity: "warning",
-					detail:   detail,
-				})
+				expected = fmt.Sprintf("< %.0f", memorySize*0.45)
+			} else if float64(blockSize) < memorySize*0.1 {
+				detail = fmt.Sprintf("There are %v TiKV server in %v node, the total 'storage.block-cache.capacity' of TiKV is less than (0.1  * total node memory)",
+					ipToCount[ip], ip)
+				expected = fmt.Sprintf("> %.0f", memorySize*0.1)
 			}
+			results = append(results, inspectionResult{
+				tp:       "tikv",
+				instance: ip,
+				item:     item,
+				actual:   fmt.Sprintf("%v", blockSize),
+				expected: expected,
+				severity: "warning",
+				detail:   detail,
+			})
 		}
 	}
 	return results
