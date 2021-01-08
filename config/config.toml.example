@@ -370,6 +370,10 @@ log-spans = false
 #  LocalAgentHostPort instructs reporter to send spans to jaeger-agent at this address
 local-agent-host-port = ""
 
+[pd-client]
+# Max time which PD client will wait for the PD server in seconds.
+pd-server-timeout = 3
+
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 4
