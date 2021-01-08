@@ -2230,7 +2230,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
-		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow {
+		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow && agg.Name != ast.AggFuncAvg {
 			return false
 		}
 		if agg.HasDistinct {
