@@ -103,7 +103,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"compact", "redundant", "1 sql_no_cache", "1 sql_cache", "action", "round",
 		"enable", "disable", "reverse", "space", "privileges", "get_lock", "release_lock", "sleep", "no", "greatest", "least",
 		"binlog", "hex", "unhex", "function", "indexes", "from_unixtime", "processlist", "events", "less", "than", "timediff",
-		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
+		"ln", "log", "log2", "log10", "timestampdiff", "pi", "proxy", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "stats_healthy", "tidb_version", "replication", "slave", "client",
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
