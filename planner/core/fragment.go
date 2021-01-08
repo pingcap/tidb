@@ -57,7 +57,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s.Tasks = []*kv.MPPTask{tidbTask}
+	s.TargetTasks = []*kv.MPPTask{tidbTask}
 	return rootTasks, nil
 }
 
@@ -81,11 +81,12 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		s := r.ChildPf.ExchangeSender
-		s.Tasks = tasks
+		s.TargetTasks = tasks
 	}
 	for _, task := range tasks {
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", task.StartTs), zap.Int64("ID", task.ID), zap.String("address", task.Meta.GetAddress()), zap.String("plan", ToString(f.ExchangeSender)))
 	}
+	f.ExchangeSender.Tasks = tasks
 	return tasks, nil
 }
 

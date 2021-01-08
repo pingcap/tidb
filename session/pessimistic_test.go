@@ -655,6 +655,11 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -687,12 +692,13 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	// Parallel the blocking tests to accelerate CI.
 	var wg sync.WaitGroup
 	wg.Add(2)
+	timeoutErrCh := make(chan error, 2)
 	go func() {
 		defer wg.Done()
 		// tk3 try lock c1 = 1 timeout 1sec
 		tk3.MustExec("begin pessimistic")
 		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk3.MustExec("commit")
 	}()
 
@@ -703,9 +709,16 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk5.MustExec("set innodb_lock_wait_timeout = 2")
 		tk5.MustExec("begin pessimistic")
 		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk5.MustExec("rollback")
 	}()
+
+	timeoutErr := <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	timeoutErr = <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
@@ -771,6 +784,11 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer tk.MustExec("drop table if exists tk")

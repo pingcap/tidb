@@ -111,6 +111,31 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	exprs, err := expression.ExpressionsToPBList(sc, p.Exprs, client)
+	if err != nil {
+		return nil, err
+	}
+	projExec := &tipb.Projection{
+		Exprs: exprs,
+	}
+	executorID := ""
+	if storeType == kv.TiFlash {
+		var err error
+		projExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		executorID = p.ExplainID().String()
+	} else {
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
@@ -205,9 +230,9 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		return nil, errors.Trace(err)
 	}
 
-	encodedTask := make([][]byte, 0, len(e.Tasks))
+	encodedTask := make([][]byte, 0, len(e.TargetTasks))
 
-	for _, task := range e.Tasks {
+	for _, task := range e.TargetTasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, errors.Trace(err)
