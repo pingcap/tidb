@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -93,7 +94,26 @@ var (
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
+
+	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
+
+var gcVariableComments = map[string]string{
+	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiDBGCEnable:       "Current GC enable status",
+	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
+var gcVariableMap = map[string]string{
+	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
+	variable.TiDBGCLifetime:     "tikv_gc_life_time",
+	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
+	variable.TiDBGCEnable:       "tikv_gc_enable",
+	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
+}
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
@@ -353,6 +373,9 @@ func (s *session) GetSessionManager() util.SessionManager {
 }
 
 func (s *session) StoreQueryFeedback(feedback interface{}) {
+	if fb, ok := feedback.(*statistics.QueryFeedback); !ok || fb == nil || !fb.Valid {
+		return
+	}
 	if s.statsCollector != nil {
 		do, err := GetDomain(s.store)
 		if err != nil {
@@ -984,23 +1007,12 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	return value, nil
 }
 
-// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(sessionctx.Initing) != nil {
-		return nil, nil
+func (s *session) varFromTiDBTable(name string) bool {
+	switch name {
+	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
+		return true
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	ret := make(map[string]string, len(rows))
-	for _, r := range rows {
-		k, v := r.GetString(0), r.GetString(1)
-		ret[k] = v
-	}
-	return ret, nil
+	return false
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
@@ -1024,6 +1036,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		}
 		return "", err
+	}
+	// Fetch mysql.tidb values if required
+	if s.varFromTiDBTable(name) {
+		return s.getTiDBTableValue(name, sysVar)
 	}
 	return sysVar, nil
 }
@@ -1052,11 +1068,109 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+	// update mysql.tidb if required.
+	if s.varFromTiDBTable(name) {
+		if err = s.setTiDBTableValue(name, sVal); err != nil {
+			return err
+		}
+	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(sVal))
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+// escape user supplied string for internal SQL. Not safe for all cases, since it doesn't
+// handle quote-type, sql-mode, character set breakout.
+func escapeUserString(str string) string {
+	return strings.ReplaceAll(str, `'`, `\'`)
+}
+
+// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
+// for backwards compatibility. Validation has already been performed.
+func (s *session) setTiDBTableValue(name, val string) error {
+	if name == variable.TiDBGCConcurrency {
+		autoConcurrency := "false"
+		if val == "-1" {
+			autoConcurrency = "true"
+		}
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, tiKVGCAutoConcurrency, autoConcurrency, gcVariableComments[name])
+		_, _, err := s.ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+	}
+	val = onOffToTrueFalse(val)
+	sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
+	_, _, err := s.ExecRestrictedSQL(sql)
+	return err
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return variable.BoolOn
+	} else if strings.EqualFold("false", str) {
+		return variable.BoolOff
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
+// getTiDBTableValue handles tikv_* sysvars which need
+// to read from mysql.tidb for backwards compatibility.
+func (s *session) getTiDBTableValue(name, val string) (string, error) {
+	if name == variable.TiDBGCConcurrency {
+		// Check if autoconcurrency is set
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, tiKVGCAutoConcurrency)
+		autoConcurrencyVal, err := s.getExecRet(s, sql)
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+	}
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, gcVariableMap[name])
+	tblValue, err := s.getExecRet(s, sql)
+	if err != nil {
+		return val, nil // mysql.tidb value does not exist.
+	}
+	// Run validation on the tblValue. This will return an error if it can't be validated,
+	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
+	tblValue = trueFalseToOnOff(tblValue)
+	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
+			zap.Error(err),
+			zap.String("name", name),
+			zap.String("tblName", gcVariableMap[name]),
+			zap.String("tblValue", tblValue),
+			zap.String("restoredValue", val))
+		sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
+			VALUES ('%s', '%s', '%s')`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
+		_, _, err = s.ExecRestrictedSQL(sql)
+		return val, err
+	}
+	if validatedVal != val {
+		// The sysvar value is out of sync.
+		sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+			mysql.SystemDB, mysql.GlobalVariablesTable, gcVariableMap[name], escapeUserString(validatedVal))
+		_, _, err = s.ExecRestrictedSQL(sql)
+		return validatedVal, err
+	}
+	return validatedVal, nil
 }
 
 func (s *session) ensureFullGlobalStats() error {
@@ -1115,15 +1229,19 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
+	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		oldPi := s.ShowProcess()
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
+	}
+	// We set process info before building plan, so we extended execution time.
+	if oldPi != nil && oldPi.Info == pi.Info {
+		pi.Time = oldPi.Time
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
@@ -1227,6 +1345,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
+	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
+	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
@@ -1301,6 +1423,21 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	sessVars := se.sessionVars
+
+	// Record diagnostic information for DML statements
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
+		defer func() {
+			sessVars.LastQueryInfo = variable.QueryInfo{
+				TxnScope:    sessVars.TxnScope,
+				StartTS:     sessVars.TxnCtx.StartTS,
+				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+			}
+			if err != nil {
+				sessVars.LastQueryInfo.ErrMsg = err.Error()
+			}
+		}()
+	}
+
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
@@ -1309,21 +1446,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(se).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				se.StmtRollback()
-			} else {
-				se.StmtCommit()
-			}
-		}
-	}
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
@@ -1623,7 +1745,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		txnScope := s.GetSessionVars().TxnCtx.TxnScope
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1651,6 +1773,8 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		IsStaleness:   false,
+		TxnScope:      s.sessionVars.CheckAndGetTxnScope(),
 	}
 	return nil
 }
@@ -1893,6 +2017,21 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 	return 32 << 30, nil
 }
 
+func loadDefOOMAction(se *session) (string, error) {
+	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return config.GetGlobalConfig().OOMAction, nil
+		}
+		return config.GetGlobalConfig().OOMAction, err
+	}
+	if defOOMAction != config.OOMActionLog {
+		logutil.BgLogger().Warn("Unexpected value of 'default_oom_action' in 'mysql.tidb', use 'log' instead",
+			zap.String("value", defOOMAction))
+	}
+	return defOOMAction, nil
+}
+
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 )
@@ -1973,6 +2112,15 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
 		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+	}
+	newOOMAction, err := loadDefOOMAction(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsOOMActionSetByUser {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = newOOMAction
+		})
 	}
 
 	dom := domain.GetDomain(se)
@@ -2132,8 +2280,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 }
 
 const (
-	notBootstrapped         = 0
-	currentBootstrapVersion = version56
+	notBootstrapped = 0
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2209,6 +2356,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.DefaultWeekFormat,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,
@@ -2262,6 +2410,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowBatchCop,
 	variable.TiDBAllowMPPExecution,
 	variable.TiDBOptBCJ,
+	variable.TiDBBCJThresholdSize,
+	variable.TiDBBCJThresholdCount,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
@@ -2273,6 +2423,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBCapturePlanBaseline,
 	variable.TiDBUsePlanBaselines,
 	variable.TiDBEvolvePlanBaselines,
+	variable.TiDBEnableExtendedStats,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
@@ -2282,13 +2433,20 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableChangeMultiSchema,
+	variable.TiDBEnablePointGetCache,
+	variable.TiDBEnableAlterPlacement,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemQuotaApplyCache,
+	variable.TiDBEnableParallelApply,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
+	variable.TiDBEnableIndexMergeJoin,
+	variable.TiDBTrackAggregateMemoryUsage,
 }
 
 var (
@@ -2371,6 +2529,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().CheckAndGetTxnScope(),
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2413,7 +2572,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
+	txn, err := s.store.BeginWithStartTS(s.GetSessionVars().CheckAndGetTxnScope(), startTS)
 	if err != nil {
 		return err
 	}
@@ -2422,6 +2581,56 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+// NewTxnWithStalenessOption create a transaction with Staleness option
+func (s *session) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
+	if s.txn.Valid() {
+		txnID := s.txn.StartTS()
+		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+		err := s.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		vars := s.GetSessionVars()
+		logutil.Logger(ctx).Info("InitTxnWithExactStaleness() inside a transaction auto commit",
+			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
+			zap.Uint64("txnStartTS", txnID),
+			zap.String("txnScope", txnScope))
+	}
+	var txn kv.Transaction
+	var err error
+	txnScope := s.GetSessionVars().TxnScope
+	switch option.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		txn, err = s.store.BeginWithStartTS(txnScope, option.StartTS)
+		if err != nil {
+			return err
+		}
+	case ast.TimestampBoundExactStaleness:
+		txn, err = s.store.BeginWithExactStaleness(txnScope, option.PrevSec)
+		if err != nil {
+			return err
+		}
+	default:
+		// For unsupported staleness txn cases, fallback to NewTxn
+		return s.NewTxn(ctx)
+	}
+	txn.SetVars(s.sessionVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
+	s.txn.changeInvalidToValid(txn)
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+		StartTS:       txn.StartTS(),
+		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		IsStaleness:   true,
+		TxnScope:      txnScope,
 	}
 	return nil
 }
@@ -2510,7 +2719,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
 		txnScope = oracle.GlobalTxnScope
 	}
@@ -2518,22 +2727,43 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		is := infoschema.GetInfoSchema(s)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
+			var tableName string
+			var partitionName string
+			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
+			if tblInfo != nil && partInfo != nil {
+				tableName = tblInfo.Meta().Name.String()
+				partitionName = partInfo.Name.String()
+			} else {
+				tblInfo, _ := is.TableByID(physicalTableID)
+				tableName = tblInfo.Meta().Name.String()
+			}
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v don't have placement policies with txn_scope %v",
-						physicalTableID, txnScope))
+				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
+					tableName, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
+						tableName, partitionName, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
 			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader placement policy is not defined", physicalTableID))
+				errMsg := fmt.Sprintf("table %v's leader placement policy is not defined", tableName)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			if dcLocation != txnScope {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
+				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
+				if len(partitionName) > 0 {
+					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
+						tableName, partitionName, dcLocation, txnScope)
+				}
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
@@ -2545,7 +2775,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("Partition %s of table %s can not be written by local transactions when its placement policy is being altered",
+						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
 				}

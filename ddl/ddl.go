@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -78,9 +79,6 @@ const (
 )
 
 var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = uint32(512)
 	// TableIndexCountLimit is limit of the number of indexes in a table.
 	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
@@ -397,9 +395,7 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -563,9 +559,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err = d.ctx.Err()
-			return err
+			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
+			return context.Canceled
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
@@ -670,4 +665,15 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }

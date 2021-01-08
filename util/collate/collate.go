@@ -175,10 +175,10 @@ func CollationID2Name(id int32) string {
 	collation, err := charset.GetCollationByID(int(id))
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
-		//logutil.BgLogger().Warn(
-		//	"Unable to get collation name from ID, use default collation instead.",
-		//	zap.Int32("ID", id),
-		//	zap.Stack("stack"))
+		// logutil.BgLogger().Warn(
+		// 	"Unable to get collation name from ID, use default collation instead.",
+		// 	zap.Int32("ID", id),
+		// 	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
 	return collation.Name
