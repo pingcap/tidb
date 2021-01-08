@@ -2275,14 +2275,14 @@ func (la *LogicalAggregation) getHashAggsForMPP(prop *property.PhysicalProperty)
 			agg.MppRunMode = Mpp2Phase
 			agg.PartitionCols = groupByCols
 			hashAggs = append(hashAggs, agg)
+		} else {
+			// TODO: support running scalar agg in MPP, merge the final result to one node
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = MppTiDB
+			hashAggs = append(hashAggs, agg)
 		}
-		// TODO: support running scalar agg in MPP, merge the final result to one node
-		// 2-phase, a final agg is on TiDB, and optionally another is on TiFlash
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
-		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
-		agg.MppRunMode = MppTiDB
-		hashAggs = append(hashAggs, agg)
 	}
 	return
 }
