@@ -614,8 +614,10 @@ func (s *testSerialSuite) TestMemCacheReadLock(c *C) {
 	tk.Se.GetSessionVars().EnablePointGetCache = true
 	defer func() {
 		tk.Se.GetSessionVars().EnablePointGetCache = false
+		tk.MustExec("drop table if exists point")
 	}()
 
+	tk.MustExec("drop table if exists point")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
@@ -690,8 +692,10 @@ func (s *testSerialSuite) TestPartitionMemCacheReadLock(c *C) {
 	tk.Se.GetSessionVars().EnablePointGetCache = true
 	defer func() {
 		tk.Se.GetSessionVars().EnablePointGetCache = false
+		tk.MustExec("drop table if exists point")
 	}()
 
+	tk.MustExec("drop table if exists point")
 	tk.MustExec("create table point (id int unique key, c int, d varchar(10)) partition by hash (id) partitions 4")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
