@@ -1013,13 +1013,16 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
+	var hintSet bool
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
-	hintStr = sctx.GetSessionVars().StmtCtx.GetPlanHint()
-	if len(encodedPlan) > 0 {
+	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
+	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
-	encodedPlan = plannercore.EncodePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	if len(encodedPlan) == 0 {
+		encodedPlan = plannercore.EncodePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
 		if n != nil {
