@@ -696,6 +696,9 @@ func (s *testSerialSuite) TestPartitionMemCacheReadLock(c *C) {
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
 
+	// Confirm _tidb_rowid will not be duplicated.
+	tk.MustQuery("select distinct(_tidb_rowid) from point order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+
 	s.mustExecDDL(tk, c, "lock tables point read")
 
 	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows("1"))
