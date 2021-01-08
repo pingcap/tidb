@@ -361,6 +361,7 @@ func RegisterSysVar(sv *SysVar) {
 }
 
 // UnregisterSysVar removes a sysvar from the SysVars list
+// currently only used in tests.
 func UnregisterSysVar(name string) {
 	name = strings.ToLower(name)
 	sysVarsLock.Lock()
