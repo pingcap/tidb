@@ -75,8 +75,16 @@ func WithTxnLocalLatches(t config.TxnLocalLatches) DriverOption {
 	}
 }
 
+// WithPDClientConfig changes the config.PDClient used by tikv driver.
+func WithPDClientConfig(client config.PDClient) DriverOption {
+	return func(c *Driver) {
+		c.pdConfig = client
+	}
+}
+
 // Driver implements engine Driver.
 type Driver struct {
+	pdConfig        config.PDClient
 	security        config.Security
 	tikvConfig      config.TiKVClient
 	txnLocalLatches config.TxnLocalLatches
@@ -103,6 +111,7 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 func (d Driver) Open(path string) (kv.Storage, error) {
 	tidbCfg := config.GetGlobalConfig()
 	return d.OpenWithOptions(path,
+		WithPDClientConfig(tidbCfg.PDClient),
 		WithSecurity(tidbCfg.Security),
 		WithTiKVClientConfig(tidbCfg.TiKVClient),
 		WithTxnLocalLatches(tidbCfg.TxnLocalLatches),
@@ -111,6 +120,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 func (d *Driver) setDefaultAndOptions(options ...DriverOption) {
 	defaultCfg := config.NewConfig()
+	d.pdConfig = defaultCfg.PDClient
 	d.security = defaultCfg.Security
 	d.tikvConfig = defaultCfg.TiKVClient
 	d.txnLocalLatches = defaultCfg.TxnLocalLatches
@@ -120,6 +130,7 @@ func (d *Driver) setDefaultAndOptions(options ...DriverOption) {
 }
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
+// unspecified options will be set to default config obtained from config.NewConfig()
 func (d Driver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
@@ -140,7 +151,7 @@ func (d Driver) OpenWithOptions(path string, options ...DriverOption) (kv.Storag
 			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
-	))
+	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
