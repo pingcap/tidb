@@ -496,6 +496,46 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	return fields
 }
 
+type basicCopRuntimeStats struct {
+	BasicRuntimeStats
+	threads   int32
+	storeType string
+}
+
+// String implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) String() string {
+	if e.storeType == "tiflash" {
+		return fmt.Sprintf("time:%v, loops:%d, threads:%d", FormatDuration(time.Duration(e.consume)), e.loop, e.threads)
+	}
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Clone() RuntimeStats {
+	return &basicCopRuntimeStats{
+		BasicRuntimeStats: BasicRuntimeStats{loop: e.loop, consume: e.consume, rows: e.rows},
+		threads:           e.threads,
+		storeType:         e.storeType,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
+	tmp, ok := rs.(*basicCopRuntimeStats)
+	if !ok {
+		return
+	}
+	e.loop += tmp.loop
+	e.consume += tmp.consume
+	e.rows += tmp.rows
+	e.threads += tmp.threads
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *basicCopRuntimeStats) Tp() int {
+	return TpBasicCopRunTimeStats
+}
+
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
 	sync.Mutex
@@ -505,8 +545,10 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string][]*BasicRuntimeStats
+	stats      map[string][]*basicCopRuntimeStats
 	scanDetail *ScanDetail
+	// do not use kv.StoreType because it will meet cycle import error
+	storeType string
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -514,9 +556,11 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
+		&basicCopRuntimeStats{BasicRuntimeStats: BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
-			rows:    int64(*summary.NumProducedRows)})
+			rows:    int64(*summary.NumProducedRows)},
+			threads:   int32(summary.GetConcurrency()),
+			storeType: crs.storeType})
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -550,28 +594,43 @@ func (crs *CopRuntimeStats) String() string {
 
 	var totalTasks int64
 	var totalIters int32
+	var totalThreads int32
 	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalIters += stat.loop
+			totalThreads += stat.threads
 			totalTasks++
 		}
 	}
+	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
+		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalIters))
+		if isTiFlashCop {
+			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+		} else {
+			buf.WriteString("}")
+		}
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
+		if isTiFlashCop {
+			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
+		} else {
+			buf.WriteString("}")
+		}
 	}
-	if detail := crs.scanDetail; detail != nil {
-		buf.WriteString(", ")
-		buf.WriteString(detail.String())
+	if !isTiFlashCop {
+		if detail := crs.scanDetail; detail != nil {
+			buf.WriteString(", ")
+			buf.WriteString(detail.String())
+		}
 	}
 	return buf.String()
 }
@@ -605,6 +664,8 @@ const (
 	TpHashAggRuntimeStat
 	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
 	TpIndexMergeRunTimeStats
+	// TpBasicCopRunTimeStats is the tp for TpBasicCopRunTimeStats
+	TpBasicCopRunTimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -789,9 +850,21 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
+		return nil
+	}
+	return copStats
+}
+
+// GetOrCreateCopStats gets the CopRuntimeStats specified by planID, if not exists a new one will be created.
+func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *CopRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
 		copStats = &CopRuntimeStats{
-			stats:      make(map[string][]*BasicRuntimeStats),
+			stats:      make(map[string][]*basicCopRuntimeStats),
 			scanDetail: &ScanDetail{},
+			storeType:  storeType,
 		}
 		e.copStats[planID] = copStats
 	}
@@ -809,19 +882,19 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
 		planID = id
 	}
-	copStats := e.GetCopStats(planID)
+	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.RecordOneCopTask(address, summary)
 }
 
 // RecordScanDetail records a specific cop tasks's cop detail.
-func (e *RuntimeStatsColl) RecordScanDetail(planID int, detail *ScanDetail) {
-	copStats := e.GetCopStats(planID)
+func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *ScanDetail) {
+	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.scanDetail.Merge(detail)
 }
 

@@ -619,47 +619,64 @@ func (s *testSerialSuite) TestPointGetReadLock(c *C) {
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
-	s.mustExecDDL(tk, c, "lock tables point read")
 
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+	cases := []struct {
+		sql string
+		r1  bool
+		r2  bool
+	}{
+		{"explain analyze select * from point where id = 1", false, false},
+		{"explain analyze select * from point where id in (1, 2)", false, false},
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	ok := strings.Contains(explain, "num_rpc")
-	c.Assert(ok, IsFalse)
-	s.mustExecDDL(tk, c, "unlock tables")
+		// Cases for not exist keys.
+		{"explain analyze select * from point where id = 3", true, true},
+		{"explain analyze select * from point where id in (1, 3)", true, true},
+		{"explain analyze select * from point where id in (3, 4)", true, true},
+	}
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+	for _, ca := range cases {
+		s.mustExecDDL(tk, c, "lock tables point read")
 
-	// Test cache release after unlocking tables.
-	s.mustExecDDL(tk, c, "lock tables point read")
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+		rows := tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1, Commentf("%v", ca.sql))
+		explain := fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	ok = strings.Contains(explain, "num_rpc")
-	c.Assert(ok, IsFalse)
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		ok := strings.Contains(explain, "num_rpc")
+		c.Assert(ok, Equals, ca.r1, Commentf("%v", ca.sql))
+		s.mustExecDDL(tk, c, "unlock tables")
 
-	s.mustExecDDL(tk, c, "unlock tables")
-	s.mustExecDDL(tk, c, "lock tables point read")
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+		// Test cache release after unlocking tables.
+		s.mustExecDDL(tk, c, "lock tables point read")
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
 
-	s.mustExecDDL(tk, c, "unlock tables")
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		ok = strings.Contains(explain, "num_rpc")
+		c.Assert(ok, Equals, ca.r2, Commentf("%v", ca.sql))
+
+		s.mustExecDDL(tk, c, "unlock tables")
+		s.mustExecDDL(tk, c, "lock tables point read")
+
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
+
+		s.mustExecDDL(tk, c, "unlock tables")
+	}
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
