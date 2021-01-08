@@ -45,11 +45,6 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	switch tbInfo.State {
 	case model.StateNone:
 		// none -> public
@@ -59,13 +54,18 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		ver, err = updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateSequence, TableInfo: tbInfo})
-		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}
+	return ver, errors.Trace(err)
 }
 
 func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {

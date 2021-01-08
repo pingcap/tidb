@@ -41,11 +41,6 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	switch dbInfo.State {
 	case model.StateNone:
 		// none -> public
@@ -54,13 +49,17 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		ver, err = updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
-		return ver, nil
 	default:
 		// We can't enter here.
-		return ver, errors.Errorf("invalid db state %v", dbInfo.State)
+		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
+	return ver, errors.Trace(err)
 }
 
 func checkSchemaNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, dbInfo *model.DBInfo) error {
@@ -145,15 +144,15 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -163,6 +162,10 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		dbInfo.State = model.StateDeleteOnly
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -184,6 +187,10 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			break
 		}
 
+		ver, err = updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		if len(tables) > 0 {
 			job.Args = append(job.Args, getIDs(tables))
