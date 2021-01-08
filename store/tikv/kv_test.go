@@ -17,8 +17,9 @@ func (s *testTiKVDriverSuite) TestSetDefaultAndOptions(c *C) {
 	security := config.Security{ClusterSSLCA: "test"}
 	d.setDefaultAndOptions(WithSecurity(security))
 
-	defaultCfg := config.NewConfig()
+	defaultCfg := config.GetGlobalConfig()
 	c.Assert(d.security, DeepEquals, security)
 	c.Assert(d.tikvConfig, DeepEquals, defaultCfg.TiKVClient)
 	c.Assert(d.txnLocalLatches, DeepEquals, defaultCfg.TxnLocalLatches)
+	c.Assert(d.pdConfig, DeepEquals, defaultCfg.PDClient)
 }

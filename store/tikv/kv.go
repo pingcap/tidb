@@ -106,31 +106,25 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 	return cli, nil
 }
 
-// Open opens or creates an TiKV storage with given path.
+// Open opens or creates an TiKV storage with given path using global config
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d Driver) Open(path string) (kv.Storage, error) {
-	tidbCfg := config.GetGlobalConfig()
-	return d.OpenWithOptions(path,
-		WithPDClientConfig(tidbCfg.PDClient),
-		WithSecurity(tidbCfg.Security),
-		WithTiKVClientConfig(tidbCfg.TiKVClient),
-		WithTxnLocalLatches(tidbCfg.TxnLocalLatches),
-	)
+	return d.OpenWithOptions(path)
 }
 
 func (d *Driver) setDefaultAndOptions(options ...DriverOption) {
-	defaultCfg := config.NewConfig()
-	d.pdConfig = defaultCfg.PDClient
-	d.security = defaultCfg.Security
-	d.tikvConfig = defaultCfg.TiKVClient
-	d.txnLocalLatches = defaultCfg.TxnLocalLatches
+	tidbCfg := config.GetGlobalConfig()
+	d.pdConfig = tidbCfg.PDClient
+	d.security = tidbCfg.Security
+	d.tikvConfig = tidbCfg.TiKVClient
+	d.txnLocalLatches = tidbCfg.TxnLocalLatches
 	for _, f := range options {
 		f(d)
 	}
 }
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
-// unspecified options will be set to default config obtained from config.NewConfig()
+// unspecified options will be set to global config
 func (d Driver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
