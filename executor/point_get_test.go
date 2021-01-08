@@ -713,6 +713,7 @@ func (s *testSerialSuite) TestPartitionMemCacheReadLock(c *C) {
 
 	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
 	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
+	tk.MustQuery("select _tidb_rowid from point where id = -2").Check(testkit.Rows("2"))
 
 	s.mustExecDDL(tk, c, "unlock tables")
 }
