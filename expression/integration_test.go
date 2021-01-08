@@ -7327,3 +7327,12 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
+
+func (s *testIntegrationSuite) TestDatetimeUserVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @p = now()")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+}
