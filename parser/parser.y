@@ -212,7 +212,6 @@ import (
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
-	proxy             "PROXY"
 	rangeKwd          "RANGE"
 	rank              "RANK"
 	read              "READ"
@@ -493,6 +492,7 @@ import (
 	processlist           "PROCESSLIST"
 	profile               "PROFILE"
 	profiles              "PROFILES"
+	proxy                 "PROXY"
 	purge                 "PURGE"
 	quarter               "QUARTER"
 	queries               "QUERIES"
@@ -5312,6 +5312,7 @@ UnReservedKeyword:
 |	"PASSWORD" %prec lowerThanEq
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"
+|	"PROXY"
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
