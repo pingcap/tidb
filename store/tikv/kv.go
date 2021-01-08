@@ -78,6 +78,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	pdConfig := config.GetGlobalConfig().PDClient
 	tikvConfig := config.GetGlobalConfig().TiKVClient
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
 	etcdAddrs, disableGC, err := config.ParsePath(path)
@@ -94,7 +95,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
-	))
+	), pd.WithCustomTimeoutOption(time.Duration(pdConfig.PDServerTimeout)*time.Second))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
