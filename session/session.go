@@ -1420,14 +1420,11 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
-	// covered SelectStmt/ExplainStmt/DoStmt/ShowStmt/SetOprStmt/ExecuteStmt
-	if planner.IsReadOnly(stmtNode, vars) {
-		return nil
-	}
-	switch stmtNode.(type) {
+	node := stmtNode.(ast.Node)
+	switch node.(type) {
 	case *ast.SplitRegionStmt:
 		return nil
-	case *ast.SelectStmt, *ast.ExplainStmt, *ast.SetOprStmt, *ast.ExecuteStmt:
+	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
 		if !planner.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
