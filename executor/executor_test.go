@@ -4154,21 +4154,6 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 
 	err = rs.Close()
 	c.Assert(err, IsNil)
-
-	tk.MustExec("DROP TABLE IF EXISTS t1, t11, t2;")
-	tk.MustExec("CREATE TABLE t1(a INTEGER);")
-	tk.MustExec("CREATE TABLE t11(a INTEGER primary key);")
-	tk.MustExec("CREATE TABLE t2(b INTEGER);")
-	tk.MustExec("INSERT INTO t2 VALUES (1),(1);")
-	tk.MustExec("INSERT INTO t1 VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);")
-	tk.MustExec("INSERT INTO t11 VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);")
-	tk.MustExec("INSERT INTO t2 VALUES (2)")
-	tk.MustExec("INSERT INTO t11 VALUES (2)")
-	tk.MustGetErrMsg("INSERT INTO t1(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
-	tk.MustGetErrMsg("INSERT INTO t11(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
-	tk.MustExec("DELETE FROM t2 WHERE b=2")
-	tk.MustExec("INSERT INTO t2 VALUES (NULL)")
-	tk.MustGetErrMsg("INSERT INTO t1(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
 }
 
 func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
