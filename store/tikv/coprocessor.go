@@ -886,6 +886,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
+	logutil.BgLogger().Info("handleTaskOnce", zap.Bool("staleRead", req.StaleRead))
 	var ops []StoreSelectorOption
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, WithMatchLabels(worker.req.MatchStoreLabels))
