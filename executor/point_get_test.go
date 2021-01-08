@@ -603,7 +603,7 @@ func (s *testSerialSuite) mustExecDDL(tk *testkit.TestKit, c *C, sql string) {
 	c.Assert(s.domain.Reload(), IsNil)
 }
 
-func (s *testSerialSuite) TestPointGetReadLock(c *C) {
+func (s *testSerialSuite) TestMemCacheReadLock(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
@@ -677,6 +677,41 @@ func (s *testSerialSuite) TestPointGetReadLock(c *C) {
 
 		s.mustExecDDL(tk, c, "unlock tables")
 	}
+}
+
+func (s *testSerialSuite) TestPartitionMemCacheReadLock(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Se.GetSessionVars().EnablePointGetCache = false
+	}()
+
+	tk.MustExec("create table point (id int unique key, c int, d varchar(10)) partition by hash (id) partitions 4")
+	tk.MustExec("insert point values (1, 1, 'a')")
+	tk.MustExec("insert point values (2, 2, 'b')")
+
+	s.mustExecDDL(tk, c, "lock tables point read")
+
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows("1"))
+	s.mustExecDDL(tk, c, "unlock tables")
+
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows("1"))
+	tk.MustExec("update point set id = -id")
+
+	// Test cache release after unlocking tables.
+	s.mustExecDDL(tk, c, "lock tables point read")
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows())
+
+	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
+	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
+
+	s.mustExecDDL(tk, c, "unlock tables")
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
