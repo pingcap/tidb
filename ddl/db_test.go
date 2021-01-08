@@ -4275,17 +4275,15 @@ func (s *testDBSuite3) TestIssue123123123(c *C) {
 	s.mustExec(tk, c, "insert into t values(1, 1);")
 
 	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var checkErr error
+	var checkErr1, checkErr2 error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 		default:
 			return
 		}
-		//_, checkErr = tk.Exec("select a from t where b > 0;")
-		//_, checkErr = tk.Exec("update t set a = 3 where b = 1097235;")
-		//_, checkErr = tk.Exec("update t set b = 3 where b = 1;")
-		_, checkErr = tk.Exec("update t set a = 3 order by b;")
+		_, checkErr1 = tk.Exec("update t set b = 3 where b = 1;")
+		_, checkErr2 = tk.Exec("update t set a = 3 order by b;")
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
@@ -4293,7 +4291,8 @@ func (s *testDBSuite3) TestIssue123123123(c *C) {
 	go backgroundExec(s.store, "alter table t drop column b;", done)
 	err := <-done
 	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
+	c.Assert(checkErr1.Error(), Equals, "[planner:1054]Unknown column 'b' in 'where clause'")
+	c.Assert(checkErr2.Error(), Equals, "[planner:1054]Unknown column 'b' in 'order clause'")
 }
 
 func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {

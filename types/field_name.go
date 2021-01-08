@@ -28,7 +28,8 @@ type FieldName struct {
 	TblName     model.CIStr
 	ColName     model.CIStr
 
-	Hidden bool
+	Hidden        bool
+	NotAccessible bool
 }
 
 const emptyName = "EMPTY_NAME"

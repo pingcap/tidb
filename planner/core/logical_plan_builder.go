@@ -3703,12 +3703,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
-			Hidden:      col.Hidden,
+			DBName:        dbName,
+			TblName:       tableInfo.Name,
+			ColName:       col.Name,
+			OrigTblName:   tableInfo.Name,
+			OrigColName:   col.Name,
+			Hidden:        col.Hidden,
+			NotAccessible: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
@@ -4251,7 +4252,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 		// find all conditions depend columns
 		//for _, cond := range p.(*LogicalSelection).Conditions {
-			//
+		//
 		//}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
