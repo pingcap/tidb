@@ -4249,6 +4249,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if err != nil {
 			return nil, err
 		}
+		// find all conditions depend columns
+		//for _, cond := range p.(*LogicalSelection).Conditions {
+			//
+		//}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if update.TableRefs.TableRefs.Right == nil {
