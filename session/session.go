@@ -1420,6 +1420,9 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 		return nil
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
+	if planner.IsReadOnly(stmtNode, vars) {
+		return nil
+	}
 	switch stmtNode.(type) {
 	case *ast.SplitRegionStmt:
 		return nil
