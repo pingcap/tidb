@@ -1263,12 +1263,6 @@ func BuildFinalModeAggregation(
 				sumAgg.Name = ast.AggFuncSum
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &cntAgg, &sumAgg)
-				if sctx.GetSessionVars().AllowMPPExecution {
-					finalAvgCount := cntAgg.Clone()
-					finalAvgCount.Name = ast.AggFuncSum
-					finalAvgCount.Mode = aggregation.FinalMode
-				}
-
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				approxCountDistinctAgg := *aggFunc
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
