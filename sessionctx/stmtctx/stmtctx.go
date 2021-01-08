@@ -147,6 +147,7 @@ type StatementContext struct {
 	planDigest            string
 	encodedPlan           string
 	planHint              string
+	planHintSet           bool
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -229,12 +230,13 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 }
 
 // GetPlanHint gets the hint string generated from the plan.
-func (sc *StatementContext) GetPlanHint() string {
-	return sc.planHint
+func (sc *StatementContext) GetPlanHint() (string, bool) {
+	return sc.planHint, sc.planHintSet
 }
 
 // SetPlanHint sets the hint for the plan.
 func (sc *StatementContext) SetPlanHint(hint string) {
+	sc.planHintSet = true
 	sc.planHint = hint
 }
 
