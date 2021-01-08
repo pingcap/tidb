@@ -1221,19 +1221,27 @@ func BuildFinalModeAggregation(
 			finalAggFunc.HasDistinct = true
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
-			if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount {
-				// TODO: only work when the count() can be pushed down.
-				finalAggFunc.Name = ast.AggFuncSum
-			}
 			if aggregation.NeedCount(finalAggFunc.Name) {
-				ft := types.NewFieldType(mysql.TypeLonglong)
-				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  ft,
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
+				if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount && partialIsCop {
+					// TODO: only work when the count() can be pushed down in MPP.
+					// Note: MPP mode does not run avg() directly, so here should not
+					finalAggFunc.IsMppFinal = true
+					partial.Schema.Append(&expression.Column{
+						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+						RetType:  original.Schema.Columns[i].GetType(),
+					})
+					args = append(args, partial.Schema.Columns[partialCursor])
+					partialCursor++
+				} else {
+					ft := types.NewFieldType(mysql.TypeLonglong)
+					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+					partial.Schema.Append(&expression.Column{
+						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+						RetType:  ft,
+					})
+					args = append(args, partial.Schema.Columns[partialCursor])
+					partialCursor++
+				}
 			}
 			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
 				ft := types.NewFieldType(mysql.TypeString)
@@ -1590,7 +1598,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			newMpp.p = proj
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false) / 2)
+		newMpp.addCost(p.GetCost(inputRows, false))
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)

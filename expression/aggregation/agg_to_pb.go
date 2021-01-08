@@ -36,7 +36,11 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	var tp tipb.ExprType
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		tp = tipb.ExprType_Count
+		if aggFunc.IsMppFinal {
+			tp = tipb.ExprType_Sum
+		} else {
+			tp = tipb.ExprType_Count
+		}
 	case ast.AggFuncApproxCountDistinct:
 		tp = tipb.ExprType_ApproxCountDistinct
 	case ast.AggFuncFirstRow:
