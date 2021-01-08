@@ -684,39 +684,6 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	c.Assert(len(bo.errors), Equals, 2)
 }
 
-func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
-	// add store3 as tiflash
-	store3 := s.cluster.AllocID()
-	peer3 := s.cluster.AllocID()
-	s.cluster.UpdateStoreAddr(s.store1, s.storeAddr(s.store1), &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-	s.cluster.AddStore(store3, s.storeAddr(store3))
-	s.cluster.AddPeer(s.region1, store3, peer3)
-	s.cluster.ChangeLeader(s.region1, peer3)
-
-	// pre-load region cache
-	loc1, err := s.cache.LocateKey(s.bo, []byte("a"))
-	c.Assert(err, IsNil)
-	c.Assert(loc1.Region.id, Equals, s.region1)
-	lctx, err := s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
-	c.Assert(err, IsNil)
-	c.Assert(lctx.Peer.Id, Equals, peer3)
-
-	// epoch-not-match on tiflash
-	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
-	c.Assert(err, IsNil)
-	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
-	ctxTiFlash.Peer.IsLearner = true
-	r := ctxTiFlash.Meta
-	reqSend := NewRegionRequestSender(s.cache, nil)
-	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{r}}}
-	reqSend.onRegionError(s.bo, ctxTiFlash, nil, regionErr)
-
-	// check leader read should not go to tiflash
-	lctx, err = s.cache.GetTiKVRPCContext(s.bo, loc1.Region, kv.ReplicaReadLeader, 0)
-	c.Assert(err, IsNil)
-	c.Assert(lctx.Peer.Id, Not(Equals), s.peer1)
-}
-
 const regionSplitKeyFormat = "t%08d"
 
 func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Cluster {

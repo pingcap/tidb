@@ -51,19 +51,8 @@ type DDLExec struct {
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
-	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
-	dom := domain.GetDomain(e.ctx)
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	txn, err1 := e.ctx.Txn(true)
-	if err1 != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(err))
-		return err1
-	}
-	_, schemaInfoErr := checker.Check(txn.StartTS())
-	if schemaInfoErr != nil {
-		return errors.Trace(schemaInfoErr)
-	}
-	return err
+	panic("unreachable")
+	return nil
 }
 
 // Next implements the Executor Next interface.

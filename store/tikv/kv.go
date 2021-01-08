@@ -148,7 +148,6 @@ type tikvStore struct {
 	client       Client
 	pdClient     pd.Client
 	regionCache  *RegionCache
-	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler
@@ -205,7 +204,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		client:          reqCollapse{client},
 		pdClient:        pdClient,
 		regionCache:     NewRegionCache(pdClient),
-		coprCache:       nil,
 		kv:              spkv,
 		safePoint:       0,
 		spTime:          time.Now(),
@@ -214,12 +212,6 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-
-	coprCache, err := newCoprCache(coprCacheConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	store.coprCache = coprCache
 
 	go store.runSafePointChecker()
 
@@ -275,16 +267,7 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	if !s.enableGC || NewGCHandlerFunc == nil {
-		return nil
-	}
-
-	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcWorker.Start()
-	s.gcWorker = gcWorker
+	panic("should not be called")
 	return nil
 }
 

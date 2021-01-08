@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -568,43 +567,9 @@ func newWriteConflictError(conflict *pb.WriteConflict) error {
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err == nil {
-		_, err1 := fmt.Fprintf(buf, "{tableID=%d, indexID=%d, indexValues={", tableID, indexID)
-		if err1 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err1))
-		}
-		for _, v := range indexValues {
-			_, err2 := fmt.Fprintf(buf, "%s, ", v)
-			if err2 != nil {
-				logutil.BgLogger().Error("error", zap.Error(err2))
-			}
-		}
-		buf.WriteString("}}")
-		return
-	}
-
-	tableID, handle, err := tablecodec.DecodeRecordKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{tableID=%d, handle=%d}", tableID, handle)
-		if err3 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	mKey, mField, err := tablecodec.DecodeMetaKey(key)
-	if err == nil {
-		_, err3 := fmt.Fprintf(buf, "{metaKey=true, key=%s, field=%s}", string(mKey), string(mField))
-		if err3 != nil {
-			logutil.Logger(context.Background()).Error("error", zap.Error(err3))
-		}
-		return
-	}
-
-	_, err4 := fmt.Fprintf(buf, "%#v", key)
-	if err4 != nil {
-		logutil.BgLogger().Error("error", zap.Error(err4))
+	_, err := fmt.Fprintf(buf, "%#v", key)
+	if err != nil {
+		logutil.BgLogger().Error("error", zap.Error(err))
 	}
 }
 

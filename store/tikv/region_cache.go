@@ -83,8 +83,6 @@ type AccessMode int
 const (
 	// TiKvOnly indicates stores list that use for TiKv access(include both leader request and follower read).
 	TiKvOnly AccessMode = iota
-	// TiFlashOnly indicates stores list that use for TiFlash request.
-	TiFlashOnly
 	// NumAccessMode reserved to keep max access mode value.
 	NumAccessMode
 )
@@ -93,8 +91,6 @@ func (a AccessMode) String() string {
 	switch a {
 	case TiKvOnly:
 		return "TiKvOnly"
-	case TiFlashOnly:
-		return "TiFlashOnly"
 	default:
 		return fmt.Sprintf("%d", a)
 	}
@@ -106,11 +102,10 @@ type AccessIndex int
 // RegionStore represents region stores info
 // it will be store as unsafe.Pointer and be load at once
 type RegionStore struct {
-	workTiKVIdx    AccessIndex          // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
-	workTiFlashIdx int32                // point to current work peer in meta.Peers and work store in stores(same idx) for tiflash peer
-	stores         []*Store             // stores in this region
-	storeEpochs    []uint32             // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
-	accessIndex    [NumAccessMode][]int // AccessMode => idx in stores
+	workTiKVIdx AccessIndex          // point to current work peer in meta.Peers and work store in stores(same idx) for tikv peer
+	stores      []*Store             // stores in this region
+	storeEpochs []uint32             // snapshots of store's epoch, need reload when `storeEpochs[curr] != stores[cur].fail`
+	accessIndex [NumAccessMode][]int // AccessMode => idx in stores
 }
 
 func (r *RegionStore) accessStore(mode AccessMode, idx AccessIndex) (int, *Store) {
@@ -126,10 +121,9 @@ func (r *RegionStore) accessStoreNum(mode AccessMode) int {
 func (r *RegionStore) clone() *RegionStore {
 	storeEpochs := make([]uint32, len(r.stores))
 	rs := &RegionStore{
-		workTiFlashIdx: r.workTiFlashIdx,
-		workTiKVIdx:    r.workTiKVIdx,
-		stores:         r.stores,
-		storeEpochs:    storeEpochs,
+		workTiKVIdx: r.workTiKVIdx,
+		stores:      r.stores,
+		storeEpochs: storeEpochs,
 	}
 	copy(storeEpochs, r.storeEpochs)
 	for i := 0; i < int(NumAccessMode); i++ {
@@ -182,10 +176,9 @@ func (r *Region) init(c *RegionCache) error {
 	// region store pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &RegionStore{
-		workTiKVIdx:    0,
-		workTiFlashIdx: 0,
-		stores:         make([]*Store, 0, len(r.meta.Peers)),
-		storeEpochs:    make([]uint32, 0, len(r.meta.Peers)),
+		workTiKVIdx: 0,
+		stores:      make([]*Store, 0, len(r.meta.Peers)),
+		storeEpochs: make([]uint32, 0, len(r.meta.Peers)),
 	}
 	for _, p := range r.meta.Peers {
 		c.storeMu.RLock()
@@ -202,7 +195,7 @@ func (r *Region) init(c *RegionCache) error {
 		case kv.TiKV:
 			rs.accessIndex[TiKvOnly] = append(rs.accessIndex[TiKvOnly], len(rs.stores))
 		case kv.TiFlash:
-			rs.accessIndex[TiFlashOnly] = append(rs.accessIndex[TiFlashOnly], len(rs.stores))
+			panic("unsupported store type")
 		}
 		rs.stores = append(rs.stores, store)
 		rs.storeEpochs = append(rs.storeEpochs, atomic.LoadUint32(&store.epoch))
@@ -428,63 +421,6 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	}, nil
 }
 
-// GetTiFlashRPCContext returns RPCContext for a region must access flash store. If it returns nil, the region
-// must be out of date and already dropped from cache or not flash store found.
-func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext, error) {
-	ts := time.Now().Unix()
-
-	cachedRegion := c.getCachedRegionWithRLock(id)
-	if cachedRegion == nil {
-		return nil, nil
-	}
-	if !cachedRegion.checkRegionCacheTTL(ts) {
-		return nil, nil
-	}
-
-	regionStore := cachedRegion.getStore()
-
-	// sIdx is for load balance of TiFlash store.
-	sIdx := int(atomic.AddInt32(&regionStore.workTiFlashIdx, 1))
-	for i := 0; i < regionStore.accessStoreNum(TiFlashOnly); i++ {
-		accessIdx := AccessIndex((sIdx + i) % regionStore.accessStoreNum(TiFlashOnly))
-		storeIdx, store := regionStore.accessStore(TiFlashOnly, accessIdx)
-		addr, err := c.getStoreAddr(bo, cachedRegion, store, storeIdx)
-		if err != nil {
-			return nil, err
-		}
-		if len(addr) == 0 {
-			cachedRegion.invalidate()
-			return nil, nil
-		}
-		if store.getResolveState() == needCheck {
-			store.reResolve(c)
-		}
-		atomic.StoreInt32(&regionStore.workTiFlashIdx, int32(accessIdx))
-		peer := cachedRegion.meta.Peers[storeIdx]
-		storeFailEpoch := atomic.LoadUint32(&store.epoch)
-		if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
-			cachedRegion.invalidate()
-			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
-				zap.Uint64("region", id.GetID()),
-				zap.String("store", store.addr))
-			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
-			continue
-		}
-		return &RPCContext{
-			Region:     id,
-			Meta:       cachedRegion.meta,
-			Peer:       peer,
-			AccessIdx:  accessIdx,
-			Store:      store,
-			Addr:       addr,
-			AccessMode: TiFlashOnly,
-		}, nil
-	}
-
-	cachedRegion.invalidate()
-	return nil, nil
-}
-
 // KeyLocation is the region and range that a key is located.
 type KeyLocation struct {
 	Region   RegionVerID
@@ -609,7 +545,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 		if ctx.AccessMode == TiKvOnly {
 			rs.switchNextTiKVPeer(r, ctx.AccessIdx)
 		} else {
-			rs.switchNextFlashPeer(r, ctx.AccessIdx)
+			panic("unexpected access mode")
 		}
 
 		// force reload region when retry all known peers in region.
@@ -847,9 +783,6 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	old := c.mu.sorted.ReplaceOrInsert(newBtreeItem(cachedRegion))
 	if old != nil {
-		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
-		// is under transferring regions.
-		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
@@ -1345,13 +1278,6 @@ retry:
 		goto retry
 	}
 	return
-}
-
-func (r *RegionStore) switchNextFlashPeer(rr *Region, currentPeerIdx AccessIndex) {
-	nextIdx := (currentPeerIdx + 1) % AccessIndex(r.accessStoreNum(TiFlashOnly))
-	newRegionStore := r.clone()
-	newRegionStore.workTiFlashIdx = int32(nextIdx)
-	rr.compareAndSwapStore(r, newRegionStore)
 }
 
 func (r *RegionStore) switchNextTiKVPeer(rr *Region, currentPeerIdx AccessIndex) {

@@ -49,13 +49,6 @@ var (
 	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblLockKeys)
 )
 
-// SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
-type SchemaAmender interface {
-	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
-	// The returned results are mutations need to prewrite and mutations need to cleanup.
-	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (*CommitterMutations, error)
-}
-
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
 	snapshot  *tikvSnapshot
@@ -81,10 +74,6 @@ type tikvTxn struct {
 	valid bool
 	dirty bool
 
-	// txnInfoSchema is the infoSchema fetched at startTS.
-	txnInfoSchema SchemaVer
-	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
-	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info kv.TxnInfo, err error)
 }
@@ -242,9 +231,9 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.CheckExists:
 		txn.us.SetOption(kv.CheckExists, val.(map[string]struct{}))
 	case kv.InfoSchema:
-		txn.txnInfoSchema = val.(SchemaVer)
+		panic("unexpected option")
 	case kv.SchemaAmender:
-		txn.schemaAmender = val.(SchemaAmender)
+		panic("unexpected option")
 	case kv.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}

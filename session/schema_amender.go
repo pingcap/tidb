@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
@@ -617,53 +616,6 @@ func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutation
 		return nil, err
 	}
 	return &resultNewMutations, nil
-}
-
-// AmendTxn does check and generate amend mutations based on input infoSchema and mutations, mutations need to prewrite
-// are returned, the input commitMutations will not be changed.
-func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.SchemaVer, change *tikv.RelatedSchemaChange,
-	commitMutations tikv.CommitterMutations) (*tikv.CommitterMutations, error) {
-	// Get info schema meta
-	infoSchemaAtStart := startInfoSchema.(infoschema.InfoSchema)
-	infoSchemaAtCheck := change.LatestInfoSchema.(infoschema.InfoSchema)
-
-	// Collect amend operations for each table by physical table ID.
-	var needAmendMem bool
-	amendCollector := newAmendCollector()
-	for i, tblID := range change.PhyTblIDS {
-		actionType := change.ActionTypes[i]
-		// Check amendable flags, return if not supported flags exist.
-		if actionType&(^amendableType) != 0 {
-			logutil.Logger(ctx).Info("amend action type not supported for txn", zap.Int64("tblID", tblID), zap.Uint64("actionType", actionType))
-			return nil, errors.Trace(table.ErrUnsupportedOp)
-		}
-		// Partition table is not supported now.
-		tblInfoAtStart, ok := infoSchemaAtStart.TableByID(tblID)
-		if !ok {
-			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
-		}
-		if tblInfoAtStart.Meta().Partition != nil {
-			logutil.Logger(ctx).Info("Amend for partition table is not supported",
-				zap.String("tableName", tblInfoAtStart.Meta().Name.String()), zap.Int64("tableID", tblID))
-			return nil, errors.Trace(table.ErrUnsupportedOp)
-		}
-		tblInfoAtCommit, ok := infoSchemaAtCheck.TableByID(tblID)
-		if !ok {
-			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
-		}
-		if actionType&(memBufAmendType) != 0 {
-			needAmendMem = true
-			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit, actionType)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	// After amend operations collect, generate related new mutations based on input commitMutations
-	if needAmendMem {
-		return s.genAllAmendMutations(ctx, commitMutations, amendCollector)
-	}
-	return nil, nil
 }
 
 func newSchemaAndDecoder(ctx sessionctx.Context, tbl *model.TableInfo) *schemaAndDecoder {
