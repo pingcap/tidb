@@ -1015,31 +1015,6 @@ func (s *session) varFromTiDBTable(name string) bool {
 	return false
 }
 
-// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(sessionctx.Initing) != nil {
-		return nil, nil
-	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	ret := make(map[string]string, len(rows))
-	for _, r := range rows {
-		k, v := r.GetString(0), r.GetString(1)
-		if s.varFromTiDBTable(k) {
-			if v, err = s.getTiDBTableValue(k, v); err != nil {
-				ret[k] = v
-			}
-		} else {
-			ret[k] = v
-		}
-	}
-	return ret, nil
-}
-
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if name == variable.TiDBSlowLogMasking {
