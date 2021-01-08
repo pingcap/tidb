@@ -2235,7 +2235,11 @@ func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
 			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
 		}
+		// capture the forUpdateRead mark
+		isForUpdateRead := r.b.isForUpdateRead
+		r.b.isForUpdateRead = false
 		r.err = r.resolveSelect(v)
+		r.b.isForUpdateRead = isForUpdateRead
 		return n, true
 	}
 	return n, false
