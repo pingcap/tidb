@@ -170,10 +170,10 @@
       {
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
         "Plan": [
-          "StreamAgg_7 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#4)->Column#5",
-          "└─Projection_13 4.00 root  test.t1.a, test.t1.b, plus(test.t1.a, 1)->Column#4",
-          "  └─IndexReader_15 4.00 root  index:IndexFullScan_14",
-          "    └─IndexFullScan_14 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
+          "[StreamAgg_10 4.00 root  group by:Column#10, Column#11, funcs:count(Column#9)->Column#5]",
+          "[└─Projection_24 4.00 root  plus(test.t1.a, 1)->Column#9, test.t1.b, test.t1.a]",
+          "[  └─IndexReader_23 4.00 root  index:IndexFullScan_22]",
+          "[    └─IndexFullScan_22 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true]"
         ]
       },
       {

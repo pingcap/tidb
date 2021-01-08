@@ -1108,11 +1108,10 @@
       {
         "SQL": "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader_13 1.00 root  data:HashAgg_8",
-          "  └─HashAgg_8 1.00 cop[tiflash]  funcs:count(Column#4)->Column#7",
-          "    └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "      └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5]",
+          "└─TableReader_13 1.00 root  data:HashAgg_6",
+          "  └─HashAgg_6 1.00 cop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#7",
+          "    └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1251,12 +1250,12 @@
       {
         "SQL": "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg_12 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader_14 1.00 root  data:ExchangeSender_13",
-          "  └─ExchangeSender_13 1.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:count(Column#4)->Column#7",
+          "HashAgg_15 1.00 root  funcs:count(Column#8)->Column#5",
+          "└─TableReader_17 1.00 root  data:ExchangeSender_16",
+          "  └─ExchangeSender_16 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_8 1.00 cop[tiflash]  funcs:count(plus(test.t.id, 1))->Column#8",
           "      └─Projection_10 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#4",
-          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "        └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
