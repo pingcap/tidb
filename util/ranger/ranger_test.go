@@ -786,6 +786,13 @@ create table t(
 		},
 		{
 			indexPos:    4,
+			exprStr:     "col_int = 9223372036854775808",
+			accessConds: "[eq(test.t.col_int, 9223372036854775808)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    4,
 			exprStr:     "col_int > 9223372036854775808",
 			accessConds: "[gt(test.t.col_int, 9223372036854775808)]",
 			filterConds: "[]",
@@ -812,6 +819,34 @@ create table t(
 			filterConds: "[]",
 			resultStr:   "[]",
 		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float = 1000000000000000000000000000000000000000",
+			accessConds: "[eq(test.t.col_float, 1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float <=> 1000000000000000000000000000000000000000",
+			accessConds: "[nulleq(test.t.col_float, 1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float = -1000000000000000000000000000000000000000",
+			accessConds: "[eq(test.t.col_float, -1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "col_float <=> -1000000000000000000000000000000000000000",
+			accessConds: "[nulleq(test.t.col_float, -1e+39)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
 	}
 
 	ctx := context.Background()
@@ -826,21 +861,26 @@ create table t(
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
+		if selection, ok := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection); ok {
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			c.Assert(cols, NotNil)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			c.Assert(err, IsNil)
+			c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+			c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+			got := fmt.Sprintf("%v", res.Ranges)
+			c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		if selection, ok := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalTableDual); ok {
+			c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+			continue
+		}
 	}
 }
 
