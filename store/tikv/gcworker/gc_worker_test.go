@@ -377,6 +377,28 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	useAutoConcurrency, err = s.gcWorker.checkUseAutoConcurrency()
 	c.Assert(err, IsNil)
 	c.Assert(useAutoConcurrency, IsTrue)
+
+}
+
+func (s *testGCWorkerSuite) TestStatusVars(c *C) {
+	// Status variables should now exist for:
+	// tidb_gc_safe_point, tidb_gc_last_run_time
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+
+	safePoint, err := s.gcWorker.loadValueFromSysTable(gcSafePointKey)
+	c.Assert(err, IsNil)
+	lastRunTime, err := s.gcWorker.loadValueFromSysTable(gcLastRunTimeKey)
+	c.Assert(err, IsNil)
+
+	statusVars, _ := s.gcWorker.Stats(se.GetSessionVars())
+	val, ok := statusVars[tidbGCSafePoint]
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, safePoint)
+	val, ok = statusVars[tidbGCLastRunTime]
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, lastRunTime)
+
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {

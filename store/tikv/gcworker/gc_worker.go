@@ -88,6 +88,7 @@ func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error)
 		lastFinish:  time.Now(),
 		done:        make(chan error),
 	}
+	variable.RegisterStatistics(worker)
 	return worker, nil
 }
 
@@ -150,6 +151,13 @@ const (
 	gcDefaultAutoConcurrency = true
 
 	gcWorkerServiceSafePointID = "gc_worker"
+
+	// Status var names start with tidb_%
+	tidbGCLastRunTime = "tidb_gc_last_run_time"
+	tidbGCLeaderDesc  = "tidb_gc_leader_desc"
+	tidbGCLeaderLease = "tidb_gc_leader_lease"
+	tidbGCLeaderUUID  = "tidb_gc_leader_uuid"
+	tidbGCSafePoint   = "tidb_gc_safe_point"
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -216,6 +224,32 @@ func createSession(store kv.Storage) session.Session {
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
+}
+
+// GetScope gets the status variables scope.
+func (w *GCWorker) GetScope(status string) variable.ScopeFlag {
+	return variable.DefaultStatusVarScopeFlag
+}
+
+// Stats returns the server statistics.
+func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	if v, err := w.loadValueFromSysTable(gcLeaderUUIDKey); err == nil {
+		m[tidbGCLeaderUUID] = v
+	}
+	if v, err := w.loadValueFromSysTable(gcLeaderDescKey); err == nil {
+		m[tidbGCLeaderDesc] = v
+	}
+	if v, err := w.loadValueFromSysTable(gcLeaderLeaseKey); err == nil {
+		m[tidbGCLeaderLease] = v
+	}
+	if v, err := w.loadValueFromSysTable(gcLastRunTimeKey); err == nil {
+		m[tidbGCLastRunTime] = v
+	}
+	if v, err := w.loadValueFromSysTable(gcSafePointKey); err == nil {
+		m[tidbGCSafePoint] = v
+	}
+	return m, nil
 }
 
 func (w *GCWorker) tick(ctx context.Context) {
