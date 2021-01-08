@@ -1162,31 +1162,33 @@
       {
         "SQL": "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
         "Plan": [
-          "TableReader_39 9990.00 root  data:ExchangeSender_38",
-          "└─ExchangeSender_38 9990.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_37 9990.00 root  data:ExchangeSender_36",
+          "└─ExchangeSender_36 9990.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_9 9990.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "    ├─HashAgg_26(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
-          "    │ └─ExchangeReceiver_28 7992.00 cop[tiflash]  ",
-          "    │   └─ExchangeSender_27 7992.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "    │     └─HashAgg_16 7992.00 cop[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
-          "    │       └─Selection_21 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    │         └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─Selection_13(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    ├─HashAgg_28(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "    │ └─ExchangeReceiver_30 7992.00 cop[tiflash]  ",
+          "    │   └─ExchangeSender_29 7992.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "    │     └─HashAgg_18 7992.00 cop[tiflash]  group by:test.t.id, funcs:count(1)->Column#8",
+          "    │       └─Selection_23 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    │         └─TableFullScan_22 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver_15(Probe) 9990.00 cop[tiflash]  ",
+          "      └─ExchangeSender_14 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "        └─Selection_13 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
         "Plan": [
           "HashJoin_10 1.25 root  inner join, equal:[eq(test.t.id, Column#7)]",
-          "├─HashAgg_45(Build) 1.00 root  funcs:count(Column#11)->Column#7",
-          "│ └─TableReader_47 1.00 root  data:ExchangeSender_46",
-          "│   └─ExchangeSender_46 1.00 cop[tiflash]  ExchangeType: PassThrough",
-          "│     └─HashAgg_36 1.00 cop[tiflash]  funcs:count(1)->Column#11",
-          "│       └─TableFullScan_18 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_32(Probe) 9990.00 root  data:Selection_31",
-          "  └─Selection_31 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    └─TableFullScan_30 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "├─HashAgg_47(Build) 1.00 root  funcs:count(Column#11)->Column#7",
+          "│ └─TableReader_49 1.00 root  data:ExchangeSender_48",
+          "│   └─ExchangeSender_48 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "│     └─HashAgg_38 1.00 cop[tiflash]  funcs:count(1)->Column#11",
+          "│       └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
+          "  └─Selection_33 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1263,39 +1265,41 @@
       {
         "SQL": "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
         "Plan": [
-          "TableReader_41 7992.00 root  data:ExchangeSender_40",
-          "└─ExchangeSender_40 7992.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_44 7992.00 root  data:ExchangeSender_43",
+          "└─ExchangeSender_43 7992.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─HashAgg_12 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#7",
-          "    └─ExchangeReceiver_39 12487.50 cop[tiflash]  ",
-          "      └─ExchangeSender_38 12487.50 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "        └─HashJoin_37 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "          ├─ExchangeReceiver_20(Build) 9990.00 cop[tiflash]  ",
-          "          │ └─ExchangeSender_19 9990.00 cop[tiflash]  ExchangeType: Broadcast",
-          "          │   └─Selection_18 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "          │     └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─Selection_22(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "    └─HashJoin_39 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "      ├─ExchangeReceiver_20(Build) 9990.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender_19 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "      │   └─Selection_18 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "      │     └─TableFullScan_17 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver_24(Probe) 9990.00 cop[tiflash]  ",
+          "        └─ExchangeSender_23 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "          └─Selection_22 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "            └─TableFullScan_21 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id;",
         "Plan": [
-          "TableReader_82 7992.00 root  data:ExchangeSender_81",
-          "└─ExchangeSender_81 7992.00 cop[tiflash]  ExchangeType: PassThrough",
+          "TableReader_80 7992.00 root  data:ExchangeSender_79",
+          "└─ExchangeSender_79 7992.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_17 7992.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "    ├─HashAgg_20(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
           "    │ └─Selection_27 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "    │   └─TableFullScan_26 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─HashAgg_78(Probe) 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(Column#16)->Column#11, funcs:firstrow(test.t.id)->test.t.id",
-          "      └─ExchangeReceiver_80 7992.00 cop[tiflash]  ",
-          "        └─ExchangeSender_79 7992.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg_46 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#16",
-          "            └─HashJoin_47 9990.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "              ├─HashAgg_50(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "              │ └─Selection_57 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "              │   └─TableFullScan_56 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "              └─Selection_49(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan_48 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─HashAgg_73(Probe) 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(Column#16)->Column#11, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─ExchangeReceiver_75 7992.00 cop[tiflash]  ",
+          "        └─ExchangeSender_74 7992.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "          └─HashAgg_42 7992.00 cop[tiflash]  group by:test.t.id, funcs:sum(test.t.id)->Column#16",
+          "            └─HashJoin_46 9990.00 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "              ├─HashAgg_51(Build) 7992.00 cop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "              │ └─Selection_58 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "              │   └─TableFullScan_57 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "              └─ExchangeReceiver_50(Probe) 9990.00 cop[tiflash]  ",
+          "                └─ExchangeSender_49 9990.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "                  └─Selection_48 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "                    └─TableFullScan_47 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
