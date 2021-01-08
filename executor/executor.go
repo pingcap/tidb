@@ -1364,6 +1364,7 @@ type MaxOneRowExec struct {
 	baseExecutor
 
 	rowData   [][]byte
+	nullMap   map[int]bool
 	evaluated bool
 }
 
@@ -1373,6 +1374,7 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.rowData = make([][]byte, 0)
+	e.nullMap = make(map[int]bool)
 	e.evaluated = false
 	return nil
 }
@@ -1381,7 +1383,7 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 
-	if e.evaluated && len(e.rowData) == 0 {
+	if e.evaluated {
 		return nil
 	}
 	err := Next(ctx, e.children[0], req)
@@ -1399,12 +1401,25 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		row := req.GetRow(0)
 		for i := 0; i < req.NumCols(); i++ {
-			e.rowData = append(e.rowData, row.GetRaw(i))
+			if !row.IsNull(i) {
+				e.rowData = append(e.rowData, row.GetRaw(i))
+			} else {
+				e.rowData = append(e.rowData, []byte{0})
+				e.nullMap[i] = true
+			}
 		}
 
 		// Check the rest rows in the first chunk.
 		for startRow = 1; startRow < req.NumRows(); startRow++ {
 			for i := 0; i < req.NumCols(); i++ {
+				isNull := req.GetRow(startRow).IsNull(i)
+				_, firstIsNull := e.nullMap[i]
+				if isNull != firstIsNull {
+					return ErrSubqueryMoreThan1Row
+				}
+				if isNull {
+					continue
+				}
 				if !bytes.Equal(req.GetRow(startRow).GetRaw(i), e.rowData[i]) {
 					return ErrSubqueryMoreThan1Row
 				}
@@ -1424,6 +1439,14 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		for startRow = 0; startRow < childChunk.NumRows(); startRow++ {
 			for i := 0; i < childChunk.NumCols(); i++ {
+				isNull := req.GetRow(startRow).IsNull(i)
+				_, firstIsNull := e.nullMap[i]
+				if isNull != firstIsNull {
+					return ErrSubqueryMoreThan1Row
+				}
+				if isNull {
+					continue
+				}
 				if !bytes.Equal(childChunk.GetRow(startRow).GetRaw(i), e.rowData[i]) {
 					return ErrSubqueryMoreThan1Row
 				}

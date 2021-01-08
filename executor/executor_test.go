@@ -4166,6 +4166,9 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk.MustExec("INSERT INTO t11 VALUES (2)")
 	tk.MustGetErrMsg("INSERT INTO t1(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
 	tk.MustGetErrMsg("INSERT INTO t11(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
+	tk.MustExec("DELETE FROM t2 WHERE b=2")
+	tk.MustExec("INSERT INTO t2 VALUES (NULL)")
+	tk.MustGetErrMsg("INSERT INTO t1(a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM t2);", "[executor:1242]Subquery returns more than 1 row")
 }
 
 func (s *testSuiteP2) TestCurrentTimestampValueSelection(c *C) {
