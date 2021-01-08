@@ -1344,6 +1344,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
+		return nil, err
+	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
@@ -1384,6 +1387,30 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	return recordSet, nil
+}
+
+func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if !vars.TxnCtx.IsStaleness {
+		return nil
+	}
+	errMsg := "only support read-only statement during read-only staleness transactions"
+	node := stmtNode.(ast.Node)
+	switch node.(type) {
+	case *ast.SplitRegionStmt:
+		return nil
+	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
+		return nil
+	default:
+	}
+	// covered DeleteStmt/InsertStmt/UpdateStmt/CallStmt/LoadDataStmt
+	if _, ok := stmtNode.(ast.DMLNode); ok {
+		return errors.New(errMsg)
+	}
+	return nil
 }
 
 // querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
