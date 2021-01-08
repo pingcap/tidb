@@ -1802,3 +1802,21 @@ func (s *testSuite) TestCapturedBindingCharset(c *C) {
 	c.Assert(rows[0][6], Equals, "")
 	c.Assert(rows[0][7], Equals, "")
 }
+
+func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustExec("select * from t")
+	tk.MustExec("select * from t")
+	tk.MustExec("set tidb_slow_log_threshold = 300")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from test . t")
+}
