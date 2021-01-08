@@ -1296,9 +1296,13 @@ func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *Phy
 	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
 	nullTp := types.NewFieldType(mysql.TypeNull)
 	nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+	// TODO: TiFlash dose not accept precision of 0
+	if nullTp.Flen < 1 {
+		nullTp.Flen = 1
+	}
 	paramNull := &expression.Constant{
 		Value:   types.NewDatum(nil),
 		RetType: nullTp,
@@ -1342,8 +1346,8 @@ func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *Phy
 	if len(p.schema.Columns) == len(newSchema.Columns) {
 		return nil
 	}
-	// todo: surely?
-	for i := len(exprs); i < len(p.schema.Columns); i++ {
+	// add remaining columns to exprs
+	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
 		exprs = append(exprs, p.schema.Columns[i])
 	}
 	proj := PhysicalProjection{
@@ -1585,18 +1589,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		finalAgg.SetChildren(newMpp.p)
 		newMpp.p = finalAgg
 		if proj != nil {
-			if expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, proj.Exprs, p.ctx.GetClient(), kv.TiFlash) {
-				proj.SetChildren(newMpp.p)
-				newMpp.p = proj
-			} else {
-				t = newMpp.convertToRootTask(p.ctx)
-				attachPlan2Task(proj, t)
-				t.addCost(p.GetCost(t.count(), true))
-				return t
-			}
+			proj.SetChildren(newMpp.p)
+			newMpp.p = proj
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows/2, false))
+		newMpp.addCost(p.GetCost(inputRows, false) / 2)
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
@@ -1604,6 +1601,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			partialAgg.SetChildren(mpp.p)
 			mpp.p = partialAgg
 		}
+		mpp.addCost(p.GetCost(inputRows, false))
 		t = mpp.convertToRootTask(p.ctx)
 		inputRows = t.count()
 		attachPlan2Task(finalAgg, t)
