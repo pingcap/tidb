@@ -913,15 +913,15 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
-// AggMppRunMode means the running mode of aggregation in MPP
+// AggMppRunMode defines the running mode of aggregation in MPP
 type AggMppRunMode int
 
 const (
-	// Mpp1Phase runs only 1 phase when match its parent's partition property
+	// Mpp1Phase runs only 1 phase but requires its child's partition property
 	Mpp1Phase AggMppRunMode = iota
 	// Mpp2Phase runs partial agg + final agg with hash partition
 	Mpp2Phase
-	// MppTiDB have 1 phase or 2 phase when run the final agg on TiDB
+	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
 	MppTiDB
 )
 

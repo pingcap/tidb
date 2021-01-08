@@ -360,10 +360,10 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	}
 	for i, col := range p.HashCols {
 		colExpr, err1 := col.ResolveIndices(p.children[0].Schema())
-		p.HashCols[i], _ = colExpr.(*expression.Column)
 		if err1 != nil {
 			return err1
 		}
+		p.HashCols[i], _ = colExpr.(*expression.Column)
 	}
 	return err
 }
