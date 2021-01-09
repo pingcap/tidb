@@ -728,6 +728,12 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 
 	// Test issue 19981
 	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
+
+	// Test issue 22134
+	// Information about column n will not be in stats immediately after this SQL executed.
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
+	testKit.MustExec("alter table t add column n timestamp;")
+	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
 }
 
 func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {

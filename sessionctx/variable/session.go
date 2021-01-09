@@ -145,8 +145,8 @@ type TransactionContext struct {
 	shardRand    *rand.Rand
 
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistias updating.
-	// Note: for the partitionted table, it stores all the partition IDs.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
 	TableDeltaMap map[int64]TableDelta
 
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
@@ -162,9 +162,11 @@ type TransactionContext struct {
 	StatementCount int
 	CouldRetry     bool
 	IsPessimistic  bool
-	Isolation      string
-	LockExpire     uint32
-	ForUpdate      uint32
+	// IsStaleness indicates whether the txn is read only staleness txn.
+	IsStaleness bool
+	Isolation   string
+	LockExpire  uint32
+	ForUpdate   uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
@@ -268,6 +270,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.TableDeltaMap = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
+	tc.IsStaleness = false
 }
 
 // ClearDelta clears the delta map.
@@ -525,6 +528,10 @@ type SessionVars struct {
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	CurrInsertValues chunk.Row
+
+	// In https://github.com/pingcap/tidb/issues/14164, we can see that MySQL can enter the column that is not in the insert's SELECT's output.
+	// We store the extra columns in this variable.
+	CurrInsertBatchExtraCols [][]types.Datum
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
