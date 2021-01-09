@@ -4150,7 +4150,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	c.Assert(err, IsNil)
 
 	err = rs.Next(context.TODO(), rs.NewChunk())
-	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
+	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 
 	err = rs.Close()
 	c.Assert(err, IsNil)
