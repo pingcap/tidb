@@ -128,7 +128,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadLeader, 0), Equals, s.storeAddr(s.store1))
 	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed), Equals, s.storeAddr(s.store2))
-	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, 1<<31), Equals, s.storeAddr(s.store2))
+	c.Assert(s.getAddr(c, []byte("a"), kv.ReplicaReadMixed, 1<<31+1), Equals, s.storeAddr(s.store2))
 	s.checkCache(c, 1)
 	c.Assert(r.GetMeta(), DeepEquals, r.meta)
 	c.Assert(r.GetLeaderPeerID(), Equals, r.meta.Peers[r.getStore().workTiKVIdx].Id)
