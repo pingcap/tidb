@@ -30,9 +30,8 @@ Design system tables to record index usage information. The system table is desi
 
 | Column name  | Data type | Description |
 |--------------|-----------|-------------|
-| TABLE_SCHEMA | varchar   | Name of the database on which the table or view is defined.|
-| TABLE_NAME   | varchar   | Name of the table or view on which the index is defined.|
-| INDEX_NAME   | varchar   | Name of the index.|
+| TABLE_ID     | bigint    | ID of the table or view on which the index is defined.|
+| INDEX_ID     | bigint    | ID of the index.|
 | QUERY_COUNT  | longlong  | Number of the SQL using this index.|
 | ROWS_SELECTED| longlong  | Number of rows read from the index. We can check the average fetched rows count of each query of the index through `ROWS_READ` / `QUERY_COUNT`.|
 | LAST_USED_AT | timestamp | The last time of the SQL using this index.|
@@ -44,9 +43,8 @@ Design system tables to record index usage information. The system table is desi
 
 ```sql
 create table SCHEMA_INDEX_USAGE (
-	TABLE_SCHEMA varchar(64),
-	TABLE_NAME varchar(64),
-	INDEX_NAME varchar(64),
+	TABLE_ID bigint(21),
+	INDEX_ID bigint(21),
 	QUERY_COUNT BIGINT,
 	ROUWS_SELECTED BIGINT,
 	LAST_USED_AT timestamp,
@@ -54,7 +52,7 @@ create table SCHEMA_INDEX_USAGE (
 );
 ```
 
-Because the max length of schema name, table name and index name is 64, so we use `varchar(64)`. The documentation is [here](https://dev.mysql.com/doc/refman/5.7/en/identifier-length.html).
+According to the [TiDB Doc](https://docs.pingcap.com/zh/tidb/stable/information-schema-tidb-indexes#tidb_indexes), `INDEX_ID` should be `bigint(21)`. Similarly, [this doc](https://docs.pingcap.com/zh/tidb/stable/information-schema-tables#tables) tells us that `TABLE_ID` should be `bigint(21)`.
 
 #### Table update: 
 
@@ -88,6 +86,32 @@ as select i.table_schema as table_schema, i.table_name as table_name, i.index_na
 from mysql.tidb_indexes as i left join mysql.schema_index_usage as u 
 on i.table_schema=u.table_schema and i.table_name=u.table_name and i.index_name=u.index_name
 where u.query_count=0 or u.query_count is null;
+```
+
+### INFORMATION_SCHEMA.SCHEMA_INDEX_USAGE
+
+We use `TABLE_ID` and `INDEX_ID` as ID `mysql.SCHEMA_INDEX_USAGE`. Because of `TABLE_ID` and `INDEX_ID` is not user-friendly, we need a more user-friendly view.
+Columns of it:
+
+| Column name  | Data type | Description |
+|--------------|-----------|-------------|
+| TABLE_SCHEMA | varchar   | Name of the database on which the table or view is defined.|
+| TABLE_NAME   | varchar   | Name of the table or view on which the index is defined.|
+| INDEX_NAME   | varchar   | Name of the index.|
+| QUERY_COUNT  | longlong  | Number of the SQL using this index.|
+| ROWS_SELECTED| longlong  | Number of rows read from the index. We can check the average fetched rows count of each query of the index through `ROWS_READ` / `QUERY_COUNT`.|
+| LAST_USED_AT | timestamp | The last time of the SQL using this index.|
+
+#### View creation:
+
+```sql
+create view information_schema.schema_index_usage
+as select idx.table_schema as table_schema, idx.table_name as table_name, idx.key_name as index_name, stats.query_count as query_count, stats.rows_selected as rows_selected
+from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+where tables.table_name = idx.table_schema
+	AND tables.table_name = idx.table_name
+	AND tables.tidb_table_id = stats.table_id
+	AND idx.index_id = stats.index_id
 ```
 
 ### FLUSH SCHEMA_INDEX_USAGE

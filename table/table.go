@@ -22,23 +22,23 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Type , the type of table, store data in different ways.
 type Type int16
 
 const (
-	// NormalTable , store data in tikv, mocktikv and so on.
+	// NormalTable stores data in tikv, mocktikv and so on.
 	NormalTable Type = iota
-	// VirtualTable , store no data, just extract data from the memory struct.
+	// VirtualTable stores no data, just extract data from the memory struct.
 	VirtualTable
-	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	// ClusterTable contains the `VirtualTable` in the all cluster tidb nodes.
 	ClusterTable
 )
 
@@ -57,53 +57,46 @@ func (tp Type) IsClusterTable() bool {
 	return tp == ClusterTable
 }
 
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-)
-
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
-	ErrColumnCantNull = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	ErrColumnCantNull = dbterror.ClassTable.NewStd(mysql.ErrBadNull)
 	// ErrUnknownColumn is returned when accessing an unknown column.
-	ErrUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	errDuplicateColumn = terror.ClassTable.New(mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
+	ErrUnknownColumn   = dbterror.ClassTable.NewStd(mysql.ErrBadField)
+	errDuplicateColumn = dbterror.ClassTable.NewStd(mysql.ErrFieldSpecifiedTwice)
 
-	errGetDefaultFailed = terror.ClassTable.New(mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
+	errGetDefaultFailed = dbterror.ClassTable.NewStd(mysql.ErrFieldGetDefaultFailed)
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(mysql.ErrNoDefaultForField, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
+	ErrNoDefaultValue = dbterror.ClassTable.NewStd(mysql.ErrNoDefaultForField)
 	// ErrIndexOutBound returns for index column offset out of bound.
-	ErrIndexOutBound = terror.ClassTable.New(mysql.ErrIndexOutBound, mysql.MySQLErrName[mysql.ErrIndexOutBound])
+	ErrIndexOutBound = dbterror.ClassTable.NewStd(mysql.ErrIndexOutBound)
 	// ErrUnsupportedOp returns for unsupported operation.
-	ErrUnsupportedOp = terror.ClassTable.New(mysql.ErrUnsupportedOp, mysql.MySQLErrName[mysql.ErrUnsupportedOp])
+	ErrUnsupportedOp = dbterror.ClassTable.NewStd(mysql.ErrUnsupportedOp)
 	// ErrRowNotFound returns for row not found.
-	ErrRowNotFound = terror.ClassTable.New(mysql.ErrRowNotFound, mysql.MySQLErrName[mysql.ErrRowNotFound])
+	ErrRowNotFound = dbterror.ClassTable.NewStd(mysql.ErrRowNotFound)
 	// ErrTableStateCantNone returns for table none state.
-	ErrTableStateCantNone = terror.ClassTable.New(mysql.ErrTableStateCantNone, mysql.MySQLErrName[mysql.ErrTableStateCantNone])
+	ErrTableStateCantNone = dbterror.ClassTable.NewStd(mysql.ErrTableStateCantNone)
 	// ErrColumnStateCantNone returns for column none state.
-	ErrColumnStateCantNone = terror.ClassTable.New(mysql.ErrColumnStateCantNone, mysql.MySQLErrName[mysql.ErrColumnStateCantNone])
+	ErrColumnStateCantNone = dbterror.ClassTable.NewStd(mysql.ErrColumnStateCantNone)
 	// ErrColumnStateNonPublic returns for column non-public state.
-	ErrColumnStateNonPublic = terror.ClassTable.New(mysql.ErrColumnStateNonPublic, mysql.MySQLErrName[mysql.ErrColumnStateNonPublic])
+	ErrColumnStateNonPublic = dbterror.ClassTable.NewStd(mysql.ErrColumnStateNonPublic)
 	// ErrIndexStateCantNone returns for index none state.
-	ErrIndexStateCantNone = terror.ClassTable.New(mysql.ErrIndexStateCantNone, mysql.MySQLErrName[mysql.ErrIndexStateCantNone])
+	ErrIndexStateCantNone = dbterror.ClassTable.NewStd(mysql.ErrIndexStateCantNone)
 	// ErrInvalidRecordKey returns for invalid record key.
-	ErrInvalidRecordKey = terror.ClassTable.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
+	ErrInvalidRecordKey = dbterror.ClassTable.NewStd(mysql.ErrInvalidRecordKey)
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
-	ErrTruncatedWrongValueForField = terror.ClassTable.New(mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+	ErrTruncatedWrongValueForField = dbterror.ClassTable.NewStd(mysql.ErrTruncatedWrongValueForField)
 	// ErrUnknownPartition returns unknown partition error.
-	ErrUnknownPartition = terror.ClassTable.New(mysql.ErrUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
+	ErrUnknownPartition = dbterror.ClassTable.NewStd(mysql.ErrUnknownPartition)
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
-	ErrNoPartitionForGivenValue = terror.ClassTable.New(mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
+	ErrNoPartitionForGivenValue = dbterror.ClassTable.NewStd(mysql.ErrNoPartitionForGivenValue)
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
-	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	ErrLockOrActiveTransaction = dbterror.ClassTable.NewStd(mysql.ErrLockOrActiveTransaction)
 	// ErrSequenceHasRunOut returns when sequence has run out.
-	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	ErrSequenceHasRunOut = dbterror.ClassTable.NewStd(mysql.ErrSequenceRunOut)
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
-	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -227,7 +220,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	}
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -243,7 +236,7 @@ func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.
 	}
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}
@@ -267,6 +260,7 @@ type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetAllPartitionIDs() []int64
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

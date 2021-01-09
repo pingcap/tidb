@@ -28,17 +28,23 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -79,7 +85,9 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -182,7 +190,7 @@ const (
 		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
 		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
 		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		cm_sketch 			BLOB,
+		cm_sketch 			BLOB(6291456),
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
@@ -234,15 +242,15 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql	TEXT NOT NULL  ,
-      	bind_sql 		TEXT NOT NULL ,
-      	default_db 		TEXT NOT NULL,
-		status 			TEXT NOT NULL,
-		create_time 	TIMESTAMP(3) NOT NULL,
-		update_time 	TIMESTAMP(3) NOT NULL,
-		charset 		TEXT NOT NULL,
-		collation 		TEXT NOT NULL,
-		source 			VARCHAR(10) NOT NULL DEFAULT 'unknown',
+		original_sql TEXT NOT NULL,
+		bind_sql TEXT NOT NULL,
+		default_db TEXT NOT NULL,
+		status TEXT NOT NULL,
+		create_time TIMESTAMP(3) NOT NULL,
+		update_time TIMESTAMP(3) NOT NULL,
+		charset TEXT NOT NULL,
+		collation TEXT NOT NULL,
+		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -290,29 +298,26 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
 
 	// CreateSchemaIndexUsageTable stores the index usage information.
 	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
-		TABLE_SCHEMA varchar(64),
-		TABLE_NAME varchar(64),
-		INDEX_NAME varchar(64),
+		TABLE_ID bigint(64),
+		INDEX_ID bigint(21),
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
+		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
 )
 
@@ -363,6 +368,12 @@ const (
 	tidbSystemTZ = "system_tz"
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
+	// The variable name in mysql.tidb table and it records the default value of
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
+	// The variable name in mysql.tidb table and it records the default value of
+	// oom-action when upgrade from v3.0.x to v4.0.11+.
+	tidbDefOOMAction = "default_oom_action"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -401,7 +412,7 @@ const (
 	version36 = 36
 	version37 = 37
 	version38 = 38
-	version39 = 39
+	// version39 will be redone in version46 so it's skipped here.
 	// version40 is the version that introduce new collation in TiDB,
 	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
@@ -419,13 +430,35 @@ const (
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
 	// version48 reset all deprecated concurrency related system-variables if they were all default value.
-	version48 = 48
 	// version49 introduces mysql.stats_extended table.
-	version49 = 49
+	// Both version48 and version49 will be redone in version55 and version56 so they're skipped here.
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
+	// version53 introduce Global variable tidb_enable_strict_double_type_check
+	version53 = 53
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
+	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
+	// version57 fixes the bug of concurrent create / drop binding
+	version57 = 57
+	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
+	version58 = 58
+	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
+	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version61
 )
 
 var (
@@ -467,7 +500,8 @@ var (
 		upgradeToVer36,
 		upgradeToVer37,
 		upgradeToVer38,
-		upgradeToVer39,
+		// We will redo upgradeToVer39 in upgradeToVer46,
+		// so upgradeToVer39 is skipped here.
 		upgradeToVer40,
 		upgradeToVer41,
 		upgradeToVer42,
@@ -476,10 +510,20 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
-		upgradeToVer48,
-		upgradeToVer49,
+		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
+		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
+		upgradeToVer53,
+		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
+		upgradeToVer57,
+		upgradeToVer58,
+		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
 	}
 )
 
@@ -1006,16 +1050,6 @@ func upgradeToVer38(s Session, ver int64) {
 	}
 }
 
-func upgradeToVer39(s Session, ver int64) {
-	if ver >= version39 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
-}
-
 func writeNewCollationParameter(s Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
 	b := varFalse
@@ -1046,8 +1080,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {
@@ -1063,8 +1096,8 @@ func upgradeToVer42(s Session, ver int64) {
 func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
 	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
@@ -1112,8 +1145,60 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer48(s Session, ver int64) {
-	if ver >= version48 {
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer53(s Session, ver int64) {
+	if ver >= version53 {
+		return
+	}
+	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
+	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer54(s Session, ver int64) {
+	if ver >= version54 {
+		return
+	}
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
+	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
+	// default value of mem-quota-query, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	if ver <= version38 {
+		writeMemoryQuotaQuery(s)
+	}
+}
+
+// When cherry-pick upgradeToVer52 to v4.0, we wrongly name it upgradeToVer48.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer48 will be missed.
+// So we redo upgradeToVer48 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer55(s Session, ver int64) {
+	if ver >= version55 {
 		return
 	}
 	defValues := map[string]string{
@@ -1160,26 +1245,144 @@ func upgradeToVer48(s Session, ver int64) {
 	mustExecute(s, "COMMIT")
 }
 
-func upgradeToVer49(s Session, ver int64) {
-	if ver >= version49 {
+// When cherry-pick upgradeToVer54 to v4.0, we wrongly name it upgradeToVer49.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
+// So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeeds.
+func upgradeToVer56(s Session, ver int64) {
+	if ver >= version56 {
 		return
 	}
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
-func upgradeToVer50(s Session, ver int64) {
-	if ver >= version50 {
+func upgradeToVer57(s Session, ver int64) {
+	if ver >= version57 {
 		return
 	}
-	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+	insertBuiltinBindInfoRow(s)
 }
 
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
+func initBindInfoTable(s Session) {
+	mustExecute(s, CreateBindInfoTable)
+	insertBuiltinBindInfoRow(s)
+}
+
+func insertBuiltinBindInfoRow(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES ("%s", "%s", "mysql", "%s", "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", "%s")`,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+func upgradeToVer59(s Session, ver int64) {
+	if ver >= version59 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	h := &bindinfo.BindHandle{}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+
+		mustExecute(s, "COMMIT")
+	}()
+	mustExecute(s, h.LockBindInfoSQL())
+	var recordSets []sqlexec.RecordSet
+	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+	}
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	req := recordSets[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = recordSets[0].Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(s, iter, p, now.String())
+	}
+}
+
+func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		original := row.GetString(0)
+		bind := row.GetString(1)
+		db := row.GetString(2)
+		charset := row.GetString(3)
+		collation := row.GetString(4)
+		originStmt, err := p.ParseOneStmt(original, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		bindStmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
+		bindWithDB := utilparser.RestoreWithDefaultDB(bindStmt, db)
+		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
+			expression.Quote(originWithDB),
+			expression.Quote(bindWithDB),
+			expression.Quote(now),
+			expression.Quote(original)))
+	}
+}
+
+func writeMemoryQuotaQuery(s Session) {
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
+}
+
+func writeOOMAction(s Session) {
+	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -1238,7 +1441,7 @@ func doDDLWorks(s Session) {
 	// Create default_roles table.
 	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
-	mustExecute(s, CreateBindInfoTable)
+	initBindInfoTable(s)
 	// Create stats_topn_store table.
 	mustExecute(s, CreateStatsTopNTable)
 	// Create expr_pushdown_blacklist table.
@@ -1258,7 +1461,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
@@ -1272,14 +1475,18 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
-			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = variable.BoolOn
-			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.DynamicOnly)
+				}
+			}
+			if v.Name == variable.TiDBEnableChangeMultiSchema {
+				vVal = variable.BoolOff
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+					// enable change multi schema in test case for compatibility with old cases.
+					vVal = variable.BoolOn
 				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
@@ -1325,7 +1532,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))

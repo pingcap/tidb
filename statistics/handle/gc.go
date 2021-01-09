@@ -96,7 +96,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	// Mark records in mysql.stats_extended as `deleted`.
-	sql = fmt.Sprintf("select stats_name, db, column_ids from mysql.stats_extended where table_id = %d and status in (%d, %d)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
+	sql = fmt.Sprintf("select name, column_ids from mysql.stats_extended where table_id = %d and status in (%d, %d)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
 	rows, _, err = h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -105,7 +105,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		return nil
 	}
 	for _, row := range rows {
-		statsName, db, strColIDs := row.GetString(0), row.GetString(1), row.GetString(2)
+		statsName, strColIDs := row.GetString(0), row.GetString(1)
 		var colIDs []int64
 		err = json.Unmarshal([]byte(strColIDs), &colIDs)
 		if err != nil {
@@ -121,9 +121,9 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 				}
 			}
 			if !found {
-				err = h.MarkExtendedStatsDeleted(statsName, db, physicalID)
+				err = h.MarkExtendedStatsDeleted(statsName, physicalID)
 				if err != nil {
-					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.String("db", db), zap.Error(err))
+					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
 					return errors.Trace(err)
 				}
 				break

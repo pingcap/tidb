@@ -716,19 +716,39 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		c.Assert(err, IsNil)
 
 		tk.MustExec("use test")
+
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(data mediumblob)")
-
-		tk.MustExec(`prepare stmt1 from 'insert t (data) values (?)'`)
-
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
 		tk.MustExec(`set @a = 'a'`)
-		tk.MustExec(`execute stmt1 using @a;`)
-
+		tk.MustExec(`execute stmt using @a;`)
 		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
-		tk.MustExec(`execute stmt1 using @b;`)
+		tk.MustExec(`execute stmt using @b;`)
 
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal)")
+		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
+		tk.MustExec(`set @a = '1'`)
+		tk.MustExec(`execute stmt using @a;`)
+		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
+		tk.MustExec(`execute stmt using @b;`)
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1", "11111"))
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data decimal(10,3));")
+		tk.MustExec("prepare stmt from 'insert t (data) values (?)';")
+		tk.MustExec("set @a = 1.1;")
+		tk.MustExec("execute stmt using @a;")
+		tk.MustExec("set @b = 11.11;")
+		tk.MustExec("execute stmt using @b;")
+
+		r = tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("1.100", "11.110"))
 	}
 }
 
@@ -750,6 +770,12 @@ func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager1) Kill(cid uint64, query bool) {}
+
+func (msm *mockSessionManager1) KillAllConnections() {}
+
+func (msm *mockSessionManager1) ServerID() uint64 {
+	return 1
+}
 
 func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {}
 

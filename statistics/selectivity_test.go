@@ -25,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -146,7 +147,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear4Test()
+	do.StatsHandle().Clear()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
@@ -605,6 +606,7 @@ func (s *testStatsSuite) TestUniqCompEqualEst(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
@@ -726,4 +728,25 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 
 	// Test issue 19981
 	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
+
+	// Test issue 22134
+	// Information about column n will not be in stats immediately after this SQL executed.
+	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
+	testKit.MustExec("alter table t add column n timestamp;")
+	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
+}
+
+func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a,b))")
+	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`), IsNil)
+	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 }

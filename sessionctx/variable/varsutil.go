@@ -16,21 +16,15 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
 )
 
@@ -78,6 +72,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetDDLReorgRowFormat sets ddlReorgRowFormat version.
+func SetDDLReorgRowFormat(format int64) {
+	atomic.StoreInt64(&ddlReorgRowFormat, format)
+}
+
+// GetDDLReorgRowFormat gets ddlReorgRowFormat version.
+func GetDDLReorgRowFormat() int64 {
+	return atomic.LoadInt64(&ddlReorgRowFormat)
+}
+
 // SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
 func SetMaxDeltaSchemaCount(cnt int64) {
 	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
@@ -122,8 +126,14 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
-		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
 		val := "0"
 		if EnablePProfSQLCPU.Load() {
@@ -132,6 +142,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
+	case TiDBMemoryUsageAlarmRatio:
+		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
@@ -152,17 +164,19 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBRecordPlanInSlowLog:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
 	case TiDBEnableSlowLog:
-		return BoolToIntStr(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
+		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case TiDBCheckMb4ValueInUTF8:
-		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
+		return BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), true, nil
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
-		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
+		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
-		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -227,6 +241,21 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
+// SetStmtVar sets system variable and updates SessionVars states.
+func SetStmtVar(vars *SessionVars, name string, value string) error {
+	name = strings.ToLower(name)
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
+		return ErrUnknownSystemVar
+	}
+	sVal, err := ValidateSetSystemVar(vars, name, value, ScopeSession)
+	if err != nil {
+		return err
+	}
+	CheckDeprecationSetSystemVar(vars, name)
+	return vars.SetStmtVar(name, sVal)
+}
+
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar := GetSysVar(name)
@@ -246,152 +275,6 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 	return nil
 }
 
-func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
-	// There are two types of validation behaviors for integer values. The default
-	// is to return an error saying the value is out of range. For MySQL compatibility, some
-	// values prefer convert the value to the min/max and return a warning.
-	sv := GetSysVar(name)
-	if sv != nil && !sv.AutoConvertOutOfRange {
-		return checkUint64SystemVarWithError(name, value, min, max)
-	}
-	if len(value) == 0 {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if value[0] == '-' {
-		_, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
-		return fmt.Sprintf("%d", min), nil
-	}
-	val, err := strconv.ParseUint(value, 10, 64)
-	if err != nil {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if val < min {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
-		return fmt.Sprintf("%d", min), nil
-	}
-	if val > max {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
-		return fmt.Sprintf("%d", max), nil
-	}
-	return value, nil
-}
-
-func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) (string, error) {
-	// There are two types of validation behaviors for integer values. The default
-	// is to return an error saying the value is out of range. For MySQL compatibility, some
-	// values prefer convert the value to the min/max and return a warning.
-	sv := GetSysVar(name)
-	if sv != nil && !sv.AutoConvertOutOfRange {
-		return checkInt64SystemVarWithError(name, value, min, max)
-	}
-	val, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if val < min {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
-		return fmt.Sprintf("%d", min), nil
-	}
-	if val > max {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(name, value))
-		return fmt.Sprintf("%d", max), nil
-	}
-	return value, nil
-}
-
-func checkEnumSystemVar(name, value string, vars *SessionVars) (string, error) {
-	sv := GetSysVar(name)
-	// The value could be either a string or the ordinal position in the PossibleValues.
-	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
-	var iStr string
-	for i, v := range sv.PossibleValues {
-		iStr = fmt.Sprintf("%d", i)
-		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
-			return v, nil
-		}
-	}
-	return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-}
-
-func checkFloatSystemVar(name, value string, min, max float64, vars *SessionVars) (string, error) {
-	if len(value) == 0 {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	val, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if val < min || val > max {
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	}
-	return value, nil
-}
-
-func checkBoolSystemVar(name, value string, vars *SessionVars) (string, error) {
-	if strings.EqualFold(value, "ON") {
-		return BoolOn, nil
-	} else if strings.EqualFold(value, "OFF") {
-		return BoolOff, nil
-	}
-	val, err := strconv.ParseInt(value, 10, 64)
-	if err == nil {
-		// Confusingly, there are two types of conversion rules for integer values.
-		// The default only allows 0 || 1, but a subset of values convert any
-		// negative integer to 1.
-		sv := GetSysVar(name)
-		if !sv.AutoConvertNegativeBool {
-			if val == 0 {
-				return BoolOff, nil
-			} else if val == 1 {
-				return BoolOn, nil
-			}
-		} else {
-			if val == 1 || val < 0 {
-				return BoolOn, nil
-			} else if val == 0 {
-				return BoolOff, nil
-			}
-		}
-	}
-	return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-}
-
-func checkUint64SystemVarWithError(name, value string, min, max uint64) (string, error) {
-	if len(value) == 0 {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if value[0] == '-' {
-		// // in strict it expects the error WrongValue, but in non-strict it returns WrongType
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	}
-	val, err := strconv.ParseUint(value, 10, 64)
-	if err != nil {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if val < min || val > max {
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	}
-	return value, nil
-}
-
-func checkInt64SystemVarWithError(name, value string, min, max int64) (string, error) {
-	if len(value) == 0 {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	val, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-	}
-	if val < min || val > max {
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	}
-	return value, nil
-}
-
 const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32
@@ -404,12 +287,11 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency:
+		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBMergeJoinConcurrency, TiDBStreamAggConcurrency:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply:
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
 	}
 }
@@ -417,176 +299,17 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
 	sv := GetSysVar(name)
-	// Some sysvars are read-only. Attempting to set should always fail.
-	if sv.ReadOnly || sv.Scope == ScopeNone {
-		return value, ErrReadOnly.GenWithStackByArgs(name)
-	}
-	// The string "DEFAULT" is a special keyword in MySQL, which restores
-	// the compiled sysvar value. In which case we can skip further validation.
-	if strings.EqualFold(value, "DEFAULT") {
-		if sv != nil {
-			return sv.Value, nil
-		}
+	if sv == nil {
 		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	// Some sysvars in TiDB have a special behavior where the empty string means
-	// "use the config file value". This needs to be cleaned up once the behavior
-	// for instance variables is determined.
-	if value == "" && ((sv.AllowEmpty && scope == ScopeSession) || sv.AllowEmptyAll) {
-		return value, nil
+	// Normalize the value and apply validation based on type.
+	// i.e. TypeBool converts 1/on/ON to ON.
+	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
+	if err != nil {
+		return normalizedValue, err
 	}
-	// Attempt to provide validation using the SysVar struct.
-	// Eventually the struct should handle all validation
-	var err error
-	if sv != nil {
-		switch sv.Type {
-		case TypeUnsigned:
-			value, err = checkUInt64SystemVar(name, value, uint64(sv.MinValue), sv.MaxValue, vars)
-		case TypeInt:
-			value, err = checkInt64SystemVar(name, value, sv.MinValue, int64(sv.MaxValue), vars)
-		case TypeBool:
-			value, err = checkBoolSystemVar(name, value, vars)
-		case TypeFloat:
-			value, err = checkFloatSystemVar(name, value, float64(sv.MinValue), float64(sv.MaxValue), vars)
-		case TypeEnum:
-			value, err = checkEnumSystemVar(name, value, vars)
-		}
-		// If there is no error, follow through and handle legacy cases of validation that are not handled by the type.
-		// TODO: Move each of these validations into the SysVar as an anonymous function.
-		if err != nil {
-			return value, err
-		}
-	}
-	switch name {
-	case ForeignKeyChecks:
-		if TiDBOptOn(value) {
-			// TiDB does not yet support foreign keys.
-			// For now, resist the change and show a warning.
-			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
-			return BoolOff, nil
-		} else if !TiDBOptOn(value) {
-			return BoolOff, nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case GroupConcatMaxLen:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len
-		// Minimum Value 4
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 4, maxLen, vars)
-	case TimeZone:
-		if strings.EqualFold(value, "SYSTEM") {
-			return "SYSTEM", nil
-		}
-		_, err := parseTimeZone(value)
-		return value, err
-	case SecureAuth:
-		if TiDBOptOn(value) {
-			return BoolOn, nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBOptBCJ:
-		if TiDBOptOn(value) && vars.AllowBatchCop == 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
-		}
-		return value, nil
-	case TiDBIndexLookupConcurrency,
-		TiDBIndexLookupJoinConcurrency,
-		TiDBHashJoinConcurrency,
-		TiDBHashAggPartialConcurrency,
-		TiDBHashAggFinalConcurrency,
-		TiDBWindowConcurrency:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v <= 0 && v != ConcurrencyUnset {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBAllowBatchCop:
-		v, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v == 0 && vars.AllowBCJ {
-			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set tidb_opt_broadcast_join 0 at first")
-		}
-		if v < 0 || v > 2 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:
-		v, err := setDayTime(vars, value)
-		if err != nil {
-			return "", err
-		}
-		return v, nil
-	case TxnIsolation, TransactionIsolation:
-		upVal := strings.ToUpper(value)
-		_, exists := TxIsolationNames[upVal]
-		if !exists {
-			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		switch upVal {
-		case "SERIALIZABLE", "READ-UNCOMMITTED":
-			skipIsolationLevelCheck, err := GetSessionSystemVar(vars, TiDBSkipIsolationLevelCheck)
-			returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(value)
-			if err != nil {
-				returnErr = err
-			}
-			if !TiDBOptOn(skipIsolationLevelCheck) || err != nil {
-				return "", returnErr
-			}
-			//SET TRANSACTION ISOLATION LEVEL will affect two internal variables:
-			// 1. tx_isolation
-			// 2. transaction_isolation
-			// The following if condition is used to deduplicate two same warnings.
-			if name == "transaction_isolation" {
-				vars.StmtCtx.AppendWarning(returnErr)
-			}
-		}
-		return upVal, nil
-	case TiDBTxnMode:
-		switch strings.ToUpper(value) {
-		case ast.Pessimistic, ast.Optimistic, "":
-		default:
-			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
-		}
-	case TiDBPartitionPruneMode:
-		if !PartitionPruneMode(value).Valid() {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-	case TiDBIsolationReadEngines:
-		engines := strings.Split(value, ",")
-		var formatVal string
-		for i, engine := range engines {
-			engine = strings.TrimSpace(engine)
-			if i != 0 {
-				formatVal += ","
-			}
-			switch {
-			case strings.EqualFold(engine, kv.TiKV.Name()):
-				formatVal += kv.TiKV.Name()
-			case strings.EqualFold(engine, kv.TiFlash.Name()):
-				formatVal += kv.TiFlash.Name()
-			case strings.EqualFold(engine, kv.TiDB.Name()):
-				formatVal += kv.TiDB.Name()
-			default:
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-		}
-		return formatVal, nil
-	case CollationConnection, CollationDatabase, CollationServer:
-		if _, err := collate.GetCollationByName(value); err != nil {
-			return value, errors.Trace(err)
-		}
-	}
-	return value, nil
+	// If type validation was successful, call the (optional) validation function
+	return sv.ValidateFromHook(vars, normalizedValue, value, scope)
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
@@ -679,26 +402,6 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 func GoTimeToTS(t time.Time) uint64 {
 	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	return uint64(ts)
-}
-
-const (
-	localDayTimeFormat = "15:04"
-	// FullDayTimeFormat is the full format of analyze start time and end time.
-	FullDayTimeFormat = "15:04 -0700"
-)
-
-func setDayTime(s *SessionVars, val string) (string, error) {
-	var t time.Time
-	var err error
-	if len(val) <= len(localDayTimeFormat) {
-		t, err = time.ParseInLocation(localDayTimeFormat, val, s.TimeZone)
-	} else {
-		t, err = time.ParseInLocation(FullDayTimeFormat, val, s.TimeZone)
-	}
-	if err != nil {
-		return "", err
-	}
-	return t.Format(FullDayTimeFormat), nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

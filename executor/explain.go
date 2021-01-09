@@ -103,9 +103,6 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
-	if e.analyzeExec != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
-	}
 	return e.explain.Rows, nil
 }
 

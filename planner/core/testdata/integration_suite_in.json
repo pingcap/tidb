@@ -72,9 +72,18 @@
     ]
   },
   {
+    "name": "TestIndexMergeHint4CNF",
+    "cases": [
+      "explain select * from t where b = 1 and (a = 1 or c = 1)",
+      "explain select /*+ USE_INDEX_MERGE(t, a, c) */ * from t where b = 1 and (a = 1 or c = 1)"
+    ]
+  },
+  {
     "name": "TestSubqueryWithTopN",
     "cases": [
-      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)"
+      "desc select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1)",
+      "desc select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1",
+      "desc select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1"
     ]
   },
   {
@@ -216,6 +225,13 @@
     ]
   },
   {
+    "name": "TestInvalidHint",
+    "cases": [
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;",
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);"
+    ]
+  },
+  {
     "name": "TestApproxPercentile",
     "cases": [
       "select approx_percentile(a, 50) from t",
@@ -223,6 +239,21 @@
       "select approx_percentile(a, 10+70) from t",
       "select approx_percentile(a, 10*10) from t",
       "select approx_percentile(a, 50) from t group by b order by b"
+    ]
+  },
+  {
+    "name": "TestConvertRangeToPoint",
+    "cases": [
+      "explain select * from t0 where a > 1 and a < 3 order by b limit 2",
+      "explain select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2",
+      "explain select * from t2 where a >= 2.5 and a <= 2.5 order by b limit 2",
+      "explain select * from t3 where a >= 'a' and a <= 'a' and b = 'b' and c > 'c'"
+    ]
+  },
+  {
+    "name": "TestIssue22105",
+    "cases": [
+      "explain SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)"
     ]
   }
 ]

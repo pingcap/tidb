@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,11 +28,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
+	ErrUnsupportedType = dbterror.ClassOptimizer.NewStd(errno.ErrUnsupportedType)
 )
 
 // RangeType is alias for int.
@@ -210,11 +210,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		ft    *types.FieldType
 	)
 
-	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
-	refineValue := func(col *expression.Column, value *types.Datum) {
+	// refineValue refines the constant datum:
+	// 1. for string type since we may eval the constant to another collation instead of its own collation.
+	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
+	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
 		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
+		if col.GetType().Tp == mysql.TypeYear {
+			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
+		}
+		return
 	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
@@ -222,7 +228,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		refineValue(col, &value)
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
 		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
@@ -234,7 +243,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		refineValue(col, &value)
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
 
 		switch expr.FuncName.L {
 		case ast.GE:
@@ -253,7 +265,12 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	value, op, isValidRange := handleUnsignedCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
+	value, op, isValidRange = handleBoundCol(ft, value, op)
 	if !isValidRange {
 		return nil
 	}
@@ -294,15 +311,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	return nil
 }
 
-// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isIntegerType := mysql.IsIntegerType(ft.Tp)
-	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
+		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
+		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
+		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative())
 
-	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+	if !isUnsigned || !isNegative {
 		return val, op, true
 	}
 
@@ -310,11 +329,64 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	// Otherwise the value is out of valid range.
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
-		val.SetUint64(0)
+		switch val.Kind() {
+		case types.KindInt64:
+			val.SetUint64(0)
+		case types.KindFloat32:
+			val.SetFloat32(0)
+		case types.KindFloat64:
+			val.SetFloat64(0)
+		case types.KindMysqlDecimal:
+			val.SetMysqlDecimal(new(types.MyDecimal))
+		}
 		return val, op, true
 	}
 
 	return val, op, false
+}
+
+// handleBoundCol handles the case when column meets overflow value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	if isUnsigned {
+		return val, op, true
+	}
+
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !isNegative && val.GetUint64() > math.MaxInt64 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewIntDatum(math.MaxInt64)
+			}
+		}
+	case mysql.TypeFloat:
+		if val.GetFloat64() > math.MaxFloat32 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewFloat32Datum(math.MaxFloat32)
+			}
+		} else if val.GetFloat64() < -math.MaxFloat32 {
+			switch op {
+			case ast.LE, ast.LT:
+				return val, op, false
+			case ast.GT, ast.GE, ast.NE:
+				op = ast.GE
+				val = types.NewFloat32Datum(-math.MaxFloat32)
+			}
+		}
+	}
+
+	return val, op, true
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
@@ -387,6 +459,13 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 		}
 		if dt.Kind() == types.KindString {
 			dt.SetString(dt.GetString(), colCollate)
+		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
+			dt, err = types.ConvertDatumToFloatYear(r.sc, dt)
+			if err != nil {
+				r.err = ErrUnsupportedType.GenWithStack("expr:%v is not converted to year", e)
+				return fullRange, hasNull
+			}
 		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)

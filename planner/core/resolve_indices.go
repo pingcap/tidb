@@ -114,49 +114,6 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalBroadCastJoin) ResolveIndices() (err error) {
-	err = p.physicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	lSchema := p.children[0].Schema()
-	rSchema := p.children[1].Schema()
-	for i, col := range p.LeftJoinKeys {
-		newKey, err := col.ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-		p.LeftJoinKeys[i] = newKey.(*expression.Column)
-	}
-	for i, col := range p.RightJoinKeys {
-		newKey, err := col.ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-		p.RightJoinKeys[i] = newKey.(*expression.Column)
-	}
-	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-	}
-	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-	}
-	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
-		if err != nil {
-			return err
-		}
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
@@ -250,6 +207,17 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			}
 			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
 		}
+	}
+	for i := range p.OuterHashKeys {
+		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.children[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.children[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
 	}
 	return
 }
@@ -487,11 +455,15 @@ func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := range p.HashByItems {
-		// "Shuffle" get value of items from `DataSource`, other than children[0].
-		p.HashByItems[i], err = p.HashByItems[i].ResolveIndices(p.DataSource.Schema())
-		if err != nil {
-			return err
+	// There may be one or more DataSource
+	for i := range p.ByItemArrays {
+		// Each DataSource has an array of HashByItems
+		for j := range p.ByItemArrays[i] {
+			// "Shuffle" get value of items from `DataSource`, other than children[0].
+			p.ByItemArrays[i][j], err = p.ByItemArrays[i][j].ResolveIndices(p.DataSources[i].Schema())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return err

@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -41,6 +42,9 @@ type Context interface {
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
+
+	// GetClient gets a kv.Client.
+	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
@@ -67,6 +71,9 @@ type Context interface {
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
+
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
+	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
@@ -105,7 +112,7 @@ type Context interface {
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
-	StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64)
+	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 }
 
 type basicCtxType int
@@ -140,4 +147,11 @@ var ConnID = connIDCtxKeyType{}
 // SetCommitCtx sets connection id into context
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+}
+
+// StalenessTxnOption represents available options for the InitTxnWithStaleness
+type StalenessTxnOption struct {
+	Mode    ast.TimestampBoundMode
+	PrevSec uint64
+	StartTS uint64
 }

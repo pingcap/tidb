@@ -266,11 +266,11 @@ count(a)
 insert t values(0,0,0);
 explain select distinct b from t group by a;
 id	estRows	task	access object	operator info
-HashAgg_7	8000.00	root		group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b
-└─StreamAgg_22	8000.00	root		group by:test.t.a, funcs:firstrow(Column#9)->test.t.b
-  └─IndexReader_23	8000.00	root		index:StreamAgg_11
-    └─StreamAgg_11	8000.00	cop[tikv]		group by:test.t.a, funcs:firstrow(test.t.b)->Column#9
-      └─IndexFullScan_21	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+HashAgg_5	8000.00	root		group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b
+└─StreamAgg_20	8000.00	root		group by:test.t.a, funcs:firstrow(Column#9)->test.t.b
+  └─IndexReader_21	8000.00	root		index:StreamAgg_9
+    └─StreamAgg_9	8000.00	cop[tikv]		group by:test.t.a, funcs:firstrow(test.t.b)->Column#9
+      └─IndexFullScan_19	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select distinct b from t group by a;
 b
 0
@@ -377,7 +377,7 @@ id	estRows	task	access object	operator info
 Projection_8	10000.00	root		and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
 └─HashJoin_9	10000.00	root		CARTESIAN inner join
   ├─StreamAgg_14(Build)	1.00	root		funcs:max(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
+  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
   │   └─TableReader_18	10000.00	root		data:TableFullScan_17
   │     └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
@@ -387,7 +387,7 @@ id	estRows	task	access object	operator info
 Projection_8	10000.00	root		or(and(and(le(Column#8, 1), eq(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 1)), or(eq(Column#10, 0), if(isnull(test.t.a), <nil>, 0)))->Column#11
 └─HashJoin_9	10000.00	root		CARTESIAN inner join
   ├─StreamAgg_14(Build)	1.00	root		funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
+  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
   │   └─TableReader_18	10000.00	root		data:TableFullScan_17
   │     └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
@@ -462,7 +462,7 @@ HashJoin_10	7984.01	root		semi join, equal:[eq(test.t1.a, test.t2.a)], other con
 drop table t;
 CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
 i int(10) unsigned DEFAULT NULL,
-x int(10) unsigned DEFAULT 0,
+x int(10) unsigned DEFAULT '0',
 PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
@@ -472,3 +472,18 @@ Projection_7	10000.00	root		minus(Column#5, test.t.x)->Column#7
   └─Sort_11	10000.00	root		test.t.i
     └─TableReader_10	10000.00	root		data:TableRangeScan_9
       └─TableRangeScan_9	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo
+create table precise_types (
+a BIGINT UNSIGNED NOT NULL,
+b BIGINT NOT NULL,
+c DECIMAL(21,1) NOT NULL,
+d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+18446744073709551614,
+-9223372036854775806,
+99999999999999999999,
+18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;
+a	b	c	d
+18446744073709551614	-9223372036854775806	99999999999999999999.0	1.8446744073709552e19

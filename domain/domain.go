@@ -15,6 +15,9 @@ package domain
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,11 +29,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/placement"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -44,13 +48,16 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -79,6 +86,10 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
+
+	serverID             uint64
+	serverIDSession      *concurrency.Session
+	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -139,12 +150,6 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 
 	bundles, err := infosync.GetAllRuleBundles(nil)
-	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-		if val.(bool) {
-			bundles = []*placement.Bundle{}
-			err = nil
-		}
-	})
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
@@ -360,7 +365,7 @@ func (do *Domain) Reload() error {
 	var err error
 	var neededSchemaVersion int64
 
-	ver, err := do.store.CurrentVersion()
+	ver, err := do.store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return err
 	}
@@ -648,6 +653,7 @@ type ddlCallback struct {
 	do *Domain
 }
 
+// OnChanged overrides ddl Callback interface.
 func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
@@ -660,6 +666,14 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 
 	return nil
+}
+
+// OnSchemaStateChange overrides the ddl Callback interface.
+func (c *ddlCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+	}
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
@@ -680,6 +694,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	return do
 }
+
+const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
@@ -757,7 +773,26 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient, skipRegisterToDashboard)
+
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Set(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	}
+
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -1069,14 +1104,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		do.wg.Add(1)
 		go do.loadStatsWorker()
 	}
+	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
-		go do.syncIndexUsageWorker()
+		go do.syncIndexUsageWorker(owner)
 	}
 	if do.statsLease <= 0 {
 		return nil
 	}
-	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.wg.Add(1)
 	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
@@ -1144,9 +1179,10 @@ func (do *Domain) loadStatsWorker() {
 	}
 }
 
-func (do *Domain) syncIndexUsageWorker() {
+func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
 	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
+	gcStatsTicker := time.NewTicker(100 * do.indexUsageSyncLease)
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
@@ -1161,6 +1197,13 @@ func (do *Domain) syncIndexUsageWorker() {
 		case <-idxUsageSyncTicker.C:
 			if err := handle.DumpIndexUsageToKV(); err != nil {
 				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
+			}
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			if err := handle.GCIndexUsage(); err != nil {
+				logutil.BgLogger().Error("[stats] gc index usage failed", zap.Error(err))
 			}
 		}
 	}
@@ -1277,10 +1320,246 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	}
 }
 
+// ServerID gets serverID.
+func (do *Domain) ServerID() uint64 {
+	return atomic.LoadUint64(&do.serverID)
+}
+
+// IsLostConnectionToPD indicates lost connection to PD or not.
+func (do *Domain) IsLostConnectionToPD() bool {
+	return do.isLostConnectionToPD.Get() != 0
+}
+
+const (
+	serverIDEtcdPath               = "/tidb/server_id"
+	refreshServerIDRetryCnt        = 3
+	acquireServerIDRetryInterval   = 300 * time.Millisecond
+	acquireServerIDTimeout         = 10 * time.Second
+	retrieveServerIDSessionTimeout = 10 * time.Second
+)
+
+var (
+	// serverIDTTL should be LONG ENOUGH to avoid barbarically killing an on-going long-run SQL.
+	serverIDTTL = 12 * time.Hour
+	// serverIDTimeToKeepAlive is the interval that we keep serverID TTL alive periodically.
+	serverIDTimeToKeepAlive = 5 * time.Minute
+	// serverIDTimeToCheckPDConnectionRestored is the interval that we check connection to PD restored (after broken) periodically.
+	serverIDTimeToCheckPDConnectionRestored = 10 * time.Second
+	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this limit,
+	//   we realize the connection to PD is lost utterly, and server ID acquired before should be released.
+	//   Must be SHORTER than `serverIDTTL`.
+	lostConnectionToPDTimeout = 6 * time.Hour
+)
+
+var (
+	ldflagIsGlobalKillTest                        = "0"  // 1:Yes, otherwise:No.
+	ldflagServerIDTTL                             = "10" // in seconds.
+	ldflagServerIDTimeToKeepAlive                 = "1"  // in seconds.
+	ldflagServerIDTimeToCheckPDConnectionRestored = "1"  // in seconds.
+	ldflagLostConnectionToPDTimeout               = "5"  // in seconds.
+)
+
+func initByLDFlagsForGlobalKill() {
+	if ldflagIsGlobalKillTest == "1" {
+		var (
+			i   int
+			err error
+		)
+
+		if i, err = strconv.Atoi(ldflagServerIDTTL); err != nil {
+			panic("invalid ldflagServerIDTTL")
+		}
+		serverIDTTL = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToKeepAlive); err != nil {
+			panic("invalid ldflagServerIDTimeToKeepAlive")
+		}
+		serverIDTimeToKeepAlive = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToCheckPDConnectionRestored); err != nil {
+			panic("invalid ldflagServerIDTimeToCheckPDConnectionRestored")
+		}
+		serverIDTimeToCheckPDConnectionRestored = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagLostConnectionToPDTimeout); err != nil {
+			panic("invalid ldflagLostConnectionToPDTimeout")
+		}
+		lostConnectionToPDTimeout = time.Duration(i) * time.Second
+
+		logutil.BgLogger().Info("global_kill_test is enabled", zap.Duration("serverIDTTL", serverIDTTL),
+			zap.Duration("serverIDTimeToKeepAlive", serverIDTimeToKeepAlive),
+			zap.Duration("serverIDTimeToCheckPDConnectionRestored", serverIDTimeToCheckPDConnectionRestored),
+			zap.Duration("lostConnectionToPDTimeout", lostConnectionToPDTimeout))
+	}
+}
+
+func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
+	if do.serverIDSession != nil {
+		return do.serverIDSession, nil
+	}
+
+	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
+	//   while `etcdClient.KeepAlive` should be longterm.
+	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
+	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
+	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
+	cancel()
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
+		return nil, err
+	}
+	leaseID := resp.ID
+
+	session, err := concurrency.NewSession(do.etcdClient,
+		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
+		return nil, err
+	}
+	do.serverIDSession = session
+	return session, nil
+}
+
+func (do *Domain) acquireServerID(ctx context.Context) error {
+	atomic.StoreUint64(&do.serverID, 0)
+
+	session, err := do.retrieveServerIDSession(ctx)
+	if err != nil {
+		return err
+	}
+
+	for {
+		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID]
+		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
+		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
+		value := "0"
+
+		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
+		txn := do.etcdClient.Txn(childCtx)
+		t := txn.If(cmp)
+		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
+		cancel()
+		if err != nil {
+			return err
+		}
+		if !resp.Succeeded {
+			logutil.BgLogger().Info("proposed random serverID exists, will randomize again", zap.Int64("randServerID", randServerID))
+			time.Sleep(acquireServerIDRetryInterval)
+			continue
+		}
+
+		atomic.StoreUint64(&do.serverID, uint64(randServerID))
+		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
+		return nil
+	}
+}
+
+func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
+	session, err := do.retrieveServerIDSession(ctx)
+	if err != nil {
+		return err
+	}
+
+	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
+	value := "0"
+	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
+	if err != nil {
+		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
+	}
+	return err
+}
+
+func (do *Domain) serverIDKeeper() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("serverIDKeeper exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", func() {
+		logutil.BgLogger().Info("recover serverIDKeeper.")
+		// should be called before `do.wg.Done()`, to ensure that Domain.Close() waits for the new `serverIDKeeper()` routine.
+		do.wg.Add(1)
+		go do.serverIDKeeper()
+	}, false)
+
+	tickerKeepAlive := time.NewTicker(serverIDTimeToKeepAlive)
+	tickerCheckRestored := time.NewTicker(serverIDTimeToCheckPDConnectionRestored)
+	defer func() {
+		tickerKeepAlive.Stop()
+		tickerCheckRestored.Stop()
+	}()
+
+	blocker := make(chan struct{}) // just used for blocking the sessionDone() when session is nil.
+	sessionDone := func() <-chan struct{} {
+		if do.serverIDSession == nil {
+			return blocker
+		}
+		return do.serverIDSession.Done()
+	}
+
+	var lastSucceedTimestamp time.Time
+
+	onConnectionToPDRestored := func() {
+		logutil.BgLogger().Info("restored connection to PD")
+		do.isLostConnectionToPD.Set(0)
+		lastSucceedTimestamp = time.Now()
+
+		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
+		}
+	}
+
+	onConnectionToPDLost := func() {
+		logutil.BgLogger().Warn("lost connection to PD")
+		do.isLostConnectionToPD.Set(1)
+
+		// Kill all connections when lost connection to PD,
+		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID,
+		//   which will lead to a wrong connection killed.
+		do.InfoSyncer().GetSessionManager().KillAllConnections()
+	}
+
+	for {
+		select {
+		case <-tickerKeepAlive.C:
+			if !do.IsLostConnectionToPD() {
+				if err := do.refreshServerIDTTL(context.Background()); err == nil {
+					lastSucceedTimestamp = time.Now()
+				} else {
+					if lostConnectionToPDTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionToPDTimeout {
+						onConnectionToPDLost()
+					}
+				}
+			}
+		case <-tickerCheckRestored.C:
+			if do.IsLostConnectionToPD() {
+				if err := do.acquireServerID(context.Background()); err == nil {
+					onConnectionToPDRestored()
+				}
+			}
+		case <-sessionDone():
+			// inform that TTL of `serverID` is expired. See https://godoc.org/github.com/coreos/etcd/clientv3/concurrency#Session.Done
+			//   Should be in `IsLostConnectionToPD` state, as `lostConnectionToPDTimeout` is shorter than `serverIDTTL`.
+			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
+			logutil.BgLogger().Info("serverIDSession need restart")
+			do.serverIDSession = nil
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func init() {
+	initByLDFlagsForGlobalKill()
+}
+
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.New(errno.ErrInfoSchemaExpired, errno.MySQLErrName[errno.ErrInfoSchemaExpired])
+	ErrInfoSchemaExpired = dbterror.ClassDomain.NewStd(errno.ErrInfoSchemaExpired)
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.New(errno.ErrInfoSchemaChanged,
-		errno.MySQLErrName[errno.ErrInfoSchemaChanged]+". "+kv.TxnRetryableMark)
+	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
+		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )

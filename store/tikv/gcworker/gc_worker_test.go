@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -51,13 +52,18 @@ func TestT(t *testing.T) {
 }
 
 type testGCWorkerSuite struct {
-	store    tikv.Storage
-	cluster  cluster.Cluster
-	oracle   *mockoracle.MockOracle
-	gcWorker *GCWorker
-	dom      *domain.Domain
-	client   *testGCWorkerClient
-	pdClient pd.Client
+	store      tikv.Storage
+	cluster    cluster.Cluster
+	oracle     *mockoracle.MockOracle
+	gcWorker   *GCWorker
+	dom        *domain.Domain
+	client     *testGCWorkerClient
+	pdClient   pd.Client
+	initRegion struct {
+		storeIDs []uint64
+		peerIDs  []uint64
+		regionID uint64
+	}
 }
 
 var _ = SerialSuites(&testGCWorkerSuite{})
@@ -74,8 +80,9 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	}
 
 	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.MockTiKV),
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
-			mockstore.BootstrapWithMultiStores(c, 3)
+			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
 		mockstore.WithClientHijacker(hijackClient),
@@ -137,7 +144,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 }
 
 func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
-	ts, err := s.oracle.GetTimestamp(context.Background())
+	ts, err := s.oracle.GetTimestamp(context.Background(), &oracle.Option{})
 	c.Assert(err, IsNil)
 	return ts
 }
@@ -544,6 +551,11 @@ const (
 )
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
 	// Put some delete range tasks.
 	se := createSession(s.gcWorker.store)
 	defer se.Close()
@@ -844,7 +856,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
 	)
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte) []*tikv.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 		*scanCntRef++
 		return []*tikv.Lock{
 			{
@@ -855,7 +867,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 			},
 		}
 	}
-	s.gcWorker.testingKnobs.resolveLocks = func(regionID tikv.RegionVerID) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
@@ -868,6 +880,74 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resolveCnt, Equals, 2)
 	c.Assert(scanCnt, Equals, 1)
+}
+
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(c *C) {
+	var (
+		firstAccess    = true
+		firstAccessRef = &firstAccess
+		resolvedLock   [][]byte
+	)
+
+	// key range: ['' - 'm' - 'z']
+	region2 := s.cluster.AllocID()
+	newPeers := []uint64{s.cluster.AllocID(), s.cluster.AllocID(), s.cluster.AllocID()}
+	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
+
+	// init a, b lock in region1 and o, p locks in region2
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+		if regionID == s.initRegion.regionID {
+			return []*tikv.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
+		}
+		if regionID == region2 {
+			return []*tikv.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
+		}
+		return []*tikv.Lock{}
+	}
+
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
+			*firstAccessRef = false
+			// merge region2 into region1 and return EpochNotMatch error.
+			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster.Merge(s.initRegion.regionID, region2)
+			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
+			s.store.GetRegionCache().OnRegionEpochNotMatch(
+				tikv.NewNoopBackoff(context.Background()),
+				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
+				[]*metapb.Region{regionMeta})
+			// also let region1 contains all 4 locks
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+				if regionID == s.initRegion.regionID {
+					locks := []*tikv.Lock{
+						{Key: []byte("a")},
+						{Key: []byte("b")},
+						{Key: []byte("o")},
+						{Key: []byte("p")},
+					}
+					for i, lock := range locks {
+						if bytes.Compare(key, lock.Key) <= 0 {
+							return locks[i:]
+						}
+					}
+				}
+				return []*tikv.Lock{}
+			}
+			return false, nil
+		}
+		for _, lock := range locks {
+			resolvedLock = append(resolvedLock, lock.Key)
+		}
+		return true, nil
+	}
+
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(len(resolvedLock), Equals, 4)
+	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
+	for i, l := range resolvedLock {
+		c.Assert(l, BytesEquals, expects[i])
+	}
 }
 
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
@@ -1468,4 +1548,16 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 	case <-time.After(5 * time.Second):
 		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
+}
+
+func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	pid, err := s.gcWorker.doGCPlacementRules(dr)
+	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
 }

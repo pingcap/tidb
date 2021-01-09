@@ -204,11 +204,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
+		s.snapshot.mu.RLock()
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
-			TaskId:       s.snapshot.taskID,
+			TaskId:       s.snapshot.mu.taskID,
 		})
+		s.snapshot.mu.RUnlock()
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -234,6 +236,26 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// When there is a response-level key error, the returned pairs are incomplete.
+		// We should resolve the lock first and then retry the same request.
+		if keyErr := cmdScanResp.GetError(); keyErr != nil {
+			lock, err := extractLockFromKeyErr(keyErr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version.Ver, []*Lock{lock})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			continue
 		}
 
 		kvPairs := cmdScanResp.Pairs

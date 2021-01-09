@@ -28,14 +28,27 @@ type Store struct {
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 
+// GetMPPClient implements kv.Storage interface.
+func (s *Store) GetMPPClient() kv.MPPClient { return nil }
+
 // GetOracle implements kv.Storage interface.
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
 func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 
+// BeginWithTxnScope implements kv.Storage interface.
+func (s *Store) BeginWithTxnScope(txnScope string) (kv.Transaction, error) { return nil, nil }
+
 // BeginWithStartTS implements kv.Storage interface.
-func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
+func (s *Store) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	return s.Begin()
+}
+
+// BeginWithExactStaleness implements kv.Storage interface
+func (s *Store) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	return s.Begin()
+}
 
 // GetSnapshot implements kv.Storage interface.
 func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
@@ -47,7 +60,7 @@ func (s *Store) Close() error { return nil }
 func (s *Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+func (s *Store) CurrentVersion(txnScope string) (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }
@@ -58,6 +71,11 @@ func (s *Store) Name() string { return "UtilMockStorage" }
 // Describe implements kv.Storage interface.
 func (s *Store) Describe() string {
 	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
+}
+
+// GetMemCache implements kv.Storage interface
+func (s *Store) GetMemCache() kv.MemManager {
+	return nil
 }
 
 // ShowStatus implements kv.Storage interface.
