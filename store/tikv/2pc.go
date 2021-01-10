@@ -18,7 +18,12 @@ import (
 	"context"
 	"encoding/hex"
 	"math"
+<<<<<<< HEAD
 	"sort"
+=======
+	"math/rand"
+	"strings"
+>>>>>>> c9ff8458b... store/tikv: Add more failpoints about transaction (#22160)
 	"sync"
 	"sync/atomic"
 	"time"
@@ -652,6 +657,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
+<<<<<<< HEAD
 			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 				if s, ok := v.(string); !ok {
 					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
@@ -663,6 +669,23 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			})
 
 			e := c.doActionOnBatches(secondaryBo, action, batches)
+=======
+			if c.connID > 0 {
+				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+					if s, ok := v.(string); !ok {
+						logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						time.Sleep(2 * time.Second)
+					} else if s == "skip" {
+						logutil.Logger(bo.ctx).Info("[failpoint] injected skip committing secondaries",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						failpoint.Return()
+					}
+				})
+			}
+
+			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
+>>>>>>> c9ff8458b... store/tikv: Add more failpoints about transaction (#22160)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
 					zap.Uint64("conn", c.connID),
@@ -1309,8 +1332,34 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 
+<<<<<<< HEAD
 func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticRollback{}, mutations)
+=======
+func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
+	c.cleanWg.Add(1)
+	go func() {
+		failpoint.Inject("commitFailedSkipCleanup", func() {
+			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
+				zap.Uint64("txnStartTS", c.startTS))
+			c.cleanWg.Done()
+			failpoint.Return()
+		})
+
+		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		if err != nil {
+			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
+			logutil.Logger(ctx).Info("2PC cleanup failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+		} else {
+			logutil.Logger(ctx).Info("2PC clean up done",
+				zap.Uint64("txnStartTS", c.startTS))
+		}
+		c.cleanWg.Done()
+	}()
+>>>>>>> c9ff8458b... store/tikv: Add more failpoints about transaction (#22160)
 }
 
 // execute executes the two-phase commit protocol.
@@ -1437,7 +1486,24 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		failpoint.Inject("beforeCommit", func() {})
+		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
+			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
+			// `return("delay,fail")`. Then they will be executed sequentially at once.
+			if v, ok := val.(string); ok {
+				for _, action := range strings.Split(v, ",") {
+					// Async commit transactions cannot return error here, since it's already successful.
+					if action == "fail" && !c.isAsyncCommit() {
+						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
+						failpoint.Return(errors.New("injected failure before commit"))
+					} else if action == "delay" {
+						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
+							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+						time.Sleep(duration)
+					}
+				}
+			}
+		})
 	}
 
 	start = time.Now()
@@ -1719,7 +1785,15 @@ type batchMutations struct {
 
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
+<<<<<<< HEAD
 func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int, primaryIdx *int) []batchMutations {
+=======
+func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
+	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
+		limit = 1
+	})
+
+>>>>>>> c9ff8458b... store/tikv: Add more failpoints about transaction (#22160)
 	var start, end int
 	for start = 0; start < mutations.len(); start = end {
 		var size int
