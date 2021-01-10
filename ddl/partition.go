@@ -1069,7 +1069,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			def := &pi.Definitions[i]
 			if def.ID == oldID {
 				pid, err1 := t.GenGlobalID()
-				if err != nil {
+				if err1 != nil {
 					return ver, errors.Trace(err1)
 				}
 				def.ID = pid
