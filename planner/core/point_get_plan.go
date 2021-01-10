@@ -461,7 +461,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 // IsSelectForUpdateLockType checks if the select lock type is for update type.
 func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForUpdate ||
-		lockType == ast.SelectLockInShareMode ||
+		lockType == ast.SelectLockForShare ||
 		lockType == ast.SelectLockForUpdateNoWait ||
 		lockType == ast.SelectLockForUpdateWaitN {
 		return true
