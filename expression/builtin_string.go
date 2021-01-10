@@ -3948,6 +3948,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		if b.length < lenRunes {
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
+			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("weight_string", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
 		ctor = collate.GetCollator(b.args[0].GetType().Collate)
