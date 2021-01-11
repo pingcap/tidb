@@ -3703,13 +3703,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:        dbName,
-			TblName:       tableInfo.Name,
-			ColName:       col.Name,
-			OrigTblName:   tableInfo.Name,
-			OrigColName:   col.Name,
-			Hidden:        col.Hidden,
-			NotAccessible: col.State != model.StatePublic,
+			DBName:            dbName,
+			TblName:           tableInfo.Name,
+			ColName:           col.Name,
+			OrigTblName:       tableInfo.Name,
+			OrigColName:       col.Name,
+			Hidden:            col.Hidden,
+			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),

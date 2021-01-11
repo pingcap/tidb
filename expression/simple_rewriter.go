@@ -122,7 +122,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {
-		if !name.NotAccessible && (dbName.L == "" || dbName.L == name.DBName.L) &&
+		if !name.NotExplicitUsable && (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
 			(colName.L == name.ColName.L) {
 			if idx == -1 {
