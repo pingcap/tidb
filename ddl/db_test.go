@@ -4282,7 +4282,7 @@ func (s *testDBSuite3) TestIssue123123123(c *C) {
 		default:
 			return
 		}
-		_, checkErr1 = tk.Exec("update t set b = 3 where b = 1;")
+		_, checkErr1 = tk.Exec("update t set a = 3 where b = 1;")
 		_, checkErr2 = tk.Exec("update t set a = 3 order by b;")
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
