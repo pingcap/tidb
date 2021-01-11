@@ -3364,7 +3364,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
