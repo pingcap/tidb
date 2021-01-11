@@ -965,6 +965,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if expr == nil {
 			continue
 		}
+		expressions = append(expressions, expr)
+	}
+	cnfExpres := make([]expression.Expression, 0)
+	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
@@ -978,13 +982,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 				dual.SetSchema(p.Schema())
 				return dual, nil
 			}
-			expressions = append(expressions, item)
+			cnfExpres = append(cnfExpres, item)
 		}
 	}
-	if len(expressions) == 0 {
+	if len(cnfExpres) == 0 {
 		return p, nil
 	}
-	selection.Conditions = expressions
+	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
 }
@@ -2383,7 +2387,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
 		}
 	}
-	return n, true
+	return n, r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
