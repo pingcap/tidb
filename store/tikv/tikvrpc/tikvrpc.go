@@ -16,8 +16,6 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
 
@@ -400,7 +398,6 @@ func (req *Request) EnableStaleRead() {
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
 func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Request {
-	logutil.BgLogger().Info("ToBatchCommandsRequest", zap.Bool("staleRead", req.StaleRead))
 	switch req.Type {
 	case CmdGet:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Get{Get: req.Get()}}

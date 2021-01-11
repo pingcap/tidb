@@ -17,7 +17,6 @@ package tikv
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"io"
 	"math"
 	"runtime/trace"
@@ -378,7 +377,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	client := tikvpb.NewTikvClient(clientConn)
-	logutil.BgLogger().Info("SendRequest", zap.Bool("staleRead", req.StaleRead))
+
 	switch req.Type {
 	case tikvrpc.CmdBatchCop:
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)
