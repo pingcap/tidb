@@ -2383,7 +2383,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
 		}
 	}
-	return n, true
+	return n, r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
