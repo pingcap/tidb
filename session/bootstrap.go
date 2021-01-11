@@ -1309,6 +1309,7 @@ func upgradeToVer61(s Session, ver int64) {
 	if ver >= version61 {
 		return
 	}
+	bindMap := make(map[string]types.Time)
 	h := &bindinfo.BindHandle{}
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
@@ -1323,7 +1324,7 @@ func upgradeToVer61(s Session, ver int64) {
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
 	var recordSets []sqlexec.RecordSet
-	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation from mysql.bind_info where source != 'builtin'")
+	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation, update_time from mysql.bind_info where source != 'builtin'")
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 	}
@@ -1342,27 +1343,37 @@ func upgradeToVer61(s Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		updateBindInfo(s, iter, p, now.String())
+		updateBindInfo(s, iter, p, now.String(), bindMap)
 	}
 }
 
-func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string) {
+func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string, bindMap map[string]types.Time) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		original := row.GetString(0)
 		bind := row.GetString(1)
 		db := row.GetString(2)
 		charset := row.GetString(3)
 		collation := row.GetString(4)
-		originStmt, err := p.ParseOneStmt(original, charset, collation)
+		updateTime := row.GetTime(5)
+		stmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		bindStmt, err := p.ParseOneStmt(bind, charset, collation)
-		if err != nil {
-			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		if latest, ok := bindMap[originWithDB]; ok {
+			// In the following cases, duplicate originWithDB may occur
+			//      originalText         	|bindText                                   	|DB
+			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
+			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
+			// If repeated, we will keep the latest binding.
+			if updateTime.Compare(latest) <= 0 {
+				continue
+			}
+			mustExecute(s, fmt.Sprintf(`DELETE FROM mysql.bind_info WHERE original_sql=%s`, expression.Quote(original)))
+			original = originWithDB
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(originStmt, db))
-		bindWithDB := utilparser.RestoreWithDefaultDB(bindStmt, db)
+		bindMap[originWithDB] = updateTime
+		bindWithDB := utilparser.RestoreWithDefaultDB(stmt, db)
 		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
 			expression.Quote(originWithDB),
 			expression.Quote(bindWithDB),
