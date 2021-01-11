@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"encoding/hex"
 	"math"
 	"sync/atomic"
 	"time"
@@ -72,17 +73,37 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 	})
 
+	ttl := c.lockTTL
+
+	if c.connID > 0 {
+		failpoint.Inject("twoPCShortLockTTL", func() {
+			ttl = 1
+			keys := make([]string, 0, len(mutations))
+			for _, m := range mutations {
+				keys = append(keys, hex.EncodeToString(m.Key))
+			}
+			logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on prewrite",
+				zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+		})
+	}
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
-		LockTtl:           c.lockTTL,
+		LockTtl:           ttl,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
 		MaxCommitTs:       c.maxCommitTS,
 	}
+
+	failpoint.Inject("invalidMaxCommitTS", func() {
+		if req.MaxCommitTs > 0 {
+			req.MaxCommitTs = minCommitTS - 1
+		}
+	})
 
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
@@ -104,6 +125,16 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
+
+	if c.connID > 0 {
+		failpoint.Inject("prewritePrimaryFail", func() {
+			if batch.isPrimary {
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting primary batch"))
+			}
+		})
+	}
 
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
@@ -158,10 +189,14 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 			if c.isOnePC() {
 				if prewriteResp.OnePcCommitTs == 0 {
+					if prewriteResp.MinCommitTs != 0 {
+						return errors.Trace(errors.New("MinCommitTs must be 0 when 1pc falls back to 2pc"))
+					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
+					c.setAsyncCommit(false)
 				} else {
 					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
 					// not to lock the mutex.

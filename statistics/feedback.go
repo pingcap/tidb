@@ -965,6 +965,21 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 	return eqFB, ranFB
 }
 
+// CleanRangeFeedbackByTopN will not update the part containing the TopN.
+func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
+	for i := len(feedbacks) - 1; i >= 0; i-- {
+		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
+		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
+		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
+		// we can indicate that no top-n overlaps the feedback's ranges.
+		if lIdx == rIdx && !lMatch {
+			continue
+		}
+		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
+	}
+	return feedbacks
+}
+
 // setNextValue sets the next value for the given datum. For types like float,
 // we do not set because it is not discrete and does not matter too much when estimating the scalar info.
 func setNextValue(d *types.Datum) {

@@ -280,13 +280,16 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
 				if colID == col.ID && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-					values[offset] = handle.EncodedCol(i)
-					break
+					// Only try to decode handle when there is no corresponding column in the value.
+					// This is because the information in handle may be incomplete in some cases.
+					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
+					if values[offset] == nil {
+						values[offset] = handle.EncodedCol(i)
+						break
+					}
 				}
 			}
-			continue
-		}
-		if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
+		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(col.Flag) {
 				// PK column is Unsigned.
@@ -433,16 +436,11 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
-	handleColIDs := []int64{-1}
-	if tblInfo.IsCommonHandle {
-		handleColIDs = handleColIDs[:0]
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		for _, idxCol := range pkIdx.Columns {
-			colID := tblInfo.Columns[idxCol.Offset].ID
-			handleColIDs = append(handleColIDs, colID)
-		}
+	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, handleColIDs, nil, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
@@ -452,6 +450,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
+		pkColIDs:      pkColIDs,
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,

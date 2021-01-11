@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -80,6 +81,14 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	for i, child := range p.Children() {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
+	}
+
+	// eliminate projection in a coprocessor task
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		return p
 	}
 
 	proj, isProj := p.(*PhysicalProjection)

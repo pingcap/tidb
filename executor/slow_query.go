@@ -51,7 +51,7 @@ import (
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
 var ParseSlowLogBatchSize = 64
 
-//slowQueryRetriever is used to read slow log data.
+// slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
 	outputCols  []*model.ColumnInfo
@@ -62,8 +62,8 @@ type slowQueryRetriever struct {
 	fileLine    int
 	checker     *slowLogChecker
 
-	parsedSlowLogCh chan parsedSlowLog
-	stats           *slowQueryRuntimeStats
+	taskList chan slowLogTask
+	stats    *slowQueryRuntimeStats
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -108,12 +108,31 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	e.stats = &slowQueryRuntimeStats{}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
-		e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
-		e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
+		for _, tr := range e.extractor.TimeRanges {
+			startTime := types.NewTime(types.FromGoTime(tr.StartTime), mysql.TypeDatetime, types.MaxFsp)
+			endTime := types.NewTime(types.FromGoTime(tr.EndTime), mysql.TypeDatetime, types.MaxFsp)
+			timeRange := &timeRange{
+				startTime: startTime,
+				endTime:   endTime,
+			}
+			e.checker.timeRanges = append(e.checker.timeRanges, timeRange)
+		}
+	} else {
+		e.extractor = &plannercore.SlowQueryExtractor{}
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(ctx, sctx, sctx.GetSessionVars().SlowQueryFile)
+	if e.extractor.Desc {
+		e.reverseLogFiles()
+	}
 	return err
+}
+
+func (e *slowQueryRetriever) reverseLogFiles() {
+	for i := 0; i < len(e.files)/2; i++ {
+		j := len(e.files) - i - 1
+		e.files[i], e.files[j] = e.files[j], e.files[i]
+	}
 }
 
 func (e *slowQueryRetriever) close() error {
@@ -148,10 +167,26 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 	return file
 }
 
+func (e *slowQueryRetriever) getPreviousFile() *os.File {
+	fileIdx := e.fileIdx
+	// fileIdx refer to the next file which should be read
+	// so we need to set fileIdx to fileIdx - 2 to get the previous file.
+	fileIdx = fileIdx - 2
+	if fileIdx < 0 {
+		return nil
+	}
+	file := e.files[fileIdx].file
+	_, err := file.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil
+	}
+	return file
+}
+
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
 	file := e.getNextFile()
 	if file == nil {
-		close(e.parsedSlowLogCh)
+		close(e.taskList)
 		return
 	}
 	reader := bufio.NewReader(file)
@@ -160,19 +195,20 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
 	var (
-		slowLog parsedSlowLog
-		ok      bool
+		task slowLogTask
+		ok   bool
 	)
 	for {
 		select {
-		case slowLog, ok = <-e.parsedSlowLogCh:
+		case task, ok = <-e.taskList:
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		}
 		if !ok {
 			return nil, true, nil
 		}
-		rows, err := slowLog.rows, slowLog.err
+		result := <-task.resultCh
+		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, false, err
 		}
@@ -193,8 +229,12 @@ type slowLogChecker struct {
 	user           *auth.UserIdentity
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
-	startTime       types.Time
-	endTime         types.Time
+	timeRanges      []*timeRange
+}
+
+type timeRange struct {
+	startTime types.Time
+	endTime   types.Time
 }
 
 func (sc *slowLogChecker) hasPrivilege(userName string) bool {
@@ -202,10 +242,12 @@ func (sc *slowLogChecker) hasPrivilege(userName string) bool {
 }
 
 func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
-	if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
-		return false
+	for _, tr := range sc.timeRanges {
+		if sc.enableTimeCheck && (t.Compare(tr.startTime) >= 0 && t.Compare(tr.endTime) <= 0) {
+			return true
+		}
 	}
-	return true
+	return !sc.enableTimeCheck
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
@@ -243,7 +285,13 @@ type offset struct {
 	length int
 }
 
-func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+type slowLogTask struct {
+	resultCh chan parsedSlowLog
+}
+
+type slowLogBlock []string
+
+func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
 	var line string
 	log := make([]string, 0, num)
 	var err error
@@ -259,13 +307,13 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 					e.fileLine = 0
 					file := e.getNextFile()
 					if file == nil {
-						return log, nil
+						return [][]string{log}, nil
 					}
 					offset.length = len(log)
 					reader.Reset(file)
 					continue
 				}
-				return log, err
+				return [][]string{log}, err
 			}
 			line = string(hack.String(lineByte))
 			log = append(log, line)
@@ -277,11 +325,98 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 			}
 		}
 	}
-	return log, err
+	return [][]string{log}, err
+}
+
+func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
+	// reader maybe change when read previous file.
+	inputReader := reader
+	defer func() {
+		file := e.getNextFile()
+		if file != nil {
+			inputReader.Reset(file)
+		}
+	}()
+	var line string
+	var logs []slowLogBlock
+	var log []string
+	var err error
+	hasStartFlag := false
+	scanPreviousFile := false
+	for {
+		if isCtxDone(ctx) {
+			return nil, ctx.Err()
+		}
+		e.fileLine++
+		lineByte, err := getOneLine(reader)
+		if err != nil {
+			if err == io.EOF {
+				if len(log) == 0 {
+					decomposedSlowLogTasks := decomposeToSlowLogTasks(logs, num)
+					offset.length = len(decomposedSlowLogTasks)
+					return decomposedSlowLogTasks, nil
+				}
+				e.fileLine = 0
+				file := e.getPreviousFile()
+				if file == nil {
+					return decomposeToSlowLogTasks(logs, num), nil
+				}
+				reader = bufio.NewReader(file)
+				scanPreviousFile = true
+				continue
+			}
+			return nil, err
+		}
+		line = string(hack.String(lineByte))
+		if !hasStartFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+			hasStartFlag = true
+		}
+		if hasStartFlag {
+			log = append(log, line)
+			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
+					continue
+				}
+				logs = append(logs, log)
+				if scanPreviousFile {
+					break
+				}
+				log = make([]string, 0, 8)
+				hasStartFlag = false
+			}
+		}
+	}
+	return decomposeToSlowLogTasks(logs, num), err
+}
+
+func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	//In reversed scan, We should reverse the blocks.
+	last := len(logs) - 1
+	for i := 0; i < len(logs)/2; i++ {
+		logs[i], logs[last-i] = logs[last-i], logs[i]
+	}
+
+	decomposedSlowLogTasks := make([][]string, 0)
+	log := make([]string, 0, num*len(logs[0]))
+	for i := range logs {
+		log = append(log, logs[i]...)
+		if i > 0 && i%num == 0 {
+			decomposedSlowLogTasks = append(decomposedSlowLogTasks, log)
+			log = make([]string, 0, len(log))
+		}
+	}
+	if len(log) > 0 {
+		decomposedSlowLogTasks = append(decomposedSlowLogTasks, log)
+	}
+	return decomposedSlowLogTasks
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	defer close(e.parsedSlowLogCh)
+	defer close(e.taskList)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -293,40 +428,54 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	defer close(ch)
 	for {
 		startTime := time.Now()
-		log, err := e.getBatchLog(ctx, reader, &offset, logNum)
-		if err != nil {
-			e.sendParsedSlowLogCh(ctx, parsedSlowLog{nil, err})
-			break
+		var logs [][]string
+		var err error
+		if !e.extractor.Desc {
+			logs, err = e.getBatchLog(ctx, reader, &offset, logNum)
+		} else {
+			logs, err = e.getBatchLogForReversedScan(ctx, reader, &offset, logNum)
 		}
-		if len(log) == 0 {
+		if err != nil {
+			t := slowLogTask{}
+			t.resultCh = make(chan parsedSlowLog, 1)
+			e.taskList <- t
+			e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{nil, err})
+		}
+		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
 		}
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
 		}
-		start := offset
-		wg.Add(1)
-		ch <- 1
-		go func() {
-			defer wg.Done()
-			result, err := e.parseLog(ctx, sctx, log, start)
-			e.sendParsedSlowLogCh(ctx, parsedSlowLog{result, err})
-			<-ch
-		}()
-		offset.offset = e.fileLine
-		offset.length = 0
-		select {
-		case <-ctx.Done():
-			break
-		default:
+		for i := range logs {
+			log := logs[i]
+			t := slowLogTask{}
+			t.resultCh = make(chan parsedSlowLog, 1)
+			start := offset
+			wg.Add(1)
+			ch <- 1
+			e.taskList <- t
+			go func() {
+				defer wg.Done()
+				result, err := e.parseLog(ctx, sctx, log, start)
+				e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{result, err})
+				<-ch
+			}()
+			offset.offset = e.fileLine
+			offset.length = 0
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 		}
 	}
 	wg.Wait()
 }
 
-func (e *slowQueryRetriever) sendParsedSlowLogCh(ctx context.Context, re parsedSlowLog) {
+func (e *slowQueryRetriever) sendParsedSlowLogCh(ctx context.Context, t slowLogTask, re parsedSlowLog) {
 	select {
-	case e.parsedSlowLogCh <- re:
+	case t.resultCh <- re:
 	case <-ctx.Done():
 		return
 	}
@@ -881,7 +1030,14 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return handleErr(err)
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
-		if start.Compare(e.checker.endTime) > 0 {
+		notInAllTimeRanges := true
+		for _, tr := range e.checker.timeRanges {
+			if start.Compare(tr.endTime) <= 0 {
+				notInAllTimeRanges = false
+				break
+			}
+		}
+		if notInAllTimeRanges {
 			return nil
 		}
 
@@ -891,7 +1047,14 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return handleErr(err)
 		}
 		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-		if end.Compare(e.checker.startTime) < 0 {
+		inTimeRanges := false
+		for _, tr := range e.checker.timeRanges {
+			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+				inTimeRanges = true
+				break
+			}
+		}
+		if !inTimeRanges {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
@@ -1087,6 +1250,6 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
-	e.parsedSlowLogCh = make(chan parsedSlowLog, 100)
+	e.taskList = make(chan slowLogTask, 100)
 	go e.parseDataForSlowLog(ctx, sctx)
 }

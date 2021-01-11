@@ -17,10 +17,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 type testClusteredSuite struct{ *baseTestSuite }
+type testClusteredSerialSuite struct{ *testClusteredSuite }
 
 func (s *testClusteredSuite) SetUpTest(c *C) {
 }
@@ -184,6 +186,28 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
+// Test for union scan in prefixed clustered index table.
+// See https://github.com/pingcap/tidb/issues/22069.
+func (s *testClusteredSerialSuite) TestClusteredUnionScanOnPrefixingPrimaryKey(c *C) {
+	originCollate := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(originCollate)
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));")
+	tk.MustExec("insert into t values ('aaaaa', -38);")
+	tk.MustExec("insert into t values ('bbbbb', -48);")
+
+	tk.MustExec("begin PESSIMISTIC;")
+	tk.MustExec("update t set col_2 = 47 where col_1 in ('aaaaa') order by col_1,col_2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("aaaaa 47", "bbbbb -48"))
+	tk.MustGetErrCode("insert into t values ('bb', 0);", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('aa', 0);", errno.ErrDupEntry)
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("aaaaa 47", "bbbbb -48"))
+	tk.MustExec("admin check table t;")
+}
+
 func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk := s.newTK(c)
 	tk.Se.GetSessionVars().RowEncoder.Enable = false
@@ -191,6 +215,40 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
 	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
 	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
+	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21502.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
+	tk.MustExec("delete from t where c_int = 5;")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568#issuecomment-741601887
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (11, 'abc', null, null);")
+	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
+	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/22193
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
+	tk.MustExec("insert into t values('aaa', 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set col_0 = 'ccc';")
+	tk.MustExec("update t set col_0 = 'ddd';")
+	tk.MustExec("commit;")
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testClusteredSuite) TestIssue20002(c *C) {

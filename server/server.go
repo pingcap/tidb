@@ -192,10 +192,8 @@ func (s *Server) forwardUnixSocketToTCP() {
 		if uconn, err := s.socket.Accept(); err == nil {
 			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 			go s.handleForwardedConnection(uconn, addr)
-		} else {
-			if s.listener != nil {
-				logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
-			}
+		} else if s.listener != nil {
+			logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
 		}
 	}
 }
@@ -247,7 +245,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-		if s.listener, err = net.Listen("tcp", addr); err == nil {
+		tcpProto := "tcp"
+		if s.cfg.EnableTCP4Only {
+			tcpProto = "tcp4"
+		}
+		if s.listener, err = net.Listen(tcpProto, addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 			if cfg.Socket != "" {
 				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {

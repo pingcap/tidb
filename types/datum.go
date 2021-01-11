@@ -902,8 +902,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
 		return 0, overflow(f, target.Tp)
+	}
+	if target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
+		if f > 0 {
+			return math.MaxFloat32, overflow(f, target.Tp)
+		}
+		return -math.MaxFloat32, overflow(f, target.Tp)
 	}
 	return f, nil
 }
@@ -1281,11 +1287,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 		dec.FromUint(val)
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1621,11 +1627,11 @@ func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, e
 		dec.FromUint(val)
 		err = err1
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
 	}
@@ -2011,17 +2017,6 @@ func (ds *datumsSorter) Less(i, j int) bool {
 
 func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
-	if sc.IgnoreTruncate {
-		return nil
-	}
-	if !sc.TruncateAsWarning {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
 }
 
 // DatumsToString converts several datums to formatted string.

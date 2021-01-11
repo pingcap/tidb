@@ -265,7 +265,12 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return nil
 	}
 
-	value, op, isValidRange := handleUnsignedIntCol(ft, value, op)
+	value, op, isValidRange := handleUnsignedCol(ft, value, op)
+	if !isValidRange {
+		return nil
+	}
+
+	value, op, isValidRange = handleBoundCol(ft, value, op)
 	if !isValidRange {
 		return nil
 	}
@@ -306,15 +311,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	return nil
 }
 
-// handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
+// handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
-	isIntegerType := mysql.IsIntegerType(ft.Tp)
-	isNegativeInteger := (val.Kind() == types.KindInt64 && val.GetInt64() < 0)
+	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
+		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
+		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
+		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative())
 
-	if !isUnsigned || !isIntegerType || !isNegativeInteger {
+	if !isUnsigned || !isNegative {
 		return val, op, true
 	}
 
@@ -322,11 +329,64 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	// Otherwise the value is out of valid range.
 	if op == ast.GT || op == ast.GE || op == ast.NE {
 		op = ast.GE
-		val.SetUint64(0)
+		switch val.Kind() {
+		case types.KindInt64:
+			val.SetUint64(0)
+		case types.KindFloat32:
+			val.SetFloat32(0)
+		case types.KindFloat64:
+			val.SetFloat64(0)
+		case types.KindMysqlDecimal:
+			val.SetMysqlDecimal(new(types.MyDecimal))
+		}
 		return val, op, true
 	}
 
 	return val, op, false
+}
+
+// handleBoundCol handles the case when column meets overflow value.
+// The three returned values are: fixed constant value, fixed operator, and a boolean
+// which indicates whether the range is valid or not.
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
+	if isUnsigned {
+		return val, op, true
+	}
+
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if !isNegative && val.GetUint64() > math.MaxInt64 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewIntDatum(math.MaxInt64)
+			}
+		}
+	case mysql.TypeFloat:
+		if val.GetFloat64() > math.MaxFloat32 {
+			switch op {
+			case ast.GT, ast.GE:
+				return val, op, false
+			case ast.NE, ast.LE, ast.LT:
+				op = ast.LE
+				val = types.NewFloat32Datum(math.MaxFloat32)
+			}
+		} else if val.GetFloat64() < -math.MaxFloat32 {
+			switch op {
+			case ast.LE, ast.LT:
+				return val, op, false
+			case ast.GT, ast.GE, ast.NE:
+				op = ast.GE
+				val = types.NewFloat32Datum(-math.MaxFloat32)
+			}
+		}
+	}
+
+	return val, op, true
 }
 
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
