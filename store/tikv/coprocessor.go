@@ -851,7 +851,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(&copReq)
 		if err == nil {
 			cacheKey = cKey
@@ -1076,7 +1076,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 				return nil, nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
+			boRPCType := boTiKVRPC
+			if task.storeType == kv.TiFlash {
+				boRPCType = boTiFlashRPC
+			}
+			if err1 := bo.Backoff(boRPCType, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
 				return nil, errors.Trace(err)
 			}
 
@@ -1159,38 +1163,29 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
+	sd := &execdetails.ScanDetail{}
+	td := execdetails.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			copDetail := &execdetails.CopDetails{
-				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
-				TotalKeys:                 int64(scanDetailV2.TotalVersions),
-				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
-				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
-				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
-				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
-				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
-			}
-			resp.detail.CopDetail = copDetail
+			sd.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
+			td.MergeFromTimeDetail(timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.CopDetail = &execdetails.CopDetails{
-					ProcessedKeys: scanDetail.Write.Processed,
-					TotalKeys:     scanDetail.Write.Total,
-				}
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
+	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -1203,7 +1198,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 
@@ -1234,6 +1229,10 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	errMsg := err.Error()
 	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	if terror.ErrorEqual(err, ErrTiFlashServerTimeout) {
+		errCode = errno.ErrTiFlashServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
 	selResp := tipb.SelectResponse{

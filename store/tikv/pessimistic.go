@@ -14,6 +14,8 @@
 package tikv
 
 import (
+	"math/rand"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 )
 
 type actionPessimisticLock struct {
@@ -63,7 +67,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Op:  pb.Op_PessimisticLock,
 			Key: m.GetKey(i),
 		}
-		if c.txn.us.HasPresumeKeyNotExists(m.GetKey(i)) {
+		if c.txn.us.HasPresumeKeyNotExists(m.GetKey(i)) || (c.doingAmend && m.GetOp(i) == pb.Op_Insert) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -218,6 +222,26 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
+	if c.connID > 0 {
+		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
+			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
+			// `return("delay,fail")`. Then they will be executed sequentially at once.
+			if v, ok := val.(string); ok {
+				for _, action := range strings.Split(v, ",") {
+					if action == "delay" {
+						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+						logutil.Logger(bo.ctx).Info("[failpoint] injected delay at pessimistic lock",
+							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+						time.Sleep(duration)
+					} else if action == "fail" {
+						logutil.Logger(bo.ctx).Info("[failpoint] injected failure at pessimistic lock",
+							zap.Uint64("txnStartTS", c.startTS))
+						failpoint.Return(errors.New("injected failure at pessimistic lock"))
+					}
+				}
+			}
+		})
+	}
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 

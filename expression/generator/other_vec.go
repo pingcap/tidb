@@ -120,6 +120,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ $InputString := (eq .Input.TypeName "String") }}
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
+{{ $InputTime := (eq .Input.TypeName "Time") }}
 func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- template "BufAllocator" . }}
@@ -143,13 +144,12 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	{{- end }}
 	var compareResult int
-	args := b.args
+	args := b.args[1:]
 	{{- if not $InputJSON}}
 	if len(b.hashSet) != 0 {
 		{{- if $InputString }}
 			collator := collate.GetCollator(b.collation)
 		{{- end }}
-		args = b.nonConstArgs
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
@@ -188,6 +188,11 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 						r64s[i] = 1
 						result.SetNull(i, false)
 					}
+				{{- else if $InputTime }}
+					if _, ok := b.hashSet[arg0.CoreTime()]; ok {
+						r64s[i] = 1
+						result.SetNull(i, false)
+					}
 				{{- else }}
 					if _, ok := b.hashSet[arg0]; ok {
 						r64s[i] = 1
@@ -196,10 +201,14 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				{{- end }}
 			{{- end }}
 		}
+		args = args[:0]
+		for _, i := range b.nonConstArgsIdx {
+			args = append(args, b.args[i])
+		}
 	}
 	{{- end }}
 
-	for j := 1; j < len(args); j++ {
+	for j := 0; j < len(args); j++ {
 		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}

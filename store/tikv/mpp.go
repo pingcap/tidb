@@ -41,10 +41,26 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
+	resultTasks := make([]kv.MPPTaskMeta, 0)
+	c.store.regionCache.storeMu.RLock()
+	for _, st := range c.store.regionCache.storeMu.stores {
+		if st.storeType == kv.TiFlash {
+			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
+			resultTasks = append(resultTasks, task)
+		}
+	}
+	c.store.regionCache.storeMu.RUnlock()
+	return resultTasks
+}
+
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+	if req.KeyRanges == nil {
+		return c.selectAllTiFlashStore(), nil
+	}
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -58,7 +74,10 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
-	pbResp *mpp.MPPDataPacket
+	pbResp   *mpp.MPPDataPacket
+	detail   *CopRuntimeStats
+	respTime time.Duration
+	respSize int64
 
 	err error
 }
@@ -75,16 +94,26 @@ func (m *mppResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently.
 func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
-	return nil
+	return m.detail
 }
 
 // MemSize returns how many bytes of memory this response use
 func (m *mppResponse) MemSize() int64 {
-	return int64(m.pbResp.Size())
+	if m.respSize != 0 {
+		return m.respSize
+	}
+
+	if m.detail != nil {
+		m.respSize += int64(sizeofExecDetails)
+	}
+	if m.pbResp != nil {
+		m.respSize += int64(m.pbResp.Size())
+	}
+	return m.respSize
 }
 
 func (m *mppResponse) RespTime() time.Duration {
-	return 0
+	return m.respTime
 }
 
 type mppIterator struct {
@@ -134,7 +163,6 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	defer func() {
 		m.wg.Done()
 	}()
-	sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask := req.Meta.(*batchCopTask)
 	for _, task := range originalTask.copTasks {
@@ -164,18 +192,27 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	wrappedReq.StoreTp = kv.TiFlash
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
-	rpcResp, _, _, err := sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
+	var rpcResp *tikvrpc.Response
+	var err error
+	// If copTasks is not empty, we should send request according to region distribution.
+	// Or else it's the task without region, which always happens in high layer task without table.
+	// In that case
+	if len(originalTask.copTasks) != 0 {
+		sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
+		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
+		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
+		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
+		// That's a hard job but we can try it in the future.
+		if sender.rpcError != nil {
+			m.sendError(sender.rpcError)
+			return
+		}
+	} else {
+		rpcResp, err = m.store.client.SendRequest(ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutMedium)
+	}
 
 	if err != nil {
 		m.sendError(err)
-		return
-	}
-
-	// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
-	// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
-	// That's a hard job but we can try it in the future.
-	if sender.rpcError != nil {
-		m.sendError(sender.rpcError)
 		return
 	}
 
@@ -224,7 +261,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// TODO: cancel the whole process when some error happens
 	for {
-		err := m.handleMPPStreamResponse(resp, req)
+		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.sendError(err)
 			return
@@ -260,7 +297,7 @@ func (m *mppIterator) Close() error {
 	return nil
 }
 
-func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -272,7 +309,18 @@ func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 
 	resp := &mppResponse{
 		pbResp: response,
+		detail: new(CopRuntimeStats),
 	}
+
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
 	m.sendToRespCh(resp)
 	return

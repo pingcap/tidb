@@ -28,6 +28,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -1151,17 +1152,16 @@ func init() {
 			return nil, err
 		}
 		chk := newFirstChunk(exec)
-		for {
-			err = Next(ctx, exec, chk)
-			if err != nil {
-				return nil, err
-			}
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
-			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
-			return row, err
+
+		err = Next(ctx, exec, chk)
+		if err != nil {
+			return nil, err
 		}
+		if chk.NumRows() == 0 {
+			return nil, nil
+		}
+		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+		return row, err
 	}
 }
 
@@ -1392,7 +1392,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := newFirstChunk(e.children[0])
@@ -1401,7 +1401,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	return nil
@@ -1439,6 +1439,12 @@ type UnionExec struct {
 	results     []*chunk.Chunk
 	wg          sync.WaitGroup
 	initialized bool
+	mu          struct {
+		*sync.Mutex
+		maxOpenedChildID int
+	}
+
+	childInFlightForTest int32
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1458,12 +1464,11 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
+	e.mu.Mutex = &sync.Mutex{}
+	e.mu.maxOpenedChildID = -1
 	return nil
 }
 
@@ -1509,6 +1514,19 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
+		e.mu.Lock()
+		if childID > e.mu.maxOpenedChildID {
+			e.mu.maxOpenedChildID = childID
+		}
+		e.mu.Unlock()
+		if err := e.children[childID].Open(ctx); err != nil {
+			result.err = err
+			e.stopFetchData.Store(true)
+			e.resultPool <- result
+		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, 1)
+		})
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1523,12 +1541,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
+			failpoint.Inject("issue21441", func() {
+				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
+					panic("the count of child in flight is larger than e.concurrency unexpectedly")
+				}
+			})
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, -1)
+		})
 	}
 }
 
@@ -1567,7 +1593,15 @@ func (e *UnionExec) Close() error {
 		for range e.childIDChan {
 		}
 	}
-	return e.baseExecutor.Close()
+	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
+	// promised to exit when reaching here (e.childIDChan been closed).
+	var firstErr error
+	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
+		if err := e.children[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
@@ -1632,9 +1666,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
-		// but should not make DupKeyAsWarning or BadNullAsWarning,
+		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -1642,11 +1677,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
+		sc.InCreateOrAlterStmt = true
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 		sc.InLoadDataStmt = true
+		// return warning instead of error when load data meet no partition for value
+		sc.IgnoreNoPartition = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1729,6 +1767,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
+	sc.IgnoreNoPartition = stmt.IgnoreErr
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated

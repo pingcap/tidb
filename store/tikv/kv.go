@@ -78,6 +78,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	defer mc.Unlock()
 
 	security := config.GetGlobalConfig().Security
+	pdConfig := config.GetGlobalConfig().PDClient
 	tikvConfig := config.GetGlobalConfig().TiKVClient
 	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
 	etcdAddrs, disableGC, err := config.ParsePath(path)
@@ -94,7 +95,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
-	))
+	), pd.WithCustomTimeoutOption(time.Duration(pdConfig.PDServerTimeout)*time.Second))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
@@ -325,7 +326,11 @@ func (s *tikvStore) runSafePointChecker() {
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
-	txn, err := newTiKVTxn(s)
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+}
+
+func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
+	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -333,8 +338,16 @@ func (s *tikvStore) Begin() (kv.Transaction, error) {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
-	txn, err := newTikvTxnWithStartTS(s, startTS, s.nextReplicaReadSeed())
+func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn, nil
+}
+
+func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error) {
+	txn, err := newTiKVTxnWithExactStaleness(s, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -380,16 +393,16 @@ func (s *tikvStore) UUID() string {
 	return s.uuid
 }
 
-func (s *tikvStore) CurrentVersion() (kv.Version, error) {
+func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	startTS, err := s.getTimestampWithRetry(bo)
+	startTS, err := s.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
 	}
 	return kv.NewVersion(startTS), nil
 }
 
-func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
+func (s *tikvStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64, error) {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvStore.getTimestampWithRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -397,7 +410,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: txnScope})
 		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
@@ -412,6 +425,19 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 			return startTS, nil
 		}
 		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+}
+
+func (s *tikvStore) getStalenessTimestamp(bo *Backoffer, txnScope string, prevSec uint64) (uint64, error) {
+	for {
+		startTS, err := s.oracle.GetStaleTimestamp(bo.ctx, txnScope, prevSec)
+		if err == nil {
+			return startTS, nil
+		}
+		err = bo.Backoff(BoPDRPC, errors.Errorf("get staleness timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

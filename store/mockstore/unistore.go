@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/execdetails"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
@@ -26,6 +27,9 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 	opts.clusterInspector(cluster)
+	pdClient = execdetails.InterceptedPDClient{
+		Client: pdClient,
+	}
 
 	return tikv.NewTestTiKVStore(client, pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
 }

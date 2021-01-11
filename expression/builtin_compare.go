@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -367,53 +368,67 @@ func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, i
 	return res, isNull, err
 }
 
-// temporalWithDateAsNumEvalType makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
-func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.EvalType, isStr bool, isTemporalWithDate bool) {
-	argEvalType = argTp.EvalType()
-	isStr, isTemporalWithDate = argEvalType.IsStringKind(), types.IsTemporalWithDate(argTp.Tp)
-	if !isTemporalWithDate {
-		return
+func aggregateType(args []Expression) *types.FieldType {
+	fieldTypes := make([]*types.FieldType, len(args))
+	for i := range fieldTypes {
+		fieldTypes[i] = args[i].GetType()
 	}
-	if argTp.Decimal > 0 {
-		argEvalType = types.ETDecimal
-	} else {
-		argEvalType = types.ETInt
-	}
-	return
+	return types.AggFieldType(fieldTypes)
 }
 
-// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
-	datetimeFound, isAllStr := false, true
-	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
-	if !isStr {
-		isAllStr = false
+// ResolveType4Between resolves eval type for between expression.
+func ResolveType4Between(args [3]Expression) types.EvalType {
+	cmpTp := args[0].GetType().EvalType()
+	for i := 1; i < 3; i++ {
+		cmpTp = getBaseCmpType(cmpTp, args[i].GetType().EvalType(), nil, nil)
 	}
-	if isTemporalWithDate {
-		datetimeFound = true
-	}
-	lft := args[0].GetType()
-	for i := range args {
-		rft := args[i].GetType()
-		var tp types.EvalType
-		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(rft)
-		if isTemporalWithDate {
-			datetimeFound = true
+
+	hasTemporal := false
+	if cmpTp == types.ETString {
+		for _, arg := range args {
+			if types.IsTypeTemporal(arg.GetType().Tp) {
+				hasTemporal = true
+				break
+			}
 		}
-		if !isStr {
-			isAllStr = false
+		if hasTemporal {
+			cmpTp = types.ETDatetime
 		}
-		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
-		lft = rft
 	}
-	argTp = cmpEvalType
-	if cmpEvalType.IsStringKind() {
-		argTp = types.ETString
+
+	return cmpTp
+}
+
+// resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func resolveType4Extremum(args []Expression) types.EvalType {
+	aggType := aggregateType(args)
+
+	var temporalItem *types.FieldType
+	if aggType.EvalType().IsStringKind() {
+		for i := range args {
+			item := args[i].GetType()
+			if types.IsTemporalWithDate(item.Tp) {
+				temporalItem = item
+			}
+		}
+
+		if !types.IsTemporalWithDate(aggType.Tp) && temporalItem != nil {
+			aggType.Tp = temporalItem.Tp
+		}
+		// TODO: String charset, collation checking are needed.
 	}
-	if isAllStr && datetimeFound {
-		argTp = types.ETDatetime
+	return aggType.EvalType()
+}
+
+// unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
+func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
+	for _, arg := range args {
+		tp := arg.GetType().Tp
+		if tp == mysql.TypeJSON {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedJSONComparison)
+			break
+		}
 	}
-	return argTp
 }
 
 type greatestFunctionClass struct {
@@ -424,9 +439,13 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
-	if tp == types.ETDatetime {
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJSONComparison(ctx, args)
 		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -453,7 +472,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
@@ -592,30 +611,39 @@ func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (_ string, isNull bool, err error) {
+func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		v string
-		t types.Time
+		strRes  string
+		timeRes types.Time
 	)
-	max := types.ZeroDatetime
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
-		v, isNull, err = b.args[i].EvalString(b.ctx, row)
+		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err = types.ParseDatetime(sc, v)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			}
-			continue
+		} else {
+			v = t.String()
 		}
-		if t.Compare(max) > 0 {
-			max = t
+		// In MySQL, if the compare result is zero, than we will try to use the string comparison result
+		if i == 0 || strings.Compare(v, strRes) > 0 {
+			strRes = v
+		}
+		if i == 0 || t.Compare(timeRes) > 0 {
+			timeRes = t
 		}
 	}
-	return max.String(), false, nil
+	if timeRes.IsZero() {
+		res = strRes
+	} else {
+		res = timeRes.String()
+	}
+	return res, false, nil
 }
 
 type leastFunctionClass struct {
@@ -626,9 +654,13 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJSONComparison(ctx, args)
 		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -796,32 +828,36 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		v string
-		t types.Time
+		// timeRes will be converted to a strRes only when the arguments is a valid datetime value.
+		strRes  string     // Record the strRes of each arguments.
+		timeRes types.Time // Record the time representation of a valid arguments.
 	)
-	min := types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp)
-	findInvalidTime := false
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
-		v, isNull, err = b.args[i].EvalString(b.ctx, row)
+		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err = types.ParseDatetime(sc, v)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
-			} else if !findInvalidTime {
-				res = v
-				findInvalidTime = true
 			}
+		} else {
+			v = t.String()
 		}
-		if t.Compare(min) < 0 {
-			min = t
+		if i == 0 || strings.Compare(v, strRes) < 0 {
+			strRes = v
+		}
+		if i == 0 || t.Compare(timeRes) < 0 {
+			timeRes = t
 		}
 	}
-	if !findInvalidTime {
-		res = min.String()
+
+	if timeRes.IsZero() {
+		res = strRes
+	} else {
+		res = timeRes.String()
 	}
 	return res, false, nil
 }
@@ -1042,7 +1078,7 @@ type compareFunctionClass struct {
 
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
-	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
+	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
 		if lft.Tp == rft.Tp {
 			return types.ETString
 		}
@@ -1054,11 +1090,16 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
+	} else if (lhs == types.ETInt || (lft != nil && lft.Hybrid())) && (rhs == types.ETInt || (rft != nil && rft.Hybrid())) {
 		return types.ETInt
-	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
-		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
+	} else if (lhs == types.ETDecimal && rhs == types.ETString) || (lhs == types.ETString && rhs == types.ETDecimal) {
+		return types.ETReal
+	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
+	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.Tp) && rft.Tp == mysql.TypeYear ||
+		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp)) {
+		return types.ETDatetime
 	}
 	return types.ETReal
 }

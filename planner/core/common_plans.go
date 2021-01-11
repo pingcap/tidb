@@ -725,6 +725,8 @@ type Insert struct {
 	NeedFillDefaultValue bool
 
 	AllAssignmentsAreConstant bool
+
+	RowLen int
 }
 
 // Update represents Update plan.
@@ -734,6 +736,8 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	AllAssignmentsAreConstant bool
+
+	VirtualAssignmentsOffset int
 
 	SelectPlan PhysicalPlan
 
@@ -1031,8 +1035,6 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
 			buildSide = plan.InnerChildIdx ^ 1
-		case *PhysicalBroadCastJoin:
-			buildSide = plan.InnerChildIdx
 		}
 
 		if buildSide != -1 {

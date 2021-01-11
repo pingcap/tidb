@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -28,7 +29,12 @@ func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
@@ -38,8 +44,27 @@ PARTITION BY RANGE (c) (
 	PARTITION p3 VALUES LESS THAN (21)
 );`)
 
+	is := s.dom.InfoSchema()
+	bundles := make(map[string]*placement.Bundle)
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	partDefs := tb.Meta().GetPartitionInfo().Definitions
+	p0ID := placement.GroupID(partDefs[0].ID)
+	bundles[p0ID] = &placement.Bundle{
+		ID:    p0ID,
+		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
+	}
+
 	// normal cases
-	_, err := tk.Exec(`alter table t1 alter partition p0
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
@@ -56,6 +81,20 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="{'+zone=sh': 1}"
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="['+zone=sh']"
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -86,6 +125,24 @@ drop placement policy
 	role=leader`)
 	c.Assert(err, IsNil)
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+drop placement policy
+	role=follower`)
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=xxx
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*ROLE is not specified.*")
+
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -104,7 +161,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -130,7 +187,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3,
 alter placement policy
@@ -144,11 +201,11 @@ drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=voter
 	replicas=3,
 drop placement policy
@@ -158,30 +215,48 @@ drop placement policy
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=follower
+	constraints='[]'`)
+	c.Assert(err, ErrorMatches, ".*array CONSTRAINTS should be with a positive REPLICAS.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*array or object.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=voter
+	replicas=3`)
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='[,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=follower
 	replicas=2`)
+	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	role=leader`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
 	// checkPlacementSpecConstraint
@@ -289,7 +364,11 @@ add placement policy
 func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	defer tk.MustExec("drop table if exists t1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	initTable := func() []string {
 		bundles := make(map[string]*placement.Bundle)
@@ -332,7 +411,11 @@ func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
@@ -416,7 +499,7 @@ PARTITION BY RANGE (c) (
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
 			txnScope: "bj",
-			err:      fmt.Errorf(".*don't have placement policies with txn_scope.*"),
+			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with global txnScope",
@@ -454,6 +537,7 @@ PARTITION BY RANGE (c) (
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
 		if testcase.disableAutoCommit {
 			tk.MustExec("set @@autocommit = 0")
+			tk.MustExec("begin")
 			tk.MustExec(testcase.sql)
 			_, err = tk.Exec("commit")
 		} else {
@@ -464,7 +548,6 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
-			fmt.Println(err.Error())
 		}
 	}
 }
@@ -473,7 +556,11 @@ func (s *testDBSuite1) TestAbortTxnIfPlacementChanged(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tp1")
-	defer tk.MustExec("drop table if exists tp1")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop table if exists tp1")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 
 	tk.MustExec(`create table tp1 (c int)
 PARTITION BY RANGE (c) (
@@ -484,6 +571,11 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
 	tk1.MustExec("use test")
+
+	tk1.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk1.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
 	_, err = tk.Exec(`alter table tp1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  "]'
@@ -522,4 +614,122 @@ add placement policy
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
+}
+
+func (s *testDBSuite1) TestGlobalTxnState(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
+
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
+	c.Assert(err, IsNil)
+	groupID := placement.GroupID(pid)
+	bundles[groupID] = &placement.Bundle{
+		ID: groupID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: groupID,
+				Role:    placement.Leader,
+				Count:   1,
+				LabelConstraints: []placement.LabelConstraint{
+					{
+						Key:    placement.DCLabelKey,
+						Op:     placement.In,
+						Values: []string{"bj"},
+					},
+				},
+			},
+		},
+	}
+	dbInfo := testGetSchemaByName(c, tk.Se, "test")
+	tk2 := testkit.NewTestKit(c, s.store)
+	var chkErr error
+	done := false
+	testcases := []struct {
+		name      string
+		hook      *ddl.TestDDLCallback
+		expectErr error
+	}{
+		{
+			name: "write partition p0 during StateGlobalTxnOnly",
+			hook: func() *ddl.TestDDLCallback {
+				hook := &ddl.TestDDLCallback{}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+						job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+						done = true
+						tk2.MustExec("use test")
+						tk2.MustExec("set @@txn_scope=bj")
+						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+					}
+				}
+				return hook
+			}(),
+			expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
+		},
+		// FIXME: support abort read txn during StateGlobalTxnOnly
+		// {
+		//	name: "read partition p0 during middle state",
+		//	hook: func() *ddl.TestDDLCallback {
+		//		hook := &ddl.TestDDLCallback{}
+		//		hook.OnJobUpdatedExported = func(job *model.Job) {
+		//			if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+		//				job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+		//				done = true
+		//				tk2.MustExec("use test")
+		//				tk2.MustExec("set @@txn_scope=bj")
+		//				tk2.MustExec("begin;")
+		//				tk2.MustExec("select * from t1 where c < 6;")
+		//				_, chkErr = tk2.Exec("commit")
+		//			}
+		//		}
+		//		return hook
+		//	}(),
+		//	expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
+		// },
+	}
+	originalHook := s.dom.DDL().GetHook()
+	testFunc := func(name string, hook *ddl.TestDDLCallback, expectErr error) {
+		c.Log(name)
+		done = false
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		defer func() {
+			s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+		}()
+		_, err = tk.Exec(`alter table t1 alter partition p0
+alter placement policy
+	constraints='["+zone=bj"]'
+	role=leader
+	replicas=1`)
+		c.Assert(err, IsNil)
+		c.Assert(done, Equals, true)
+		if expectErr != nil {
+			c.Assert(chkErr, NotNil)
+			c.Assert(chkErr.Error(), Matches, expectErr.Error())
+		} else {
+			c.Assert(chkErr, IsNil)
+		}
+	}
+
+	for _, testcase := range testcases {
+		testFunc(testcase.name, testcase.hook, testcase.expectErr)
+	}
 }

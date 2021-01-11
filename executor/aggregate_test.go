@@ -15,8 +15,10 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -468,7 +470,7 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 
-	//For var_samp()/stddev_samp()
+	// For var_samp()/stddev_samp()
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (id int(11),value1 float(10,2));")
 	tk.MustExec("INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);")
@@ -775,10 +777,10 @@ func (s *testSuiteAgg) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 
 	// FixMe: test functional dependency of derived table
-	//tk.MustQuery("select * from (select * from t) as e group by a")
-	//tk.MustQuery("select * from (select * from t) as e group by b,d")
-	//err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	//c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	// tk.MustQuery("select * from (select * from t) as e group by a")
+	// tk.MustQuery("select * from (select * from t) as e group by b,d")
+	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	// c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
@@ -1248,19 +1250,12 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 
-	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
-	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
+	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)", "var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
 	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
-	castFormat := "cast(%s as decimal(32, 2))"
 
-	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
+	sqls := make([]string, 0, len(aggFuncs))
 	for _, af := range aggFuncs {
 		sql := fmt.Sprintf(sqlFormat, af)
-		sqls = append(sqls, sql)
-	}
-
-	for _, af := range aggFuncs2 {
-		sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
 		sqls = append(sqls, sql)
 	}
 
@@ -1272,11 +1267,11 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	concurrencies := []int{1, 2, 4, 8}
 	for _, sql := range sqls {
-		var expected *testkit.Result
+		var expected [][]interface{}
 		for _, con := range concurrencies {
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			if con == 1 {
-				expected = tk.MustQuery(sql).Sort()
+				expected = tk.MustQuery(sql).Sort().Rows()
 			} else {
 				er := tk.MustQuery("explain " + sql).Rows()
 				ok := false
@@ -1288,9 +1283,17 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 					}
 				}
 				c.Assert(ok, Equals, true)
-				tk.MustQuery(sql).Sort().Check(expected.Rows())
-			}
+				rows := tk.MustQuery(sql).Sort().Rows()
 
+				c.Assert(len(rows), Equals, len(expected))
+				for i := range rows {
+					v1, err := strconv.ParseFloat(rows[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					v2, err := strconv.ParseFloat(expected[i][0].(string), 64)
+					c.Assert(err, IsNil)
+					c.Assert(math.Abs(v1-v2), Less, 1e-3)
+				}
+			}
 		}
 	}
 }

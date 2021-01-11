@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -139,12 +140,26 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 	ts.runTestPreparedTimestamp(c)
 }
 
+func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
+	ts.runTestsOnNewDB(c, nil, "config", func(dbt *DBTest) {
+		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
+		ts.checkRows(c, rows, "300")
+	})
+}
+
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
@@ -363,7 +378,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	//a fake server client, config is override, just used to run tests
+	// a fake server client, config is override, just used to run tests
 	cli := newTestServerClient()
 	cli.runTestRegression(c, func(config *mysql.Config) {
 		config.User = "root"
@@ -942,6 +957,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
@@ -978,6 +1013,29 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	// 255 is the collation id of mysql client 8 default collation_connection
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+	c.Assert(err, IsNil)
+	testCase := []struct {
+		variable string
+		except   string
+	}{
+		{"collation_connection", "utf8mb4_bin"},
+		{"character_set_connection", "utf8mb4"},
+		{"character_set_client", "utf8mb4"},
+	}
+
+	for _, t := range testCase {
+		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+		c.Assert(b, IsTrue)
+		c.Assert(sVars, Equals, t.except)
+	}
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {

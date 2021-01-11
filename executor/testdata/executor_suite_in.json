@@ -30,5 +30,14 @@
       "select * from t1 union all select * from t2 intersect select * from t3",
       "select * from t1 except select * from t2 intersect select * from t3"
     ]
+  },
+  {
+    "name": "TestNaturalJoin",
+    "cases": [
+      "select * from t1 natural join t2",
+      "select * from t1 natural left join t2 order by a",
+      "select * from t1 natural right join t2 order by a",
+      "SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a)"
+    ]
   }
 ]
