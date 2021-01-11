@@ -1877,6 +1877,225 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 	return extractor.aggMapper, nil
 }
 
+<<<<<<< HEAD
+=======
+// correlatedAggregateResolver visits Expr tree.
+// It finds and collects all correlated aggregates which should be evaluated in the outer query.
+type correlatedAggregateResolver struct {
+	ctx       context.Context
+	err       error
+	b         *PlanBuilder
+	outerPlan LogicalPlan
+
+	// correlatedAggFuncs stores aggregate functions which belong to outer query
+	correlatedAggFuncs []*ast.AggregateFuncExpr
+}
+
+// Enter implements Visitor interface.
+func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
+	switch v := n.(type) {
+	case *ast.SelectStmt:
+		if r.outerPlan != nil {
+			outerSchema := r.outerPlan.Schema()
+			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
+			r.b.outerNames = append(r.b.outerNames, r.outerPlan.OutputNames())
+		}
+		r.err = r.resolveSelect(v)
+		return n, true
+	}
+	return n, false
+}
+
+// resolveSelect finds and collects correlated aggregates within the SELECT stmt.
+// It resolves and builds FROM clause first to get a source plan, from which we can decide
+// whether a column is correlated or not.
+// Then it collects correlated aggregate from SELECT fields (including sub-queries), HAVING,
+// ORDER BY, WHERE & GROUP BY.
+// Finally it restore the original SELECT stmt.
+func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err error) {
+	// collect correlated aggregate from sub-queries inside FROM clause.
+	useCache, err := r.collectFromTableRefs(r.ctx, sel.From)
+	if err != nil {
+		return err
+	}
+	// we cannot use cache if there are correlated aggregates inside FROM clause,
+	// since the plan we are building now is not correct and need to be rebuild later.
+	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
+	if err != nil {
+		return err
+	}
+
+	// similar to process in PlanBuilder.buildSelect
+	originalFields := sel.Fields.Fields
+	sel.Fields.Fields, err = r.b.unfoldWildStar(p, sel.Fields.Fields)
+	if err != nil {
+		return err
+	}
+	if r.b.capFlag&canExpandAST != 0 {
+		originalFields = sel.Fields.Fields
+	}
+
+	hasWindowFuncField := r.b.detectSelectWindow(sel)
+	if hasWindowFuncField {
+		_, err = r.b.resolveWindowFunction(sel, p)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, _, err = r.b.resolveHavingAndOrderBy(sel, p)
+	if err != nil {
+		return err
+	}
+
+	// find and collect correlated aggregates recursively in sub-queries
+	_, err = r.b.resolveCorrelatedAggregates(r.ctx, sel, p)
+	if err != nil {
+		return err
+	}
+
+	// collect from SELECT fields, HAVING, ORDER BY and window functions
+	if r.b.detectSelectAgg(sel) {
+		err = r.collectFromSelectFields(p, sel.Fields.Fields)
+		if err != nil {
+			return err
+		}
+	}
+
+	// collect from WHERE
+	err = r.collectFromWhere(p, sel.Where)
+	if err != nil {
+		return err
+	}
+
+	// collect from GROUP BY
+	err = r.collectFromGroupBy(p, sel.GroupBy)
+	if err != nil {
+		return err
+	}
+
+	// restore the sub-query
+	sel.Fields.Fields = originalFields
+	r.b.handleHelper.popMap()
+	return nil
+}
+
+func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, from *ast.TableRefsClause) (canCache bool, err error) {
+	if from == nil {
+		return true, nil
+	}
+	subResolver := &correlatedAggregateResolver{
+		ctx: r.ctx,
+		b:   r.b,
+	}
+	_, ok := from.TableRefs.Accept(subResolver)
+	if !ok {
+		return false, subResolver.err
+	}
+	if len(subResolver.correlatedAggFuncs) == 0 {
+		return true, nil
+	}
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, subResolver.correlatedAggFuncs...)
+	return false, nil
+}
+
+func (r *correlatedAggregateResolver) collectFromSelectFields(p LogicalPlan, fields []*ast.SelectField) error {
+	aggList, _ := r.b.extractAggFuncsInSelectFields(fields)
+	r.b.curClause = fieldList
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
+	if err != nil {
+		return nil
+	}
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
+	return nil
+}
+
+func (r *correlatedAggregateResolver) collectFromGroupBy(p LogicalPlan, groupBy *ast.GroupByClause) error {
+	if groupBy == nil {
+		return nil
+	}
+	aggList := r.b.extractAggFuncsInByItems(groupBy.Items)
+	r.b.curClause = groupByClause
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, aggList)
+	if err != nil {
+		return nil
+	}
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
+	return nil
+}
+
+func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.ExprNode) error {
+	if where == nil {
+		return nil
+	}
+	extractor := &AggregateFuncExtractor{skipAggMap: r.b.correlatedAggMapper}
+	_, _ = where.Accept(extractor)
+	r.b.curClause = whereClause
+	outerAggFuncs, err := r.b.extractCorrelatedAggFuncs(r.ctx, p, extractor.AggFuncs)
+	if err != nil {
+		return err
+	}
+	r.correlatedAggFuncs = append(r.correlatedAggFuncs, outerAggFuncs...)
+	return nil
+}
+
+// Leave implements Visitor interface.
+func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
+	switch n.(type) {
+	case *ast.SelectStmt:
+		if r.outerPlan != nil {
+			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
+			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
+		}
+	}
+	return n, r.err == nil
+}
+
+// resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
+// in the outer query from all the sub-queries inside SELECT fields.
+func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan) (map[*ast.AggregateFuncExpr]int, error) {
+	resolver := &correlatedAggregateResolver{
+		ctx:       ctx,
+		b:         b,
+		outerPlan: p,
+	}
+	correlatedAggList := make([]*ast.AggregateFuncExpr, 0)
+	for _, field := range sel.Fields.Fields {
+		_, ok := field.Expr.Accept(resolver)
+		if !ok {
+			return nil, resolver.err
+		}
+		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+	}
+	if sel.Having != nil {
+		_, ok := sel.Having.Expr.Accept(resolver)
+		if !ok {
+			return nil, resolver.err
+		}
+		correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			_, ok := item.Expr.Accept(resolver)
+			if !ok {
+				return nil, resolver.err
+			}
+			correlatedAggList = append(correlatedAggList, resolver.correlatedAggFuncs...)
+		}
+	}
+	correlatedAggMap := make(map[*ast.AggregateFuncExpr]int)
+	for _, aggFunc := range correlatedAggList {
+		correlatedAggMap[aggFunc] = len(sel.Fields.Fields)
+		sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
+			Auxiliary: true,
+			Expr:      aggFunc,
+			AsName:    model.NewCIStr(fmt.Sprintf("sel_subq_agg_%d", len(sel.Fields.Fields))),
+		})
+	}
+	return correlatedAggMap, nil
+}
+
+>>>>>>> e393b1b97... planner: check error when correlatedAggregateResolver leaves ast.Node (#22222)
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	ctx     sessionctx.Context
