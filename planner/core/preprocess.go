@@ -34,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -179,14 +180,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		EraseLastSemicolon(node.OriginNode)
 		if node.HintedNode != nil {
 			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -291,7 +292,7 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
-func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
 	origTp := bindableStmtType(originNode)
 	hintedTp := bindableStmtType(hintedNode)
 	if origTp == TypeInvalid || hintedTp == TypeInvalid {
@@ -309,8 +310,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
 			return
 		}
 	}
-	originSQL := parser.Normalize(originNode.Text())
-	hintedSQL := parser.Normalize(hintedNode.Text())
+	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB))
+	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB))
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -970,8 +971,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth {
+			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
+			if tp.Flen < tp.Decimal {
+				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
 	case mysql.TypeSet:
@@ -991,6 +995,15 @@ func checkColumn(colDef *ast.ColumnDef) error {
 
 		if tp.Flen > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
+
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
+		}
+		// If decimal and flen all equals 0, just set flen to default value.
+		if tp.Decimal == 0 && tp.Flen == 0 {
+			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
+			tp.Flen = defaultFlen
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {

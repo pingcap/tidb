@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -1337,7 +1337,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return errors.Trace(err)
 			}
 
-			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
+			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits > autoid.MaxAutoRandomBits {
@@ -2526,7 +2526,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 				break
 			}
 		}
-		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
 		if layout.IncrementalMask()&newBase != newBase {
 			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
@@ -5653,23 +5653,19 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 }
 
 func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
-	var err error
-	cnstr = strings.TrimSpace(cnstr)
-	rules := make([]*placement.Rule, 0, 1)
-	if len(cnstr) > 0 && cnstr[0] == '[' {
+	rules := []*placement.Rule{}
+
+	cnstbytes := []byte(cnstr)
+
+	constraints1 := []string{}
+	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	if err1 == nil {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
-		constraints := []string{}
-
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
-
-		labelConstraints, err := placement.CheckLabelConstraints(constraints)
+		labelConstraints, err := placement.CheckLabelConstraints(constraints1)
 		if err != nil {
 			return rules, err
 		}
@@ -5678,46 +5674,48 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			Count:            int(replicas),
 			LabelConstraints: labelConstraints,
 		})
-	} else if len(cnstr) > 0 && cnstr[0] == '{' {
-		constraints := map[string]int{}
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
 
+		return rules, nil
+	}
+
+	constraints2 := map[string]int{}
+	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
+	if err2 == nil {
 		ruleCnt := int(replicas)
-		for labels, cnt := range constraints {
+
+		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
-				err = errors.Errorf("count should be positive, but got %d", cnt)
-				break
+				return rules, errors.Errorf("count should be positive, but got %d", cnt)
 			}
 
 			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
-					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
-					break
+					return rules, errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
 				}
 			}
 
 			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
-				break
+				return rules, err
 			}
+
 			rules = append(rules, &placement.Rule{
 				Count:            cnt,
 				LabelConstraints: labelConstraints,
 			})
 		}
+
 		if ruleCnt > 0 {
 			rules = append(rules, &placement.Rule{
 				Count: ruleCnt,
 			})
 		}
-	} else {
-		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+
+		return rules, nil
 	}
-	return rules, err
+
+	return nil, errors.Errorf("constraint is neither an array of string, nor a string-to-number map, due to:\n%s\n%s", err1, err2)
 }
 
 func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
@@ -5744,13 +5742,14 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleVoter:
 			role = placement.Voter
 		default:
-			err = errors.Errorf("unknown role: %d", spec.Role)
+			err = errors.Errorf("ROLE is not specified")
 		}
 		if err != nil {
 			break
 		}
 
 		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
+			origLen := len(bundle.Rules)
 			newRules := bundle.Rules[:0]
 			for _, r := range bundle.Rules {
 				if r.Role != role {
@@ -5761,6 +5760,11 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 
 			// alter == drop + add new rules
 			if spec.Tp == ast.PlacementDrop {
+				// error if no rules will be dropped
+				if len(bundle.Rules) == origLen {
+					err = errors.Errorf("no rule of role '%s' to drop", role)
+					break
+				}
 				continue
 			}
 		}

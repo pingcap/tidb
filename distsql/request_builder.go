@@ -40,7 +40,7 @@ type RequestBuilder struct {
 	kv.Request
 	// txnScope indicates the value of txn_scope
 	txnScope string
-	bundles  map[string]*placement.Bundle
+	is       infoschema.InfoSchema
 	err      error
 }
 
@@ -263,7 +263,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 	if is == nil {
 		return builder
 	}
-	builder.bundles = is.RuleBundles()
+	builder.is = is
 	return builder
 }
 
@@ -271,23 +271,39 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.txnScope == "" {
 		builder.txnScope = oracle.GlobalTxnScope
 	}
-	if builder.txnScope == oracle.GlobalTxnScope || len(builder.bundles) < 1 {
+	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
-	visitTableID := make(map[int64]struct{})
+	visitPhysicalTableID := make(map[int64]struct{})
 	for _, keyRange := range builder.Request.KeyRanges {
 		tableID := tablecodec.DecodeTableID(keyRange.StartKey)
 		if tableID > 0 {
-			visitTableID[tableID] = struct{}{}
+			visitPhysicalTableID[tableID] = struct{}{}
 		} else {
 			return errors.New("requestBuilder can't decode tableID from keyRange")
 		}
 	}
 
-	for tableID := range visitTableID {
-		valid := VerifyTxnScope(builder.txnScope, tableID, builder.bundles)
+	bundles := builder.is.RuleBundles()
+	for phyTableID := range visitPhysicalTableID {
+		valid := VerifyTxnScope(builder.txnScope, phyTableID, bundles)
 		if !valid {
-			return fmt.Errorf("table %v can not be read by %v txn_scope", tableID, builder.txnScope)
+			var tblName string
+			var partName string
+			tblInfo, _, partInfo := builder.is.FindTableByPartitionID(phyTableID)
+			if tblInfo != nil && partInfo != nil {
+				tblName = tblInfo.Meta().Name.String()
+				partName = partInfo.Name.String()
+			} else {
+				tblInfo, _ = builder.is.TableByID(phyTableID)
+				tblName = tblInfo.Meta().Name.String()
+			}
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			if len(partName) > 0 {
+				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
+					tblName, partName, builder.txnScope)
+			}
+			return err
 		}
 	}
 	return nil
