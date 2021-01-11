@@ -62,7 +62,7 @@ func MemUsedNormal() (uint64, error) {
 }
 
 const (
-	cGroupMemPath = "/sys/fs/cgroup/memory/"
+	cGroupMemPath      = "/sys/fs/cgroup/memory/"
 	cGroupMemLimitName = "memory.limit_in_bytes"
 	cGroupMemUsageName = "memory.usage_in_bytes"
 	selfCGroupPath     = "/proc/self/cgroup"
@@ -124,11 +124,11 @@ func MemUsedCGroup() (uint64, error) {
 	return mem, nil
 }
 
-func setDefaultFunction()  {
+func setDefaultFunction() {
 	MemTotal = MemTotalNormal
 	MemUsed = MemUsedNormal
 
-	memoryPath, err:= cgroups.PidPath(os.Getpid())(cgroups.Memory)
+	memoryPath, err := cgroups.PidPath(os.Getpid())(cgroups.Memory)
 	if err != nil {
 		return
 	}
@@ -138,7 +138,7 @@ func setDefaultFunction()  {
 		if err != nil {
 			return
 		}
-		rel, err = filepath.Rel(rootPath,memoryPath)
+		rel, err = filepath.Rel(rootPath, memoryPath)
 		if err != nil {
 			rel = memoryPath
 		}
