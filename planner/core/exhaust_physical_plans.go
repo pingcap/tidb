@@ -2279,6 +2279,14 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg.MppRunMode = Mpp2Phase
 		agg.PartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
+
+		if prop.TaskTp == property.RootTaskType {
+			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = MppTiDB
+			hashAggs = append(hashAggs, agg)
+		}
 	} else {
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
