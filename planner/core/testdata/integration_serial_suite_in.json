@@ -145,7 +145,10 @@
       "desc select avg(value),id from t group by id having avg(value)>0",
       "desc select avg(value) +1,id from t group by id",
       "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
-      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id;"
+      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc select count(distinct value),id from t group by id",
+      "desc select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select count(1/value), id from t group by id) as A on A.id = t.id"
     ]
   },
   {

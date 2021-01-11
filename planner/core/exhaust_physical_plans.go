@@ -2230,10 +2230,13 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
+		if agg.HasDistinct {
+			return false
+		}
 		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow && agg.Name != ast.AggFuncAvg {
 			return false
 		}
-		if agg.HasDistinct {
+		if !expression.CanExprsPushDown(la.SCtx().GetSessionVars().StmtCtx, agg.Args, la.SCtx().GetClient(), kv.TiFlash) {
 			return false
 		}
 	}
@@ -2282,12 +2285,17 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() && !la.canPushToCop() {
 		return nil
 	}
+	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-
+	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
+		taskTypes = append(taskTypes, property.MppTaskType)
+	}
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
@@ -2304,14 +2312,15 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
-		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
-		hashAggs = append(hashAggs, agg)
-	}
-	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
-		mppAggs := la.getHashAggsForMPP(prop)
-		if len(mppAggs) > 0 {
-			hashAggs = append(hashAggs, mppAggs...)
+		if taskTp == property.MppTaskType {
+			mppAggs := la.getHashAggsForMPP(prop)
+			if len(mppAggs) > 0 {
+				hashAggs = append(hashAggs, mppAggs...)
+			}
+		} else {
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+			agg.SetSchema(la.schema.Clone())
+			hashAggs = append(hashAggs, agg)
 		}
 	}
 	return hashAggs
