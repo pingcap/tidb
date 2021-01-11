@@ -3866,6 +3866,129 @@ func (s *testSessionSerialSuite) TestIssue21943(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_plan_from_cache' is a read only variable")
 }
 
+func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+	testcases := []struct {
+		name       string
+		sql        string
+		isValidate bool
+	}{
+		{
+			name:       "select statement",
+			sql:        `select * from t;`,
+			isValidate: true,
+		},
+		{
+			name:       "explain statement",
+			sql:        `explain insert into t (id) values (1);`,
+			isValidate: true,
+		},
+		{
+			name:       "explain analyze insert statement",
+			sql:        `explain analyze insert into t (id) values (1);`,
+			isValidate: false,
+		},
+		{
+			name:       "explain analyze select statement",
+			sql:        `explain analyze select * from t `,
+			isValidate: true,
+		},
+		{
+			name:       "execute insert statement",
+			sql:        `EXECUTE stmt1;`,
+			isValidate: false,
+		},
+		{
+			name:       "execute select statement",
+			sql:        `EXECUTE stmt2;`,
+			isValidate: true,
+		},
+		{
+			name:       "show statement",
+			sql:        `show tables;`,
+			isValidate: true,
+		},
+		{
+			name:       "set union",
+			sql:        `SELECT 1, 2 UNION SELECT 'a', 'b';`,
+			isValidate: true,
+		},
+		{
+			name:       "insert",
+			sql:        `insert into t (id) values (1);`,
+			isValidate: false,
+		},
+		{
+			name:       "delete",
+			sql:        `delete from t where id =1`,
+			isValidate: false,
+		},
+		{
+			name:       "update",
+			sql:        "update t set id =2 where id =1",
+			isValidate: false,
+		},
+		{
+			name:       "point get",
+			sql:        `select * from t where id = 1`,
+			isValidate: true,
+		},
+		{
+			name:       "batch point get",
+			sql:        `select * from t where id in (1,2,3);`,
+			isValidate: true,
+		},
+		{
+			name:       "split table",
+			sql:        `SPLIT TABLE t BETWEEN (0) AND (1000000000) REGIONS 16;`,
+			isValidate: true,
+		},
+		{
+			name:       "do statement",
+			sql:        `DO SLEEP(1);`,
+			isValidate: true,
+		},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
+	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		if testcase.isValidate {
+			_, err := tk.Exec(testcase.sql)
+			c.Assert(err, IsNil)
+			tk.MustExec("commit")
+		} else {
+			err := tk.ExecToErr(testcase.sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
+		}
+	}
+}
+
+func (s *testSessionSerialSuite) TestRemovedSysVars(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
+	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
+	result.Check(testkit.Rows("bogus_var acdc"))
+	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")
+	result.Check(testkit.Rows("acdc"))
+	tk.MustExec("SET GLOBAL bogus_var = 'newvalue'")
+
+	// unregister
+	variable.UnregisterSysVar("bogus_var")
+
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
+	result.Check(testkit.Rows()) // empty
+	_, err := tk.Exec("SET GLOBAL bogus_var = 'newvalue'")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
+	_, err = tk.Exec("SELECT @@GLOBAL.bogus_var")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogus_var'")
+}
+
 func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -3898,6 +4021,12 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	tk.MustExec("UPDATE mysql.tidb SET variable_value = 'true' WHERE variable_name='tikv_gc_auto_concurrency'")
 	result = tk.MustQuery("SELECT @@tidb_gc_concurrency;")
 	result.Check(testkit.Rows("-1")) // because auto_concurrency is turned on it takes precedence
+
+	tk.MustExec("REPLACE INTO mysql.tidb (variable_value, variable_name) VALUES ('15m', 'tikv_gc_run_interval')")
+	result = tk.MustQuery("SELECT @@GLOBAL.tidb_gc_run_interval;")
+	result.Check(testkit.Rows("15m0s"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
 
 	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'")
