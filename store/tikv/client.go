@@ -201,6 +201,14 @@ type rpcClient struct {
 	conns    map[string]*connArray
 	security config.Security
 
+<<<<<<< HEAD
+=======
+	idleNotify uint32
+	// recycleMu protect the conns from being modified during a connArray is taken out and used.
+	// That means recycleIdleConnArray() will wait until nobody doing sendBatchRequest()
+	recycleMu sync.RWMutex
+	// Periodically check whether there is any connection that is idle and then close and remove these connections.
+>>>>>>> ae7e43249... store/tikv: fix a concurrency bug that may cause the batchClient timeout (#22239)
 	// Implement background cleanup.
 	// Periodically check whether there is any connection that is idle and then close and remove these idle connections.
 	idleNotify uint32
@@ -274,10 +282,20 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}()
 
 	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
+		c.recycleMu.Lock()
 		c.recycleIdleConnArray()
+		c.recycleMu.Unlock()
 	}
 
+<<<<<<< HEAD
 	connArray, err := c.getConnArray(addr)
+=======
+	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
+	enableBatch := req.StoreTp != kv.TiDB && req.StoreTp != kv.TiFlash
+	c.recycleMu.RLock()
+	defer c.recycleMu.RUnlock()
+	connArray, err := c.getConnArray(addr, enableBatch)
+>>>>>>> ae7e43249... store/tikv: fix a concurrency bug that may cause the batchClient timeout (#22239)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
