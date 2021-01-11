@@ -12,7 +12,6 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
-	github.com/dgraph-io/ristretto v0.0.2
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
