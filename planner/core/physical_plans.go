@@ -856,9 +856,11 @@ type PhysicalExchangeReceiver struct {
 type PhysicalExchangeSender struct {
 	basePhysicalPlan
 
-	Tasks        []*kv.MPPTask
+	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
+	// Tasks is the mpp task for current PhysicalExchangeSender
+	Tasks []*kv.MPPTask
 
 	Fragment *Fragment
 }

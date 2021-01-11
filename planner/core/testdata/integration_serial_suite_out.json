@@ -430,6 +430,31 @@
         ]
       },
       {
+        "SQL": "explain select count(*) from (select case when t1.col1 is null then t2.col1 + 5 else 10 end as col1, t2.d1_k as d1_k from fact_t t1 right join fact_t t2 on t1.d1_k = t2.d1_k) fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 5",
+        "Plan": [
+          "HashAgg_37 1.00 root  funcs:count(Column#22)->Column#19",
+          "└─TableReader_39 1.00 root  data:ExchangeSender_38",
+          "  └─ExchangeSender_38 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_15 1.00 cop[tiflash]  funcs:count(1)->Column#22",
+          "      └─HashJoin_20 204.80 cop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "        ├─ExchangeReceiver_24(Build) 4.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_23 4.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.d1_t.d1_k",
+          "        │   └─Selection_22 4.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "        │     └─TableFullScan_21 4.00 cop[tiflash] table:d1_t keep order:false",
+          "        └─Projection_25(Probe) 102.40 cop[tiflash]  test.fact_t.d1_k",
+          "          └─Selection_27 102.40 cop[tiflash]  gt(case(isnull(test.fact_t.col1), plus(test.fact_t.col1, 5), 10), 5)",
+          "            └─HashJoin_28 128.00 cop[tiflash]  right outer join, equal:[eq(test.fact_t.d1_k, test.fact_t.d1_k)]",
+          "              ├─ExchangeReceiver_32(Build) 16.00 cop[tiflash]  ",
+          "              │ └─ExchangeSender_31 16.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "              │   └─Selection_30 16.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "              │     └─TableFullScan_29 16.00 cop[tiflash] table:t1 keep order:false",
+          "              └─ExchangeReceiver_36(Probe) 16.00 cop[tiflash]  ",
+          "                └─ExchangeSender_35 16.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.fact_t.d1_k",
+          "                  └─Selection_34 16.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "                    └─TableFullScan_33 16.00 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
         "SQL": "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
         "Plan": [
           "HashAgg_21 1.00 root  funcs:count(Column#12)->Column#11",

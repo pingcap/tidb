@@ -234,9 +234,9 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		return nil, errors.Trace(err)
 	}
 
-	encodedTask := make([][]byte, 0, len(e.Tasks))
+	encodedTask := make([][]byte, 0, len(e.TargetTasks))
 
-	for _, task := range e.Tasks {
+	for _, task := range e.TargetTasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, errors.Trace(err)
