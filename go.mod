@@ -7,6 +7,7 @@ require (
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
 	github.com/codahale/hdrhistogram v0.9.0 // indirect
+	github.com/containerd/cgroups v0.0.0-20201119153540-4cbc285b3327
 	github.com/coocood/freecache v1.1.1
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
@@ -54,7 +55,7 @@ require (
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
 	github.com/shirou/gopsutil v2.20.6+incompatible
-	github.com/sirupsen/logrus v1.6.0
+	github.com/sirupsen/logrus v1.7.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/stretchr/testify v1.6.1 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2

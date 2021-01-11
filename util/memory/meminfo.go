@@ -15,11 +15,15 @@ package memory
 
 import (
 	"io/ioutil"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/containerd/cgroups"
 	"github.com/shirou/gopsutil/mem"
 )
 
@@ -58,10 +62,14 @@ func MemUsedNormal() (uint64, error) {
 }
 
 const (
-	cGroupMemLimitPath = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-	cGroupMemUsagePath = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+	cGroupMemPath = "/sys/fs/cgroup/memory/"
+	cGroupMemLimitName = "memory.limit_in_bytes"
+	cGroupMemUsageName = "memory.usage_in_bytes"
 	selfCGroupPath     = "/proc/self/cgroup"
 )
+
+var cGroupMemLimitPath string
+var cGroupMemUsagePath string
 
 type memInfoCache struct {
 	*sync.RWMutex
@@ -116,14 +124,37 @@ func MemUsedCGroup() (uint64, error) {
 	return mem, nil
 }
 
-func init() {
-	if inContainer() {
-		MemTotal = MemTotalCGroup
-		MemUsed = MemUsedCGroup
-	} else {
-		MemTotal = MemTotalNormal
-		MemUsed = MemUsedNormal
+func setDefaultFunction()  {
+	MemTotal = MemTotalNormal
+	MemUsed = MemUsedNormal
+
+	memoryPath, err:= cgroups.PidPath(os.Getpid())(cgroups.Memory)
+	if err != nil {
+		return
 	}
+	var rel string
+	if InContainer() {
+		rootPath, err := cgroups.NestedPath("")(cgroups.Memory)
+		if err != nil {
+			return
+		}
+		rel, err = filepath.Rel(rootPath,memoryPath)
+		if err != nil {
+			rel = memoryPath
+		}
+	} else {
+		rel = memoryPath
+	}
+
+	cGroupMemLimitPath = path.Join(cGroupMemPath, rel, cGroupMemLimitName)
+	cGroupMemUsagePath = path.Join(cGroupMemPath, rel, cGroupMemUsageName)
+	MemTotal = MemTotalCGroup
+	MemUsed = MemUsedCGroup
+}
+
+func init() {
+	setDefaultFunction()
+
 	memLimit = &memInfoCache{
 		RWMutex: &sync.RWMutex{},
 	}
@@ -138,7 +169,8 @@ func init() {
 	}
 }
 
-func inContainer() bool {
+// InContainer check whether the process is running in container.
+func InContainer() bool {
 	v, err := ioutil.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
