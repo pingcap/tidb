@@ -622,6 +622,12 @@ func (s *testSerialSuite) TestMemCacheReadLock(c *C) {
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
 
+	// Simply check the cached results.
+	s.mustExecDDL(tk, c, "lock tables point read")
+	tk.MustQuery("select id from point where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from point where id = 1").Check(testkit.Rows("1"))
+	s.mustExecDDL(tk, c, "unlock tables")
+
 	cases := []struct {
 		sql string
 		r1  bool
