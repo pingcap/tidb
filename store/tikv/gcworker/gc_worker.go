@@ -1014,6 +1014,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		Limit:      gcScanLockLimit,
 	})
 
+	failpoint.Inject("lowScanLockLimit", func() {
+		req.ScanLock().Limit = 3
+	})
+
 	var stat tikv.RangeTaskStat
 	key := startKey
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
