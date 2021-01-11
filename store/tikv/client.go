@@ -360,7 +360,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			logutil.BgLogger().Info("SendRequest", zap.Bool("staleRead", req.Context.StaleRead))
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}
 	}
