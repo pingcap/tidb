@@ -90,7 +90,7 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 			aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, hasDistinct)
 			c.Assert(err, IsNil)
 			aggFunc.RetTp = funcTypes[i]
-			pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
+			pbExpr := AggFuncToPBExpr(sc, client, aggFunc, false)
 			js, err := json.Marshal(pbExpr)
 			c.Assert(err, IsNil)
 			c.Assert(string(js), Equals, jsons[i])

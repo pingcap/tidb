@@ -1100,7 +1100,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			return false
 		}
-		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc, false)
 		if pb == nil {
 			return false
 		}
@@ -1225,7 +1225,6 @@ func BuildFinalModeAggregation(
 				if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount && partialIsCop {
 					// TODO: only work when the count() can be pushed down in MPP.
 					// Note: MPP mode does not run avg() directly, so here should not
-					finalAggFunc.IsMppFinal = true
 					partial.Schema.Append(&expression.Column{
 						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 						RetType:  original.Schema.Columns[i].GetType(),
@@ -1583,6 +1582,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return invalidTask
 		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.PartitionCols}
+		// if mpp does not need to enforce exchange, i.e., the child is properly partitioned, then this 2-phase agg is invalid
+		if !mpp.needEnforce(prop) {
+			return invalidTask
+		}
 		proj := p.convertAvgForMPP(prop)
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 		if partialAgg == nil {

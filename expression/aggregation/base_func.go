@@ -39,8 +39,6 @@ type baseFuncDesc struct {
 	Args []expression.Expression
 	// RetTp represents the return type of the function.
 	RetTp *types.FieldType
-	// isMppFinal means this function runs in MPP as a final agg
-	IsMppFinal bool
 }
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {

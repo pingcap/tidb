@@ -917,8 +917,10 @@ type PhysicalUnionAll struct {
 type AggMppRunMode int
 
 const (
+	// NoMpp means the default value which runs not in MPP
+	NoMpp AggMppRunMode = iota
 	// Mpp1Phase runs only 1 phase but requires its child's partition property
-	Mpp1Phase AggMppRunMode = iota
+	Mpp1Phase
 	// Mpp2Phase runs partial agg + final agg with hash partition
 	Mpp2Phase
 	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)

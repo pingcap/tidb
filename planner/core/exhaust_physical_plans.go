@@ -2233,7 +2233,9 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 		if agg.HasDistinct {
 			return false
 		}
-		if agg.Name != ast.AggFuncSum && agg.Name != ast.AggFuncMin && agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncMax && agg.Name != ast.AggFuncFirstRow && agg.Name != ast.AggFuncAvg {
+		switch agg.Name {
+		case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncAvg:
+		default:
 			return false
 		}
 		if !expression.CanExprsPushDown(la.SCtx().GetSessionVars().StmtCtx, agg.Args, la.SCtx().GetClient(), kv.TiFlash) {
@@ -2243,7 +2245,16 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	return true
 }
 
-func (la *LogicalAggregation) getHashAggsForMPP(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
+func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
+	if !prop.IsEmpty() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return
+	}
+	if prop.PartitionTp == property.BroadcastType {
+		return
+	}
 	partitionCols := la.GetGroupByCols()
 	if len(partitionCols) != 0 {
 		if prop.PartitionTp == property.HashType {
@@ -2313,7 +2324,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
-			mppAggs := la.getHashAggsForMPP(prop)
+			mppAggs := la.tryToGetMppHashAggs(prop)
 			if len(mppAggs) > 0 {
 				hashAggs = append(hashAggs, mppAggs...)
 			}
