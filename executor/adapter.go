@@ -960,8 +960,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		if sessVars.InRestrictedSQL {
 			metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-			metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
-			metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
+			metrics.TotalCopProcHistogram.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			metrics.TotalCopWaitHistogram.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		}
 		var userString string
 		if sessVars.User != nil {
