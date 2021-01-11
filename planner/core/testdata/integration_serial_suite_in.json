@@ -130,28 +130,6 @@
     ]
   },
   {
-    "name": "TestPushDownAggForMPP",
-    "cases": [
-      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
-      "desc select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
-      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
-      "desc select count(*) from t",
-      "desc select count(*), id from t group by id",
-      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
-      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
-      "desc select avg(value) as b,id from t group by id",
-      "desc select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
-      "desc select id from t group by id having avg(value)>0",
-      "desc select avg(value),id from t group by id having avg(value)>0",
-      "desc select avg(value) +1,id from t group by id",
-      "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
-      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
-      "desc select count(distinct value),id from t group by id",
-      "desc select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
-      "desc select * from t join ( select count(1/value), id from t group by id) as A on A.id = t.id"
-    ]
-  },
-  {
     "name": "TestPushDownProjectionForTiFlash",
     "cases": [
       "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
@@ -185,6 +163,37 @@
       "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc select id from t as A where not exists (select 1 from t where t.id=A.id)"
+    ]
+  },
+  {
+    "name": "TestPushDownAggForMPP",
+    "cases": [
+      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
+      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select count(*) from t",
+      "desc select count(*), id from t group by id",
+      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
+      "desc select avg(value) as b,id from t group by id",
+      "desc select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
+      "desc select id from t group by id having avg(value)>0",
+      "desc select avg(value),id from t group by id having avg(value)>0",
+      "desc select avg(value) +1,id from t group by id",
+      "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
+      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc select count(distinct value),id from t group by id",
+      "desc select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select count(1/value), id from t group by id) as A on A.id = t.id"
+    ]
+  },
+  {
+    "name": "TestMppAggWithJoin",
+    "cases": [
+      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
+      "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
+      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
     ]
   }
 ]
