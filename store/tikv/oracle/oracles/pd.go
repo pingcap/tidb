@@ -297,11 +297,10 @@ func (o *pdOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevS
 	if err != nil {
 		if !strings.HasPrefix(err.Error(), "invalid prevSecond") {
 			// If any error happened, we will try to fetch tso and set it as last ts.
-			ts, tsErr := o.getTimestamp(ctx, txnScope)
-			if tsErr != nil {
-				return 0, errors.Trace(tsErr)
+			_, tErr := o.GetTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+			if tErr != nil {
+				return 0, errors.Trace(tErr)
 			}
-			o.setLastTS(ts, txnScope)
 		}
 		return 0, errors.Trace(err)
 	}
