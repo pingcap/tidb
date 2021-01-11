@@ -22,6 +22,7 @@ import (
 	rpprof "runtime/pprof"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -86,6 +87,8 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	return
 }
 
+var testOnce sync.Once
+
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
@@ -111,6 +114,11 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 			return
 		}
 	}
+
+	testOnce.Do(func() {
+		logutil.BgLogger().Info("test", zap.Uint64("limit", record.serverMemoryQuota))
+		logutil.BgLogger().Info("test", zap.Uint64("usage", memoryUsage))
+	})
 
 	// TODO: Consider NextGC to record SQLs.
 	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
