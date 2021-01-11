@@ -1565,7 +1565,41 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
 		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled. Run 'SET GLOBAL tidb_allow_multi_statement=1' after you understand the security risk")
+
+		dbt.mustExec("SET tidb_allow_multi_statement=1;")
+
+		// Server can not run identical test to runTestMultiStatements
+
+		// Create Table
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+
+		// Create Data
+		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err := res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Update
+		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+
+		// Read
+		var out int
+		rows := dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+
 	})
 }
 

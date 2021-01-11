@@ -741,6 +741,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMultiStatement, Value: BoolOff, Type: TypeBool},
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},

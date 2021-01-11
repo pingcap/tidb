@@ -1432,7 +1432,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// new statement.
 
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
-		if capabilities&mysql.ClientMultiStatements < 1 {
+		multiStmt := cc.ctx.GetSessionVars().AllowMultiStatement
+		if capabilities&mysql.ClientMultiStatements < 1 && !multiStmt {
 			return errMultiStatementDisabled
 		}
 
