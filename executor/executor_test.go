@@ -6511,3 +6511,11 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }
+
+func (s *testSuite) TestIssue22201(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS char(1000000000000000000)));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of weight_string() was larger than max_allowed_packet (67108864) - truncated"))
+}
