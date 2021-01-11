@@ -791,9 +791,9 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 	defer s.se.Execute(context.Background(), "drop table t_drop_columns")
 
 	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
 	// TODO: Fix the case of sqls[2].
 	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
