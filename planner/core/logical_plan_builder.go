@@ -2387,7 +2387,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
 		}
 	}
-	return n, true
+	return n, r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
@@ -3368,7 +3368,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
