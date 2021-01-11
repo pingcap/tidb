@@ -943,9 +943,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
-		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
-		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
+		if sessVars.InRestrictedSQL {
+			metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
+			metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
+			metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
+		}
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
