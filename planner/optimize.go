@@ -343,11 +343,8 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, "", nil
 	}
 	stmtNode, normalizedSQL, hash, err := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
-	if err != nil {
+	if err != nil || stmtNode == nil {
 		return nil, "", err
-	}
-	if stmtNode == nil {
-		return nil, "", nil
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
