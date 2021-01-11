@@ -773,11 +773,15 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 	if ContainMutableConst(ctx, []Expression{expr}) {
 		ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 	}
+	return evaluateExprWithNull(ctx, schema, expr)
+}
+
+func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = EvaluateExprWithNull(ctx, schema, arg)
+			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
 		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:
