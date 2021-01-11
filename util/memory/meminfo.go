@@ -133,7 +133,7 @@ func setDefaultFunction() {
 		return
 	}
 	var rel string
-	if InContainer() {
+	if inContainer() {
 		rootPath, err := cgroups.NestedPath("")(cgroups.Memory)
 		if err != nil {
 			return
@@ -169,8 +169,7 @@ func init() {
 	}
 }
 
-// InContainer check whether the process is running in container.
-func InContainer() bool {
+func inContainer() bool {
 	v, err := ioutil.ReadFile(selfCGroupPath)
 	if err != nil {
 		return false
