@@ -94,7 +94,26 @@ var (
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
+
+	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
+
+var gcVariableComments = map[string]string{
+	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiDBGCEnable:       "Current GC enable status",
+	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
+var gcVariableMap = map[string]string{
+	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
+	variable.TiDBGCLifetime:     "tikv_gc_life_time",
+	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
+	variable.TiDBGCEnable:       "tikv_gc_enable",
+	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
+}
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
@@ -988,23 +1007,12 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	return value, nil
 }
 
-// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(sessionctx.Initing) != nil {
-		return nil, nil
+func (s *session) varFromTiDBTable(name string) bool {
+	switch name {
+	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
+		return true
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	ret := make(map[string]string, len(rows))
-	for _, r := range rows {
-		k, v := r.GetString(0), r.GetString(1)
-		ret[k] = v
-	}
-	return ret, nil
+	return false
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
@@ -1028,6 +1036,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		}
 		return "", err
+	}
+	// Fetch mysql.tidb values if required
+	if s.varFromTiDBTable(name) {
+		return s.getTiDBTableValue(name, sysVar)
 	}
 	return sysVar, nil
 }
@@ -1056,11 +1068,109 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+	// update mysql.tidb if required.
+	if s.varFromTiDBTable(name) {
+		if err = s.setTiDBTableValue(name, sVal); err != nil {
+			return err
+		}
+	}
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, escapeUserString(sVal))
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+// escape user supplied string for internal SQL. Not safe for all cases, since it doesn't
+// handle quote-type, sql-mode, character set breakout.
+func escapeUserString(str string) string {
+	return strings.ReplaceAll(str, `'`, `\'`)
+}
+
+// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
+// for backwards compatibility. Validation has already been performed.
+func (s *session) setTiDBTableValue(name, val string) error {
+	if name == variable.TiDBGCConcurrency {
+		autoConcurrency := "false"
+		if val == "-1" {
+			autoConcurrency = "true"
+		}
+		sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, tiKVGCAutoConcurrency, autoConcurrency, gcVariableComments[name])
+		_, _, err := s.ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+	}
+	val = onOffToTrueFalse(val)
+	sql := fmt.Sprintf(`INSERT INTO mysql.tidb (variable_name, variable_value, comment) VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s'`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
+	_, _, err := s.ExecRestrictedSQL(sql)
+	return err
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return variable.BoolOn
+	} else if strings.EqualFold("false", str) {
+		return variable.BoolOff
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
+// getTiDBTableValue handles tikv_* sysvars which need
+// to read from mysql.tidb for backwards compatibility.
+func (s *session) getTiDBTableValue(name, val string) (string, error) {
+	if name == variable.TiDBGCConcurrency {
+		// Check if autoconcurrency is set
+		sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, tiKVGCAutoConcurrency)
+		autoConcurrencyVal, err := s.getExecRet(s, sql)
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+	}
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';`, gcVariableMap[name])
+	tblValue, err := s.getExecRet(s, sql)
+	if err != nil {
+		return val, nil // mysql.tidb value does not exist.
+	}
+	// Run validation on the tblValue. This will return an error if it can't be validated,
+	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
+	tblValue = trueFalseToOnOff(tblValue)
+	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
+			zap.Error(err),
+			zap.String("name", name),
+			zap.String("tblName", gcVariableMap[name]),
+			zap.String("tblValue", tblValue),
+			zap.String("restoredValue", val))
+		sql := fmt.Sprintf(`REPLACE INTO mysql.tidb (variable_name, variable_value, comment)
+			VALUES ('%s', '%s', '%s')`, gcVariableMap[name], escapeUserString(val), gcVariableComments[name])
+		_, _, err = s.ExecRestrictedSQL(sql)
+		return val, err
+	}
+	if validatedVal != val {
+		// The sysvar value is out of sync.
+		sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
+			mysql.SystemDB, mysql.GlobalVariablesTable, gcVariableMap[name], escapeUserString(validatedVal))
+		_, _, err = s.ExecRestrictedSQL(sql)
+		return validatedVal, err
+	}
+	return validatedVal, nil
 }
 
 func (s *session) ensureFullGlobalStats() error {
@@ -1234,6 +1344,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
+		return nil, err
+	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
@@ -1274,6 +1387,30 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	return recordSet, nil
+}
+
+func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if !vars.TxnCtx.IsStaleness {
+		return nil
+	}
+	errMsg := "only support read-only statement during read-only staleness transactions"
+	node := stmtNode.(ast.Node)
+	switch node.(type) {
+	case *ast.SplitRegionStmt:
+		return nil
+	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
+		return nil
+	default:
+	}
+	// covered DeleteStmt/InsertStmt/UpdateStmt/CallStmt/LoadDataStmt
+	if _, ok := stmtNode.(ast.DMLNode); ok {
+		return errors.New(errMsg)
+	}
+	return nil
 }
 
 // querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
