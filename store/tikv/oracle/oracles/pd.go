@@ -270,36 +270,38 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	}
 }
 
-func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, error) {
+func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, bool, error) {
 	ts, ok := o.getLastTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
+		return 0, true, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTS, ok := o.getLastArrivalTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
+		return 0, true, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
 	physicalTime := oracle.GetTimeFromTS(ts)
 	if uint64(physicalTime.Unix()) <= prevSecond {
-		return 0, errors.Errorf("invalid prevSecond %v", prevSecond)
+		return 0, false, errors.Errorf("invalid prevSecond %v", prevSecond)
 	}
 
 	staleTime := physicalTime.Add(-arrivalTime.Sub(time.Now().Add(-time.Duration(prevSecond) * time.Second)))
 
-	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), nil
+	return oracle.ComposeTS(oracle.GetPhysical(staleTime), 0), false, nil
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
 func (o *pdOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
-	ts, err = o.getStaleTimestamp(txnScope, prevSecond)
+	ts, setLastTS, err := o.getStaleTimestamp(txnScope, prevSecond)
 	if err != nil {
-		// If any error happened, we will try to fetch tso and set it as last ts.
-		ts, tsErr := o.getTimestamp(ctx, txnScope)
-		if tsErr != nil {
-			return 0, errors.Trace(tsErr)
+		if setLastTS {
+			// If any error happened, we will try to fetch tso and set it as last ts.
+			ts, tsErr := o.getTimestamp(ctx, txnScope)
+			if tsErr != nil {
+				return 0, errors.Trace(tsErr)
+			}
+			o.setLastTS(ts, txnScope)
 		}
-		o.setLastTS(ts, txnScope)
 		return 0, errors.Trace(err)
 	}
 	return ts, nil

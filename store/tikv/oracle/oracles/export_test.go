@@ -53,6 +53,9 @@ func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 		lastTSInterface, _ := o.lastTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
 		lastTSPointer := lastTSInterface.(*uint64)
 		atomic.StoreUint64(lastTSPointer, ts)
+		lasTSArrivalInterface, _ := o.lastArrivalTSMap.LoadOrStore(oracle.GlobalTxnScope, new(uint64))
+		lasTSArrivalPointer := lasTSArrivalInterface.(*uint64)
+		atomic.StoreUint64(lasTSArrivalPointer, uint64(time.Now().Unix()*1000))
 	}
 	setEmptyPDOracleLastArrivalTs(oc, ts)
 }
