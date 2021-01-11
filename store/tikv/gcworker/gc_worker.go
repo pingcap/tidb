@@ -30,10 +30,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -58,12 +56,6 @@ type GCWorker struct {
 	}
 }
 
-// NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error) {
-	panic("unsupported")
-	return nil, nil
-}
-
 const (
 	booleanTrue  = "true"
 	booleanFalse = "false"
@@ -86,37 +78,6 @@ const (
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
-
-// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.Time) time.Time {
-	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
-	if err != nil {
-		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
-		return safePoint
-	}
-
-	var globalMinStartTS uint64 = math.MaxUint64
-	for _, v := range kvs {
-		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
-		if err != nil {
-			logutil.Logger(ctx).Warn("parse minStartTS failed", zap.Error(err))
-			continue
-		}
-		if minStartTS < globalMinStartTS {
-			globalMinStartTS = minStartTS
-		}
-	}
-
-	safePointTS := variable.GoTimeToTS(safePoint)
-	if globalMinStartTS < safePointTS {
-		safePoint = time.Unix(0, oracle.ExtractPhysical(globalMinStartTS)*1e6)
-		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
-			zap.String("uuid", w.uuid),
-			zap.Uint64("globalMinStartTS", globalMinStartTS),
-			zap.Time("safePoint", safePoint))
-	}
-	return safePoint
-}
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
 	currentVer, err := w.store.CurrentVersion()

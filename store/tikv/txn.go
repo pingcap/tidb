@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -230,10 +229,6 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.setSnapshotTS(val.(uint64))
 	case kv.CheckExists:
 		txn.us.SetOption(kv.CheckExists, val.(map[string]struct{}))
-	case kv.InfoSchema:
-		panic("unexpected option")
-	case kv.SchemaAmender:
-		panic("unexpected option")
 	case kv.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
@@ -270,18 +265,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
-	// connID is used for log.
-	var connID uint64
-	val := ctx.Value(sessionctx.ConnID)
-	if val != nil {
-		connID = val.(uint64)
-	}
-
 	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, connID)
+		committer, err = newTwoPhaseCommitter(txn)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -309,9 +297,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
-		if val == nil || connID > 0 {
-			txn.onCommitted(err)
-		}
+		txn.onCommitted(err)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -330,9 +316,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
-	if val == nil || connID > 0 {
-		txn.onCommitted(err)
-	}
+	txn.onCommitted(err)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -421,9 +405,8 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			if checkKeyExists && valueExist {
 				existErrInfo := txn.us.GetKeyExistErrInfo(key)
 				if existErrInfo == nil {
-					logutil.Logger(ctx).Error("key exist error not found", zap.Uint64("connID", txn.committer.connID),
-						zap.Stringer("key", key))
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", txn.committer.connID, key)
+					logutil.Logger(ctx).Error("key exist error not found", zap.Stringer("key", key))
+					return errors.Errorf("existErr for key:%s should not be nil", key)
 				}
 				return existErrInfo.Err()
 			}
@@ -440,14 +423,8 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
-			// connID is used for log.
-			var connID uint64
 			var err error
-			val := ctx.Value(sessionctx.ConnID)
-			if val != nil {
-				connID = val.(uint64)
-			}
-			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			txn.committer, err = newTwoPhaseCommitter(txn)
 			if err != nil {
 				return err
 			}
@@ -542,7 +519,6 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	// Clone a new committer for execute in background.
 	committer := &twoPhaseCommitter{
 		store:       txn.committer.store,
-		connID:      txn.committer.connID,
 		startTS:     txn.committer.startTS,
 		forUpdateTS: txn.committer.forUpdateTS,
 		primaryKey:  txn.committer.primaryKey,

@@ -134,7 +134,6 @@ type twoPhaseCommitter struct {
 	lockTTL          uint64
 	commitTS         uint64
 	priority         pb.CommandPri
-	connID           uint64 // connID is used for log.
 	cleanWg          sync.WaitGroup
 	detail           unsafe.Pointer
 	txnSize          int
@@ -263,12 +262,11 @@ func (c *CommitterMutations) AppendMutation(mutation Mutation) {
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
-func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitter(txn *tikvTxn) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
-		connID:        connID,
 		regionTxnSize: map[uint64]int{},
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),
@@ -412,7 +410,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if mutations.len() > logEntryCount || size > logSize {
 		logutil.BgLogger().Info("[BIG_TXN]",
-			zap.Uint64("con", c.connID),
 			zap.Int("size", size),
 			zap.Int("keys", mutations.len()),
 			zap.Int("puts", putCnt),
@@ -426,7 +423,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	if txn.StartTS() == math.MaxUint64 {
 		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
 		logutil.BgLogger().Error("commit failed",
-			zap.Uint64("conn", c.connID),
 			zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -600,7 +596,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
-		if ok && c.connID > 0 {
+		if ok {
 			if firstIsPrimary && actionIsPessimiticLock {
 				logutil.Logger(bo.ctx).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
 				switch valStr {
@@ -616,7 +612,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	})
 	failpoint.Inject("pessimisticRollbackDoNth", func() {
 		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
-		if actionIsPessimisticRollback && c.connID > 0 {
+		if actionIsPessimisticRollback {
 			logutil.Logger(bo.ctx).Warn("pessimisticRollbackDoNth failpoint")
 			failpoint.Return(nil)
 		}
@@ -644,7 +640,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 				if s, ok := v.(string); !ok {
 					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
-						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+						zap.Uint64("startTS", c.startTS))
 					time.Sleep(2 * time.Second)
 				} else if s == "skip" {
 					failpoint.Return()
@@ -654,7 +650,6 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
-					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
 				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
@@ -683,7 +678,6 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			e := action.handleSingleBatch(c, bo, b)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-					zap.Uint64("conn", c.connID),
 					zap.Stringer("action type", action),
 					zap.Error(e),
 					zap.Uint64("txnStartTS", c.startTS))
@@ -798,7 +792,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 				key := alreadyExist.GetKey()
 				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
 				if existErrInfo == nil {
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
+					return errors.Errorf("existErr for key:%s should not be nil", key)
 				}
 				return existErrInfo.Err()
 			}
@@ -809,7 +803,6 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
-				zap.Uint64("conn", c.connID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
@@ -1001,7 +994,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				key := alreadyExist.GetKey()
 				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
 				if existErrInfo == nil {
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
+					return errors.Errorf("existErr for key:%s should not be nil", key)
 				}
 				return existErrInfo.Err()
 			}
@@ -1261,7 +1254,7 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
-		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("2PC cleanup failed: %s", keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
@@ -1367,14 +1360,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	c.commitTS = commitTS
 
 	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
-		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
-			c.connID, c.startTS, c.commitTS)
+		err = errors.Errorf("txn takes too much time, txnStartTS: %d, comm: %d",
+			c.startTS, c.commitTS)
 		return err
 	}
 
-	if c.connID > 0 {
-		failpoint.Inject("beforeCommit", func() {})
-	}
+	failpoint.Inject("beforeCommit", func() {})
 
 	start = time.Now()
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
@@ -1449,8 +1440,8 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execd
 
 	// Check commitTS.
 	if commitTS <= c.startTS {
-		err = errors.Errorf("conn %d invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
-			c.connID, c.startTS, commitTS)
+		err = errors.Errorf("invalid transaction tso with txnStartTS=%v while txnCommitTS=%v",
+			c.startTS, commitTS)
 		logutil.BgLogger().Error("invalid transaction", zap.Error(err))
 		return 0, errors.Trace(err)
 	}
@@ -1574,14 +1565,12 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch failed",
-				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
 				logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
-					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))
 				cancel()

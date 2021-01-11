@@ -17,10 +17,8 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -31,62 +29,7 @@ import (
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("distsql.Select", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	// For testing purpose.
-	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
-		hook.(func(*kv.Request))(kvReq)
-	}
-
-	if !sctx.GetSessionVars().EnableStreaming {
-		kvReq.Streaming = false
-	}
-	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
-	if resp == nil {
-		err := errors.New("client returns nil response")
-		return nil, err
-	}
-
-	label := metrics.LblGeneral
-	if sctx.GetSessionVars().InRestrictedSQL {
-		label = metrics.LblInternal
-	}
-
-	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
-	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
-	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
-	// instead of creating a new one for simplification.
-	if kvReq.Streaming {
-		return &streamResult{
-			label:      "dag-stream",
-			sqlType:    label,
-			resp:       resp,
-			rowLen:     len(fieldTypes),
-			fieldTypes: fieldTypes,
-			ctx:        sctx,
-			feedback:   fb,
-		}, nil
-	}
-	encodetype := tipb.EncodeType_TypeDefault
-	if canUseChunkRPC(sctx) {
-		encodetype = tipb.EncodeType_TypeChunk
-	}
-	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		encodeType: encodetype,
-	}, nil
+	return nil, errors.New("client returns nil response")
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
@@ -107,40 +50,12 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
 	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
-	if resp == nil {
-		return nil, errors.New("client returns nil response")
-	}
-	label := metrics.LblGeneral
-	if isRestrict {
-		label = metrics.LblInternal
-	}
-	result := &selectResult{
-		label:      "analyze",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    label,
-		encodeType: tipb.EncodeType_TypeDefault,
-	}
-	return result, nil
+	return nil, errors.New("client returns nil response")
 }
 
 // Checksum sends a checksum request.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
-	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
-	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil, false)
-	if resp == nil {
-		return nil, errors.New("client returns nil response")
-	}
-	result := &selectResult{
-		label:      "checksum",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    metrics.LblGeneral,
-		encodeType: tipb.EncodeType_TypeDefault,
-	}
-	return result, nil
+	return nil, errors.New("client returns nil response")
 }
 
 // SetEncodeType sets the encoding method for the DAGRequest. The supported encoding

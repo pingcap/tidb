@@ -61,10 +61,6 @@ const (
 	CollectRuntimeStats
 	// CheckExist map for key existence check.
 	CheckExists
-	// InfoSchema is schema version used by txn startTS.
-	InfoSchema
-	// SchemaAmender is used to amend mutations for pessimistic transactions
-	SchemaAmender
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
 )
@@ -255,9 +251,6 @@ type ReturnedValue struct {
 
 // Client is used to send request to KV layer.
 type Client interface {
-	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
-
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
 }

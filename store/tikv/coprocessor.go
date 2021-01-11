@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,12 +41,6 @@ type CopClient struct {
 	kv.RequestTypeSupportedChecker
 	store           *tikvStore
 	replicaReadSeed uint32
-}
-
-// Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
-	panic("sending coprocessor requests is unsupported")
-	return nil
 }
 
 // copRanges is like []kv.KeyRange, but may has extra elements at head/tail.

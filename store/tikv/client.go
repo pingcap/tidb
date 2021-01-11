@@ -368,7 +368,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	client := tikvpb.NewTikvClient(clientConn)
 
 	if req.Type == tikvrpc.CmdBatchCop || req.Type == tikvrpc.CmdCopStream {
-		panic("coprocessor requests are not supported")
+		return nil, errors.New("coprocessor requests are not supported")
 	}
 
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
