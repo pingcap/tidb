@@ -457,7 +457,7 @@ func (b *builtinArithmeticMinusIntForcedSignedUnsignedSig) vecEvalInt(input *chu
 }
 
 func (b *builtinArithmeticMinusIntSignedUnsignedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -499,7 +499,7 @@ func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chu
 }
 
 func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -545,7 +545,7 @@ func (b *builtinArithmeticMinusIntForcedUnsignedSignedSig) vecEvalInt(input *chu
 }
 
 func (b *builtinArithmeticMinusIntUnsignedSignedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
@@ -590,7 +590,7 @@ func (b *builtinArithmeticMinusIntUnsignedSignedSig) vecEvalInt(input *chunk.Chu
 }
 
 func (b *builtinArithmeticMinusIntSignedSignedSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinArithmeticMinusIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
