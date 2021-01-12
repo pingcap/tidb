@@ -204,19 +204,19 @@ func iterateTestCases(testCases []struct {
 
 		switch sig.(type) {
 		case *builtinArithmeticMinusIntSignedSignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntSignedSigned)
 		case *builtinArithmeticMinusIntForcedUnsignedUnsignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntForcedUnsignedUnsigned)
 		case *builtinArithmeticMinusIntUnsignedUnsignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntUnsignedUnsigned)
 		case *builtinArithmeticMinusIntForcedSignedUnsignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntForcedSignedUnsigned)
 		case *builtinArithmeticMinusIntSignedUnsignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntSignedUnsigned)
 		case *builtinArithmeticMinusIntForcedUnsignedSignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntForcedUnsignedSigned)
 		case *builtinArithmeticMinusIntUnsignedSignedSig:
-			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusInt)
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_MinusIntUnsignedSigned)
 		}
 
 		if tc.expect[1] == nil {

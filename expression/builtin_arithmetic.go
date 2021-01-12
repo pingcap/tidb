@@ -351,35 +351,35 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		switch {
 		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntForcedUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntForcedUnsignedUnsigned)
 			return sig, nil
 		case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntForcedUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntForcedUnsignedSigned)
 			return sig, nil
 		case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntForcedSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntForcedSignedUnsigned)
 			return sig, nil
 		case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntSignedSigned)
 			return sig, nil
 		case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntUnsignedUnsigned)
 			return sig, nil
 		case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntUnsignedSigned)
 			return sig, nil
 		case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticMinusIntSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntSignedUnsigned)
 			return sig, nil
 		default:
 			sig := &builtinArithmeticMinusIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
+			sig.setPbCode(tipb.ScalarFuncSig_MinusIntSignedSigned)
 			return sig, nil
 		}
 	}

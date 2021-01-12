@@ -709,6 +709,41 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(-1),
 		},
 		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntSignedSigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(12)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntUnsignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(12)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntForcedUnsignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(12)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntSignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(12)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntForcedSignedUnsigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewIntDatum(12)), datumExpr(c, types.NewUintDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntUnsignedSigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(12)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
+			scalarFunctionExpr(tipb.ScalarFuncSig_MinusIntForcedUnsignedSigned,
+				toPBFieldType(newIntFieldType()), datumExpr(c, types.NewUintDatum(12)), datumExpr(c, types.NewIntDatum(2))),
+			types.NewIntDatum(10),
+		},
+		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MinusDecimal,
 				toPBFieldType(newDecimalFieldType()), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "1"))), datumExpr(c, types.NewDecimalDatum(newMyDecimal(c, "2")))),
 			types.NewDecimalDatum(newMyDecimal(c, "-1")),
