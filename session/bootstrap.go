@@ -1133,42 +1133,6 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
-<<<<<<< HEAD
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-=======
-func upgradeToVer58(s Session, ver int64) {
-	if ver >= version58 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
-}
-
-func upgradeToVer59(s Session, ver int64) {
-	if ver >= version59 {
-		return
-	}
-	// The oom-action default value is log by default in v3.0, and cancel by
-	// default in v4.0.11+.
-	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
-	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
-	// the default value of oom-action, and promise the compatibility even if
-	// the tidb-server restarts.
-	// If it's a newly deployed cluster, we do not need to write the value into
-	// mysql.tidb, since no compatibility problem will happen.
-	writeOOMAction(s)
-}
-
-func upgradeToVer60(s Session, ver int64) {
-	if ver >= version60 {
-		return
-	}
-	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
-	doReentrantDDL(s, CreateStatsExtended)
-}
-
 type bindInfo struct {
 	bindSQL    string
 	status     string
@@ -1178,9 +1142,8 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer61(s Session, ver int64) {
-	if ver >= version61 {
->>>>>>> dd234b7e3... session: fix the duplicate binding case when updating bind info (#22367)
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
