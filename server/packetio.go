@@ -36,6 +36,8 @@ package server
 
 import (
 	"bufio"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"io"
 	"time"
 
@@ -75,16 +77,19 @@ func (p *packetIO) setReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
 
-func (p *packetIO) readOnePacket() ([]byte, error) {
+func (p *packetIO) readOnePacket(flag int) ([]byte, error) {
+	begin := time.Now()
 	var header [4]byte
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
 			return nil, err
 		}
 	}
+	logutil.BgLogger().Info("[DEBUG] readOnePacket readTimeout", zap.Int("flag", flag), zap.Duration("cost", time.Since(begin)))
 	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[DEBUG] readOnePacket readFull", zap.Int("flag", flag), zap.Duration("cost", time.Since(begin)))
 
 	sequence := header[3]
 	if sequence != p.sequence {
@@ -101,14 +106,18 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 			return nil, err
 		}
 	}
+	logutil.BgLogger().Info("[DEBUG] readOnePacket readTimeout2", zap.Int("flag", flag), zap.Duration("cost", time.Since(begin)))
 	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
 		return nil, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("[DEBUG] readOnePacket readFull2", zap.Int("flag", flag), zap.Duration("cost", time.Since(begin)))
 	return data, nil
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
-	data, err := p.readOnePacket()
+	cnt := 0
+	data, err := p.readOnePacket(cnt)
+	cnt++
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -120,7 +129,8 @@ func (p *packetIO) readPacket() ([]byte, error) {
 
 	// handle multi-packet
 	for {
-		buf, err := p.readOnePacket()
+		buf, err := p.readOnePacket(cnt)
+		cnt++
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

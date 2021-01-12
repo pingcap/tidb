@@ -765,6 +765,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
+		logutil.BgLogger().Info("[DEBUG] read data in conn", zap.Int("datalen", len(data)), zap.Error(err))
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
