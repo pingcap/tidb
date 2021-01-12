@@ -185,6 +185,8 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+
+	DEBUG bool
 }
 
 func (cc *clientConn) String() string {
@@ -927,6 +929,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) (err error) {
+	cc.DEBUG = false
 	defer func(begin time.Time) {
 		var sql string
 		if len(data) == 0 {
@@ -1006,7 +1009,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) (err error) {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
+		begin := time.Now()
 		cc.ctx.SetProcessInfo("", t, cmd, 0)
+		if cmd == mysql.ComPing {
+			logutil.BgLogger().Info("[DEBUG] ping SetProcessInfo cost ", zap.Duration("cost", time.Since(begin)))
+			cc.DEBUG = true
+		}
 	case mysql.ComInitDB:
 		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
@@ -1100,8 +1108,18 @@ func (cc *clientConn) flush(ctx context.Context) error {
 }
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
+	begin := time.Now()
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	if cc.DEBUG {
+		logutil.BgLogger().Info("[DEBUG] writeOK.LastMessage ", zap.Duration("cost", time.Since(begin)))
+	}
+
+	begin = time.Now()
+	err := cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	if cc.DEBUG {
+		logutil.BgLogger().Info("[DEBUG] writeOK.writeOKWith ", zap.Duration("cost", time.Since(begin)))
+	}
+	return err
 }
 
 func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
