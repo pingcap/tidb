@@ -60,6 +60,7 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
+<<<<<<< HEAD
 	IsDDLJobInQueue        bool
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -79,6 +80,30 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
+=======
+	IsDDLJobInQueue           bool
+	InInsertStmt              bool
+	InUpdateStmt              bool
+	InDeleteStmt              bool
+	InSelectStmt              bool
+	InLoadDataStmt            bool
+	InExplainStmt             bool
+	InCreateOrAlterStmt       bool
+	IgnoreTruncate            bool
+	IgnoreZeroInDate          bool
+	DupKeyAsWarning           bool
+	BadNullAsWarning          bool
+	DividedByZeroAsWarning    bool
+	TruncateAsWarning         bool
+	OverflowAsWarning         bool
+	InShowWarning             bool
+	UseCache                  bool
+	BatchCheck                bool
+	InNullRejectCheck         bool
+	AllowInvalidDate          bool
+	IgnoreNoPartition         bool
+	OptimDependOnMutableConst bool
+>>>>>>> e3108df57... planner: do not cache prepared plan if optimization depends on mutable constant (#22349)
 
 	// mu struct holds variables that change during execution.
 	mu struct {
