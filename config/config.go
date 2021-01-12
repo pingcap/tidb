@@ -665,7 +665,7 @@ var defaultConf = Config{
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
+		Enabled:  true,
 		Capacity: 0,
 	},
 	LowerCaseTableNames:        2,
