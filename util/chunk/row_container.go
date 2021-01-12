@@ -223,7 +223,7 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
 	}
-	logutil.BgLogger().Info("[DEBUG] close RowContainer 1", zap.Duration("cost", time.Since(begin)))
+	logutil.BgLogger().Info("[DEBUG] close RowContainer 1 ", zap.Duration("cost", time.Since(begin)))
 	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
