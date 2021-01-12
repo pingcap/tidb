@@ -86,3 +86,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/containerd/cgroups => github.com/wshwsh12/cgroups v0.0.0-20210108101036-4a08313d673d

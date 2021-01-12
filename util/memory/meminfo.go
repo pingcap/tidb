@@ -17,7 +17,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,26 +127,13 @@ func setDefaultFunction() {
 	MemTotal = MemTotalNormal
 	MemUsed = MemUsedNormal
 
+	// Try use cGroup to control memory usage.
 	memoryPath, err := cgroups.PidPath(os.Getpid())(cgroups.Memory)
 	if err != nil {
 		return
 	}
-	var rel string
-	if inContainer() {
-		rootPath, err := cgroups.NestedPath("")(cgroups.Memory)
-		if err != nil {
-			return
-		}
-		rel, err = filepath.Rel(rootPath, memoryPath)
-		if err != nil {
-			rel = memoryPath
-		}
-	} else {
-		rel = memoryPath
-	}
-
-	cGroupMemLimitPath = path.Join(cGroupMemPath, rel, cGroupMemLimitName)
-	cGroupMemUsagePath = path.Join(cGroupMemPath, rel, cGroupMemUsageName)
+	cGroupMemLimitPath = path.Join(cGroupMemPath, memoryPath, cGroupMemLimitName)
+	cGroupMemUsagePath = path.Join(cGroupMemPath, memoryPath, cGroupMemUsageName)
 	MemTotal = MemTotalCGroup
 	MemUsed = MemUsedCGroup
 }
