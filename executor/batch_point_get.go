@@ -443,7 +443,10 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[str
 	for _, key := range keys {
 		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
 		if err != nil {
-			return nil, err
+			if !kv.ErrNotExist.Equal(err) {
+				return nil, err
+			}
+			continue
 		}
 		vals[string(key)] = val
 	}
