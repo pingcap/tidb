@@ -15,7 +15,6 @@ package variable
 
 import (
 	"math"
-	"os"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -516,6 +515,9 @@ const (
 
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	// TiDBEnableEnancedSecurity restricts SUPER users from certain operations.
+	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
 // TiDB vars that have only global scope
@@ -673,7 +675,6 @@ var (
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
-	ServerHostname, _                     = os.Hostname()
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/security"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -922,7 +923,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 	for _, storeStat := range storesStat.Stores {
 		row := make([]types.Datum, len(infoschema.TableTiKVStoreStatusCols))
 		row[0].SetInt64(storeStat.Store.ID)
-		row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
 		row[2].SetInt64(storeStat.Store.State)
 		row[3].SetString(storeStat.Store.StateName, mysql.DefaultCollationName)
 		data, err := json.Marshal(storeStat.Store.Labels)
@@ -935,8 +935,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		}
 		row[4].SetMysqlJSON(bj)
 		row[5].SetString(storeStat.Store.Version, mysql.DefaultCollationName)
-		row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
-		row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
 		row[8].SetInt64(storeStat.Status.LeaderCount)
 		row[9].SetFloat64(storeStat.Status.LeaderWeight)
 		row[10].SetFloat64(storeStat.Status.LeaderScore)
@@ -945,11 +943,27 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 		row[13].SetFloat64(storeStat.Status.RegionWeight)
 		row[14].SetFloat64(storeStat.Status.RegionScore)
 		row[15].SetInt64(storeStat.Status.RegionSize)
-		startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
-		row[16].SetMysqlTime(startTs)
 		lastHeartbeatTs := types.NewTime(types.FromGoTime(storeStat.Status.LastHeartbeatTs), mysql.TypeDatetime, types.DefaultFsp)
 		row[17].SetMysqlTime(lastHeartbeatTs)
-		row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
+
+		// If SEM is enabled, we need to patch-out columns
+		if security.IsEnabled() {
+			row[1].SetString(strconv.FormatInt(storeStat.Store.ID, 10), mysql.DefaultCollationName)
+			row[1].SetNull()
+			row[6].SetNull()
+			row[7].SetNull()
+			row[16].SetNull()
+			row[18].SetNull()
+		} else {
+			row[1].SetString(storeStat.Store.Address, mysql.DefaultCollationName)
+			row[6].SetString(storeStat.Status.Capacity, mysql.DefaultCollationName)
+			row[7].SetString(storeStat.Status.Available, mysql.DefaultCollationName)
+			startTs := types.NewTime(types.FromGoTime(storeStat.Status.StartTs), mysql.TypeDatetime, types.DefaultFsp)
+			row[16].SetMysqlTime(startTs)
+			row[18].SetString(storeStat.Status.Uptime, mysql.DefaultCollationName)
+
+		}
+
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -1092,6 +1106,13 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			upTimeStr,
 			server.ServerID,
 		)
+		if security.IsEnabled() {
+			row[1].SetString(strconv.FormatUint(server.ServerID, 10), mysql.DefaultCollationName)
+			row[1].SetNull()
+			row[2].SetNull()
+			row[5].SetNull()
+			row[6].SetNull()
+		}
 		rows = append(rows, row)
 	}
 	e.rows = rows
@@ -1710,6 +1731,9 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
+		if security.IsEnabled() {
+			row[1].SetNull() // clear IP
+		}
 		rows = append(rows, row)
 	}
 	e.rows = rows

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/security"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -5433,6 +5434,23 @@ func (s *testIntegrationSuite) TestIssue10804(c *C) {
 	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`86400`))
 	tk.MustExec("/*!80000 SET GLOBAL information_schema_stats_expiry=0 */")
 	tk.MustQuery(`SELECT @@GLOBAL.information_schema_stats_expiry`).Check(testkit.Rows(`0`))
+}
+
+func (s *testIntegrationSuite) TestSecurityEnhancedMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_row_format_version'").Check(testkit.Rows("tidb_row_format_version 2"))
+
+	security.Enable()
+	tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_row_format_version'").Check(testkit.Rows())
+	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL").Check(testkit.Rows("0"))
+	security.Disable()
+
+	// Supports the same behavior after. Dynamic changing is not a requirement, but SEM supports it.
+	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_row_format_version'").Check(testkit.Rows("tidb_row_format_version 2"))
+
 }
 
 func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {

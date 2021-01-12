@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/security"
 	"go.uber.org/zap"
 )
 
@@ -57,6 +58,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	// Skip check for system databases.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
 	dbLowerName := strings.ToLower(db)
+	tblLowerName := strings.ToLower(table)
+	if security.IsInvisibleTable(dbLowerName, tblLowerName) {
+		return false
+	}
+
 	switch dbLowerName {
 	case util.InformationSchemaName.L:
 		switch priv {
@@ -65,7 +71,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			return false
 		}
 		return true
-	// We should be very careful of limiting privileges, so ignore `mysql` for now.
 	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
 		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
 			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
@@ -76,8 +81,15 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 				return true
 			}
 		}
+	// When in security enhanced mode, refuse anything except
+	// SELECT or existence (AllPrivMask) to a list of tables
+	case mysql.SystemDB:
+		if security.IsReadOnlySystemTable(tblLowerName) {
+			if !(priv == mysql.SelectPriv || priv == mysql.AllPrivMask) {
+				return false
+			}
+		}
 	}
-
 	mysqlPriv := p.Handle.Get()
 	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
 }
@@ -371,6 +383,9 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string) bool {
 	if SkipWithGrant {
 		return true
+	}
+	if security.IsInvisibleSchema(db) {
+		return false
 	}
 	mysqlPriv := p.Handle.Get()
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {

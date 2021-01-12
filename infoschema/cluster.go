@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/security"
 )
 
 // Cluster table list, attention:
@@ -84,6 +85,9 @@ func AppendHostInfoToRows(rows [][]types.Datum) ([][]types.Datum, error) {
 		return nil, err
 	}
 	addr := serverInfo.IP + ":" + strconv.FormatUint(uint64(serverInfo.StatusPort), 10)
+	if security.IsEnabled() {
+		addr = serverInfo.ID
+	}
 	for i := range rows {
 		row := make([]types.Datum, 0, len(rows[i])+1)
 		row = append(row, types.NewStringDatum(addr))

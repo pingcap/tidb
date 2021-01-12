@@ -361,12 +361,22 @@ func RegisterSysVar(sv *SysVar) {
 }
 
 // UnregisterSysVar removes a sysvar from the SysVars list
-// currently only used in tests.
 func UnregisterSysVar(name string) {
 	name = strings.ToLower(name)
 	sysVarsLock.Lock()
 	delete(sysVars, name)
 	sysVarsLock.Unlock()
+}
+
+// RegisterSysVarFromDefaults is used by the Security Enhanced mode testsuite
+// It re-registers a sysvar from defaultSysVars. It is inefficient because it
+// must scan the defaultSysVars to find a match.
+func RegisterSysVarFromDefaults(name string) {
+	for _, sv := range defaultSysVars {
+		if sv.Name == name {
+			RegisterSysVar(sv)
+		}
+	}
 }
 
 // GetSysVar returns sys var info for name as key.
@@ -465,7 +475,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
-	{Scope: ScopeNone, Name: Hostname, Value: ServerHostname},
+	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeSession, Name: Timestamp, Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetFilesystem)
@@ -741,6 +751,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
+	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: BoolToOnOff(config.GetGlobalConfig().EnableEnhancedSecurity), Type: TypeBool},
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/security"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1203,6 +1204,9 @@ func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 }
 
 func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
+	if security.IsEnabled() && node.Tp == ast.ShowConfig {
+		p.err = errors.New("tidb-server is running in enhanced security mode")
+	}
 	if node.DBName == "" {
 		if node.Table != nil && node.Table.Schema.L != "" {
 			node.DBName = node.Table.Schema.O
