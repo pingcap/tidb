@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -51,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -568,25 +566,9 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) {
-	if tbl.IsView() {
-		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder(sctx, infoschema.GetInfoSchema(sctx), &hint.BlockHintProcessor{})
-		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl); err == nil {
-			viewSchema := viewLogicalPlan.Schema()
-			viewOutputNames := viewLogicalPlan.OutputNames()
-			for _, col := range tbl.Columns {
-				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-				if idx >= 0 {
-					col.FieldType = *viewSchema.Columns[idx].GetType()
-				}
-				if col.Tp == mysql.TypeVarString {
-					col.Tp = mysql.TypeVarchar
-				}
-			}
-		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			return
-		}
+	if err := tryFillViewColumnType(ctx, sctx, infoschema.GetInfoSchema(sctx), schema.Name, tbl); err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return
 	}
 	for i, col := range tbl.Columns {
 		if col.Hidden {
