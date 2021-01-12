@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1306,12 +1306,12 @@ func upgradeToVer60(s Session, ver int64) {
 }
 
 type bindInfo struct {
-	bindSQL string
-	status string
+	bindSQL    string
+	status     string
 	createTime types.Time
-	charset string
-	collation string
-	source string
+	charset    string
+	collation  string
+	source     string
 }
 
 func upgradeToVer61(s Session, ver int64) {
@@ -1356,7 +1356,7 @@ func upgradeToVer61(s Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		updateBindInfo(s, iter, p, now.String(), bindMap)
+		updateBindInfo(iter, p, bindMap)
 	}
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
@@ -1374,7 +1374,7 @@ func upgradeToVer61(s Session, ver int64) {
 	}
 }
 
-func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string, bindMap map[string]bindInfo) {
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		bind := row.GetString(0)
 		db := row.GetString(1)
@@ -1395,12 +1395,12 @@ func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now
 			continue
 		}
 		bindMap[originWithDB] = bindInfo{
-			bindSQL: utilparser.RestoreWithDefaultDB(stmt, db),
-			status: row.GetString(2),
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
 			createTime: row.GetTime(3),
-			charset: charset,
-			collation: collation,
-			source: row.GetString(6),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
 		}
 	}
 }
