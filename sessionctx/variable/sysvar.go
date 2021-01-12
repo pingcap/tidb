@@ -360,6 +360,15 @@ func RegisterSysVar(sv *SysVar) {
 	sysVarsLock.Unlock()
 }
 
+// UnregisterSysVar removes a sysvar from the SysVars list
+// currently only used in tests.
+func UnregisterSysVar(name string) {
+	name = strings.ToLower(name)
+	sysVarsLock.Lock()
+	delete(sysVars, name)
+	sysVarsLock.Unlock()
+}
+
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
@@ -1029,8 +1038,6 @@ const (
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
 type GlobalVarAccessor interface {
-	// GetAllSysVars gets all the global system variable values.
-	GetAllSysVars() (map[string]string, error)
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
