@@ -46,8 +46,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
-		tblIDs := b.applyDropSchema(diff.SchemaID)
-		return tblIDs, nil
+		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	}
@@ -133,16 +132,17 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
-			// Reduce the impact on DML when executing partition DDL. eg.
-			// While session 1 performs the DML operation associated with partition 1,
-			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			switch diff.Type {
 			case model.ActionAlterTableAlterPartition:
 				partitionID := opt.TableID
 				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
 				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
+				// Reduce the impact on DML when executing partition DDL. eg.
+				// While session 1 performs the DML operation associated with partition 1,
+				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 				tblIDs = append(tblIDs, opt.OldTableID)
+
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
@@ -276,6 +276,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		return nil
 	}
 	delete(b.is.schemaMap, di.Name.L)
+	b.applyPlacementDelete(placement.GroupID(schemaID))
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
@@ -291,6 +292,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	di = di.Clone()
 	for _, id := range tableIDs {
+		b.applyPlacementDelete(placement.GroupID(id))
 		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs
