@@ -107,11 +107,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
 func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
-	// capture the forUpdateRead mark
-	isForUpdateRead := b.isForUpdateRead
-	b.isForUpdateRead = false
 	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
-	b.isForUpdateRead = isForUpdateRead
 	return expr, resultPlan, err
 }
 
