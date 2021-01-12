@@ -15,11 +15,14 @@ package chunk
 
 import (
 	"errors"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -196,9 +199,20 @@ func (l *ListInDisk) NumChunks() int {
 // Close releases the disk resource.
 func (l *ListInDisk) Close() error {
 	if l.disk != nil {
+		begin := time.Now()
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
+		logutil.BgLogger().Info("[DEBUG] tracker consume ", zap.Duration("cost", time.Since(begin)))
+
+		fname := l.disk.Name()
+		fsize := 0
+		st, err := l.disk.Stat()
+		if err == nil {
+			fsize = int(st.Size())
+		}
 		terror.Call(l.disk.Close)
+		logutil.BgLogger().Info("[DEBUG] close FILE ", zap.String("name", fname), zap.Int("size", fsize), zap.Duration("cost", time.Since(begin)))
 		terror.Log(os.Remove(l.disk.Name()))
+		logutil.BgLogger().Info("[DEBUG] os Remove ", zap.String("name", fname), zap.Int("size", fsize), zap.Duration("cost", time.Since(begin)))
 	}
 	return nil
 }
