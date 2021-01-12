@@ -1133,11 +1133,57 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
+<<<<<<< HEAD
 func upgradeToVer51(s Session, ver int64) {
 	if ver >= version51 {
+=======
+func upgradeToVer58(s Session, ver int64) {
+	if ver >= version58 {
 		return
 	}
-	bindMap := make(map[string]types.Time)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+func upgradeToVer59(s Session, ver int64) {
+	if ver >= version59 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+type bindInfo struct {
+	bindSQL    string
+	status     string
+	createTime types.Time
+	charset    string
+	collation  string
+	source     string
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+>>>>>>> dd234b7e3... session: fix the duplicate binding case when updating bind info (#22367)
+		return
+	}
+	bindMap := make(map[string]bindInfo)
 	h := &bindinfo.BindHandle{}
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
@@ -1152,7 +1198,11 @@ func upgradeToVer51(s Session, ver int64) {
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
 	var recordSets []sqlexec.RecordSet
-	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation, update_time from mysql.bind_info where source != 'builtin'")
+	recordSets, err = s.ExecuteInternal(context.Background(),
+		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
+			FROM mysql.bind_info
+			WHERE source != 'builtin'
+			ORDER BY update_time DESC`)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 	}
@@ -1171,42 +1221,52 @@ func upgradeToVer51(s Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		updateBindInfo(s, iter, p, now.String(), bindMap)
+		updateBindInfo(iter, p, bindMap)
+	}
+
+	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
+	for original, bind := range bindMap {
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+			expression.Quote(original),
+			expression.Quote(bind.bindSQL),
+			expression.Quote(bind.status),
+			expression.Quote(bind.createTime.String()),
+			expression.Quote(now.String()),
+			expression.Quote(bind.charset),
+			expression.Quote(bind.collation),
+			expression.Quote(bind.source),
+		))
 	}
 }
 
-func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string, bindMap map[string]types.Time) {
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		original := row.GetString(0)
-		bind := row.GetString(1)
-		db := row.GetString(2)
-		charset := row.GetString(3)
-		collation := row.GetString(4)
-		updateTime := row.GetTime(5)
+		bind := row.GetString(0)
+		db := row.GetString(1)
+		charset := row.GetString(4)
+		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
 		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
-		if latest, ok := bindMap[originWithDB]; ok {
-			// In the following cases, duplicate originWithDB may occur
+		if _, ok := bindMap[originWithDB]; ok {
+			// The results are sorted in descending order of time.
+			// And in the following cases, duplicate originWithDB may occur
 			//      originalText         	|bindText                                   	|DB
 			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
 			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
-			// If repeated, we will keep the latest binding.
-			if updateTime.Compare(latest) <= 0 {
-				continue
-			}
-			mustExecute(s, fmt.Sprintf(`DELETE FROM mysql.bind_info WHERE original_sql=%s`, expression.Quote(original)))
-			original = originWithDB
+			// Therefore, if repeated, we can skip to keep the latest binding.
+			continue
 		}
-		bindMap[originWithDB] = updateTime
-		bindWithDB := utilparser.RestoreWithDefaultDB(stmt, db)
-		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
-			expression.Quote(originWithDB),
-			expression.Quote(bindWithDB),
-			expression.Quote(now),
-			expression.Quote(original)))
+		bindMap[originWithDB] = bindInfo{
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
+			createTime: row.GetTime(3),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
+		}
 	}
 }
 
