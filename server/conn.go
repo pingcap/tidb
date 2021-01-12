@@ -1387,16 +1387,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if len(rss) == 1 {
 			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
-			// The client gets to choose if it allows multi-statements, and
-			// probably defaults OFF. This helps prevent against SQL injection attacks
-			// by early terminating the first statement, and then running an entirely
-			// new statement.
-
-			capabilities := cc.ctx.GetSessionVars().ClientCapability
-			if capabilities&mysql.ClientMultiStatements < 1 {
-				return errMultiStatementDisabled
-			}
-
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
