@@ -14,6 +14,7 @@
 package infoschema_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 
