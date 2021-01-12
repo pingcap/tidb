@@ -204,6 +204,8 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
+	logutil.BgLogger().Info("MYLOG optimize prepared plan, p1")
+
 	paramLen := len(e.PrepareParams)
 	if paramLen > 0 {
 		// for binary protocol execute, argument is placed in vars.PrepareParams
@@ -234,6 +236,10 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
+	logutil.BgLogger().Info("MYLOG optimize prepared plan, p2",
+		zap.Int64("prepare verion", prepared.SchemaVersion),
+		zap.Int64("schema version", is.SchemaMetaVersion()))
+
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -250,6 +256,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
 	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	logutil.BgLogger().Info("MYLOG optimize prepared plan, p3", zap.Error(err))
 	if err != nil {
 		return err
 	}
@@ -278,6 +285,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	prepared := preparedStmt.PreparedAst
 	stmtCtx.UseCache = prepared.UseCache
+	logutil.Logger(ctx).Info("MYLOG getPhysicalPlan", zap.Bool("use cache", prepared.UseCache))
 	var cacheKey kvcache.Key
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
@@ -300,6 +308,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		err := e.rebuildRange(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+			logutil.BgLogger().Info("MYLOG rebuild range failed", zap.Error(err))
 			goto REBUILD
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
@@ -340,6 +349,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					err := e.rebuildRange(cachedVal.Plan)
 					if err != nil {
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+						logutil.BgLogger().Info("MYLOG rebuild range failed", zap.Error(err))
 						goto REBUILD
 					}
 					err = e.setFoundInPlanCache(sctx, true)
@@ -358,10 +368,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 				}
 				break
 			}
+
+			logutil.Logger(ctx).Info("MYLOG getPhysicalPlan cache key not exist")
 		}
 	}
 
+	logutil.Logger(ctx).Info("MYLOG getPhysicalPlan before rebuild")
 REBUILD:
+	logutil.Logger(ctx).Info("MYLOG getPhysicalPlan rebuild")
 	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {

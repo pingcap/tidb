@@ -16,6 +16,9 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -60,6 +63,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	logutil.BgLogger().Info("MYLOG Compile", zap.String("final plan", finalPlan.ExplainInfo()), zap.Error(err))
 	if err != nil {
 		return nil, err
 	}

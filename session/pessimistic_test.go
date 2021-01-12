@@ -2460,7 +2460,7 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
-	//tk.MustExec("begin pessimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("prepare select_stmt from 'select * from t where v = ?'")
 	tk.MustExec("prepare select_update_stmt from 'select * from t where v = ? for update'")
 	tk.MustExec("prepare update_stmt from 'update t set vv = 3 where v = ?'")
@@ -2479,9 +2479,10 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	// current read should update cache since schema is changed
 	//tk.MustQuery("execute select_update_stmt using @v").Check(testkit.Rows("1 2 2"))
 	//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	time.Sleep(time.Second)
 	tk.MustExec("execute update_stmt using @v")
 	//tk.CheckExecResult(0, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	//tk.MustExec("commit")
+	tk.MustExec("commit")
 }
