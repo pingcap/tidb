@@ -36,8 +36,6 @@ package server
 
 import (
 	"bufio"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"io"
 	"time"
 
@@ -45,6 +43,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const defaultWriterSize = 16 * 1024
