@@ -2451,3 +2451,37 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
 	}
 }
+
+func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	//tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (id int primary key, v int, index iv (v), vv int)")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+	//tk.MustExec("begin pessimistic")
+	tk.MustExec("prepare select_stmt from 'select * from t where v = ?'")
+	tk.MustExec("prepare select_update_stmt from 'select * from t where v = ? for update'")
+	tk.MustExec("prepare update_stmt from 'update t set vv = 3 where v = ?'")
+	tk.MustExec("set @v = 1")
+	// generate plan cache
+	tk.MustQuery("execute select_stmt using @v").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("execute select_update_stmt using @v").Check(testkit.Rows("1 1 1"))
+	tk.MustExec("execute update_stmt using @v")
+
+	//tk2.MustExec("alter table t drop index iv")
+	//tk2.MustExec("update t set v = 3 where v = 2")
+
+	tk.MustExec("set @v = 2")
+	//tk.MustQuery("execute select_stmt using @v").Check(testkit.Rows("2 2 2"))
+	//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// current read should update cache since schema is changed
+	//tk.MustQuery("execute select_update_stmt using @v").Check(testkit.Rows("1 2 2"))
+	//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute update_stmt using @v")
+	//tk.CheckExecResult(0, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	//tk.MustExec("commit")
+}
