@@ -1813,7 +1813,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			var err1 error
 			t := meta.NewMeta(txn)
 			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)

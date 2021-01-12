@@ -105,7 +105,7 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	dbInfos := []*model.DBInfo{dbInfo}
-	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		meta.NewMeta(txn).CreateDatabase(dbInfo)
 		return errors.Trace(err)
 	})
@@ -195,7 +195,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 
-	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
 		return errors.Trace(err)
 	})
@@ -331,7 +331,7 @@ func (*testSuite) TestInfoTables(c *C) {
 
 func genGlobalID(store kv.Storage) (int64, error) {
 	var globalID int64
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
