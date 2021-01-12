@@ -569,7 +569,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) {
 	if tbl.IsView() {
-		// retrieve view columns info
+		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(sctx, infoschema.GetInfoSchema(sctx), &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
