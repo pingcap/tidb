@@ -138,7 +138,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
 				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
+				// Reduce the impact on DML when executing partition DDL. eg.
+				// While session 1 performs the DML operation associated with partition 1,
+				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 				tblIDs = append(tblIDs, opt.OldTableID)
+
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
@@ -162,9 +166,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				}
 				continue
 			}
-			// Reduce the impact on DML when executing partition DDL. eg.
-			// While session 1 performs the DML operation associated with partition 1,
-			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			var err error
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
