@@ -130,6 +130,9 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 	case *rootTask:
 		p.SetChildren(v.p)
 		v.p = p
+	case *mppTask:
+		p.SetChildren(v.p)
+		v.p = p
 	}
 	return t
 }
@@ -1042,8 +1045,23 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 }
 
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
-	// TODO: support projection push down.
-	var t task = tasks[0].convertToRootTask(p.ctx)
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
+		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+			copTask := attachPlan2Task(p, cop)
+			copTask.addCost(p.GetCost(t.count()))
+			return copTask
+		}
+	} else if mpp, ok := t.(*mppTask); ok {
+		if expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), kv.TiFlash) {
+			p.SetChildren(mpp.p)
+			mpp.p = p
+			mpp.addCost(p.GetCost(t.count()))
+			return mpp
+		}
+	}
+	// TODO: support projection push down for TiKV.
+	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
 	return t
@@ -1070,6 +1088,12 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	sessVars := sel.ctx.GetSessionVars()
+	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
+		sc := sel.ctx.GetSessionVars().StmtCtx
+		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
+			return attachPlan2Task(sel, mppTask.copy())
+		}
+	}
 	t := tasks[0].convertToRootTask(sel.ctx)
 	t.addCost(t.count() * sessVars.CPUFactor)
 	return attachPlan2Task(sel, t)

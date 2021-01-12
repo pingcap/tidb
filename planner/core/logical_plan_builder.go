@@ -965,6 +965,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if expr == nil {
 			continue
 		}
+		expressions = append(expressions, expr)
+	}
+	cnfExpres := make([]expression.Expression, 0)
+	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
@@ -978,13 +982,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 				dual.SetSchema(p.Schema())
 				return dual, nil
 			}
-			expressions = append(expressions, item)
+			cnfExpres = append(cnfExpres, item)
 		}
 	}
-	if len(expressions) == 0 {
+	if len(cnfExpres) == 0 {
 		return p, nil
 	}
-	selection.Conditions = expressions
+	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
 }
@@ -2383,7 +2387,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
 		}
 	}
-	return n, true
+	return n, r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
@@ -3364,7 +3368,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
@@ -3497,6 +3501,11 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+var (
+	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
+	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
+)
+
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -3519,6 +3528,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
+		pseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)
 	}
 
@@ -3527,7 +3537,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		tbl := *statsTbl
 		tbl.Pseudo = true
 		statsTbl = &tbl
-		metrics.PseudoEstimation.Inc()
+		pseudoEstimationOutdate.Inc()
 	}
 	return statsTbl
 }

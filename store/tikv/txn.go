@@ -113,6 +113,15 @@ func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, re
 	return newTiKVTxn, nil
 }
 
+func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	startTS, err := store.getStalenessTimestamp(bo, txnScope, prevSec)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
+}
+
 type assertionPair struct {
 	key       kv.Key
 	assertion kv.AssertionType

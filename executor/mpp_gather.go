@@ -90,11 +90,20 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 	return nil
 }
 
+func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
+	ids = append(ids, plan.ID())
+	for _, child := range plan.Children() {
+		ids = collectPlanIDS(child, ids)
+	}
+	return ids
+}
+
 // Open decides the task counts and locations and generate exchange operators for every plan fragment.
 // Then dispatch tasks to tiflash stores. If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
+	planIDs := collectPlanIDS(e.originalPlan, nil)
 	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID)
 	if err != nil {
 		return errors.Trace(err)
@@ -103,7 +112,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes)
+	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
 	if err != nil {
 		return errors.Trace(err)
 	}
