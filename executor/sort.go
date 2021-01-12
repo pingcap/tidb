@@ -17,7 +17,10 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sort"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
@@ -64,6 +67,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
+	begin := time.Now()
 	for _, container := range e.partitionList {
 		err := container.Close()
 		if err != nil {
@@ -71,6 +75,8 @@ func (e *SortExec) Close() error {
 		}
 	}
 	e.partitionList = e.partitionList[:0]
+
+	logutil.BgLogger().Info("[DEBUG] close Sort 1", zap.Duration("cost", time.Since(begin)))
 
 	if e.rowChunks != nil {
 		e.memTracker.Consume(-e.rowChunks.GetMemTracker().BytesConsumed())
@@ -80,7 +86,9 @@ func (e *SortExec) Close() error {
 	e.diskTracker = nil
 	e.multiWayMerge = nil
 	e.spillAction = nil
-	return e.children[0].Close()
+	err := e.children[0].Close()
+	logutil.BgLogger().Info("[DEBUG] close Sort 2", zap.Duration("cost", time.Since(begin)))
+	return err
 }
 
 // Open implements the Executor Open interface.

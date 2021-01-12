@@ -1478,7 +1478,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		err = cc.handleStmt(ctx, sql, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
 			break
 		}
@@ -1583,7 +1583,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
+func (cc *clientConn) handleStmt(ctx context.Context, sql string, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
@@ -1591,7 +1591,11 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
 	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer func() {
+			begin := time.Now()
+			terror.Call(rs.Close)
+			logutil.BgLogger().Info("[DEBUG] close result ", zap.String("sql", sql), zap.Duration("cost", time.Since(begin)))
+		}()
 	}
 	if err != nil {
 		return err

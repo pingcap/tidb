@@ -215,6 +215,7 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 
 // Close close the RowContainer
 func (c *RowContainer) Close() (err error) {
+	begin := time.Now()
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.actionSpill != nil {
@@ -222,11 +223,14 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
 	}
+	logutil.BgLogger().Info("[DEBUG] close RowContainer 1", zap.Duration("cost", time.Since(begin)))
 	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 	}
+	logutil.BgLogger().Info("[DEBUG] close RowContainer 2", zap.Duration("cost", time.Since(begin)))
 	c.m.records.Clear()
+	logutil.BgLogger().Info("[DEBUG] close RowContainer 3", zap.Duration("cost", time.Since(begin)))
 	return
 }
 
