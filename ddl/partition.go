@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/pd/pkg/slice"
 	"go.uber.org/zap"
 )
 
@@ -269,7 +270,7 @@ func checkTiFlashPeerStoreAtLeastOne(stores []*metapb.Store, peers []*metapb.Pee
 
 func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
+		if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
 			return true
 		}
 	}
@@ -399,7 +400,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			}
 		} else {
 			for _, vs := range clause.Values {
-				if err := checkPartitionValuesIsInt(ctx, def, vs); err != nil {
+				if err := checkPartitionValuesIsInt(ctx, def, vs, tbInfo); err != nil {
 					return nil, err
 				}
 			}
@@ -460,7 +461,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 				return nil, err
 			}
 		} else {
-			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs); err != nil {
+			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs, tbInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -490,7 +491,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	return definitions, nil
 }
 
-func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode) error {
+func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	if isRangePartitionColUnsignedBigint(tbInfo.Columns, tbInfo.Partition) {
+		tp.Flag |= mysql.UnsignedFlag
+	}
 	for _, exp := range exprs {
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
 			continue
@@ -503,6 +508,10 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		case types.KindInt64, types.KindUint64, types.KindNull:
 		default:
 			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+		}
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+		if err != nil {
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 
@@ -610,11 +619,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 // checkResultOK derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc
 // For partition tables, mysql do not support Constant, random or timezone-dependent expressions
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
-func checkResultOK(ok bool, err error) error {
-	if err != nil {
-		return err
-	}
-
+func checkResultOK(ok bool) error {
 	if !ok {
 		return errors.Trace(ErrWrongExprInPartitionFunc)
 	}
@@ -1064,7 +1069,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			def := &pi.Definitions[i]
 			if def.ID == oldID {
 				pid, err1 := t.GenGlobalID()
-				if err != nil {
+				if err1 != nil {
 					return ver, errors.Trace(err1)
 				}
 				def.ID = pid
@@ -1706,7 +1711,7 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 	return nil
 }
 
-func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
+func checkPartitionExprAllowed(_ sessionctx.Context, tb *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
 	case *ast.FuncCallExpr:
 		if _, ok := expression.AllowedPartitionFuncMap[v.FnName.L]; ok {
@@ -1714,11 +1719,11 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 		}
 	case *ast.BinaryOperationExpr:
 		if _, ok := expression.AllowedPartition4BinaryOpMap[v.Op]; ok {
-			return nil
+			return errors.Trace(checkNoTimestampArgs(tb, v.L, v.R))
 		}
 	case *ast.UnaryOperationExpr:
 		if _, ok := expression.AllowedPartition4UnaryOpMap[v.Op]; ok {
-			return nil
+			return errors.Trace(checkNoTimestampArgs(tb, v.V))
 		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
 		*ast.TimeUnitExpr:
@@ -1732,36 +1737,39 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	if !ok {
 		return nil
 	}
+	argsType, err := collectArgsType(tblInfo, expr.Args...)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	switch expr.FnName.L {
 	case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
 		ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
-		return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasDateArgs(argsType...)))
 	case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
-		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasTimeArgs(argsType...)))
 	case ast.UnixTimestamp:
-		return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasTimestampArgs(argsType...)))
 	case ast.FromDays:
-		if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		return errors.Trace(checkResultOK(hasDateArgs(argsType...) || hasTimeArgs(argsType...)))
 	case ast.Extract:
 		switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
 		case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
-			return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasDateArgs(argsType...)))
 		case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
-			return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasDatetimeArgs(argsType...)))
 		case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
 			ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
-			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+			return errors.Trace(checkResultOK(hasTimeArgs(argsType...)))
 		default:
 			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
-	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
-		has, err := hasTimestampArgs(tblInfo, expr)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	case ast.DateDiff:
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
+			return hasDateArgs(argsType[i])
+		})))
+
+	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
+		has := hasTimestampArgs(argsType...)
 		if has {
 			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
@@ -1769,37 +1777,54 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	return nil
 }
 
-func hasDateArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDate, mysql.TypeDatetime)
-}
-
-func hasTimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDuration, mysql.TypeDatetime)
-}
-
-func hasTimestampArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeTimestamp)
-}
-
-func hasDatetimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
-	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDatetime)
-}
-
-func hasSpecifyArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr, ts ...byte) (bool, error) {
-	for _, arg := range expr.Args {
+func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, error) {
+	ts := make([]byte, 0, len(exprs))
+	for _, arg := range exprs {
 		col, ok := arg.(*ast.ColumnNameExpr)
 		if !ok {
 			continue
 		}
 		columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
 		if columnInfo == nil {
-			return false, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
+			return nil, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
-		for _, t := range ts {
-			if columnInfo.Tp == t {
-				return true, nil
-			}
-		}
+		ts = append(ts, columnInfo.Tp)
 	}
-	return false, nil
+
+	return ts, nil
+}
+
+func hasDateArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	})
+}
+
+func hasTimeArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	})
+}
+
+func hasTimestampArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeTimestamp
+	})
+}
+
+func hasDatetimeArgs(argsType ...byte) bool {
+	return slice.AnyOf(argsType, func(i int) bool {
+		return argsType[i] == mysql.TypeDatetime
+	})
+}
+
+func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error {
+	argsType, err := collectArgsType(tbInfo, exprs...)
+	if err != nil {
+		return err
+	}
+	if hasTimestampArgs(argsType...) {
+		return errors.Trace(ErrWrongExprInPartitionFunc)
+	}
+	return nil
 }

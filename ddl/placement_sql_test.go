@@ -60,6 +60,12 @@ PARTITION BY RANGE (c) (
 	// normal cases
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints='["+zone=sh"]'
 	role=follower
 	replicas=3`)
@@ -75,6 +81,20 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="{'+zone=sh': 1}"
+	role=follower
+	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="['+zone=sh']"
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -110,6 +130,19 @@ drop placement policy
 	role=follower`)
 	c.Assert(err, NotNil)
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=xxx
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*ROLE is not specified.*")
+
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -128,7 +161,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
@@ -154,7 +187,7 @@ add placement policy
 	role=follower
 	replicas=3,
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=follower
 	replicas=3,
 alter placement policy
@@ -172,7 +205,7 @@ drop placement policy
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=bj":1}'
+	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
 	role=voter
 	replicas=3,
 drop placement policy
@@ -182,30 +215,48 @@ drop placement policy
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
+	role=follower
+	constraints='[]'`)
+	c.Assert(err, ErrorMatches, ".*array CONSTRAINTS should be with a positive REPLICAS.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*array or object.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	role=voter
+	replicas=3`)
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='[,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=follower
 	replicas=2`)
+	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	role=leader`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
 	// checkPlacementSpecConstraint
@@ -290,9 +341,17 @@ add placement policy
 	replicas=0`)
 	c.Assert(err, ErrorMatches, ".*Invalid placement option REPLICAS, it is not allowed to be 0.*")
 
+	// ban tiflash
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='["+zone=sh", "+engine=tiflash"]'
+	role=follower
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*unsupported label.*")
+
+	// invalid partition
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c int)")
-
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'

@@ -16,6 +16,8 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 )
@@ -139,7 +141,7 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
-func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -154,6 +156,23 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		var tables []*model.TableInfo
+		tables, err = t.ListTables(job.SchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		oldIDs := getIDs(tables)
+		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
+		for _, ID := range append(oldIDs, dbInfo.ID) {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
+			}
+		}
+		err := infosync.PutRuleBundles(nil, bundles)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,11 +36,15 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -293,16 +298,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -449,9 +452,13 @@ const (
 	version58 = 58
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version61
 )
 
 var (
@@ -515,6 +522,8 @@ var (
 		upgradeToVer57,
 		upgradeToVer58,
 		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
 	}
 )
 
@@ -1286,6 +1295,114 @@ func upgradeToVer59(s Session, ver int64) {
 	// If it's a newly deployed cluster, we do not need to write the value into
 	// mysql.tidb, since no compatibility problem will happen.
 	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+type bindInfo struct {
+	bindSQL    string
+	status     string
+	createTime types.Time
+	charset    string
+	collation  string
+	source     string
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	bindMap := make(map[string]bindInfo)
+	h := &bindinfo.BindHandle{}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+
+		mustExecute(s, "COMMIT")
+	}()
+	mustExecute(s, h.LockBindInfoSQL())
+	var recordSets []sqlexec.RecordSet
+	recordSets, err = s.ExecuteInternal(context.Background(),
+		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
+			FROM mysql.bind_info
+			WHERE source != 'builtin'
+			ORDER BY update_time DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+	}
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	req := recordSets[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = recordSets[0].Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(iter, p, bindMap)
+	}
+
+	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
+	for original, bind := range bindMap {
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+			expression.Quote(original),
+			expression.Quote(bind.bindSQL),
+			expression.Quote(bind.status),
+			expression.Quote(bind.createTime.String()),
+			expression.Quote(now.String()),
+			expression.Quote(bind.charset),
+			expression.Quote(bind.collation),
+			expression.Quote(bind.source),
+		))
+	}
+}
+
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		bind := row.GetString(0)
+		db := row.GetString(1)
+		charset := row.GetString(4)
+		collation := row.GetString(5)
+		stmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		if _, ok := bindMap[originWithDB]; ok {
+			// The results are sorted in descending order of time.
+			// And in the following cases, duplicate originWithDB may occur
+			//      originalText         	|bindText                                   	|DB
+			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
+			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
+			// Therefore, if repeated, we can skip to keep the latest binding.
+			continue
+		}
+		bindMap[originWithDB] = bindInfo{
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
+			createTime: row.GetTime(3),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
+		}
+	}
 }
 
 func writeMemoryQuotaQuery(s Session) {

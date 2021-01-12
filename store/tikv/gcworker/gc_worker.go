@@ -64,8 +64,8 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte) []*tikv.Lock
-		resolveLocks func(regionID tikv.RegionVerID) (ok bool, err error)
+		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
+		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	}
 }
 
@@ -801,12 +801,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return nil
 }
 
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-	engineLabelTiKV    = "tikv"
-)
-
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
@@ -819,23 +813,21 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 	engineLabel := ""
 	for _, label := range store.GetLabels() {
-		if label.GetKey() == engineLabelKey {
+		if label.GetKey() == placement.EngineLabelKey {
 			engineLabel = label.GetValue()
 			break
 		}
 	}
 
 	switch engineLabel {
-	case engineLabelTiFlash:
+	case placement.EngineLabelTiFlash:
 		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
 		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
 		// skip physical resolve locks for it.
 		return false, nil
 
-	case "":
+	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
-		fallthrough
-	case engineLabelTiKV:
 		return true, nil
 
 	default:
@@ -1064,12 +1056,18 @@ retryScanAndResolve:
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key)...)
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
+		locForResolve := loc
 		for {
-			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+			var (
+				ok   bool
+				err1 error
+			)
 			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
+				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
+			} else {
+				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}
 			if err1 != nil {
 				return stat, errors.Trace(err1)
@@ -1084,7 +1082,7 @@ retryScanAndResolve:
 					return stat, errors.Trace(err)
 				}
 				if stillInSame {
-					loc = refreshedLoc
+					locForResolve = refreshedLoc
 					continue
 				}
 				continue retryScanAndResolve
@@ -1097,7 +1095,7 @@ retryScanAndResolve:
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
 				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
+				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
