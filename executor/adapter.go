@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"runtime/trace"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -620,8 +619,9 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
-func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	sessVars := a.Ctx.GetSessionVars()
+func handlePessimisticLockError(ctx context.Context, sctx sessionctx.Context, err error,
+	retryCount *uint, retryStartTime *time.Time, execBuilder func() (Executor, error)) (Executor, error) {
+	sessVars := sctx.GetSessionVars()
 	if err != nil && sessVars.IsIsolation(ast.Serializable) {
 		return nil, err
 	}
@@ -657,30 +657,30 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
 		if err != nil {
-			tsErr := UpdateForUpdateTS(a.Ctx, 0)
+			tsErr := UpdateForUpdateTS(sctx, 0)
 			if tsErr != nil {
 				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
 		return nil, err
 	}
-	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
+	if *retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
-	a.retryCount++
-	a.retryStartTime = time.Now()
-	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
+	*retryCount = *retryCount + 1
+	*retryStartTime = time.Now()
+	err = UpdateForUpdateTS(sctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
 	}
-	e, err := a.buildExecutor()
+	e, err := execBuilder()
 	if err != nil {
 		return nil, err
 	}
 	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback()
-	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
-	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
+	sctx.StmtRollback()
+	sctx.GetSessionVars().StmtCtx.ResetForRetry()
+	sctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -688,22 +688,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	return e, nil
 }
 
-func extractConflictCommitTS(errStr string) uint64 {
-	strs := strings.Split(errStr, "conflictCommitTS=")
-	if len(strs) != 2 {
-		return 0
-	}
-	tsPart := strs[1]
-	length := strings.IndexByte(tsPart, ',')
-	if length < 0 {
-		return 0
-	}
-	tsStr := tsPart[:length]
-	ts, err := strconv.ParseUint(tsStr, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return ts
+func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
+	return handlePessimisticLockError(ctx, a.Ctx, err, &a.retryCount, &a.retryStartTime, a.buildExecutor)
 }
 
 type pessimisticTxn interface {

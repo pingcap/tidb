@@ -1124,6 +1124,26 @@ func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
 	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.maxChunkSize)
 }
 
+type execCtx struct {
+	p plannercore.PhysicalPlan
+
+	builder        *executorBuilder
+	exec           Executor
+	retryCount     uint
+	retryStartTime time.Time
+	is             infoschema.InfoSchema
+	sctx           sessionctx.Context
+}
+
+func (c *execCtx) buildExecutor() (Executor, error) {
+	c.builder = &executorBuilder{is: c.is, ctx: c.sctx}
+	c.exec = c.builder.build(c.p)
+	if c.builder.err != nil {
+		return nil, c.builder.err
+	}
+	return c.exec, nil
+}
+
 func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
@@ -1140,28 +1160,34 @@ func init() {
 			defer span1.Finish()
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
-
-		e := &executorBuilder{is: is, ctx: sctx}
-		exec := e.build(p)
-		if e.err != nil {
-			return nil, e.err
-		}
-		err := exec.Open(ctx)
-		defer terror.Call(exec.Close)
+		c := &execCtx{sctx: sctx, is: is, p: p}
+		_, err := c.buildExecutor()
 		if err != nil {
 			return nil, err
 		}
-		chk := newFirstChunk(exec)
-
-		err = Next(ctx, exec, chk)
+		err = c.exec.Open(ctx)
+		defer terror.Call(c.exec.Close)
 		if err != nil {
 			return nil, err
 		}
-		if chk.NumRows() == 0 {
-			return nil, nil
+		for {
+			chk := newFirstChunk(c.exec)
+			err = Next(ctx, c.exec, chk)
+			if err != nil {
+				if sctx.GetSessionVars().TxnCtx.IsPessimistic && c.builder.hasLock {
+					_, err = handlePessimisticLockError(ctx, sctx, err, &c.retryCount, &c.retryStartTime, c.buildExecutor)
+					if err != nil {
+						return nil, err
+					}
+					continue
+				}
+				return nil, err
+			}
+			if chk.NumRows() == 0 {
+				return nil, nil
+			}
+			return chk.GetRow(0).GetDatumRow(retTypes(c.exec)), nil
 		}
-		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
-		return row, err
 	}
 }
 

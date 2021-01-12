@@ -1305,6 +1305,20 @@ func (s *testPessimisticSuite) TestBatchPointGetAlreadyLocked(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testPessimisticSuite) TestSubQueryForUpdate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values(1, 10), (2, 20)")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select v from t").Check(testkit.Rows("10", "20"))
+	tk2.MustExec("update t set v = v * 10")
+	tk.MustQuery("select (select v from t where id = 1 for update) v1, (select v from t where id = 2) from dual").Check(testkit.Rows("100 20"))
+}
+
 func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
