@@ -64,7 +64,6 @@ const (
 	cGroupMemPath      = "/sys/fs/cgroup/memory/"
 	cGroupMemLimitName = "memory.limit_in_bytes"
 	cGroupMemUsageName = "memory.usage_in_bytes"
-	selfCGroupPath     = "/proc/self/cgroup"
 )
 
 var cGroupMemLimitPath string
@@ -128,12 +127,12 @@ func setDefaultFunction() {
 	MemUsed = MemUsedNormal
 
 	// Try use cGroup to control memory usage.
-	memoryPath, err := cgroups.PidPath(os.Getpid())(cgroups.Memory)
+	subMemoryPath, err := cgroups.PidPath(os.Getpid())(cgroups.Memory)
 	if err != nil {
 		return
 	}
-	cGroupMemLimitPath = path.Join(cGroupMemPath, memoryPath, cGroupMemLimitName)
-	cGroupMemUsagePath = path.Join(cGroupMemPath, memoryPath, cGroupMemUsageName)
+	cGroupMemLimitPath = path.Join(cGroupMemPath, subMemoryPath, cGroupMemLimitName)
+	cGroupMemUsagePath = path.Join(cGroupMemPath, subMemoryPath, cGroupMemUsageName)
 	MemTotal = MemTotalCGroup
 	MemUsed = MemUsedCGroup
 }
@@ -153,19 +152,6 @@ func init() {
 	_, err = MemUsed()
 	if err != nil {
 	}
-}
-
-func inContainer() bool {
-	v, err := ioutil.ReadFile(selfCGroupPath)
-	if err != nil {
-		return false
-	}
-	if strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") {
-		return true
-	}
-	return false
 }
 
 // refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L251
