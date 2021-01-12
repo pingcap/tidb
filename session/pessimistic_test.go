@@ -2221,3 +2221,155 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk2.MustExec("admin check table t")
 	*/
 }
+
+func (s *testPessimisticSuite) TestIssue21498(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+
+	for _, partition := range []bool{false, true} {
+		//RC test
+		tk.MustExec("drop table if exists t, t1")
+		createTable := "create table t (id int primary key, v int, index iv (v))"
+		if partition {
+			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
+		}
+		tk.MustExec(createTable)
+		tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+		tk.MustExec("create table t1(id int)")
+		tk.MustExec("insert into t1 values(1)")
+
+		tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows("1 10"))
+
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
+
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 11").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 11"))
+		tk.MustExec("admin check table t")
+		tk.MustExec("commit")
+
+		tk.MustExec("drop table if exists t")
+		createTable = "create table t (id int primary key, v int, index iv (v), v2 int)"
+		if partition {
+			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
+		}
+		tk.MustExec(createTable)
+		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400)")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t use index (iv) where v = 10").Check(testkit.Rows("1 10 100"))
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
+		err := tk.ExecToErr("select * from t use index (iv) where v = 10")
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk2.MustExec("update t set id = 5 where id = 1")
+		err = tk.ExecToErr("select * from t use index (iv) where v = 10") // select with
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		if !partition {
+			// amend transaction does not support partition table
+			tk.MustExec("insert into t(id, v, v2) select 6, v + 20, v2 + 200 from t where id = 4") // insert ... select with index unchanged
+		}
+		err = tk.ExecToErr("insert into t(id, v, v2) select 7, v + 30, v2 + 300 from t use index (iv) where id = 4") // insert ... select with index changed
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustExec("admin check table t") // check consistency inside txn
+		tk.MustExec("commit")
+		if !partition {
+			tk.MustQuery("select * from t").Check(testkit.Rows("2 20 200", "3 30 300", "4 40 400", "5 11 100", "6 60 600"))
+		}
+		tk.MustExec("admin check table t") // check consistency out of txn
+
+		// RR test for non partition
+		if partition {
+			continue
+		}
+
+		tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 21 where v = 20")
+		tk2.MustExec("update t set v = 31 where v = 30")
+		tk.MustExec("update t set v = 22 where v = 21") // fast path
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 23 where v = 22")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 32 where v >= 31 and v < 40") // common path
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("2 23 200", "3 32 300", "4 40 400", "5 11 100", "6 60 600"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 24 where v = 23")
+		tk2.MustExec("update t set v = 41 where v = 40")
+		// fast path
+		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
+		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 23 for update").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		tk.MustQuery("select (select id from t where v = 23), id from t1 for update").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id from t where v = 24), id from t1 for update").Check(testkit.Rows("<nil> 1"))
+		tk.MustQuery("select (select id from t where v = 23 for update), id from t1").Check(testkit.Rows("<nil> 1"))
+		tk.MustQuery("select (select id from t where v = 24 for update), id from t1").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id + 1 from t where v = 24 for update), id from t1").Check(testkit.Rows("3 1"))
+		// sub queries
+		tk.MustQuery("select (select id from (select id from t where v = 24 for update) tmp for update), (select id from t where v = 23), id from t where v = 23").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp), id from t where v = 23").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp for update), id from t where v = 23").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23 for update) from (select id from t where v = 24 for update) tmp), id from t where v = 23").Check(testkit.Rows("<nil> 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23 for update) from (select id from t where v = 24 for update) tmp for update), id from t where v = 23").Check(testkit.Rows("<nil> 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 23) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 24 for update) from (select id from t where v = 23) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+
+		// test index look up
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id for update").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id for update").Check(testkit.Rows("2 24 200 2 24 200"))
+		tk.MustExec("delete from t where v = 24")
+		tk.CheckExecResult(1, 0)
+		// common path
+		tk.MustQuery("select * from t where v >= 41 and v < 50").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v >= 41 and v < 50 for update").Check(testkit.Rows("4 41 400"))
+		tk.MustExec("delete from t where v >= 41 and v < 50")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 32 300", "5 11 100", "6 60 600"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 33 where v = 32")
+		tk.MustExec("insert into t(id, v, v2) select 3 * id, 3 * v, 3 * v2 from t where v = 33")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("insert into t(id, v, v2) select (select 4 * id from t where v = 32) id, 4 * v, 4 * v2 from t where v = 33")
+		tk.CheckExecResult(1, 0)
+		err = tk.ExecToErr("insert into t(id, v, v2) select (select 4 * id from t where v = 33) id, 4 * v, 4 * v2 from t where v = 33")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[table:1048]Column 'id' cannot be null")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 33 300", "5 11 100", "6 60 600", "9 99 900", "12 132 1200"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk2.MustExec("drop table if exists t1")
+		tk2.MustExec("create table t1(id int primary key, v int, index iv (v), v2 int)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 34 where v = 33")
+		tk2.MustExec("update t set v = 12 where v = 11")
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 33")
+		tk.CheckExecResult(0, 0)
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 12")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
+	}
+}
