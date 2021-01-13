@@ -207,7 +207,8 @@ const (
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		lower_bound BLOB , 
+		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -456,9 +457,11 @@ const (
 	version60 = 60
 	// version61 restore all SQL bindings.
 	version61 = 61
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version61
+	currentBootstrapVersion = version62
 )
 
 var (
@@ -524,6 +527,7 @@ var (
 		upgradeToVer59,
 		upgradeToVer60,
 		upgradeToVer61,
+		upgradeToVer62,
 	}
 )
 
@@ -1305,11 +1309,20 @@ func upgradeToVer60(s Session, ver int64) {
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
+type bindInfo struct {
+	bindSQL    string
+	status     string
+	createTime types.Time
+	charset    string
+	collation  string
+	source     string
+}
+
 func upgradeToVer61(s Session, ver int64) {
 	if ver >= version61 {
 		return
 	}
-	bindMap := make(map[string]types.Time)
+	bindMap := make(map[string]bindInfo)
 	h := &bindinfo.BindHandle{}
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
@@ -1324,7 +1337,11 @@ func upgradeToVer61(s Session, ver int64) {
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
 	var recordSets []sqlexec.RecordSet
-	recordSets, err = s.ExecuteInternal(context.Background(), "SELECT original_sql, bind_sql, default_db, charset, collation, update_time from mysql.bind_info where source != 'builtin'")
+	recordSets, err = s.ExecuteInternal(context.Background(),
+		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
+			FROM mysql.bind_info
+			WHERE source != 'builtin'
+			ORDER BY update_time DESC`)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 	}
@@ -1343,42 +1360,52 @@ func upgradeToVer61(s Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		updateBindInfo(s, iter, p, now.String(), bindMap)
+		updateBindInfo(iter, p, bindMap)
+	}
+
+	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
+	for original, bind := range bindMap {
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+			expression.Quote(original),
+			expression.Quote(bind.bindSQL),
+			expression.Quote(bind.status),
+			expression.Quote(bind.createTime.String()),
+			expression.Quote(now.String()),
+			expression.Quote(bind.charset),
+			expression.Quote(bind.collation),
+			expression.Quote(bind.source),
+		))
 	}
 }
 
-func updateBindInfo(s Session, iter *chunk.Iterator4Chunk, p *parser.Parser, now string, bindMap map[string]types.Time) {
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		original := row.GetString(0)
-		bind := row.GetString(1)
-		db := row.GetString(2)
-		charset := row.GetString(3)
-		collation := row.GetString(4)
-		updateTime := row.GetTime(5)
+		bind := row.GetString(0)
+		db := row.GetString(1)
+		charset := row.GetString(4)
+		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
 		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
-		if latest, ok := bindMap[originWithDB]; ok {
-			// In the following cases, duplicate originWithDB may occur
+		if _, ok := bindMap[originWithDB]; ok {
+			// The results are sorted in descending order of time.
+			// And in the following cases, duplicate originWithDB may occur
 			//      originalText         	|bindText                                   	|DB
 			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
 			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
-			// If repeated, we will keep the latest binding.
-			if updateTime.Compare(latest) <= 0 {
-				continue
-			}
-			mustExecute(s, fmt.Sprintf(`DELETE FROM mysql.bind_info WHERE original_sql=%s`, expression.Quote(original)))
-			original = originWithDB
+			// Therefore, if repeated, we can skip to keep the latest binding.
+			continue
 		}
-		bindMap[originWithDB] = updateTime
-		bindWithDB := utilparser.RestoreWithDefaultDB(stmt, db)
-		mustExecute(s, fmt.Sprintf(`UPDATE mysql.bind_info SET original_sql=%s, bind_sql=%s, default_db='', update_time=%s where original_sql=%s`,
-			expression.Quote(originWithDB),
-			expression.Quote(bindWithDB),
-			expression.Quote(now),
-			expression.Quote(original)))
+		bindMap[originWithDB] = bindInfo{
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
+			createTime: row.GetTime(3),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
+		}
 	}
 }
 
@@ -1387,6 +1414,13 @@ func writeMemoryQuotaQuery(s Session) {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
+}
+
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

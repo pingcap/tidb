@@ -3136,7 +3136,7 @@ func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
-		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
 			if err1 != nil {
 				return err1
@@ -5721,7 +5721,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 		}
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
@@ -5751,7 +5751,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	go func() {
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err3 := admin.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
