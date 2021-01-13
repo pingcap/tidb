@@ -83,7 +83,7 @@ This section will explain why we choose some different approaches compare to MyS
 
    (1) Chinese character need 2 bytes if encoded by GBK or GB18030, need 3 bytes if encoded by UTF-8. Storing UTF-8 encoded data needs more disk space than GBK or GB18030 encoded data.
 
-   (2) To use Pinyin order, the `new_collations_enabled_on_first_bootstrap  ` must be true.
+   (2) To use Pinyin order, the configuration option `new_collations_enabled_on_first_bootstrap` must be `true`.
 
    (3) Other components, such as TiCDC, lightning, may need to deal with encode or decode too.
 
