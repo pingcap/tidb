@@ -237,6 +237,18 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("insert into t values (11, 'abc', null, null);")
 	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
 	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/22193
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
+	tk.MustExec("insert into t values('aaa', 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set col_0 = 'ccc';")
+	tk.MustExec("update t set col_0 = 'ddd';")
+	tk.MustExec("commit;")
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testClusteredSuite) TestIssue20002(c *C) {

@@ -291,7 +291,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf(")")
 	case *PhysicalExchangeSender:
 		str = fmt.Sprintf("Send(")
-		for _, task := range x.Tasks {
+		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
 		str = fmt.Sprintf(")")
