@@ -723,19 +723,19 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 		switch {
 		case isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticIntDivideIntUnsignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideIntUnsignedUnsigned)
 			return sig, nil
 		case isLHSUnsigned && !isRHSUnsigned:
 			sig := &builtinArithmeticIntDivideIntUnsignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideIntUnsignedSigned)
 			return sig, nil
 		case !isLHSUnsigned && isRHSUnsigned:
 			sig := &builtinArithmeticIntDivideIntSignedUnsignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideIntSignedUnsigned)
 			return sig, nil
 		default:
 			sig := &builtinArithmeticIntDivideIntSignedSignedSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
+			sig.setPbCode(tipb.ScalarFuncSig_IntDivideIntSignedSigned)
 			return sig, nil
 		}
 	}

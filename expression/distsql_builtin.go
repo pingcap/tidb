@@ -312,8 +312,14 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinArithmeticDivideRealSig{base}
 	case tipb.ScalarFuncSig_DivideDecimal:
 		f = &builtinArithmeticDivideDecimalSig{base}
-	case tipb.ScalarFuncSig_IntDivideInt:
+	case tipb.ScalarFuncSig_IntDivideIntUnsignedUnsigned:
 		f = &builtinArithmeticIntDivideIntSignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_IntDivideIntUnsignedSigned:
+		f = &builtinArithmeticIntDivideIntUnsignedSignedSig{base}
+	case tipb.ScalarFuncSig_IntDivideIntSignedUnsigned:
+		f = &builtinArithmeticIntDivideIntSignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_IntDivideIntSignedSigned:
+		f = &builtinArithmeticIntDivideIntSignedSignedSig{base}
 	case tipb.ScalarFuncSig_IntDivideDecimal:
 		f = &builtinArithmeticIntDivideDecimalSig{base}
 	case tipb.ScalarFuncSig_ModReal:
