@@ -718,7 +718,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
-		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes()))
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X', %d)", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[i].NDV))
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
 		sqls = append(sqls, fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID))
@@ -751,7 +751,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 }
 
 func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
+	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := reader.read(selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -781,7 +781,7 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			}
 		}
 		totalCount += count
-		hg.AppendBucket(&lowerBound, &upperBound, totalCount, repeats)
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
 	}
 	hg.PreCalculateScalar()
 	return hg, nil
