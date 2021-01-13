@@ -202,6 +202,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil && !kv.ErrNotExist.Equal(err) {
 				return err
 			}
+			e.memTracker.Consume(int64(cap(e.idxKey)))
 
 			e.handleVal, err = e.get(ctx, e.idxKey)
 			if err != nil {
@@ -209,7 +210,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-
+			e.memTracker.Consume(int64(cap(e.handleVal)))
 			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
 			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
@@ -244,7 +245,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			})
 		}
 	}
-
+	e.memTracker.Consume(e.handle.MemoryUsage())
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
@@ -257,8 +258,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	e.memTracker.Consume(int64(cap(val)))
-
 	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
