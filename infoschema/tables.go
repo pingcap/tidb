@@ -1364,7 +1364,7 @@ func (s *ServerInfo) ResolveLoopBackAddr() {
 
 // GetClusterServerInfo returns all components information of cluster
 func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
-	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockClusterInfo")); _err_ == nil {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
 		if s := val.(string); len(s) > 0 {
@@ -1384,9 +1384,9 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 					ServerID:   serverID,
 				})
 			}
-			failpoint.Return(servers, nil)
+			return servers, nil
 		}
-	})
+	}
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
@@ -1546,11 +1546,11 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers []ServerInfo
 	for _, store := range stores {
-		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockStoreTombstone")); _err_ == nil {
 			if val.(bool) {
 				store.State = metapb.StoreState_Tombstone
 			}
-		})
+		}
 
 		if store.GetState() == metapb.StoreState_Tombstone {
 			continue
@@ -1575,11 +1575,11 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 // GetTiFlashStoreCount returns the count of tiflash server.
 func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
-	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockTiFlashStoreCount")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(uint64(10), nil)
+			return uint64(10), nil
 		}
-	})
+	}
 
 	stores, err := GetStoreServerInfo(ctx)
 	if err != nil {

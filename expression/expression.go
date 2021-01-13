@@ -923,18 +923,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
 	// If neither of the above is true, switch to original logic.
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("PushDownTestSwitcher")); _err_ == nil {
 		enabled := val.(string)
 		if enabled == "all" {
-			failpoint.Return(true)
+			return true
 		}
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				failpoint.Return(true)
+				return true
 			}
 		}
-	})
+	}
 
 	ret := false
 	switch sf.FuncName.L {
@@ -1153,9 +1153,9 @@ func init() {
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
 	if pbCode <= tipb.ScalarFuncSig_Unspecified {
-		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("PanicIfPbCodeUnspecified")); _err_ == nil {
 			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
-		})
+		}
 		return false
 	}
 

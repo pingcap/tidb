@@ -180,11 +180,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error before decode args"))
+			return ver, errors.New("occur an error before decode args")
 		}
-	})
+	}
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -321,11 +321,11 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		return ver, nil
 	}
 
-	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("errorBeforeDecodeArgs")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error before decode args"))
+			return ver, errors.New("occur an error before decode args")
 		}
-	})
+	}
 
 	tblInfo, columnInfos, columns, positions, offsets, ifNotExists, err := checkAddColumns(t, job)
 	if err != nil {
@@ -809,13 +809,13 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	}
 
-	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("uninitializedOffsetAndState")); _err_ == nil {
 		if val.(bool) {
 			if jobParam.newCol.State != model.StatePublic {
-				failpoint.Return(ver, errors.New("the column state is wrong"))
+				return ver, errors.New("the column state is wrong")
 			}
 		}
-	})
+	}
 
 	if jobParam.updatedAutoRandomBits > 0 {
 		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, jobParam.newCol, jobParam.oldColName, jobParam.updatedAutoRandomBits); err != nil {
@@ -914,22 +914,22 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateChangingInfo(changingCol, changingIdxs, model.StateDeleteOnly)
-		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockInsertValueAfterCheckNull")); _err_ == nil {
 			if valStr, ok := val.(string); ok {
 				var ctx sessionctx.Context
 				ctx, err := w.sessPool.get()
 				if err != nil {
-					failpoint.Return(ver, err)
+					return ver, err
 				}
 				defer w.sessPool.put(ctx)
 
 				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
+					return ver, err
 				}
 			}
-		})
+		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -985,7 +985,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// With a failpoint-enabled version of TiDB, you can trigger this failpoint by the following command:
 		// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
 		// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
-		failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
+		failpoint.Eval(_curpkg_("mockDelayInModifyColumnTypeWithData"))
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 			defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 				func() {
@@ -1264,13 +1264,13 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		recordWarning = errors.Cause(w.reformatErrors(warn[0].Err)).(*terror.Error)
 	}
 
-	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockReorgTimeoutInOneRegion")); _err_ == nil {
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
-				failpoint.Return(errors.Trace(errWaitReorgTimeout))
+				return errors.Trace(errWaitReorgTimeout)
 			}
 		}
-	})
+	}
 
 	w.rowMap[w.newColInfo.ID] = newColVal
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
@@ -1646,11 +1646,11 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	defer w.sessPool.put(ctx)
 
 	skipCheck := false
-	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("skipMockContextDoExec")); _err_ == nil {
 		if val.(bool) {
 			skipCheck = true
 		}
-	})
+	}
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, isModifiedType, dbInfo.Name, tblInfo.Name, newColName, cols...)

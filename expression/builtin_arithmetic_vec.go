@@ -489,8 +489,8 @@ func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chu
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		if uint64(lh-math.MinInt64) < uint64(rh) {
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
 		resulti64s[i] = lh - rh

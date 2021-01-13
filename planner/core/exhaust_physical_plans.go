@@ -766,11 +766,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
+			return p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)
 		}
-	})
+	}
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -801,11 +801,11 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	}
 	innerTask := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
+			return p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)
 		}
-	})
+	}
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -1635,12 +1635,12 @@ func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) {
 			indexJoins, _ := p.tryToGetIndexJoin(prop)
-			failpoint.Return(indexJoins, true)
+			return indexJoins, true
 		}
-	})
+	}
 
 	if prop.IsFlashProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
 		return nil, false
