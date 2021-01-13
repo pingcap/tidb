@@ -207,7 +207,8 @@ const (
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		lower_bound BLOB , 
+		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -456,9 +457,11 @@ const (
 	version60 = 60
 	// version61 restore all SQL bindings.
 	version61 = 61
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version61
+	currentBootstrapVersion = version62
 )
 
 var (
@@ -524,6 +527,7 @@ var (
 		upgradeToVer59,
 		upgradeToVer60,
 		upgradeToVer61,
+		upgradeToVer62,
 	}
 )
 
@@ -1410,6 +1414,13 @@ func writeMemoryQuotaQuery(s Session) {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
+}
+
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
