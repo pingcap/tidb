@@ -85,3 +85,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/morgo/parser v0.0.0-20210113194243-aa72bd5cf999

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -195,6 +196,11 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		stmts:     make(map[int]*TiDBStatement),
 	}
 	return tc, nil
+}
+
+// GetWarnings implements QueryCtx GetWarnings method.
+func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
+	return tc.GetSessionVars().StmtCtx.GetWarnings()
 }
 
 // CurrentDB implements QueryCtx CurrentDB method.

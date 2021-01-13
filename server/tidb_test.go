@@ -938,6 +938,10 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
 
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
+}
+
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	ts.runTestSumAvg(c)

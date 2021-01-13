@@ -155,6 +155,12 @@ const (
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
 	// TablePlacementPolicy is the string constant of placement policy table.
 	TablePlacementPolicy = "PLACEMENT_POLICY"
+	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
+	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
+	// TableClientErrorsSummaryByUser is the string constant of client errors table.
+	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
+	// TableClientErrorsSummaryByHost is the string constant of client errors table.
+	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 )
 
 var tableIDMap = map[string]int64{
@@ -224,6 +230,9 @@ var tableIDMap = map[string]int64{
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
 	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
+	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
 }
 
 type columnInfo struct {
@@ -1289,6 +1298,35 @@ var tablePlacementPolicyCols = []columnInfo{
 	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
 }
 
+var tableClientErrorsSummaryGlobalCols = []columnInfo{
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByUserCols = []columnInfo{
+	{name: "USER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
+var tableClientErrorsSummaryByHostCols = []columnInfo{
+	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1655,6 +1693,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 	TablePlacementPolicy:                    tablePlacementPolicyCols,
+	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
+	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
+	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

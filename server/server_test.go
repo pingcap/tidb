@@ -1737,3 +1737,64 @@ func (cli *testServerClient) waitUntilServerOnline() {
 		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
 }
+
+// Client errors are only incremented when using the TiDB Server protocol,
+// and not internal SQL statements. Thus, this test is in the server-test suite.
+func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
+	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *DBTest) {
+
+		clientErrors := []struct {
+			stmt              string
+			incrementWarnings bool
+			incrementErrors   bool
+			errCode           int
+		}{
+			{
+				stmt:              "SELECT 0/0",
+				incrementWarnings: true,
+				errCode:           1365, // div by zero
+			},
+			{
+				stmt:            "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
+				incrementErrors: true,
+				errCode:         1068, // multiple pkeys
+			},
+			{
+				stmt:            "gibberish",
+				incrementErrors: true,
+				errCode:         1064, // parse error
+			},
+		}
+
+		sources := []string{"client_errors_summary_global", "client_errors_summary_by_user", "client_errors_summary_by_host"}
+
+		for _, test := range clientErrors {
+			for _, tbl := range sources {
+
+				var errors, warnings int
+				rows := dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				if rows.Next() {
+					rows.Scan(&errors, &warnings)
+				}
+
+				if test.incrementErrors {
+					errors++
+				}
+				if test.incrementWarnings {
+					warnings++
+				}
+
+				dbt.db.Query(test.stmt) // ignore results and errors (query table)
+				var newErrors, newWarnings int
+				rows = dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				if rows.Next() {
+					rows.Scan(&newErrors, &newWarnings)
+				}
+
+				dbt.Check(newErrors, Equals, errors)
+				dbt.Check(newWarnings, Equals, warnings)
+			}
+		}
+
+	})
+}
