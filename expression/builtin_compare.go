@@ -407,6 +407,7 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
+			// Find the temporal value in the arguments but prefer DateTime value.
 			if types.IsTemporal(item.Tp) {
 				if temporalItem == nil || temporalItem.Tp == mysql.TypeDatetime {
 					temporalItem = item
