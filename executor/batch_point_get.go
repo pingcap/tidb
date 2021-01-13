@@ -267,14 +267,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// 2. Session B create an UPDATE query to update the record that will be obtained in step 1
 		// 3. Then point get retrieve data from backend after step 2 finished
 		// 4. Check the result
-		if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("batchPointGetRepeatableReadTest-step1")); _err_ == nil {
+		failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step1", func() {
 			if ch, ok := ctx.Value("batchPointGetRepeatableReadTest").(chan struct{}); ok {
 				// Make `UPDATE` continue
 				close(ch)
 			}
 			// Wait `UPDATE` finished
-			failpoint.EvalContext(ctx, _curpkg_("batchPointGetRepeatableReadTest-step2"))
-		}
+			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
+		})
 	} else if e.keepOrder {
 		less := func(i int, j int) bool {
 			if e.desc {

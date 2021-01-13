@@ -270,7 +270,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			e.buildFinished <- errors.Trace(err)
 			return
 		}
-		failpoint.Eval(_curpkg_("errorFetchBuildSideRowsMockOOMPanic"))
+		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -580,11 +580,11 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 
 	for i := range selected {
 		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2Chunk")); _err_ == nil {
+		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
 			if val.(bool) {
 				killed = true
 			}
-		}
+		})
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -621,11 +621,11 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
 		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2ChunkForOuterHashJoin")); _err_ == nil {
+		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 			if val.(bool) {
 				killed = true
 			}
-		}
+		})
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -747,12 +747,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
-		if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerSpill")); _err_ == nil {
+		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
 				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
-		}
+		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {

@@ -1524,9 +1524,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			e.stopFetchData.Store(true)
 			e.resultPool <- result
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
+		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, 1)
-		}
+		})
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1541,20 +1541,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
-			if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
+			failpoint.Inject("issue21441", func() {
 				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
 					panic("the count of child in flight is larger than e.concurrency unexpectedly")
 				}
-			}
+			})
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
+		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, -1)
-		}
+		})
 	}
 }
 

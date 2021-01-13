@@ -330,12 +330,12 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 
 		res, err = util2.InternalHTTPClient().Do(req)
-		if val, _err_ := failpoint.Eval(_curpkg_("FailPlacement")); _err_ == nil {
+		failpoint.Inject("FailPlacement", func(val failpoint.Value) {
 			if val.(bool) {
 				res = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
 				err = nil
 			}
-		}
+		})
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -795,14 +795,14 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockServerInfo")); _err_ == nil {
+	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700000
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
 		}
-	}
+	})
 
 	return info
 }

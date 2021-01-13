@@ -66,17 +66,17 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		minCommitTS = c.startTS + 1
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockZeroCommitTS")); _err_ == nil {
+	failpoint.Inject("mockZeroCommitTS", func(val failpoint.Value) {
 		// Should be val.(uint64) but failpoint doesn't support that.
 		if tmp, ok := val.(int); ok && uint64(tmp) == c.startTS {
 			minCommitTS = 0
 		}
-	}
+	})
 
 	ttl := c.lockTTL
 
 	if c.connID > 0 {
-		if _, _err_ := failpoint.Eval(_curpkg_("twoPCShortLockTTL")); _err_ == nil {
+		failpoint.Inject("twoPCShortLockTTL", func() {
 			ttl = 1
 			keys := make([]string, 0, len(mutations))
 			for _, m := range mutations {
@@ -84,7 +84,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			}
 			logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on prewrite",
 				zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
-		}
+		})
 	}
 
 	req := &pb.PrewriteRequest{
@@ -99,11 +99,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("invalidMaxCommitTS")); _err_ == nil {
+	failpoint.Inject("invalidMaxCommitTS", func() {
 		if req.MaxCommitTs > 0 {
 			req.MaxCommitTs = minCommitTS - 1
 		}
-	}
+	})
 
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
@@ -127,13 +127,13 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// checked there.
 
 	if c.connID > 0 {
-		if _, _err_ := failpoint.Eval(_curpkg_("prewritePrimaryFail")); _err_ == nil {
+		failpoint.Inject("prewritePrimaryFail", func() {
 			if batch.isPrimary {
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
-				return errors.New("injected error on prewriting primary batch")
+				failpoint.Return(errors.New("injected error on prewriting primary batch"))
 			}
-		}
+		})
 	}
 
 	txnSize := uint64(c.regionTxnSize[batch.region.id])

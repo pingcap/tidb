@@ -259,21 +259,21 @@ func (s *RegionRequestSender) SendReqCtx(
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("tikvStoreSendReqResult")); _err_ == nil {
+	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
 		case "timeout":
-			return nil, nil, errors.New("timeout")
+			failpoint.Return(nil, nil, errors.New("timeout"))
 		case "GCNotLeader":
 			if req.Type == tikvrpc.CmdGC {
-				return &tikvrpc.Response{
+				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil, nil
+				}, nil, nil)
 			}
 		case "GCServerIsBusy":
 			if req.Type == tikvrpc.CmdGC {
-				return &tikvrpc.Response{
+				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-				}, nil, nil
+				}, nil, nil)
 			}
 		case "callBackofferHook":
 			if bo.vars != nil && bo.vars.Hook != nil {
@@ -281,10 +281,10 @@ func (s *RegionRequestSender) SendReqCtx(
 			}
 		case "requestTiDBStoreError":
 			if sType == kv.TiDB {
-				return nil, nil, ErrTiKVServerTimeout
+				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
 		}
-	}
+	})
 
 	tryTimes := 0
 	for {
@@ -297,13 +297,13 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, err
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("invalidCacheAndRetry")); _err_ == nil {
+		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
 			if c := bo.ctx.Value("injectedBackoff"); c != nil {
 				resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
-				return resp, nil, err
+				failpoint.Return(resp, nil, err)
 			}
-		}
+		})
 		if rpcCtx == nil {
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We can skip the
@@ -327,11 +327,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
 			return nil, nil, ErrQueryInterrupted
 		}
-		if val, _err_ := failpoint.Eval(_curpkg_("mockRetrySendReqToRegion")); _err_ == nil {
+		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
 			if val.(bool) {
 				retry = true
 			}
-		}
+		})
 		if retry {
 			tryTimes++
 			continue
@@ -429,12 +429,12 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 
 	injectFailOnSend := false
 	if connID > 0 {
-		if _, _err_ := failpoint.Eval(_curpkg_("rpcFailOnSend")); _err_ == nil {
+		failpoint.Inject("rpcFailOnSend", func() {
 			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
 				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
 			injectFailOnSend = true
 			err = errors.New("injected RPC error on send")
-		}
+		})
 	}
 
 	if !injectFailOnSend {
@@ -442,27 +442,27 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 		if s.Stats != nil {
 			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-			if val, _err_ := failpoint.Eval(_curpkg_("tikvStoreRespResult")); _err_ == nil {
+			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
 				if val.(bool) {
 					if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
-						return &tikvrpc.Response{
+						failpoint.Return(&tikvrpc.Response{
 							Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
-						}, false, nil
+						}, false, nil)
 					}
 				}
-			}
+			})
 		}
 
 		if connID > 0 {
-			if _, _err_ := failpoint.Eval(_curpkg_("rpcFailOnRecv")); _err_ == nil {
+			failpoint.Inject("rpcFailOnRecv", func() {
 				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
 					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
 				err = errors.New("injected RPC error on recv")
 				resp = nil
-			}
+			})
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("rpcContextCancelErr")); _err_ == nil {
+		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
 			if val.(bool) {
 				ctx1, cancel := context.WithCancel(context.Background())
 				cancel()
@@ -474,7 +474,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 				err = ctx.Err()
 				resp = nil
 			}
-		}
+		})
 	}
 
 	if err != nil {
@@ -487,11 +487,11 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("noRetryOnRpcError")); _err_ == nil {
+		failpoint.Inject("noRetryOnRpcError", func(val failpoint.Value) {
 			if val.(bool) {
-				return nil, false, err
+				failpoint.Return(nil, false, err)
 			}
-		}
+		})
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

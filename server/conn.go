@@ -346,11 +346,11 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.writePacket(data)
 }
 
@@ -1082,11 +1082,11 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 
 func (cc *clientConn) flush(ctx context.Context) error {
 	defer trace.StartRegion(ctx, "FlushClientConn").End()
-	if _, _err_ := failpoint.Eval(_curpkg_("FakeClientConn")); _err_ == nil {
+	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 	return cc.pkt.flush()
 }
 

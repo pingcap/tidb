@@ -55,12 +55,12 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.retrieved = true
 
-	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockMetricsTableData")); _err_ == nil {
+	failpoint.InjectContext(ctx, "mockMetricsTableData", func() {
 		m, ok := ctx.Value("__mockMetricsTableData").(map[string][][]types.Datum)
 		if ok && m[e.table.Name.L] != nil {
-			return m[e.table.Name.L], nil
+			failpoint.Return(m[e.table.Name.L], nil)
 		}
-	}
+	})
 
 	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {
@@ -89,9 +89,9 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 }
 
 func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
-	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockMetricsPromData")); _err_ == nil {
-		return ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil
-	}
+	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
+		failpoint.Return(ctx.Value("__mockMetricsPromData").(pmodel.Matrix), nil)
+	})
 
 	// Add retry to avoid network error.
 	var prometheusAddr string

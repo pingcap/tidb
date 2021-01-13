@@ -220,26 +220,26 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError8942")); _err_ == nil {
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
 		if val.(bool) {
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
 	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoIncID")); _err_ == nil {
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
 		if val.(bool) && !mockAutoIncIDRetry() {
 			enableMockAutoIncIDRetry()
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitRetryForAutoRandID")); _err_ == nil {
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
 		if val.(bool) && needMockAutoRandIDRetry() {
 			decreaseMockAutoRandIDRetryCount()
-			return kv.ErrTxnRetryable
+			failpoint.Return(kv.ErrTxnRetryable)
 		}
-	}
+	})
 
 	return st.Transaction.Commit(ctx)
 }
@@ -364,9 +364,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
-	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockGetTSFail")); _err_ == nil {
+	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
 		ret.future = txnFailFuture{}
-	}
+	})
 	return ret
 }
 

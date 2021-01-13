@@ -701,7 +701,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
-	if val, _err_ := failpoint.Eval(_curpkg_("skipKeyReturnOK")); _err_ == nil {
+	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
 		valStr, ok := val.(string)
 		if ok && c.connID > 0 {
 			if firstIsPrimary && actionIsPessimiticLock {
@@ -709,21 +709,21 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 				switch valStr {
 				case "pessimisticLockSkipPrimary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-					return err
+					failpoint.Return(err)
 				case "pessimisticLockSkipSecondary":
 					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-					return err
+					failpoint.Return(err)
 				}
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("pessimisticRollbackDoNth")); _err_ == nil {
+	})
+	failpoint.Inject("pessimisticRollbackDoNth", func() {
 		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
 		if actionIsPessimisticRollback && c.connID > 0 {
 			logutil.Logger(bo.ctx).Warn("pessimisticRollbackDoNth failpoint")
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 
 	if firstIsPrimary &&
 		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
@@ -743,7 +743,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 		go func() {
 			if c.connID > 0 {
-				if v, _err_ := failpoint.Eval(_curpkg_("beforeCommitSecondaries")); _err_ == nil {
+				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 					if s, ok := v.(string); !ok {
 						logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
 							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
@@ -751,9 +751,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					} else if s == "skip" {
 						logutil.Logger(bo.ctx).Info("[failpoint] injected skip committing secondaries",
 							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
-						return
+						failpoint.Return()
 					}
-				}
+				})
 			}
 
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
@@ -1024,12 +1024,12 @@ func (c *twoPhaseCommitter) checkOnePCFallBack(action twoPhaseCommitAction, batc
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
-		if _, _err_ := failpoint.Eval(_curpkg_("commitFailedSkipCleanup")); _err_ == nil {
+		failpoint.Inject("commitFailedSkipCleanup", func() {
 			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
 				zap.Uint64("txnStartTS", c.startTS))
 			c.cleanWg.Done()
-			return
-		}
+			failpoint.Return()
+		})
 
 		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
@@ -1121,7 +1121,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 
-	failpoint.Eval(_curpkg_("beforePrewrite"))
+	failpoint.Inject("beforePrewrite", nil)
 
 	c.prewriteStarted = true
 	binlogChan := c.prewriteBinlog(ctx)
@@ -1214,10 +1214,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		if _, _err_ := failpoint.Eval(_curpkg_("beforeSchemaCheck")); _err_ == nil {
+		failpoint.Inject("beforeSchemaCheck", func() {
 			c.ttlManager.close()
-			return
-		}
+			failpoint.Return()
+		})
 	}
 
 	if !c.isAsyncCommit() {
@@ -1261,7 +1261,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		if val, _err_ := failpoint.Eval(_curpkg_("beforeCommit")); _err_ == nil {
+		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
 			// `return("delay,fail")`. Then they will be executed sequentially at once.
 			if v, ok := val.(string); ok {
@@ -1269,7 +1269,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					// Async commit transactions cannot return error here, since it's already successful.
 					if action == "fail" && !c.isAsyncCommit() {
 						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
-						return errors.New("injected failure before commit")
+						failpoint.Return(errors.New("injected failure before commit"))
 					} else if action == "delay" {
 						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
 						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
@@ -1278,7 +1278,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					}
 				}
 			}
-		}
+		})
 	}
 
 	if c.isAsyncCommit() {
@@ -1289,9 +1289,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("connID", c.connID))
 		go func() {
 			defer c.ttlManager.close()
-			if _, _err_ := failpoint.Eval(_curpkg_("asyncCommitDoNothing")); _err_ == nil {
-				return
-			}
+			failpoint.Inject("asyncCommitDoNothing", func() {
+				failpoint.Return()
+			})
 			commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
@@ -1590,12 +1590,12 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 
 	wg := sync.WaitGroup{}
 	mock := false
-	if val, _err_ := failpoint.Eval(_curpkg_("mockSyncBinlogCommit")); _err_ == nil {
+	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
 		if val.(bool) {
 			wg.Add(1)
 			mock = true
 		}
-	}
+	})
 	go func() {
 		logutil.Eventf(ctx, "start write finish binlog")
 		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)
@@ -1643,9 +1643,9 @@ func newBatched(primaryKey []byte) *batched {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
-	if _, _err_ := failpoint.Eval(_curpkg_("twoPCRequestBatchSizeLimit")); _err_ == nil {
+	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
 		limit = 1
-	}
+	})
 
 	var start, end int
 	for start = 0; start < mutations.Len(); start = end {
