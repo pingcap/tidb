@@ -50,7 +50,7 @@ The general idea is that we handle character set conversion in connection level,
 
 3. When writing result to client, convert the result to `character_set_result` if it's not UTF-8.
 4. If a column's character set is GBK or GB18030, to be able to write to MySQL, we need to check if the inserted value can be represented as GBK or GB18030. There should be a switch to control whether to check it.
-5. Always store UTF-8 encoded data regress of the column's chara set. This is not the way MySQL does, the pro and con will be explained in `rationale` section.
+5. Always store UTF-8 encoded data regardless of the column's character set. This is not the way MySQL does, the pro and con will be explained in the `rationale` section.
 6. Support corresponding collation `gbk_bin` and `gb18030_bin`. Their "sort keys" are the GBK or GB18030 encoded value, and don't need restored data since the original data can be restored from the "sort keys".
 
 
