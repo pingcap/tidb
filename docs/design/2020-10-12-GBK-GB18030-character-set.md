@@ -61,7 +61,7 @@ This section will explain why we choose some different approaches compare to MyS
 
 1. MySQL converts statements sent by the client from `character_set_client` to `character_set_connection`. Unlike MySQL, TiDB converts statements sent by the client from `character_set_client` to UTF-8.
 
-   TiDB‘s program language is Golang and TiKV's program language is Rust. In Rust, the `str` must be UTF-8 encoded. In Golang, the `string` allows invalid UTF-8 char, but to use the string package correctly, the string must be UTF-8 encoded.
+   TiDB's program language is Golang and TiKV's program language is Rust. In Rust, the `str` must be UTF-8 encoded. In Golang, the `string` allows invalid UTF-8 char, but to use the string package correctly, the string must be UTF-8 encoded.
 
    **Pro**:
 
