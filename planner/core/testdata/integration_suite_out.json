@@ -50,14 +50,15 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-          "HashJoin_7 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─Selection_15(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
-          "│ └─TableReader_14 7992.00 root  data:Selection_13",
-          "│   └─Selection_13 7992.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
-          "  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_7 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin_9 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "  ├─Selection_13(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
+          "  │ └─TableReader_12 7992.00 root  data:Selection_11",
+          "  │   └─Selection_11 7992.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │     └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
+          "    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1323,6 +1324,51 @@
           "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#12",
           "    └─Selection_19 10.00 cop[tikv]  or(and(eq(test.t1.key4, 42), not(isnull(test.t1.key6))), and(eq(test.t1.key1, 4), eq(test.t1.key3, 6)))",
           "      └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestReorderSimplifiedOuterJoins",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
+        "Plan": [
+          "IndexJoin_18 13.81 root  inner join, inner:IndexLookUp_17, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
+          "├─IndexJoin_67(Build) 12.50 root  inner join, inner:IndexLookUp_66, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
+          "│ ├─IndexLookUp_108(Build) 10.00 root  ",
+          "│ │ ├─IndexRangeScan_106(Build) 10.00 cop[tikv] table:t3, index:keycol(keycol, pad1, pad2) range:[\"c\",\"c\"], keep order:false, stats:pseudo",
+          "│ │ └─TableRowIDScan_107(Probe) 10.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexLookUp_66(Probe) 1.25 root  ",
+          "│   ├─Selection_64(Build) 1.81 cop[tikv]  not(isnull(test.t1.col3))",
+          "│   │ └─IndexRangeScan_62 1.81 cop[tikv] table:t1, index:col2(col2, col3) range: decided by [eq(test.t1.col3, test.t3.pk) eq(test.t1.col2, a)], keep order:false, stats:pseudo",
+          "│   └─Selection_65(Probe) 1.25 cop[tikv]  ne(test.t1.col1, \"aaaaaa\"), ne(test.t1.col1, \"abcdef\"), not(isnull(test.t1.col1))",
+          "│     └─TableRowIDScan_63 1.81 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp_17(Probe) 1.00 root  ",
+          "  ├─Selection_15(Build) 1.00 cop[tikv]  ne(test.t2.pk, \"aaaaaa\"), ne(test.t2.pk, \"abcdef\")",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t2, index:PRIMARY(pk) range: decided by [eq(test.t2.pk, test.t1.col1)], keep order:false, stats:pseudo",
+          "  └─Selection_16(Probe) 1.00 cop[tikv]  in(test.t2.col1, \"a\", \"b\")",
+          "    └─TableRowIDScan_14 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
+        "Plan": [
+          "IndexJoin_18 13.81 root  inner join, inner:IndexLookUp_17, outer key:test.t1.col1, inner key:test.t2.pk, equal cond:eq(test.t1.col1, test.t2.pk)",
+          "├─IndexJoin_67(Build) 12.50 root  inner join, inner:IndexLookUp_66, outer key:test.t3.pk, inner key:test.t1.col3, equal cond:eq(test.t3.pk, test.t1.col3)",
+          "│ ├─IndexLookUp_108(Build) 10.00 root  ",
+          "│ │ ├─IndexRangeScan_106(Build) 10.00 cop[tikv] table:t3, index:keycol(keycol, pad1, pad2) range:[\"c\",\"c\"], keep order:false, stats:pseudo",
+          "│ │ └─TableRowIDScan_107(Probe) 10.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexLookUp_66(Probe) 1.25 root  ",
+          "│   ├─Selection_64(Build) 1.81 cop[tikv]  not(isnull(test.t1.col3))",
+          "│   │ └─IndexRangeScan_62 1.81 cop[tikv] table:t1, index:col2(col2, col3) range: decided by [eq(test.t1.col3, test.t3.pk) eq(test.t1.col2, a)], keep order:false, stats:pseudo",
+          "│   └─Selection_65(Probe) 1.25 cop[tikv]  ne(test.t1.col1, \"aaaaaa\"), ne(test.t1.col1, \"abcdef\"), not(isnull(test.t1.col1))",
+          "│     └─TableRowIDScan_63 1.81 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp_17(Probe) 1.00 root  ",
+          "  ├─Selection_15(Build) 1.00 cop[tikv]  ne(test.t2.pk, \"aaaaaa\"), ne(test.t2.pk, \"abcdef\")",
+          "  │ └─IndexRangeScan_13 1.00 cop[tikv] table:t2, index:PRIMARY(pk) range: decided by [eq(test.t2.pk, test.t1.col1)], keep order:false, stats:pseudo",
+          "  └─Selection_16(Probe) 1.00 cop[tikv]  in(test.t2.col1, \"a\", \"b\")",
+          "    └─TableRowIDScan_14 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
