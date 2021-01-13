@@ -317,6 +317,17 @@ func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
+// TiDBOptMultiStmt converts multi-stmt options to int.
+func TiDBOptMultiStmt(opt string) int {
+	switch opt {
+	case BoolOff:
+		return OffInt
+	case BoolOn:
+		return OnInt
+	}
+	return WarnInt
+}
+
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {

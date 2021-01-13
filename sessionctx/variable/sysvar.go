@@ -71,6 +71,14 @@ const (
 	BoolOn = "ON"
 	// Nightly indicate the nightly version.
 	Nightly = "NIGHTLY"
+	// Warn means return warnings
+	Warn = "WARN"
+	// OffInt is used by allow_multi_statement
+	OffInt = 0
+	// OnInt is used byallow_multi_statement
+	OnInt = 1
+	// WarnInt is used by allow_multi_statement
+	WarnInt = 2
 )
 
 // SysVar is for system variable.
@@ -741,7 +749,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMultiStatement, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMultiStatement, Value: Warn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, Warn}},
 
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
