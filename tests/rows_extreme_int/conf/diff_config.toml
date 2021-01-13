@@ -8,8 +8,6 @@ check-thread-count = 4
 
 sample-percent = 100
 
-use-rowid = false
-
 use-checksum = true
 
 fix-sql-file = "fix.sql"
