@@ -345,8 +345,8 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		}
 
 		forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-		isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[0].GetType().Flag)
-		isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[1].GetType().Flag)
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
 
 		switch {
 		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
