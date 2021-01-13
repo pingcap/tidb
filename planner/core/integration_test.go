@@ -186,6 +186,14 @@ func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	s.runTestsWithTestData("TestIsFromUnixtimeNullRejective", tk, c)
 }
 
+func (s *testIntegrationSuite) TestIssue22298(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int, b int);`)
+	tk.MustGetErrMsg(`select * from t where 0 and c = 10;`, "[planner:1054]Unknown column 'c' in 'where clause'")
+}
+
 func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit.TestKit, c *C) {
 	var input []string
 	var output []struct {

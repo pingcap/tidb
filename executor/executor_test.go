@@ -7494,13 +7494,23 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		IsStaleness      bool
 		expectPhysicalTS int64
 		preSec           int64
+		txnScope         string
 	}{
+		{
+			name:             "TimestampBoundExactStaleness",
+			preSQL:           `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
+			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
+			IsStaleness:      true,
+			expectPhysicalTS: 1599321600000,
+			txnScope:         "sh",
+		},
 		{
 			name:             "TimestampBoundReadTimestamp",
 			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
 			expectPhysicalTS: 1599321600000,
+			txnScope:         "bj",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7508,6 +7518,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
+			txnScope:    "sh",
 		},
 		{
 			name:        "TimestampBoundExactStaleness",
@@ -7515,18 +7526,21 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 			sql:         `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`,
 			IsStaleness: true,
 			preSec:      20,
+			txnScope:    "sz",
 		},
 		{
 			name:        "begin",
 			preSQL:      `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`,
 			sql:         "begin",
 			IsStaleness: false,
+			txnScope:    oracle.GlobalTxnScope,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
 		if testcase.expectPhysicalTS > 0 {
