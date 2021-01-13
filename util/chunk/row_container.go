@@ -501,7 +501,9 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
+	currMem := a.c.GetMemTracker().BytesConsumed()
+	totalMemLimit := t.GetBytesLimit()
+	if a.getStatus() == notSpilled && currMem > totalMemLimit/10 {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -525,7 +527,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	}
 	a.cond.L.Unlock()
 
-	if !t.CheckExceed() {
+	if !t.CheckExceed() || (currMem > 0 && currMem <= totalMemLimit/10) {
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
