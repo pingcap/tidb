@@ -1548,8 +1548,8 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
 	tp := kv.TiKV
 	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
+		if label.Key == placement.EngineLabelKey {
+			if label.Value == placement.EngineLabelTiFlash {
 				tp = kv.TiFlash
 			}
 			break

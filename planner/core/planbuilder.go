@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -469,6 +470,10 @@ type PlanBuilder struct {
 	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
 	cachedResultSetNodes  map[*ast.Join]LogicalPlan
 	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 type handleColHelper struct {
@@ -582,6 +587,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
 		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]HandleCols),
+		isForUpdateRead:       sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}, savedBlockNames
 }
 
@@ -751,23 +757,52 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedNode != nil {
-		p.BindSQL = v.HintedNode.Text()
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
+func checkHintedSQL(sql, charset, collation, db string) error {
+	p := parser.New()
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedNode.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
-		BindSQL:      v.HintedNode.Text(),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedNode,
 		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
@@ -784,6 +819,9 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 		return true
 	}
 	for _, f := range sel.Fields.Fields {
+		if f.WildCard != nil {
+			continue
+		}
 		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
@@ -860,7 +898,39 @@ func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInf
 	}
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+// isForUpdateReadSelectLock checks if the lock type need to use forUpdateRead
+func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
+	if lock == nil {
+		return false
+	}
+	return lock.LockType == ast.SelectLockForUpdate ||
+		lock.LockType == ast.SelectLockForUpdateNoWait ||
+		lock.LockType == ast.SelectLockForUpdateWaitN
+}
+
+// getLatestIndexInfo gets the index info of latest schema version from given table id,
+// it returns nil if the schema version is not changed
+func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
+	dom := domain.GetDomain(ctx)
+	if dom == nil {
+		return nil, false, errors.New("domain not found for ctx")
+	}
+	is := dom.InfoSchema()
+	if is.SchemaMetaVersion() == startVer {
+		return nil, false, nil
+	}
+	latestIndexes := make(map[int64]*model.IndexInfo)
+	latestTbl, exist := is.TableByID(id)
+	if exist {
+		latestTblInfo := latestTbl.Meta()
+		for _, index := range latestTblInfo.Indices {
+			latestIndexes[index.ID] = index
+		}
+	}
+	return latestIndexes, true, nil
+}
+
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, startVer int64) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -875,6 +945,11 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
+
+	check = check && ctx.GetSessionVars().ConnectionID > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
@@ -883,6 +958,17 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 			}
 			if tblInfo.IsCommonHandle && index.Primary {
 				continue
+			}
+			if check && latestIndexes == nil {
+				latestIndexes, check, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if check {
+				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
 			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
@@ -1354,12 +1440,39 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
+
+	check := b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
-			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
-				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
+			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
+				zap.String("index", idxInfo.Name.O),
+				zap.Stringer("state", idxInfo.State),
+				zap.String("table", tblInfo.Name.O))
 			continue
+		}
+		if check && latestIndexes == nil {
+			latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if check {
+			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+				forUpdateState := model.StateNone
+				if ok {
+					forUpdateState = latestIndex.State
+				}
+				logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public in forUpdateRead",
+					zap.String("index", idxInfo.Name.O),
+					zap.Stringer("state", idxInfo.State),
+					zap.Stringer("forUpdateRead state", forUpdateState),
+					zap.String("table", tblInfo.Name.O))
+				continue
+			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
 		// For partition tables.
@@ -2639,10 +2752,84 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	return nil
 }
 
+type colNameInOnDupExtractor struct {
+	colNameMap map[types.FieldName]*ast.ColumnNameExpr
+}
+
+func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
+	switch x := node.(type) {
+	case *ast.ColumnNameExpr:
+		fieldName := types.FieldName{
+			DBName:  x.Name.Schema,
+			TblName: x.Name.Table,
+			ColName: x.Name.Name,
+		}
+		c.colNameMap[fieldName] = x
+		return node, true
+	// We don't extract the column names from the sub select.
+	case *ast.SelectStmt, *ast.SetOprStmt:
+		return node, true
+	default:
+		return node, false
+	}
+}
+
+func (c *colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
+	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
+	}
+	actualColLen := -1
+	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
+	// but just in the table occurs in the SELECT CLAUSE.
+	//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; the `y` is not a column of select's output.
+	//        MySQL won't throw error and will execute this SQL successfully.
+	// To make compatible with this strange feature, we add the variable `actualColLen` and the following IF branch.
+	if len(insert.OnDuplicate) > 0 {
+		// If the select has aggregation, it cannot see the columns not in the select field.
+		//   e.g. insert into a select x from b ON DUPLICATE KEY UPDATE  a.x=b.y; can be executed successfully.
+		//        insert into a select x from b group by x ON DUPLICATE KEY UPDATE  a.x=b.y; will report b.y not found.
+		if sel, ok := insert.Select.(*ast.SelectStmt); ok && !b.detectSelectAgg(sel) {
+			hasWildCard := false
+			for _, field := range sel.Fields.Fields {
+				if field.WildCard != nil {
+					hasWildCard = true
+					break
+				}
+			}
+			if !hasWildCard {
+				colExtractor := &colNameInOnDupExtractor{colNameMap: make(map[types.FieldName]*ast.ColumnNameExpr)}
+				for _, assign := range insert.OnDuplicate {
+					assign.Expr.Accept(colExtractor)
+				}
+				actualColLen = len(sel.Fields.Fields)
+				for _, colName := range colExtractor.colNameMap {
+					// If we found the name from the INSERT's table columns, we don't try to find it in select field anymore.
+					if insertPlan.tableColNames.FindAstColName(colName.Name) {
+						continue
+					}
+					found := false
+					for _, field := range sel.Fields.Fields {
+						if colField, ok := field.Expr.(*ast.ColumnNameExpr); ok &&
+							(colName.Name.Schema.L == "" || colField.Name.Schema.L == "" || colName.Name.Schema.L == colField.Name.Schema.L) &&
+							(colName.Name.Table.L == "" || colField.Name.Table.L == "" || colName.Name.Table.L == colField.Name.Table.L) &&
+							colName.Name.Name.L == colField.Name.Name.L {
+							found = true
+							break
+						}
+					}
+					if found {
+						continue
+					}
+					sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{Expr: colName, Offset: len(sel.Fields.Fields)})
+				}
+			}
+		}
 	}
 	selectPlan, err := b.Build(ctx, insert.Select)
 	if err != nil {
@@ -2650,7 +2837,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
-	if selectPlan.Schema().Len() != len(affectedValuesCols) {
+	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
 		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
@@ -2673,12 +2860,17 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		return err
 	}
 
+	if actualColLen == -1 {
+		actualColLen = selectPlan.Schema().Len()
+	}
+	insertPlan.RowLen = actualColLen
 	// schema4NewRow is the schema for the newly created data record based on
 	// the result of the select statement.
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	names4NewRow := make(types.NameSlice, len(insertPlan.Table.Cols()))
 	// TODO: don't clone it.
-	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+	for i := 0; i < actualColLen; i++ {
+		selCol := insertPlan.SelectPlan.Schema().Columns[i]
 		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
@@ -2694,8 +2886,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
-	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names4NewRow...)
+	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.tableSchema.Columns...)
+	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
+	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
+	insertPlan.names4OnDuplicate = append(insertPlan.tableColNames.Shallow(), names[actualColLen:]...)
+	insertPlan.names4OnDuplicate = append(insertPlan.names4OnDuplicate, names4NewRow...)
 	return nil
 }
 

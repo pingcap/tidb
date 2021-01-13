@@ -372,18 +372,9 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
 			cacheDB := e.ctx.GetStore().GetMemCache()
-			val = cacheDB.Get(ctx, e.tblInfo.ID, key)
-			// key does not exist then get from snapshot and set to cache
-			if val == nil {
-				val, err = e.snapshot.Get(ctx, key)
-				if err != nil {
-					return nil, err
-				}
-
-				err = cacheDB.Set(e.tblInfo.ID, key, val)
-				if err != nil {
-					return nil, err
-				}
+			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
+			if err != nil {
+				return nil, err
 			}
 			return val, nil
 		}
@@ -411,7 +402,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblInfo, _ := is.TableByID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 	}
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
 	if valid {
 		return nil
 	}

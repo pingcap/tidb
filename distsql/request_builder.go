@@ -294,9 +294,8 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 		}
 	}
 
-	bundles := builder.is.RuleBundles()
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, bundles)
+		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -537,11 +536,11 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 }
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
-func VerifyTxnScope(txnScope string, physicalTableID int64, bundles map[string]*placement.Bundle) bool {
+func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
 	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := bundles[placement.GroupID(physicalTableID)]
+	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 	if !ok {
 		return true
 	}
