@@ -1610,7 +1610,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			newMpp.p = proj
 		}
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false))
+		newMpp.addCost(p.GetCost(inputRows/2, false))
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
