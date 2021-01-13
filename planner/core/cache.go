@@ -198,4 +198,5 @@ type CachedPrepareStmt struct {
 	NormalizedPlan string
 	SQLDigest      string
 	PlanDigest     string
+	ForUpdateRead  bool
 }

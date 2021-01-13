@@ -219,6 +219,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		VisitInfos:    destBuilder.GetVisitInfo(),
 		NormalizedSQL: normalized,
 		SQLDigest:     digest,
+		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

@@ -524,6 +524,11 @@ func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
 }
 
+// GetIsForUpdateRead gets if the PlanBuilder use forUpdateRead
+func (b *PlanBuilder) GetIsForUpdateRead() bool {
+	return b.isForUpdateRead
+}
+
 // GetDBTableInfo gets the accessed dbs and tables info.
 func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 	var tables []stmtctx.TableEntry
