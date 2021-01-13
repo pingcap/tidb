@@ -345,8 +345,8 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		}
 
 		forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-		isLHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[0].GetType().Flag)
-		isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(args[1].GetType().Flag)
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
 
 		switch {
 		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
@@ -486,16 +486,8 @@ func (s *builtinArithmeticMinusIntForcedUnsignedUnsignedSig) evalInt(row chunk.R
 		return 0, isNull, err
 	}
 
-	if a < 0 {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-
-	if b < 0 {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-
 	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a - b, false, nil
@@ -550,10 +542,6 @@ func (s *builtinArithmeticMinusIntForcedSignedUnsignedSig) evalInt(row chunk.Row
 		return 0, isNull, err
 	}
 
-	if b < 0 || b > math.MaxInt64 {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-
 	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
 		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
@@ -571,23 +559,6 @@ func (s *builtinArithmeticMinusIntSignedSignedSig) Clone() builtinFunc {
 	return newSig
 }
 
-func judgeArgs(s *baseBuiltinFunc, a, b int64) (val int64, isNull bool, err error) {
-	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
-		if a < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
-
-	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
-		if b < 0 {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-		}
-	}
-	return
-}
-
 func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
@@ -597,11 +568,6 @@ func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row) (val i
 	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
-	}
-
-	val, isNull, err = judgeArgs(&s.baseBuiltinFunc, a, b);
-	if err != nil {
-		return
 	}
 
 	if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
@@ -658,10 +624,6 @@ func (s *builtinArithmeticMinusIntForcedUnsignedSignedSig) evalInt(row chunk.Row
 	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
-	}
-
-	if a < 0 || a > math.MaxInt64 {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
