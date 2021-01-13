@@ -3280,16 +3280,14 @@ PARTITION BY RANGE (c) (
 	PARTITION p1 VALUES LESS THAN (200)
 );`)
 	// Config the Placement Rules
-	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
-	is.MockBundles(bundles)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	setBundle := func(parName, dc string) {
 		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
 		c.Assert(err, IsNil)
 		groupID := placement.GroupID(pid)
-		oldBundle := &placement.Bundle{
+		is.SetBundle(&placement.Bundle{
 			ID: groupID,
 			Rules: []*placement.Rule{
 				{
@@ -3305,8 +3303,7 @@ PARTITION BY RANGE (c) (
 					},
 				},
 			},
-		}
-		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
+		})
 	}
 	setBundle("p0", "dc-1")
 	setBundle("p1", "dc-2")

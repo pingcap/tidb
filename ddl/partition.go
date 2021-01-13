@@ -270,7 +270,7 @@ func checkTiFlashPeerStoreAtLeastOne(stores []*metapb.Store, peers []*metapb.Pee
 
 func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
+		if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
 			return true
 		}
 	}
