@@ -121,7 +121,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
-	logutil.BgLogger().Info("MYLOG got optimize", zap.String("final plan", bestPlan.ExplainInfo()), zap.Error(err))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -255,7 +254,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		logutil.BgLogger().Info("MYLOG optimize", zap.Error(err), zap.Stack("trace"))
 		return p, p.OutputNames(), 0, err
 	}
 
@@ -421,7 +419,6 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		logutil.BgLogger().Info("MYLOG optimize exec")
 		return execPlan.Plan, err
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
