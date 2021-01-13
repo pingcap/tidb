@@ -192,8 +192,11 @@
     "name": "TestMppAggWithJoin",
     "cases": [
       "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select count(*)+id as v from t group by id) as A on A.v = t.id",
+      "desc select * from t join ( select count(*) as v, id from t group by value,id having value+v <10) as A on A.id = t.id",
       "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
       "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
+      "desc select * from (select id from t group by id) C join (select sum(value),id from t group by id)B on C.id=B.id",
       "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
     ]
   }
