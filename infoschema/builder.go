@@ -443,7 +443,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 }
 
 func (b *Builder) applyPlacementDelete(id string) {
-	delete(b.is.ruleBundleMap, id)
+	b.is.deleteBundle(id)
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
@@ -453,7 +453,7 @@ func (b *Builder) applyPlacementUpdate(id string) error {
 	}
 
 	if !bundle.IsEmpty() {
-		b.is.ruleBundleMap[id] = bundle
+		b.is.SetBundle(bundle)
 	}
 	return nil
 }
@@ -475,8 +475,9 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 }
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
-	for k, v := range oldIS.ruleBundleMap {
-		b.is.ruleBundleMap[k] = v
+	is := b.is
+	for _, v := range oldIS.RuleBundles() {
+		is.SetBundle(v)
 	}
 }
 
@@ -500,9 +501,8 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
-	info.ruleBundleMap = make(map[string]*placement.Bundle, len(bundles))
 	for _, bundle := range bundles {
-		info.ruleBundleMap[bundle.ID] = bundle
+		info.SetBundle(bundle)
 	}
 
 	for _, di := range dbInfos {
