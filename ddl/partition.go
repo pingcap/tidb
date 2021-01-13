@@ -1232,18 +1232,40 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	tempID := partDef.ID
-	// exchange table meta id
-	partDef.ID = nt.ID
-
 	if pt.TiFlashReplica != nil {
 		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
-			if id == tempID {
-				pt.TiFlashReplica.AvailablePartitionIDs[i] = partDef.ID
+			if id == partDef.ID {
+				pt.TiFlashReplica.AvailablePartitionIDs[i] = nt.ID
 				break
 			}
 		}
 	}
+
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
+		bundles := make([]*placement.Bundle, 0, 2)
+		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
+		ptOK = ptOK && !ptBundle.IsEmpty()
+		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
+		ntOK = ntOK && !ntBundle.IsEmpty()
+		if ptOK && ntOK {
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		} else if ptOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+		} else if ntOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		}
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+	}
+
+	// exchange table meta id
+	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
@@ -1259,13 +1281,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
+	err = t.DropTableOrView(job.SchemaID, partDef.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	nt.ID = tempID
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
