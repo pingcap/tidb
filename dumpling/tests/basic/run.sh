@@ -52,3 +52,12 @@ run_dumpling --sql "select nextval(\`$DB_NAME\`.\`$SEQUENCE_NAME\`)"
 actual=$(grep -w "(.*)[,|;]" ${DUMPLING_OUTPUT_DIR}/result.000000000.sql | cut -c2-2)
 echo "expected 2, actual ${actual}"
 [ "$actual" = 2 ]
+
+# Test for tidb_mem_quota_query configuration
+export GO_FAILPOINTS="github.com/pingcap/dumpling/v4/export/PrintTiDBMemQuotaQuery=1*return"
+run_dumpling > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+actual=`grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l`
+echo "expected 1, actual ${actual}"
+[ "$actual" = 1 ]
+
+export GO_FAILPOINTS=""
