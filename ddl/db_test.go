@@ -6537,4 +6537,15 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("a"))
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1 (id int) partition by list (id) (partition p0 values in (1,2,3), partition p1 values in (4,5,6));")
+	tk.MustExec("insert into t1 VALUES(1);")
+	tk.MustExec("insert into t1 VALUES(2);")
+	tk.MustExec("insert into t1 VALUES(3);")
+	tk.MustExec("create table t2(id int);")
+	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
+	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
 }
