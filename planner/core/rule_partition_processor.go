@@ -444,15 +444,30 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			}
 			used[partitionIdx] = struct{}{}
 		} else {
-			lvalue, _, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+			if len(r.HighVal) != len(exprCols) || r.IsFullRange() {
+				return l.fullRange, nil
+			}
+			if r.LowVal[0].Kind() == types.KindMinNotNull {
+				r.LowVal[0] = types.GetMinValue(exprCols[0].GetType())
+			}
+			if r.HighVal[0].Kind() == types.KindMaxValue {
+				r.HighVal[0] = types.GetMaxValue(exprCols[0].GetType())
+			}
+			lvalue, isLNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
 			if err != nil {
 				return nil, err
 			}
-			rvalue, _, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+			rvalue, isRNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 			if err != nil {
 				return nil, err
 			}
-			partitionIdxes := l.listPrune.LocateRange(lvalue, rvalue)
+			if !r.LowExclude {
+				lvalue++
+			}
+			if !r.HighExclude {
+				rvalue--
+			}
+			partitionIdxes := l.listPrune.LocateRange(lvalue, isLNull, rvalue, isRNull)
 			for _, partitionIdx := range partitionIdxes {
 				used[partitionIdx] = struct{}{}
 			}

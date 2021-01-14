@@ -633,11 +633,7 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, tblInfo *model
 		}
 		c.Index = idx
 	}
-	err = lp.buildListPartitionValueMap(ctx, tblInfo, schema, names, p)
-	if err != nil {
-		return err
-	}
-	err = lp.buildSortedListPartition(ctx, tblInfo, schema, names, p)
+	err = lp.buildListPartitionValueMapAndSorted(ctx, tblInfo, schema, names, p)
 	if err != nil {
 		return err
 	}
@@ -674,13 +670,15 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 	return nil
 }
 
-// buildListPartitionValueMap builds list partition value map.
+// buildListPartitionValueMapAndSorted builds list partition value map and sorted.
 // The map is column value -> partition index.
+// The sorted is a btree whose node is column value and partition index.
 // colIdx is the column index in the list columns.
-func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tblInfo *model.TableInfo,
+func (lp *ForListPruning) buildListPartitionValueMapAndSorted(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	pi := tblInfo.GetPartitionInfo()
 	lp.valueMap = map[int64]int{}
+	lp.sorted = btree.New(btreeDegree)
 	lp.nullPartitionIdx = -1
 	for partitionIdx, def := range pi.Definitions {
 		for _, vs := range def.InValues {
@@ -697,6 +695,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, tbl
 				continue
 			}
 			lp.valueMap[v] = partitionIdx
+			lp.sorted.ReplaceOrInsert(newBtreeItem(v, partitionIdx))
 		}
 	}
 	return nil
@@ -748,38 +747,20 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
-func (lp *ForListPruning) buildSortedListPartition(ctx sessionctx.Context, tblInfo *model.TableInfo,
-	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
-	pi := tblInfo.GetPartitionInfo()
-	lp.sorted = btree.New(btreeDegree)
-	for partitionIdx, def := range pi.Definitions {
-		for _, vs := range def.InValues {
-			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if isNull {
-				lp.nullPartitionIdx = partitionIdx
-				continue
-			}
-			lp.sorted.ReplaceOrInsert(newBtreeItem(v, partitionIdx))
-		}
-	}
-	return nil
-}
-
 // LocateRange locates partition range by the column range
-func (lp *ForListPruning) LocateRange(lowVal int64, highVal int64) []int {
-	partitionIdxs := make([]int, 0, lp.sorted.Len())
+func (lp *ForListPruning) LocateRange(lowVal int64, isLowNull bool, highVal int64, isHighNull bool) []int {
+	partitionIdxes := make([]int, 0, lp.sorted.Len())
+	if isLowNull {
+		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
+	}
+	if isHighNull {
+		partitionIdxes = append(partitionIdxes, lp.nullPartitionIdx)
+	}
 	lp.sorted.AscendRange(newBtreeSearchItem(lowVal), newBtreeSearchItem(highVal), func(item btree.Item) bool {
-		partitionIdxs = append(partitionIdxs, item.(*btreeItem).partitionIdx)
+		partitionIdxes = append(partitionIdxes, item.(*btreeItem).partitionIdx)
 		return true
 	})
-	return partitionIdxs
+	return partitionIdxes
 }
 
 // buildListPartitionValueMap builds list columns partition value map for the specified column.
