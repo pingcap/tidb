@@ -634,24 +634,24 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_proc",
+              "legendFormat": "{{sql_type}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_cop_proc",
+              "legendFormat": "{{sql_type}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_cop_wait",
+              "legendFormat": "{{sql_type}}",
               "refId": "C"
             }
           ],
