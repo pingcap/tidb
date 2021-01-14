@@ -2050,12 +2050,16 @@ type scanLockResult struct {
 }
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
-	return &mergeLockScanner{
+	scanner := &mergeLockScanner{
 		safePoint:     safePoint,
 		client:        client,
 		stores:        stores,
 		scanLockLimit: gcScanLockLimit,
 	}
+	failpoint.Inject("lowPhysicalScanLockLimit", func() {
+		scanner.scanLockLimit = 3
+	})
+	return scanner
 }
 
 // Start initializes the scanner and enables retrieving items from the scanner.
