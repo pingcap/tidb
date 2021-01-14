@@ -1823,9 +1823,8 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	is := infoschema.GetInfoSchema(ctx)
-	ruleBundles := is.RuleBundles()
 	var rows [][]types.Datum
-	for _, bundle := range ruleBundles {
+	for _, bundle := range is.RuleBundles() {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
 		if err != nil {
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
