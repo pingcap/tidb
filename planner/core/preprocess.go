@@ -246,6 +246,14 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
+// EraseLastSemicolonInSQL removes last semicolon of the SQL.
+func EraseLastSemicolonInSQL(sql string) string {
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		return sql[:len(sql)-1]
+	}
+	return sql
+}
+
 const (
 	// TypeInvalid for unexpected types.
 	TypeInvalid byte = iota

@@ -5881,8 +5881,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	extraCnt := map[placement.PeerRoleType]int{}
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID+1)))
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
@@ -5890,6 +5890,14 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
+		// refer to tidb#22065.
+		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
+		// placement rules in SQL is not compatible with `set tiflash replica` yet
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+			Op:     placement.NotIn,
+			Key:    placement.EngineLabelKey,
+			Values: []string{placement.EngineLabelTiFlash},
+		})
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
@@ -5900,6 +5908,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		if cnt <= 0 {
 			continue
 		}
+		// refer to tidb#22065.
 		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          string(role),
@@ -5907,6 +5916,11 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
+			LabelConstraints: []placement.LabelConstraint{{
+				Op:     placement.NotIn,
+				Key:    placement.EngineLabelKey,
+				Values: []string{placement.EngineLabelTiFlash},
+			}},
 		})
 	}
 	bundle.Rules = newRules
