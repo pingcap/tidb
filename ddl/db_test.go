@@ -4267,7 +4267,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
-func (s *testDBSuite3) TestIssue123123123(c *C) {
+func (s *testDBSuite3) TestIssue22307(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.mustExec(tk, c, "use test_db")
 	s.mustExec(tk, c, "drop table if exists t")
