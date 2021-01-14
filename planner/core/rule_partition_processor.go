@@ -370,7 +370,21 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 				helper.Union(location)
 			}
 		} else {
-			return nil, true, nil
+			locations, err := colPrune.LocateRanges(sc, r.LowVal[0], r.HighVal[0])
+			if err != nil {
+				return nil, false, nil
+			}
+			for _, location := range locations {
+				if len(l.partitionNames) > 0 {
+					for _, pg := range location {
+						if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
+							helper.UnionPartitionGroup(pg)
+						}
+					}
+				} else {
+					helper.Union(location)
+				}
+			}
 		}
 	}
 	return helper.GetLocation(), false, nil
