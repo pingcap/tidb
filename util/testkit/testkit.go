@@ -319,7 +319,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(err, check.IsNil, comment)
+	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 

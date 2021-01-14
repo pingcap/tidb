@@ -15,6 +15,7 @@ package oracles
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -273,11 +274,11 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, error) {
 	ts, ok := o.getLastTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTS, ok := o.getLastArrivalTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale arrival timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
 	}
 	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
 	physicalTime := oracle.GetTimeFromTS(ts)
@@ -294,6 +295,13 @@ func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64
 func (o *pdOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
 	ts, err = o.getStaleTimestamp(txnScope, prevSecond)
 	if err != nil {
+		if !strings.HasPrefix(err.Error(), "invalid prevSecond") {
+			// If any error happened, we will try to fetch tso and set it as last ts.
+			_, tErr := o.GetTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+			if tErr != nil {
+				return 0, errors.Trace(tErr)
+			}
+		}
 		return 0, errors.Trace(err)
 	}
 	return ts, nil

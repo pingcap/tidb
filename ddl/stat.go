@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -49,7 +51,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[serverID] = d.uuid
 	var ddlInfo *admin.DDLInfo
 
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		ddlInfo, err1 = admin.GetDDLInfo(txn)
 		if err1 != nil {
