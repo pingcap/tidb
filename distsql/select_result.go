@@ -92,6 +92,8 @@ type selectResult struct {
 	copPlanIDs []int
 	rootPlanID int
 
+	storeType kv.StoreType
+
 	fetchDuration    time.Duration
 	durationReported bool
 	memTracker       *memory.Tracker
@@ -147,9 +149,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -282,8 +283,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	if copStats.CopDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.CopDetail)
+	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
@@ -291,7 +292,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
 		}
 	}
 }
@@ -348,8 +349,8 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	if copStats.CopDetail != nil {
-		s.procKeys = append(s.procKeys, copStats.CopDetail.ProcessedKeys)
+	if copStats.ScanDetail != nil {
+		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
@@ -357,8 +358,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
-	s.totalProcessTime += copStats.ProcessTime
-	s.totalWaitTime += copStats.WaitTime
+	s.totalProcessTime += copStats.TimeDetail.ProcessTime
+	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++

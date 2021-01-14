@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -359,6 +360,14 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		selSQL := fmt.Sprintf("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %d and hist_id = %d", col.TableID, col.ColumnID)
+		rows, _, err := reader.read(selSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
+		}
 		tbl.Columns[c.ID] = &statistics.Column{
 			PhysicalID: col.TableID,
 			Histogram:  *hg,
@@ -367,7 +376,9 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			TopN:       topN,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
+			StatsVer:   rows[0].GetInt64(0),
 		}
+		tbl.Columns[c.ID].Count = int64(tbl.Columns[c.ID].TotalRowCount())
 		h.updateStatsCache(statsCache.update([]*statistics.Table{tbl}, nil, statsCache.version))
 		statistics.HistogramNeededColumns.Delete(col)
 	}
@@ -461,6 +472,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	totColSize := row.GetInt64(6)
+	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.Columns[histID]
@@ -486,7 +498,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
-			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID)
+			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -522,7 +534,9 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
+				StatsVer:   statsVer,
 			}
+			col.Count = int64(col.TotalRowCount())
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
 		}
@@ -600,33 +614,40 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 	} else {
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
-	sql := fmt.Sprintf("select stats_name, db, status, type, column_ids, scalar_stats, blob_stats, version from mysql.stats_extended where table_id = %d and status in (%d, %d) and version > %d", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	sql := fmt.Sprintf("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %d and status in (%d, %d) and version > %d", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
 	rows, _, err := reader.read(sql)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
 	for _, row := range rows {
-		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(7))
-		key := statistics.ExtendedStatsKey{
-			StatsName: row.GetString(0),
-			DB:        row.GetString(1),
-		}
-		status := uint8(row.GetInt64(2))
+		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(5))
+		name := row.GetString(0)
+		status := uint8(row.GetInt64(1))
 		if status == StatsStatusDeleted {
-			delete(table.ExtendedStats.Stats, key)
+			delete(table.ExtendedStats.Stats, name)
 		} else {
 			item := &statistics.ExtendedStatsItem{
-				Tp:         uint8(row.GetInt64(3)),
-				ScalarVals: row.GetFloat64(5),
-				StringVals: row.GetString(6),
+				Tp: uint8(row.GetInt64(2)),
 			}
-			colIDs := row.GetString(4)
+			colIDs := row.GetString(3)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
 				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
-			table.ExtendedStats.Stats[key] = item
+			statsStr := row.GetString(4)
+			if item.Tp == ast.StatsTypeCardinality || item.Tp == ast.StatsTypeCorrelation {
+				if statsStr != "" {
+					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
+					if err != nil {
+						logutil.BgLogger().Error("[stats] parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
+						return nil, err
+					}
+				}
+			} else {
+				item.StringVals = statsStr
+			}
+			table.ExtendedStats.Stats[name] = item
 		}
 	}
 	table.ExtendedStats.LastUpdateVersion = lastVersion
@@ -697,7 +718,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
-		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes()))
+		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X', %d)", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[i].NDV))
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
 		sqls = append(sqls, fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID))
@@ -730,7 +751,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 }
 
 func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
+	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := reader.read(selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -760,14 +781,14 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			}
 		}
 		totalCount += count
-		hg.AppendBucket(&lowerBound, &upperBound, totalCount, repeats)
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
 	}
 	hg.PreCalculateScalar()
 	return hg, nil
 }
 
-func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID int64) (int64, error) {
-	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
+func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, statsVer int64) (int64, error) {
+	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
 	rows, _, err := reader.read(selSQL)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -775,7 +796,28 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID int6
 	if rows[0].IsNull(0) {
 		return 0, nil
 	}
-	return rows[0].GetMyDecimal(0).ToInt()
+	count, err := rows[0].GetMyDecimal(0).ToInt()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if statsVer == statistics.Version2 {
+		// Before stats ver 2, histogram represents all data in this column.
+		// In stats ver 2, histogram + TopN represent all data in this column.
+		// So we need to add TopN total count here.
+		selSQL = fmt.Sprintf("select sum(count) from mysql.stats_top_n where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
+		rows, _, err = reader.read(selSQL)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !rows[0].IsNull(0) {
+			topNCount, err := rows[0].GetMyDecimal(0).ToInt()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			count += topNCount
+		}
+	}
+	return count, err
 }
 
 func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (version uint64, modifyCount, count int64, err error) {
@@ -878,7 +920,7 @@ const (
 )
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func (h *Handle) InsertExtendedStats(statsName, db string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
 		return errors.Trace(err)
@@ -900,7 +942,7 @@ func (h *Handle) InsertExtendedStats(statsName, db string, colIDs []int64, tp in
 		return errors.Trace(err)
 	}
 	version := txn.StartTS()
-	sql := fmt.Sprintf("INSERT INTO mysql.stats_extended(stats_name, db, type, table_id, column_ids, version, status) VALUES ('%s', '%s', %d, %d, '%s', %d, %d)", statsName, db, tp, tableID, strColIDs, version, StatsStatusInited)
+	sql := fmt.Sprintf("INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES ('%s', %d, %d, '%s', %d, %d)", statsName, tp, tableID, strColIDs, version, StatsStatusInited)
 	_, err = exec.Execute(ctx, sql)
 	// Key exists, but `if not exists` is specified, so we ignore this error.
 	if kv.ErrKeyExists.Equal(err) && ifNotExists {
@@ -910,18 +952,19 @@ func (h *Handle) InsertExtendedStats(statsName, db string, colIDs []int64, tp in
 }
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func (h *Handle) MarkExtendedStatsDeleted(statsName, db string, tableID int64) (err error) {
-	if tableID < 0 {
-		sql := fmt.Sprintf("SELECT table_id FROM mysql.stats_extended WHERE stats_name = '%s' and db = '%s'", statsName, db)
-		rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(rows) == 0 {
+func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
+	sql := fmt.Sprintf("SELECT name FROM mysql.stats_extended WHERE name = '%s' and table_id = %d", statsName, tableID)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		if ifExists {
 			return nil
 		}
-		tableID = rows[0].GetInt64(0)
+		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table does not exist", statsName))
 	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -939,7 +982,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName, db string, tableID int64) (
 	}
 	version := txn.StartTS()
 	sqls := make([]string, 2)
-	sqls[0] = fmt.Sprintf("UPDATE mysql.stats_extended SET version = %d, status = %d WHERE stats_name = '%s' and db = '%s'", version, StatsStatusDeleted, statsName, db)
+	sqls[0] = fmt.Sprintf("UPDATE mysql.stats_extended SET version = %d, status = %d WHERE name = '%s' and table_id = %d", version, StatsStatusDeleted, statsName, tableID)
 	sqls[1] = fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID)
 	return execSQLs(ctx, exec, sqls)
 }
@@ -970,7 +1013,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
-	sql := fmt.Sprintf("SELECT stats_name, db, type, column_ids FROM mysql.stats_extended WHERE table_id = %d and status in (%d, %d)", tableID, StatsStatusAnalyzed, StatsStatusInited)
+	sql := fmt.Sprintf("SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %d and status in (%d, %d)", tableID, StatsStatusAnalyzed, StatsStatusInited)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -980,12 +1023,9 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 	}
 	statsColl := statistics.NewExtendedStatsColl()
 	for _, row := range rows {
-		key := statistics.ExtendedStatsKey{
-			StatsName: row.GetString(0),
-			DB:        row.GetString(1),
-		}
-		item := &statistics.ExtendedStatsItem{Tp: uint8(row.GetInt64(2))}
-		colIDs := row.GetString(3)
+		name := row.GetString(0)
+		item := &statistics.ExtendedStatsItem{Tp: uint8(row.GetInt64(1))}
+		colIDs := row.GetString(2)
 		err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 		if err != nil {
 			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
@@ -993,7 +1033,7 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 		}
 		item = h.fillExtendedStatsItemVals(item, cols, collectors)
 		if item != nil {
-			statsColl.Stats[key] = item
+			statsColl.Stats[name] = item
 		}
 	}
 	if len(statsColl.Stats) == 0 {
@@ -1027,6 +1067,9 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
+	if len(samplesX) == 0 {
+		return nil
+	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
 	sampleNum := len(samplesX)
@@ -1095,19 +1138,21 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	}
 	version := txn.StartTS()
 	sqls := make([]string, 0, 1+len(extStats.Stats))
-	for key, item := range extStats.Stats {
+	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		strColIDs := string(bytes)
+		var statsStr string
 		switch item.Tp {
 		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
-			// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
-			sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_extended values ('%s', '%s', %d, %d, '%s', %f, null, %d, %d)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.ScalarVals, version, StatsStatusAnalyzed))
+			statsStr = fmt.Sprintf("%f", item.ScalarVals)
 		case ast.StatsTypeDependency:
-			sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_extended values ('%s', '%s', %d, %d, '%s', null, '%s', %d, %d)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.StringVals, version, StatsStatusAnalyzed))
+			statsStr = item.StringVals
 		}
+		// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
+		sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_extended values ('%s', %d, %d, '%s', '%s', %d, %d)", name, item.Tp, tableID, strColIDs, statsStr, version, StatsStatusAnalyzed))
 	}
 	if !isLoad {
 		sqls = append(sqls, fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID))

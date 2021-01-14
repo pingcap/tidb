@@ -15,6 +15,7 @@ package oracles
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,9 +36,10 @@ const slowDist = 30 * time.Millisecond
 type pdOracle struct {
 	c pd.Client
 	// txn_scope (string) -> lastTSPointer (*uint64)
-	lastTSMap     sync.Map
-	lastArrivalTS uint64
-	quit          chan struct{}
+	lastTSMap sync.Map
+	// txn_scope (string) -> lastArrivalTSPointer (*uint64)
+	lastArrivalTSMap sync.Map
+	quit             chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
@@ -77,9 +79,7 @@ func (o *pdOracle) GetTimestamp(ctx context.Context, opt *oracle.Option) (uint64
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	tsArrival := o.getArrivalTimestamp(ctx)
 	o.setLastTS(ts, opt.TxnScope)
-	o.setLastArrivalTS(tsArrival)
 	return ts, nil
 }
 
@@ -134,7 +134,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 	return oracle.ComposeTS(physical, logical), nil
 }
 
-func (o *pdOracle) getArrivalTimestamp(ctx context.Context) uint64 {
+func (o *pdOracle) getArrivalTimestamp() uint64 {
 	return oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0)
 }
 
@@ -145,6 +145,27 @@ func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
 	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
 	if !ok {
 		lastTSInterface, _ = o.lastTSMap.LoadOrStore(txnScope, new(uint64))
+	}
+	lastTSPointer := lastTSInterface.(*uint64)
+	for {
+		lastTS := atomic.LoadUint64(lastTSPointer)
+		if ts <= lastTS {
+			return
+		}
+		if atomic.CompareAndSwapUint64(lastTSPointer, lastTS, ts) {
+			break
+		}
+	}
+	o.setLastArrivalTS(o.getArrivalTimestamp(), txnScope)
+}
+
+func (o *pdOracle) setLastArrivalTS(ts uint64, txnScope string) {
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	lastTSInterface, ok := o.lastArrivalTSMap.Load(txnScope)
+	if !ok {
+		lastTSInterface, _ = o.lastArrivalTSMap.LoadOrStore(txnScope, new(uint64))
 	}
 	lastTSPointer := lastTSInterface.(*uint64)
 	for {
@@ -167,6 +188,17 @@ func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
 		return 0, false
 	}
 	return atomic.LoadUint64(lastTSInterface.(*uint64)), true
+}
+
+func (o *pdOracle) getLastArrivalTS(txnScope string) (uint64, bool) {
+	if txnScope == "" {
+		txnScope = oracle.GlobalTxnScope
+	}
+	lastArrivalTSInterface, ok := o.lastArrivalTSMap.Load(txnScope)
+	if !ok {
+		return 0, false
+	}
+	return atomic.LoadUint64(lastArrivalTSInterface.(*uint64)), true
 }
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
@@ -239,16 +271,16 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	}
 }
 
-func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond uint64) (uint64, error) {
-	ts, ok := o.getLastTS(oracle.GlobalTxnScope)
+func (o *pdOracle) getStaleTimestamp(txnScope string, prevSecond uint64) (uint64, error) {
+	ts, ok := o.getLastTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get stale timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale timestamp fail, txnScope: %s", txnScope)
 	}
-	tsArrival, ok := o.getLastArrivalTS()
+	arrivalTS, ok := o.getLastArrivalTS(txnScope)
 	if !ok {
-		return 0, errors.Errorf("get last arrival timestamp fail, invalid txnScope = %s", oracle.GlobalTxnScope)
+		return 0, errors.Errorf("get stale arrival timestamp fail, txnScope: %s", txnScope)
 	}
-	arrivalTime := oracle.GetTimeFromTS(tsArrival)
+	arrivalTime := oracle.GetTimeFromTS(arrivalTS)
 	physicalTime := oracle.GetTimeFromTS(ts)
 	if uint64(physicalTime.Unix()) <= prevSecond {
 		return 0, errors.Errorf("invalid prevSecond %v", prevSecond)
@@ -260,22 +292,17 @@ func (o *pdOracle) getStaleTimestamp(ctx context.Context, prevSecond uint64) (ui
 }
 
 // GetStaleTimestamp generate a TSO which represents for the TSO prevSecond secs ago.
-func (o *pdOracle) GetStaleTimestamp(ctx context.Context, prevSecond uint64) (ts uint64, err error) {
-	ts, err = o.getStaleTimestamp(ctx, prevSecond)
+func (o *pdOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
+	ts, err = o.getStaleTimestamp(txnScope, prevSecond)
 	if err != nil {
+		if !strings.HasPrefix(err.Error(), "invalid prevSecond") {
+			// If any error happened, we will try to fetch tso and set it as last ts.
+			_, tErr := o.GetTimestamp(ctx, &oracle.Option{TxnScope: txnScope})
+			if tErr != nil {
+				return 0, errors.Trace(tErr)
+			}
+		}
 		return 0, errors.Trace(err)
 	}
 	return ts, nil
-}
-
-func (o *pdOracle) setLastArrivalTS(ts uint64) {
-	atomic.StoreUint64(&o.lastArrivalTS, ts)
-}
-
-func (o *pdOracle) getLastArrivalTS() (uint64, bool) {
-	ts := atomic.LoadUint64(&o.lastArrivalTS)
-	if ts > 0 {
-		return ts, true
-	}
-	return 0, false
 }

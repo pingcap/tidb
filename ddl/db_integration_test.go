@@ -690,7 +690,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -706,7 +706,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 
 	newColumn.State = model.StatePublic
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -1323,7 +1323,7 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -2665,4 +2665,25 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig()
 		}
 	}
+}
+
+func (s *testIntegrationSuite3) TestIssue22028(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t(a double(0, 0));")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a double);")
+	_, err = tk.Exec("ALTER TABLE t MODIFY COLUMN a DOUBLE(0,0);")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+}
+
+func (s *testIntegrationSuite3) TestIssue21835(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }

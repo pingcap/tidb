@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,11 +36,15 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -202,7 +207,8 @@ const (
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		lower_bound BLOB , 
+		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -293,16 +299,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -368,6 +372,9 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
+	// The variable name in mysql.tidb table and it records the default value of
+	// oom-action when upgrade from v3.0.x to v4.0.11+.
+	tidbDefOOMAction = "default_oom_action"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -434,7 +441,7 @@ const (
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
 	version53 = 53
-	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9+.
 	version54 = 54
 	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
 	version55 = 55
@@ -444,6 +451,17 @@ const (
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
 	version58 = 58
+	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
+	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version62
 )
 
 var (
@@ -506,6 +524,10 @@ var (
 		upgradeToVer56,
 		upgradeToVer57,
 		upgradeToVer58,
+		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
+		upgradeToVer62,
 	}
 )
 
@@ -1264,10 +1286,147 @@ func upgradeToVer58(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
+func upgradeToVer59(s Session, ver int64) {
+	if ver >= version59 {
+		return
+	}
+	// The oom-action default value is log by default in v3.0, and cancel by
+	// default in v4.0.11+.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
+	// v4.0.11+, we'll write the default value to mysql.tidb. Thus we can get
+	// the default value of oom-action, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	writeOOMAction(s)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+type bindInfo struct {
+	bindSQL    string
+	status     string
+	createTime types.Time
+	charset    string
+	collation  string
+	source     string
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	bindMap := make(map[string]bindInfo)
+	h := &bindinfo.BindHandle{}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+
+		mustExecute(s, "COMMIT")
+	}()
+	mustExecute(s, h.LockBindInfoSQL())
+	var recordSets []sqlexec.RecordSet
+	recordSets, err = s.ExecuteInternal(context.Background(),
+		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
+			FROM mysql.bind_info
+			WHERE source != 'builtin'
+			ORDER BY update_time DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+	}
+	if len(recordSets) > 0 {
+		defer terror.Call(recordSets[0].Close)
+	}
+	req := recordSets[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = recordSets[0].Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(iter, p, bindMap)
+	}
+
+	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
+	for original, bind := range bindMap {
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+			expression.Quote(original),
+			expression.Quote(bind.bindSQL),
+			expression.Quote(bind.status),
+			expression.Quote(bind.createTime.String()),
+			expression.Quote(now.String()),
+			expression.Quote(bind.charset),
+			expression.Quote(bind.collation),
+			expression.Quote(bind.source),
+		))
+	}
+}
+
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		bind := row.GetString(0)
+		db := row.GetString(1)
+		charset := row.GetString(4)
+		collation := row.GetString(5)
+		stmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		if _, ok := bindMap[originWithDB]; ok {
+			// The results are sorted in descending order of time.
+			// And in the following cases, duplicate originWithDB may occur
+			//      originalText         	|bindText                                   	|DB
+			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
+			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
+			// Therefore, if repeated, we can skip to keep the latest binding.
+			continue
+		}
+		bindMap[originWithDB] = bindInfo{
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
+			createTime: row.GetTime(3),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
+		}
+	}
+}
+
 func writeMemoryQuotaQuery(s Session) {
-	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
+}
+
+func writeOOMAction(s Session) {
+	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog)
 	mustExecute(s, sql)
 }
 
@@ -1361,9 +1520,6 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
-			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = variable.BoolOn
-			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
@@ -1421,7 +1577,7 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))

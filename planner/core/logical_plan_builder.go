@@ -50,7 +50,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -966,6 +965,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if expr == nil {
 			continue
 		}
+		expressions = append(expressions, expr)
+	}
+	cnfExpres := make([]expression.Expression, 0)
+	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
@@ -979,13 +982,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 				dual.SetSchema(p.Schema())
 				return dual, nil
 			}
-			expressions = append(expressions, item)
+			cnfExpres = append(cnfExpres, item)
 		}
 	}
-	if len(expressions) == 0 {
+	if len(cnfExpres) == 0 {
 		return p, nil
 	}
-	selection.Conditions = expressions
+	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
 }
@@ -1886,6 +1889,17 @@ type havingWindowAndOrderbyExprResolver struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	curClause    clauseCode
+	prevClause   []clauseCode
+}
+
+func (a *havingWindowAndOrderbyExprResolver) pushCurClause(newClause clauseCode) {
+	a.prevClause = append(a.prevClause, a.curClause)
+	a.curClause = newClause
+}
+
+func (a *havingWindowAndOrderbyExprResolver) popCurClause() {
+	a.curClause = a.prevClause[len(a.prevClause)-1]
+	a.prevClause = a.prevClause[:len(a.prevClause)-1]
 }
 
 // Enter implements Visitor interface.
@@ -1902,6 +1916,12 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		// Enter a new context, skip it.
 		// For example: select sum(c) + c + exists(select c from t) from t;
 		return n, true
+	case *ast.PartitionByClause:
+		a.pushCurClause(partitionByClause)
+	case *ast.OrderByClause:
+		if a.inWindowSpec {
+			a.pushCurClause(windowOrderByClause)
+		}
 	default:
 		a.inExpr = true
 	}
@@ -1982,6 +2002,12 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
+	case *ast.PartitionByClause:
+		a.popCurClause()
+	case *ast.OrderByClause:
+		if a.inWindowSpec {
+			a.popCurClause()
+		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
 		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
@@ -2034,7 +2060,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromPlan(v, a.p)
 			_ = err
-			if index == -1 && a.curClause != fieldList {
+			if index == -1 && a.curClause != fieldList &&
+				a.curClause != windowOrderByClause && a.curClause != partitionByClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -2245,6 +2272,10 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 	if err != nil {
 		return err
 	}
+	// do not use cache when for update read
+	if isForUpdateReadSelectLock(sel.LockInfo) {
+		useCache = false
+	}
 	// we cannot use cache if there are correlated aggregates inside FROM clause,
 	// since the plan we are building now is not correct and need to be rebuild later.
 	p, err := r.b.buildTableRefs(r.ctx, sel.From, useCache)
@@ -2375,7 +2406,7 @@ func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
 		}
 	}
-	return n, true
+	return n, r.err == nil
 }
 
 // resolveCorrelatedAggregates finds and collects all correlated aggregates which should be evaluated
@@ -3067,8 +3098,8 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
-func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType utilhint.NodeType, currentLevel int) {
-	hints = b.hintProcessor.GetCurrentStmtHints(hints, nodeType, currentLevel)
+func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
+	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
 		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, BCTables, BCJPreferLocalTables []hintTableInfo
 		indexHintList, indexMergeHintList                                                                     []indexHintInfo
@@ -3090,19 +3121,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBBroadCastJoin, HintBCJ:
-			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintBCJPreferLocal:
-			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintINLHJ:
-			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintINLMJ:
-			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -3142,9 +3173,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
-				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 			case HintTiKV:
-				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
@@ -3256,7 +3287,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
-	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
+	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
@@ -3281,6 +3312,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		gbyCols                       []expression.Expression
 		projExprs                     []expression.Expression
 	)
+
+	// set for update read to true before building result set node
+	if isForUpdateReadSelectLock(sel.LockInfo) {
+		b.isForUpdateRead = true
+	}
 
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
@@ -3356,7 +3392,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
@@ -3408,7 +3444,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	var windowMapper map[*ast.WindowFuncExpr]int
-	if hasWindowFuncField {
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
 		// we need to check the func args first before we check the window spec
 		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
@@ -3423,10 +3459,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		// Now we build the window function fields.
-		p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
-		if err != nil {
-			return nil, err
+		// `hasWindowFuncField == false` means there's only unused named window specs without window functions.
+		// In such case plan `p` is not changed, so we don't have to build another projection.
+		if hasWindowFuncField {
+			// Now we build the window function fields.
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -3497,6 +3537,11 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
+var (
+	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
+	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
+)
+
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -3519,6 +3564,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
+		pseudoEstimationNotAvailable.Inc()
 		return statistics.PseudoTable(tblInfo)
 	}
 
@@ -3527,7 +3573,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		tbl := *statsTbl
 		tbl.Pseudo = true
 		statsTbl = &tbl
-		metrics.PseudoEstimation.Inc()
+		pseudoEstimationOutdate.Inc()
 	}
 	return statsTbl
 }
@@ -3593,7 +3639,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.is.SchemaMetaVersion())
 	if err != nil {
 		return nil, err
 	}
@@ -3690,6 +3736,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		partitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 		preferPartitions:    make(map[int][]model.CIStr),
+		is:                  b.is,
+		isForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -4196,7 +4244,7 @@ func buildColumns2Handle(
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(update.TableHints, utilhint.TypeUpdate, 0)
+	b.pushTableHints(update.TableHints, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
@@ -4215,6 +4263,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 
 	b.inUpdateStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
@@ -4547,7 +4596,7 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(delete.TableHints, utilhint.TypeDelete, 0)
+	b.pushTableHints(delete.TableHints, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
@@ -4555,6 +4604,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}()
 
 	b.inDeleteStmt = true
+	b.isForUpdateRead = true
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -5115,7 +5165,16 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 		if err != nil {
 			return nil, nil, err
 		}
-		err = b.checkOriginWindowSpecs(funcs, orderBy)
+		if len(funcs) == 0 {
+			// len(funcs) == 0 indicates this an unused named window spec,
+			// so we just check for its validity and don't have to build plan for it.
+			err := b.checkOriginWindowSpec(spec, orderBy)
+			if err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		err = b.checkOriginWindowFuncs(funcs, orderBy)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -5160,9 +5219,9 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 	return p, windowMap, nil
 }
 
-// checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
-// Because of the grouped specification is different from it, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
+// checkOriginWindowFuncs checks the validity for original window specifications for a group of functions.
+// Because the grouped specification is different from them, we should especially check them before build window frame.
+func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -5177,34 +5236,42 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.Spec.Name.L != "" {
 			spec = b.windowSpecs[f.Spec.Name.L]
 		}
-		if spec.Frame == nil {
-			continue
+		if err := b.checkOriginWindowSpec(spec, orderByItems); err != nil {
+			return err
 		}
-		if spec.Frame.Type == ast.Groups {
-			return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
-		}
-		start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
-		if start.Type == ast.Following && start.UnBounded {
-			return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if end.Type == ast.Preceding && end.UnBounded {
-			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
+	}
+	return nil
+}
 
-		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
-		if err != nil {
-			return err
-		}
-		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
-		if err != nil {
-			return err
-		}
+// checkOriginWindowSpec checks the validity for given window specification.
+func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.SortItem) error {
+	if spec.Frame == nil {
+		return nil
+	}
+	if spec.Frame.Type == ast.Groups {
+		return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
+	}
+	start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
+	if start.Type == ast.Following && start.UnBounded {
+		return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if end.Type == ast.Preceding && end.UnBounded {
+		return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+
+	err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
+	if err != nil {
+		return err
+	}
+	err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -5326,6 +5393,15 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 			}
 			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
+		}
+	}
+	// Unused window specs should also be checked in b.buildWindowFunctions,
+	// so we add them to `groupedWindow` with empty window functions.
+	for _, spec := range b.windowSpecs {
+		if _, ok := groupedWindow[spec]; !ok {
+			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
+				groupedWindow[spec] = nil
+			}
 		}
 	}
 	return groupedWindow, nil

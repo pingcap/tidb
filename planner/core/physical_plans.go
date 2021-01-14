@@ -54,7 +54,6 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
-	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -105,7 +104,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalBroadCastJoin)
+			join := curPlan.(*PhysicalHashJoin)
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -721,6 +720,10 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+
+	// on which store the join executes.
+	storeTp          kv.StoreType
+	globalChildIndex int
 }
 
 // Clone implements PhysicalPlan interface.
@@ -841,90 +844,25 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
-// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
-type PhysicalBroadCastJoin struct {
-	basePhysicalJoin
-	EqualConditions  []*expression.ScalarFunction
-	globalChildIndex int
-}
-
-// PhysicalExchangerBase is the common part of Exchanger and ExchangerClient.
-type PhysicalExchangerBase struct {
-	basePhysicalPlan
-}
-
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
-	PhysicalExchangerBase
+	basePhysicalPlan
 
 	Tasks   []*kv.MPPTask
 	ChildPf *Fragment
 }
 
-// ToPB generates the pb structure.
-func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	encodedTask := make([][]byte, 0, len(e.Tasks))
-
-	for _, task := range e.Tasks {
-		encodedStr, err := task.ToPB().Marshal()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		encodedTask = append(encodedTask, encodedStr)
-	}
-
-	fieldTypes := make([]*tipb.FieldType, 0, len(e.ChildPf.Schema().Columns))
-	for _, column := range e.ChildPf.Schema().Columns {
-		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
-	}
-	ecExec := &tipb.ExchangeReceiver{
-		EncodedTaskMeta: encodedTask,
-		FieldTypes:      fieldTypes,
-	}
-	executorID := e.ExplainID().String()
-	return &tipb.Executor{
-		Tp:               tipb.ExecType_TypeExchangeReceiver,
-		ExchangeReceiver: ecExec,
-		ExecutorId:       &executorID,
-	}, nil
-}
-
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
 type PhysicalExchangeSender struct {
-	PhysicalExchangerBase
+	basePhysicalPlan
 
-	Tasks        []*kv.MPPTask
+	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-}
+	HashCols     []*expression.Column
+	// Tasks is the mpp task for current PhysicalExchangeSender
+	Tasks []*kv.MPPTask
 
-// ToPB generates the pb structure.
-func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	encodedTask := make([][]byte, 0, len(e.Tasks))
-
-	for _, task := range e.Tasks {
-		encodedStr, err := task.ToPB().Marshal()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		encodedTask = append(encodedTask, encodedStr)
-	}
-
-	ecExec := &tipb.ExchangeSender{
-		Tp:              e.ExchangeType,
-		EncodedTaskMeta: encodedTask,
-		Child:           child,
-	}
-	executorID := e.ExplainID().String()
-	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeSender,
-		ExchangeSender: ecExec,
-		ExecutorId:     &executorID,
-	}, nil
+	Fragment *Fragment
 }
 
 // Clone implements PhysicalPlan interface.

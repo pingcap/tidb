@@ -66,6 +66,8 @@ const (
 	GuaranteeExternalConsistency
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	IsStalenessReadOnly
 )
 
 // Priority value for transaction priority.
@@ -464,6 +466,8 @@ type Storage interface {
 	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with given txnScope and startTS.
 	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
+	// BeginWithStalenessTS begins transaction with given staleness
+	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot

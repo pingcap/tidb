@@ -67,11 +67,6 @@ type testStateChangeSuiteBase struct {
 	preSQL string
 }
 
-func forceReloadDomain(sess session.Session) {
-	dom := domain.GetDomain(sess)
-	dom.Reload()
-}
-
 func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -822,7 +817,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	_, err = s.se.Execute(context.Background(), "drop stats t")
 	c.Assert(err, IsNil)
 
-	callback := &ddl.TestDDLCallback{}
+	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
 	var checkErr error
 	times := 0
@@ -838,7 +833,6 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		if job.SchemaState != state {
 			return
 		}
-		forceReloadDomain(se)
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
@@ -1198,7 +1192,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 		}
 		var qLen int
 		for {
-			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
@@ -1230,7 +1224,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 	go func() {
 		var qLen int
 		for {
-			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err3 := admin.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
@@ -1644,7 +1638,7 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	ID, err := strconv.Atoi(jobID)
 	c.Assert(err, IsNil)
 	var historyJob *model.Job
-	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err = t.GetHistoryDDLJob(int64(ID))
 		if err != nil {

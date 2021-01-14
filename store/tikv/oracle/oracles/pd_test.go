@@ -15,6 +15,9 @@ package oracles_test
 
 import (
 	"context"
+	"errors"
+	"math"
+	"regexp"
 	"testing"
 	"time"
 
@@ -43,8 +46,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	o := oracles.NewEmptyPDOracle()
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-	ts, err := o.GetStaleTimestamp(context.Background(), 10)
+	ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 10)
 	if err != nil {
 		t.Errorf("%v\n", err)
 	}
@@ -54,22 +56,49 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 		t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", 10, duration)
 	}
 
-	_, err = o.GetStaleTimestamp(context.Background(), 1e12)
+	_, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 1e12)
 	if err == nil {
 		t.Errorf("expect exceed err but get nil")
 	}
 
-	for i := uint64(3); i < 1e9; i += i/100 + 1 {
+	testcases := []struct {
+		name      string
+		preSec    uint64
+		expectErr error
+	}{
+		{
+			name:      "normal case",
+			preSec:    6,
+			expectErr: nil,
+		},
+		{
+			name:      "preSec too large",
+			preSec:    math.MaxUint64,
+			expectErr: errors.New(".*invalid prevSecond.*"),
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
 		start = time.Now()
 		oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-		oracles.SetEmptyPDOracleLastArrivalTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
-		ts, err = o.GetStaleTimestamp(context.Background(), i)
-		if err != nil {
-			t.Errorf("%v\n", err)
-		}
-		duration = start.Sub(oracle.GetTimeFromTS(ts))
-		if duration > time.Duration(i+2)*time.Second || duration < time.Duration(i-2)*time.Second {
-			t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", i, duration)
+		ts, err = o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, testcase.preSec)
+		if testcase.expectErr == nil {
+			if err != nil {
+				t.Errorf("%v\n", err)
+			}
+			duration = start.Sub(oracle.GetTimeFromTS(ts))
+			if duration > time.Duration(testcase.preSec+2)*time.Second || duration < time.Duration(testcase.preSec-2)*time.Second {
+				t.Errorf("stable TS have accuracy err, expect: %d +-2, obtain: %d", testcase.preSec, duration)
+			}
+		} else {
+			r := regexp.MustCompile(testcase.expectErr.Error())
+			if err == nil {
+				t.Errorf("err should be returned")
+			}
+			if !r.MatchString(err.Error()) {
+				t.Errorf("err should be matched")
+			}
 		}
 	}
 }

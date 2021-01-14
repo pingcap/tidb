@@ -150,7 +150,7 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
-	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.CurStatsVersion, 1)
+	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version2, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
 
@@ -195,7 +195,7 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustExec("alter table t add tidb_stats s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
 
 	is := s.do.InfoSchema()
