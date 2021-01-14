@@ -476,8 +476,8 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
-	// AllowMultiStatement permits incorrect client library usage. Not recommended to be turned on.
-	AllowMultiStatement int
+	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
+	MultiStatementMode int
 
 	// AllowWriteRowID variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
@@ -1689,8 +1689,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-	case TiDBAllowMultiStatement:
-		s.AllowMultiStatement = TiDBOptMultiStmt(val)
+	case TiDBMultiStatementMode:
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	}
 	s.systems[name] = val
 	return nil
