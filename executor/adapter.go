@@ -58,6 +58,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// metrics option
 var (
 	TotalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	TotalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
