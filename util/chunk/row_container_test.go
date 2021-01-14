@@ -117,6 +117,83 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	c.Assert(err, check.IsNil)
 }
 
+func (r *rowContainerTestSuite) TestSpillActionWithSmallExceed1(c *check.C) {
+	sz := 4
+	byItemsDesc := []bool{false}
+	keyColumns := []int{0}
+	keyCmpFuncs := []CompareFunc{cmpInt64}
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	chkMem := chk.MemoryUsage()
+
+	l := NewList(fields, 12, 12)
+	rootTracker := l.GetMemTracker()
+	rootTracker.SetBytesLimit(10*chkMem + 1)
+	action := &memory.PanicOnExceed{ConnID: 1}
+	rootTracker.SetActionOnExceed(action)
+	// Consume 10 * chkMem bytes.
+	for i := 0; i < 10; i++ {
+		l.Add(chk)
+	}
+
+	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
+	rootTracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	tracker := rc.GetMemTracker()
+	tracker.AttachTo(rootTracker)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+
+	err := rc.Add(chk)
+	rc.actionSpill.WaitForTest()
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	c.Assert(tracker.BytesConsumed(), check.Equals, chkMem)
+	err = rc.Add(chk)
+	rc.actionSpill.WaitForTest()
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	c.Assert(tracker.BytesConsumed(), check.Equals, int64(0))
+}
+
+func (r *rowContainerTestSuite) TestSpillActionWithSmallExceed2(c *check.C) {
+	sz := 4
+	byItemsDesc := []bool{false}
+	keyColumns := []int{0}
+	keyCmpFuncs := []CompareFunc{cmpInt64}
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	chkMem := chk.MemoryUsage()
+
+	l := NewList(fields, 12, 12)
+	rootTracker := l.GetMemTracker()
+	rootTracker.SetBytesLimit(10*chkMem + 1)
+	action := &memory.PanicOnExceed{ConnID: 1}
+	rootTracker.SetActionOnExceed(action)
+	// Consume 10 * chkMem bytes.
+	for i := 0; i < 10; i++ {
+		l.Add(chk)
+	}
+
+	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
+	rootTracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	tracker := rc.GetMemTracker()
+	tracker.AttachTo(rootTracker)
+
+	defer func() {
+		r := recover()
+		c.Assert(r, check.NotNil)
+		c.Assert(r, check.Equals, "Out Of Memory Quota![conn_id=1]")
+		rc.actionSpill.WaitForTest()
+		c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	}()
+	l.Add(chk)
+}
+
 func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
 	// Now the implement avoids the situation.
