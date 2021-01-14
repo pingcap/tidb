@@ -8407,8 +8407,6 @@ func (s *testIntegrationSuite) TestIssue12209(c *C) {
 	tk.MustQuery("select  `a` DIV ( ROUND( ( SCHEMA() ), '1978-05-18 03:35:52.043591' ) ) from `t12209`;").Check(
 		testkit.Rows("<nil>"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestCrossDCQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -8597,4 +8595,3 @@ func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
 	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
 	tk.MustExec("drop table if exists t")
 }
->>>>>>> cdcb0ffa3... expression: fix unexpected panic when doing isNullRejected check (#22173)
