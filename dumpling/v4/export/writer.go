@@ -177,14 +177,14 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 			}
 		}
 		err = ir.Start(ctx, conn)
+		if err != nil {
+			return
+		}
 		if conf.SQL != "" {
 			meta, err = setTableMetaFromRows(ir.RawRows())
 			if err != nil {
 				return err
 			}
-		}
-		if err != nil {
-			return
 		}
 		defer ir.Close()
 		return w.tryToWriteTableData(ctx, meta, ir, currentChunk)
