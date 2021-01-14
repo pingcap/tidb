@@ -512,6 +512,7 @@ func (s *builtinArithmeticMinusIntSignedUnsignedSig) Clone() builtinFunc {
 	return newSig
 }
 
+// minus result forced to signed
 func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
@@ -523,7 +524,10 @@ func (s *builtinArithmeticMinusIntSignedUnsignedSig) evalInt(row chunk.Row) (val
 		return 0, isNull, err
 	}
 
-	if uint64(a-math.MinInt64) < uint64(b) {
+	// overflow cases:
+	// 1. a < 0
+	// 2. uint64(a) < uint64(b)
+	if a < 0 || uint64(a) < uint64(b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 

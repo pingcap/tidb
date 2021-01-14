@@ -489,7 +489,10 @@ func (b *builtinArithmeticMinusIntSignedUnsignedSig) vecEvalInt(input *chunk.Chu
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if uint64(lh-math.MinInt64) < uint64(rh) {
+		// overflow cases:
+		// 1. a < 0
+		// 2. uint64(a) < uint64(b)
+		if lh < 0 || uint64(lh) < uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
