@@ -340,13 +340,14 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 			return nil, err
 		}
 		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
-		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
-			bf.tp.Flag |= mysql.UnsignedFlag
-		}
 
 		forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
 		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
 		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+
+		if (isLHSUnsigned || isRHSUnsigned) && !forceToSigned {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
 
 		switch {
 		case forceToSigned && isLHSUnsigned && isRHSUnsigned:
@@ -582,7 +583,7 @@ func (s *builtinArithmeticMinusIntSignedSignedSig) evalInt(row chunk.Row) (val i
 		return 0, isNull, err
 	}
 
-	if (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
+	if (a > 0 && -b > int64(math.MaxInt64)-a) || (a < 0 && -b < int64(math.MinInt64)-a) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 
