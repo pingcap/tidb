@@ -7336,8 +7336,6 @@ func (s *testIntegrationSuite) TestDatetimeUserVariable(c *C) {
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true")
 	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue12205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -7630,4 +7628,3 @@ func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
 	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
 	tk.MustExec("drop table if exists t")
 }
->>>>>>> cdcb0ffa3... expression: fix unexpected panic when doing isNullRejected check (#22173)
