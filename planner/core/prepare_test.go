@@ -830,41 +830,6 @@ func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	tk.MustExec(`prepare stmt2 from "select sum(b) from t group by ?, ?"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, unique idx_a(a))")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec(`prepare stmt1 from "select a from t order by a"`)
-
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-
-	tk.MustExec("alter table t alter index idx_a invisible")
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
-
-	tk.MustExec("alter table t alter index idx_a visible")
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-}
 
 // Test for issue https://github.com/pingcap/tidb/issues/22167
 func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
@@ -894,4 +859,3 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
 }
->>>>>>> e3108df57... planner: do not cache prepared plan if optimization depends on mutable constant (#22349)
