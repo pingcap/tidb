@@ -373,6 +373,7 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	defer func() {
 		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
