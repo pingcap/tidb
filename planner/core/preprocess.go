@@ -32,6 +32,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -156,13 +157,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateBindingStmt:
 		EraseLastSemicolon(node.OriginSel)
 		EraseLastSemicolon(node.HintedSel)
-		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		p.checkBindGrammar(node.OriginSel, node.HintedSel, p.ctx.GetSessionVars().CurrentDB)
 		return in, true
 	case *ast.DropBindingStmt:
 		EraseLastSemicolon(node.OriginSel)
 		if node.HintedSel != nil {
 			EraseLastSemicolon(node.HintedSel)
-			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+			p.checkBindGrammar(node.OriginSel, node.HintedSel, p.ctx.GetSessionVars().CurrentDB)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -207,10 +208,53 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
+const (
+	// TypeInvalid for unexpected types.
+	TypeInvalid byte = iota
+	// TypeSelect for SelectStmt.
+	TypeSelect
+	// TypeDelete for DeleteStmt.
+	TypeDelete
+	// TypeUpdate for UpdateStmt.
+	TypeUpdate
+	// TypeInsert for InsertStmt.
+	TypeInsert
+)
 
+func bindableStmtType(node ast.StmtNode) byte {
+	switch node.(type) {
+	case *ast.SelectStmt:
+		return TypeSelect
+	case *ast.DeleteStmt:
+		return TypeDelete
+	case *ast.UpdateStmt:
+		return TypeUpdate
+	case *ast.InsertStmt:
+		return TypeInsert
+	}
+	return TypeInvalid
+}
+
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
+	origTp := bindableStmtType(originNode)
+	hintedTp := bindableStmtType(hintedNode)
+	if origTp == TypeInvalid || hintedTp == TypeInvalid {
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+		return
+	}
+	if origTp != hintedTp {
+		p.err = errors.Errorf("hinted sql and original sql have different query types")
+		return
+	}
+	if origTp == TypeInsert {
+		origInsert, hintedInsert := originNode.(*ast.InsertStmt), hintedNode.(*ast.InsertStmt)
+		if origInsert.Select == nil || hintedInsert.Select == nil {
+			p.err = errors.Errorf("create binding only supports INSERT / REPLACE INTO SELECT")
+			return
+		}
+	}
+	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB))
+	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB))
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}

@@ -58,7 +58,7 @@ func (s *testValidatorSuite) SetUpTest(c *C) {
 
 func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
 	stmts, err1 := session.Parse(s.ctx, sql)
-	c.Assert(err1, IsNil)
+	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
 	c.Assert(stmts, HasLen, 1)
 	stmt := stmts[0]
 	var opts []core.PreprocessOpt

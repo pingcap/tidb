@@ -38,8 +38,8 @@ type testStmtSummarySuite struct {
 	ssMap *stmtSummaryByDigestMap
 }
 
-func emptyPlanGenerator() string {
-	return ""
+func emptyPlanGenerator() (string, string) {
+	return "", ""
 }
 
 func fakePlanDigestGenerator() string {
@@ -75,11 +75,12 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		digest:     stmtExecInfo1.Digest,
 		planDigest: stmtExecInfo1.PlanDigest,
 	}
+	samplePlan, _ := stmtExecInfo1.PlanGenerator()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
 		sampleSQL:            stmtExecInfo1.OriginalSQL,
-		samplePlan:           stmtExecInfo1.PlanGenerator(),
+		samplePlan:           samplePlan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		execCount:            1,
 		sumLatency:           stmtExecInfo1.TotalLatency,
@@ -886,8 +887,8 @@ func (s *testStmtSummarySuite) TestEnableSummaryParallel(c *C) {
 	c.Assert(s.ssMap.Enabled(), IsTrue)
 }
 
-// Test GetMoreThanOnceSelect.
-func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
+// Test GetMoreThanOnceBindableStmt.
+func (s *testStmtSummarySuite) TestGetMoreThanOnceBindableStmt(c *C) {
 	s.ssMap.Clear()
 
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -895,22 +896,19 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls := s.ssMap.GetMoreThanOnceSelect()
-	c.Assert(len(schemas), Equals, 0)
-	c.Assert(len(sqls), Equals, 0)
+	stmts := s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 0)
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
 	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
-	c.Assert(len(schemas), Equals, 0)
-	c.Assert(len(sqls), Equals, 0)
+	stmts = s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 0)
 
 	s.ssMap.AddStatement(stmtExecInfo1)
-	schemas, sqls = s.ssMap.GetMoreThanOnceSelect()
-	c.Assert(len(schemas), Equals, 1)
-	c.Assert(len(sqls), Equals, 1)
+	stmts = s.ssMap.GetMoreThanOnceBindableStmt()
+	c.Assert(len(stmts), Equals, 1)
 }
 
 // Test `formatBackoffTypes`.
