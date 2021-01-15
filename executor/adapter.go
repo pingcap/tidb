@@ -953,21 +953,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
-<<<<<<< HEAD
-		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
-		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
-=======
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.WaitTime.Seconds())
 		} else {
 			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.WaitTime.Seconds())
 		}
->>>>>>> 42edd7a29... executor: metrics slow query is divided into internal and general (#22350)
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
