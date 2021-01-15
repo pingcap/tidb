@@ -60,12 +60,12 @@ import (
 
 // metrics option
 var (
-	TotalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral + "_all_proc")
-	TotalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral + "_all_cop_proc")
-	TotalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral + "_all_cop_wait")
-	TotalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal + "_all_proc")
-	TotalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal + "_all_cop_proc")
-	TotalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal + "_all_cop_wait")
+	totalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -969,13 +969,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		if sessVars.InRestrictedSQL {
-			TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
-			TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		} else {
-			TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
-			TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
-			TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
 		}
 		var userString string
 		if sessVars.User != nil {
