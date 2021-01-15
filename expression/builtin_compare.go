@@ -408,14 +408,14 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 		for i := range args {
 			item := args[i].GetType()
 			// Find the temporal value in the arguments but prefer DateTime value.
-			if types.IsTemporal(item.Tp) {
-				if temporalItem == nil || temporalItem.Tp == mysql.TypeDatetime {
+			if types.IsTypeTemporal(item.Tp) {
+				if temporalItem == nil || item.Tp == mysql.TypeDatetime {
 					temporalItem = item
 				}
 			}
 		}
 
-		if !types.IsTemporal(aggType.Tp) && temporalItem != nil {
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
 		}
 		// TODO: String charset, collation checking are needed.
@@ -474,7 +474,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDecimal:
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
-	case types.ETString, types.ETDuration:
+	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 	case types.ETDatetime, types.ETTimestamp:
@@ -691,7 +691,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETDecimal:
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
-	case types.ETString, types.ETDuration:
+	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 	case types.ETDatetime, types.ETTimestamp:
