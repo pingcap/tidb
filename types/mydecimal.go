@@ -478,34 +478,38 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if innerIdx != 0 {
 		d.wordBuf[wordIdx] = word * powers10[digitsPerWord-innerIdx]
 	}
-	if endIdx+1 <= len(str) && (str[endIdx] == 'e' || str[endIdx] == 'E') {
-		exponent, err1 := strToInt(string(str[endIdx+1:]))
-		if err1 != nil {
-			err = errors.Cause(err1)
-			if err != ErrTruncated {
-				*d = zeroMyDecimal
-			}
-		}
-		if exponent > math.MaxInt32/2 {
-			negative := d.negative
-			maxDecimal(wordBufLen*digitsPerWord, 0, d)
-			d.negative = negative
-			err = ErrOverflow
-		}
-		if exponent < math.MinInt32/2 && err != ErrOverflow {
-			*d = zeroMyDecimal
-			err = ErrTruncated
-		}
-		if err != ErrOverflow {
-			shiftErr := d.Shift(int(exponent))
-			if shiftErr != nil {
-				if shiftErr == ErrOverflow {
-					negative := d.negative
-					maxDecimal(wordBufLen*digitsPerWord, 0, d)
-					d.negative = negative
+	if endIdx+1 <= len(str) {
+		if str[endIdx] == 'e' || str[endIdx] == 'E' {
+			exponent, err1 := strToInt(string(str[endIdx+1:]))
+			if err1 != nil {
+				err = errors.Cause(err1)
+				if err != ErrTruncated {
+					*d = zeroMyDecimal
 				}
-				err = shiftErr
 			}
+			if exponent > math.MaxInt32/2 {
+				negative := d.negative
+				maxDecimal(wordBufLen*digitsPerWord, 0, d)
+				d.negative = negative
+				err = ErrOverflow
+			}
+			if exponent < math.MinInt32/2 && err != ErrOverflow {
+				*d = zeroMyDecimal
+				err = ErrTruncated
+			}
+			if err != ErrOverflow {
+				shiftErr := d.Shift(int(exponent))
+				if shiftErr != nil {
+					if shiftErr == ErrOverflow {
+						negative := d.negative
+						maxDecimal(wordBufLen*digitsPerWord, 0, d)
+						d.negative = negative
+					}
+					err = shiftErr
+				}
+			}
+		} else {
+			err = ErrTruncated
 		}
 	}
 	allZero := true
