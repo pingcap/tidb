@@ -1224,6 +1224,9 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 		for i, key := range index.Columns {
 			col := nameToCol[key.Name.L]
+			if col.Hidden {
+				continue
+			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.Name.O,         // CONSTRAINT_SCHEMA
@@ -1823,9 +1826,8 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	is := infoschema.GetInfoSchema(ctx)
-	ruleBundles := is.RuleBundles()
 	var rows [][]types.Datum
-	for _, bundle := range ruleBundles {
+	for _, bundle := range is.RuleBundles() {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
 		if err != nil {
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
