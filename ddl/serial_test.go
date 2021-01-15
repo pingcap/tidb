@@ -893,7 +893,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				return t.DropTableOrView(job.SchemaID, job.TableID, true)
 			})

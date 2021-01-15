@@ -892,3 +892,32 @@ func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
 }
+
+// Test for issue https://github.com/pingcap/tidb/issues/22167
+func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta, tb")
+	tk.MustExec("CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ')")
+	tk.MustExec("CREATE TABLE tb (k varchar(32) NOT NULL DEFAULT ' ', s varchar(1) NOT NULL DEFAULT ' ')")
+	tk.MustExec("insert into ta values ('a')")
+	tk.MustExec("set @a=2, @b=1")
+	tk.MustExec(`prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null"`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
+}

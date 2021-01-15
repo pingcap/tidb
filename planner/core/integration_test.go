@@ -186,6 +186,14 @@ func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	s.runTestsWithTestData("TestIsFromUnixtimeNullRejective", tk, c)
 }
 
+func (s *testIntegrationSuite) TestIssue22298(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int, b int);`)
+	tk.MustGetErrMsg(`select * from t where 0 and c = 10;`, "[planner:1054]Unknown column 'c' in 'where clause'")
+}
+
 func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit.TestKit, c *C) {
 	var input []string
 	var output []struct {
@@ -2427,6 +2435,15 @@ func (s *testIntegrationSuite) TestIssue22071(c *C) {
 	tk.MustQuery("select n in (1,n) from (select a in (1,2) as n from t) g;").Check(testkit.Rows("1", "1", "1"))
 }
 
+func (s *testIntegrationSuite) TestIssue22199(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(i int primary key, j int, index idx_j(j))")
+	tk.MustExec("create table t2(i int primary key, j int, index idx_j(j))")
+	tk.MustGetErrMsg("select t1.*, (select t2.* from t1) from t1", "[planner:1051]Unknown table 't2'")
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2502,5 +2519,29 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (pk char(32) primary key, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3))")
+	tk.MustExec("create table t2 (pk char(32) primary key, col1 varchar(100))")
+	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
