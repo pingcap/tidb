@@ -81,6 +81,7 @@ type Histogram struct {
 type Bucket struct {
 	Count  int64
 	Repeat int64
+	NDV    int64
 }
 
 type scalar struct {
@@ -210,16 +211,26 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
-	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat})
+	hg.AppendBucketWithNDV(lower, upper, count, repeat, 0)
+}
+
+// AppendBucketWithNDV appends a bucket into `hg` and set value for field `NDV`.
+func (hg *Histogram) AppendBucketWithNDV(lower *types.Datum, upper *types.Datum, count, repeat, ndv int64) {
+	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: ndv})
 	hg.Bounds.AppendDatum(0, lower)
 	hg.Bounds.AppendDatum(0, upper)
 }
 
-func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
-	len := hg.Len()
-	hg.Bounds.TruncateTo(2*len - 1)
+func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, needBucketNDV bool) {
+	l := hg.Len()
+	hg.Bounds.TruncateTo(2*l - 1)
 	hg.Bounds.AppendDatum(0, upper)
-	hg.Buckets[len-1] = Bucket{Count: count, Repeat: repeat}
+	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
+	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
+		hg.Buckets[l-1].NDV++
+	}
+	hg.Buckets[l-1].Count = count
+	hg.Buckets[l-1].Repeat = repeat
 }
 
 // DecodeTo decodes the histogram bucket values into `Tp`.
@@ -270,6 +281,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // constants for stats version. These const can be used for solving compatibility issue.
+// If the version number is 0, it means the most original statistics.
 const (
 	Version0 = 0
 	// In Version1
@@ -327,7 +339,7 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	terror.Log(errors.Trace(err))
 	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
+	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
 // RemoveIdxVals remove the given values from the histogram.
@@ -346,6 +358,9 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 				break
 			}
 			totalSubCnt += int64(idxValCntPairs[pairIdx].Count)
+			if hg.Buckets[bktIdx].NDV > 0 {
+				hg.Buckets[bktIdx].NDV--
+			}
 			pairIdx++
 			if cmpResult == 0 {
 				hg.Buckets[bktIdx].Repeat = 0
@@ -374,12 +389,15 @@ func (hg *Histogram) ToString(idxCols int) string {
 }
 
 // equalRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCount(value types.Datum) float64 {
+func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) float64 {
 	index, match := hg.Bounds.LowerBound(0, &value)
 	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
 	if index%2 == 1 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
+		}
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
@@ -388,14 +406,18 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
+		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
+		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
 	return 0
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
+// It's deprecated. Only used for test.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value)
+	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value, false)
 	return math.Max(0, gtCount)
 }
 
@@ -481,7 +503,9 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, bucketIdx)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
-		hg.Buckets[curBuck] = hg.Buckets[i+1]
+		hg.Buckets[curBuck].NDV = hg.Buckets[i+1].NDV + hg.Buckets[i].NDV
+		hg.Buckets[curBuck].Count = hg.Buckets[i+1].Count
+		hg.Buckets[curBuck].Repeat = hg.Buckets[i+1].Repeat
 		c.AppendDatum(0, hg.GetLower(i))
 		c.AppendDatum(0, hg.GetUpper(i+1))
 		curBuck++
@@ -667,6 +691,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 			LowerBound: hg.GetLower(i).GetBytes(),
 			UpperBound: hg.GetUpper(i).GetBytes(),
 			Repeats:    hg.Buckets[i].Repeat,
+			Ndv:        &hg.Buckets[i].NDV,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
@@ -681,7 +706,11 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
-		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
+		if bucket.Ndv != nil {
+			hg.AppendBucketWithNDV(&lower, &upper, bucket.Count, bucket.Repeats, *bucket.Ndv)
+		} else {
+			hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
+		}
 	}
 	return hg
 }
@@ -699,7 +728,7 @@ func (hg *Histogram) IsIndexHist() bool {
 }
 
 // MergeHistograms merges two histograms.
-func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
+func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int, statsVer int) (*Histogram, error) {
 	if lh.Len() == 0 {
 		return rh, nil
 	}
@@ -715,7 +744,10 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	offset := int64(0)
 	if cmp == 0 {
 		lh.NDV--
-		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat)
+		if rh.Buckets[0].NDV > 0 {
+			lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV - 1
+		}
+		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat, false)
 		offset = rh.Buckets[0].Count
 		rh.popFirstBucket()
 	}
@@ -741,6 +773,10 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rAvg *= 2
 	}
 	for i := 0; i < rh.Len(); i++ {
+		if statsVer == Version2 {
+			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
+			continue
+		}
 		lh.AppendBucket(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat)
 	}
 	for lh.Len() > bucketSize {
@@ -910,7 +946,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		return c.Histogram.equalRowCount(val), nil
+		return c.Histogram.equalRowCount(val, false), nil
 	}
 	// Stats version == 2
 	// 1. try to find this value in TopN
@@ -1078,20 +1114,28 @@ func (idx *Index) MemoryUsage() (sum int64) {
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
+func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
-			return float64(idx.NullCount), nil
+			return float64(idx.NullCount)
 		}
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 	}
-	if idx.CMSketch != nil {
-		return float64(idx.QueryBytes(b)), nil
+	if idx.CMSketch != nil && idx.StatsVer < Version2 {
+		return float64(idx.QueryBytes(b))
 	}
-	return idx.Histogram.equalRowCount(val), nil
+	// If it's version2, query the top-n first.
+	if idx.StatsVer == Version2 {
+		count, found := idx.TopN.QueryTopN(b)
+		if found {
+			return float64(count)
+		}
+		return idx.Histogram.equalRowCount(val, true)
+	}
+	return idx.Histogram.equalRowCount(val, false)
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -1128,10 +1172,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 					totalCount += 1
 					continue
 				}
-				count, err := idx.equalRowCount(sc, lb, modifyCount)
-				if err != nil {
-					return 0, err
-				}
+				count := idx.equalRowCount(lb, modifyCount)
 				totalCount += count
 				continue
 			}
