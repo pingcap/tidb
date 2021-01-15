@@ -1233,7 +1233,7 @@ func BuildFinalModeAggregation(
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount && partialIsCop {
 					// TODO: only work when the count() can be pushed down in MPP.
-					// Note: MPP mode does not run avg() directly, so here should not
+					// Note: MPP mode does not run avg() directly, so here should not process it.
 					partial.Schema.Append(&expression.Column{
 						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 						RetType:  original.Schema.Columns[i].GetType(),
@@ -1413,6 +1413,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
+			MppRunMode:   p.MppRunMode,
 		}.initForStream(p.ctx, p.stats, p.blockOffset, prop)
 		finalAgg.schema = finalPref.Schema
 		return partialAgg, finalAgg
@@ -1421,6 +1422,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
+		MppRunMode:   p.MppRunMode,
 	}.initForHash(p.ctx, p.stats, p.blockOffset, prop)
 	finalAgg.schema = finalPref.Schema
 	return partialAgg, finalAgg
@@ -1581,8 +1583,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	case Mpp1Phase:
 		/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		/// only push down the original agg
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: mpp.hashCols}
+		proj := p.convertAvgForMPP(prop)
 		p.self.SetChildren(mpp.p)
 		mpp.p = p.self
+		if proj != nil {
+			proj.SetChildren(mpp.p)
+			mpp.p = proj
+		}
 		mpp.addCost(p.GetCost(inputRows, false))
 		return mpp
 	case Mpp2Phase:
