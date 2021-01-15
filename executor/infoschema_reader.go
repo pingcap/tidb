@@ -542,8 +542,8 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 	return nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error {
-	checker := privilege.GetPrivilegeManager(ctx)
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	batch := 1024
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
@@ -551,11 +551,11 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error 
 		for e.tblIdx < len(schema.Tables) {
 			table := schema.Tables[e.tblIdx]
 			e.tblIdx++
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
-			e.dataForColumnsInTable(schema, table)
+			e.dataForColumnsInTable(ctx, sctx, schema, table)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -565,7 +565,11 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error 
 	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) {
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) {
+	if err := tryFillViewColumnType(ctx, sctx, infoschema.GetInfoSchema(sctx), schema.Name, tbl); err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return
+	}
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -1822,9 +1826,8 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	is := infoschema.GetInfoSchema(ctx)
-	ruleBundles := is.RuleBundles()
 	var rows [][]types.Datum
-	for _, bundle := range ruleBundles {
+	for _, bundle := range is.RuleBundles() {
 		id, err := placement.ObjectIDFromGroupID(bundle.ID)
 		if err != nil {
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
@@ -1894,7 +1897,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var err error
 	switch e.table.Name.O {
 	case infoschema.TableColumns:
-		err = e.setDataForColumns(sctx)
+		err = e.setDataForColumns(ctx, sctx)
 	}
 	if err != nil {
 		return nil, err
