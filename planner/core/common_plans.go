@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -233,11 +232,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			param.InExecute = true
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
-	}
-
-	// check with latest schema if the plan uses forUpdateRead
-	if preparedObj.ForUpdateRead {
-		is = domain.GetDomain(sctx).InfoSchema()
 	}
 
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
@@ -1320,6 +1314,8 @@ func IsPointUpdateByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
 	if _, isFastSel := updPlan.SelectPlan.(*PointGetPlan); isFastSel {
 		return true, nil
 	}
+
+	logutil.BgLogger().Info("MYLOG IsPointUpdateByAutoCommit p3")
 	return false, nil
 }
 

@@ -1573,7 +1573,12 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, args []types.Datum) (sqlexec.RecordSet, error) {
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	is := infoschema.GetInfoSchema(s)
+	var is infoschema.InfoSchema
+	if prepareStmt.ForUpdateRead {
+		is = domain.GetDomain(s).InfoSchema()
+	} else {
+		is = infoschema.GetInfoSchema(s)
+	}
 	execAst := &ast.ExecuteStmt{ExecID: stmtID}
 	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
 		return nil, err
@@ -1614,9 +1619,16 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		s.PrepareTSFuture(ctx)
 		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
+	case nil:
+		// cache is invalid
+		if prepareStmt.ForUpdateRead {
+			s.PrepareTSFuture(ctx)
+		}
+		resultSet, err = runStmt(ctx, s, stmt)
 	default:
+		err = errors.Errorf("invalid cached plan type %T", prepared.CachedPlan)
 		prepared.CachedPlan = nil
-		return nil, errors.Errorf("invalid cached plan type")
+		return nil, err
 	}
 	return resultSet, err
 }

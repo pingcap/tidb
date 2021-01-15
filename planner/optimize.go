@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
+	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -235,6 +236,18 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
+
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		execID := execPlan.ExecID
+		if execPlan.Name != "" {
+			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
+		}
+		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				is = domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles

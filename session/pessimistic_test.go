@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/types"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2455,34 +2457,58 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	ctx := context.Background()
+
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
+	tk3.MustExec("use test")
 
-	tk.MustExec("create table t (id int primary key, v int, index iv (v), vv int)")
-	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int, unique index iv (v), vv int)")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (4, 4, 4)")
 
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
-	tk.MustExec("prepare update_stmt from 'update t set vv = 3 where v = ?'")
+	//generate plan cache
+	tk.MustExec("prepare update_stmt from 'update t set vv = vv + 1 where v = ?'")
 	tk.MustExec("set @v = 1")
-	// generate plan cache
 	tk.MustExec("execute update_stmt using @v")
 
+	stmtID, _, _, err := tk2.Se.PrepareStmt("update t set vv = vv + 1 where v = ?")
+	c.Assert(err, IsNil)
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+	c.Assert(err, IsNil)
+
 	tk.MustExec("begin pessimistic")
-	tk2.MustExec("alter table t drop index iv")
-	tk2.MustExec("update t set v = 3 where v = 2")
+	tk2.MustExec("begin pessimistic")
+
+	tk3.MustExec("alter table t drop index iv")
+	tk3.MustExec("update t set v = 3 where v = 2")
+	tk3.MustExec("update t set v = 5 where v = 4")
 
 	tk.MustExec("set @v = 2")
 	tk.MustExec("execute update_stmt using @v")
 	tk.CheckExecResult(0, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
 	tk.MustExec("set @v = 3")
 	tk.MustExec("execute update_stmt using @v")
 	tk.CheckExecResult(1, 0)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	tk.MustExec("commit")
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
+	c.Assert(err, IsNil)
+	tk2.CheckExecResult(0, 0)
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
+	c.Assert(err, IsNil)
+	tk2.CheckExecResult(1, 0)
+	// FIXME: should hit plan cache here
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 3", "2 3 3"))
+	tk.MustExec("commit")
+	tk2.MustExec("commit")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 3", "2 3 3", "4 5 5"))
 }
