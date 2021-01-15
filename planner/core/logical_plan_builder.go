@@ -1354,6 +1354,22 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	if setOpr.With != nil {
+		// Check CTE name must be unique.
+		nameMap := make(map[string]struct{})
+		for _, cte := range setOpr.With.CTEs {
+			if _, ok := nameMap[cte.Name.L]; ok {
+				return nil, errors.New("Not unique table/alias")
+			}
+			nameMap[cte.Name.L] = struct{}{}
+		}
+		l := len(setOpr.With.CTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		}()
+		b.outerCTEs = append(b.outerCTEs, setOpr.With.CTEs...)
+	}
+
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
@@ -3310,6 +3326,28 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
+	if sel.With != nil {
+		// Check CTE name must be unique.
+		nameMap := make(map[string]struct{})
+		for _, cte := range sel.With.CTEs {
+			if _, ok := nameMap[cte.Name.L]; ok {
+				return p, errors.New("Not unique table/alias")
+			}
+			nameMap[cte.Name.L] = struct{}{}
+		}
+		l := len(sel.With.CTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		}()
+		b.outerCTEs = append(b.outerCTEs, sel.With.CTEs...)
+		//for _, cte := range sel.With.CTEs {
+		//	_, err := b.buildCte(ctx, cte)
+		//	if err != nil {
+		//		return nil, err
+		//	}
+		//}
+	}
+
 	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
 	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
 	// existing ResultSetNode from the cache.
@@ -3560,10 +3598,52 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+func (b *PlanBuilder) buildDataSourceFromCTE(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
+	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
+	if err != nil {
+		return nil, err
+	}
+	outPutNames := p.OutputNames()
+	for _, name := range outPutNames {
+		name.TblName = cte.Name
+		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+
+	if len(cte.ColNameList) > 0 {
+		if len(cte.ColNameList) != len(p.OutputNames()) {
+			return nil, errors.New("CTE columns length is not consistent.")
+		}
+		for i, n := range cte.ColNameList {
+			outPutNames[i].ColName = n
+		}
+	}
+	p.SetOutputNames(outPutNames)
+	return p, nil
+}
+
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()
+
 	if dbName.L == "" {
+		// Try CTE
+		last := len(b.outerCTEs)-1
+		if len(b.cteStacks) > 0 {
+			last = b.cteStacks[len(b.cteStacks)-1]
+			last = last-1
+		}
+		for i := len(b.outerCTEs)-1; i >= 0; i-- {
+			if
+			cte := b.outerCTEs[i]
+			if cte.Name.L == tn.Name.L {
+				b.cteStacks = append(b.cteStacks, i)
+				defer func() {
+					b.cteStacks = b.cteStacks[:len(b.cteStacks)-1]
+				}()
+				return b.buildDataSourceFromCTE(ctx, cte)
+			}
+		}
+
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
@@ -4246,6 +4326,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
 
+	if update.With != nil {
+		// Check CTE name must be unique.
+		nameMap := make(map[string]struct{})
+		for _, cte := range update.With.CTEs {
+			if _, ok := nameMap[cte.Name.L]; ok {
+				return nil, errors.New("Not unique table/alias")
+			}
+			nameMap[cte.Name.L] = struct{}{}
+		}
+		l := len(update.With.CTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		}()
+		b.outerCTEs = append(b.outerCTEs, update.With.CTEs...)
+	}
+
 	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
@@ -4568,6 +4664,22 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
+
+	if delete.With != nil {
+		// Check CTE name must be unique.
+		nameMap := make(map[string]struct{})
+		for _, cte := range delete.With.CTEs {
+			if _, ok := nameMap[cte.Name.L]; ok {
+				return nil, errors.New("Not unique table/alias")
+			}
+			nameMap[cte.Name.L] = struct{}{}
+		}
+		l := len(delete.With.CTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:len(b.outerCTEs)-l]
+		}()
+		b.outerCTEs = append(b.outerCTEs, delete.With.CTEs...)
+	}
 
 	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
 	if err != nil {
@@ -5587,3 +5699,16 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	}
 	return cnt > 1
 }
+
+//func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression) (p LogicalPlan, err error) {
+//	seed, recursive, err := b.splitSeedAndRecursive(cte.Query.Query)
+//	return nil, nil
+//}
+//
+//func (b *PlanBuilder) splitSeedAndRecursive(cte ast.ResultSetNode) (*ast.Node, *ast.Node, error) {
+//	switch x := (cte).(type) {
+//	case *ast.SetOprStmt:
+//	case *ast.TableName:
+//
+//	}
+//}
