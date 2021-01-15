@@ -16,6 +16,7 @@ package types
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -509,7 +510,10 @@ func (d *MyDecimal) FromString(str []byte) error {
 				}
 			}
 		} else {
-			err = ErrTruncated
+			trimstr := strings.TrimSpace(string(str[endIdx:]))
+			if len(trimstr) != 0 {
+				err = ErrTruncated
+			}
 		}
 	}
 	allZero := true
