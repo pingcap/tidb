@@ -21,7 +21,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -663,14 +665,41 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 		tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		ch <- 2
 	}()
+	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
 	ch <- 1
 	tk1.Exec("commit")
-	var isSession1 string
-	if 1 == <-ch {
-		isSession1 = "true"
+	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
+	c.Assert(<-ch, Equals, 1)
+}
+
+func (ts *testSuite) TestViewColumns(c *C) {
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select * from t")
+	tk.MustExec("drop view if exists va")
+	tk.MustExec("create view va as select count(a) from t")
+	testCases := []struct {
+		query    string
+		expected []string
+	}{
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", []string{types.TypeToStr(mysql.TypeLong, ""), types.TypeToStr(mysql.TypeVarchar, "")}},
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
 	}
-	c.Assert(isSession1, Equals, "true")
-	tk1.MustExec("rollback")
-	tk2.MustExec("rollback")
+	for _, testCase := range testCases {
+		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+	}
+	tk.MustExec("drop table if exists t")
+	for _, testCase := range testCases {
+		c.Assert(tk.MustQuery(testCase.query).Rows(), HasLen, 0)
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
+	}
 }

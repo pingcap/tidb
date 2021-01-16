@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -78,9 +80,6 @@ const (
 )
 
 var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = uint32(512)
 	// TableIndexCountLimit is limit of the number of indexes in a table.
 	TableIndexCountLimit = uint32(64)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
@@ -155,8 +154,8 @@ type DDL interface {
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
-	// RegisterEventCh registers event channel for ddl.
-	RegisterEventCh(chan<- *util.Event)
+	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
+	RegisterStatsHandle(*handle.Handle)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() util.SchemaSyncer
 	// OwnerManager gets the owner manager.
@@ -201,6 +200,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
+	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 
 	// hook may be modified.
@@ -220,9 +220,10 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-// RegisterEventCh registers passed channel for ddl Event.
-func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
-	d.ddlEventCh = ch
+// RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
+func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
+	d.ddlCtx.statsHandle = h
+	d.ddlEventCh = h.DDLEventCh()
 }
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
@@ -397,9 +398,7 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -416,7 +415,7 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -669,4 +668,15 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -261,19 +262,40 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
-	for _, c := range cs {
+	primaryIndices := make([]*model.IndexInfo, 0, 1)
+	tblInfo := &model.TableInfo{
+		Name:    model.NewCIStr(tableName),
+		State:   model.StatePublic,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+	}
+	for offset, c := range cs {
+		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
+			switch c.tp {
+			case mysql.TypeLong, mysql.TypeLonglong,
+				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
+				tblInfo.PKIsHandle = true
+			default:
+				tblInfo.IsCommonHandle = true
+				index := &model.IndexInfo{
+					Name:    model.NewCIStr("primary"),
+					State:   model.StatePublic,
+					Primary: true,
+					Unique:  true,
+					Columns: []*model.IndexColumn{
+						{Name: model.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
+				}
+				primaryIndices = append(primaryIndices, index)
+				tblInfo.Indices = primaryIndices
+			}
+		}
 		cols = append(cols, buildColumnInfo(c))
 	}
 	for i, col := range cols {
 		col.Offset = i
 	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tableName),
-		Columns: cols,
-		State:   model.StatePublic,
-		Charset: mysql.DefaultCharset,
-		Collate: mysql.DefaultCollationName,
-	}
+	tblInfo.Columns = cols
+	return tblInfo
 }
 
 var schemataCols = []columnInfo{
@@ -719,7 +741,7 @@ var tableTiDBIndexesCols = []columnInfo{
 }
 
 var slowQueryCols = []columnInfo{
-	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6},
+	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.BinaryFlag},
 	{name: variable.SlowLogTxnStartTSStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
@@ -971,7 +993,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
-	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1496,14 +1518,12 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
-const tiflashLabel = "tiflash"
-
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
+			if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
 				isTiFlash = true
 			}
 		}
@@ -1537,7 +1557,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = tiflashLabel
+			tp = kv.TiFlash.Name()
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1566,7 +1586,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		return cnt, err
 	}
 	for _, store := range stores {
-		if store.ServerType == tiflashLabel {
+		if store.ServerType == kv.TiFlash.Name() {
 			cnt++
 		}
 	}

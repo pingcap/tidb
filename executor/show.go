@@ -459,25 +459,8 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	} else {
 		cols = tb.VisibleCols()
 	}
-	if tb.Meta().IsView() {
-		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
-		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
-		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
-		if err != nil {
-			return err
-		}
-		viewSchema := viewLogicalPlan.Schema()
-		viewOutputNames := viewLogicalPlan.OutputNames()
-		for _, col := range cols {
-			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
-			if idx >= 0 {
-				col.FieldType = *viewSchema.Columns[idx].GetType()
-			}
-			if col.Tp == mysql.TypeVarString {
-				col.Tp = mysql.TypeVarchar
-			}
-		}
+	if err := tryFillViewColumnType(ctx, e.ctx, e.is, e.DBName, tb.Meta()); err != nil {
+		return err
 	}
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
@@ -660,6 +643,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if variable.FilterImplicitFeatureSwitch(v) {
+					continue
+				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
 				if err != nil {
 					return errors.Trace(err)
@@ -674,6 +660,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v) {
+			continue
+		}
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
@@ -1636,6 +1625,32 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 func (e *ShowExec) fetchShowBuiltins() error {
 	for _, f := range expression.GetBuiltinList() {
 		e.appendRow([]interface{}{f})
+	}
+	return nil
+}
+
+// tryFillViewColumnType fill the columns type info of a view.
+// Because view's underlying table's column could change or recreate, so view's column type may change over time.
+// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
+func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
+	if tbl.IsView() {
+		// Retrieve view columns info.
+		planBuilder, _ := plannercore.NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
+			viewSchema := viewLogicalPlan.Schema()
+			viewOutputNames := viewLogicalPlan.OutputNames()
+			for _, col := range tbl.Columns {
+				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+				if idx >= 0 {
+					col.FieldType = *viewSchema.Columns[idx].GetType()
+				}
+				if col.Tp == mysql.TypeVarString {
+					col.Tp = mysql.TypeVarchar
+				}
+			}
+		} else {
+			return err
+		}
 	}
 	return nil
 }

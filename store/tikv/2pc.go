@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"math"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -741,6 +742,20 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
 		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 		go func() {
+			if c.connID > 0 {
+				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+					if s, ok := v.(string); !ok {
+						logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						time.Sleep(2 * time.Second)
+					} else if s == "skip" {
+						logutil.Logger(bo.ctx).Info("[failpoint] injected skip committing secondaries",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						failpoint.Return()
+					}
+				})
+			}
+
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -931,6 +946,12 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	// Disable async commit in local transactions
+	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+		return false
+	}
+
 	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
 	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
@@ -953,6 +974,12 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
+	// Disable 1PC in local transactions
+	txnScopeOption := c.txn.us.GetOption(kv.TxnScope)
+	if txnScopeOption == nil || txnScopeOption.(string) != oracle.GlobalTxnScope {
+		return false
+	}
+
 	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
@@ -997,6 +1024,13 @@ func (c *twoPhaseCommitter) checkOnePCFallBack(action twoPhaseCommitAction, batc
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
+		failpoint.Inject("commitFailedSkipCleanup", func() {
+			logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
+				zap.Uint64("txnStartTS", c.startTS))
+			c.cleanWg.Done()
+			failpoint.Return()
+		})
+
 		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
 		if err != nil {
@@ -1227,7 +1261,24 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		failpoint.Inject("beforeCommit", func() {})
+		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
+			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
+			// `return("delay,fail")`. Then they will be executed sequentially at once.
+			if v, ok := val.(string); ok {
+				for _, action := range strings.Split(v, ",") {
+					// Async commit transactions cannot return error here, since it's already successful.
+					if action == "fail" && !c.isAsyncCommit() {
+						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
+						failpoint.Return(errors.New("injected failure before commit"))
+					} else if action == "delay" {
+						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
+							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+						time.Sleep(duration)
+					}
+				}
+			}
+		})
 	}
 
 	if c.isAsyncCommit() {
@@ -1337,20 +1388,45 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 	c.doingAmend = true
 	defer func() { c.doingAmend = false }()
 	if keysNeedToLock.Len() > 0 {
-		pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 		lCtx := &kv.LockCtx{
-			ForUpdateTS:  c.forUpdateTS,
-			LockWaitTime: kv.LockNoWait,
+			Killed:        c.lockCtx.Killed,
+			ForUpdateTS:   c.forUpdateTS,
+			LockWaitTime:  c.lockCtx.LockWaitTime,
+			WaitStartTime: time.Now(),
 		}
-		err := c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+		tryTimes := uint(0)
+		retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+		var err error
+		for tryTimes < retryLimit {
+			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+			if err != nil {
+				// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+				if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+					newForUpdateTSVer, err := c.store.CurrentVersion(oracle.GlobalTxnScope)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+					c.forUpdateTS = newForUpdateTSVer.Ver
+					logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+						zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+						zap.Uint64("newForUpdateTS", c.forUpdateTS))
+					tryTimes++
+					continue
+				}
+				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return err
+			}
+			logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.Len()))
+			break
+		}
 		if err != nil {
-			logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+			logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+				zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
 			return err
 		}
-		logutil.Logger(ctx).Info("amendPessimisticLock finished",
-			zap.Uint64("startTs", c.startTS),
-			zap.Uint64("forUpdateTS", c.forUpdateTS),
-			zap.Int("keys", keysNeedToLock.Len()))
 	}
 	return nil
 }
@@ -1567,6 +1643,10 @@ func newBatched(primaryKey []byte) *batched {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
+	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
+		limit = 1
+	})
+
 	var start, end int
 	for start = 0; start < mutations.Len(); start = end {
 		var size int

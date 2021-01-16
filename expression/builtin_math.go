@@ -274,6 +274,14 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+	if bf.tp.Decimal != types.UnspecifiedLength {
+		if argFieldTp.Decimal != types.UnspecifiedLength {
+			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
+		} else {
+			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+		}
+	}
 
 	var sig builtinFunc
 	if len(args) > 1 {
@@ -635,9 +643,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	retTp, argTp = types.ETInt, fieldTp.EvalType()
 	switch argTp {
 	case types.ETInt:
-		if fieldTp.Tp == mysql.TypeLonglong {
-			retTp = types.ETDecimal
-		}
+		retTp = types.ETInt
 	case types.ETDecimal:
 		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal
@@ -651,7 +657,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
 func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
-	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
 	// TODO: when argument type is timestamp, add not null flag.

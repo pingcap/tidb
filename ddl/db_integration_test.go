@@ -690,7 +690,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -706,7 +706,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 
 	newColumn.State = model.StatePublic
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
@@ -1323,7 +1323,7 @@ func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expe
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -1348,11 +1348,11 @@ func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	sql += ");"
 	tk.MustGetErrCode(sql, errno.ErrTooManyFields)
 
-	originLimit := atomic.LoadUint32(&ddl.TableColumnCountLimit)
-	atomic.StoreUint32(&ddl.TableColumnCountLimit, uint32(cnt*4))
+	originLimit := config.GetGlobalConfig().TableColumnCountLimit
+	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, uint32(cnt*4))
 	_, err := tk.Exec(sql)
 	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
+	atomic.StoreUint32(&config.GetGlobalConfig().TableColumnCountLimit, originLimit)
 }
 
 func (s *testIntegrationSuite8) TestCreateTableTooManyIndexes(c *C) {
@@ -1472,7 +1472,7 @@ func (s *testIntegrationSuite3) TestResolveCharset(c *C) {
 func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
+	count := int(atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
@@ -2157,6 +2157,9 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2164,6 +2167,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustExec("insert into t values (1, 2.1);")
 	tk.MustExec("alter table t add index idx((a+b));")
+	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
 	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -2207,13 +2211,22 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
+
+	// Test experiment switch.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
+	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
+	tk.MustGetErrMsg("create table t(a int, key ((a+1)));", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	defer config.RestoreFunc()()
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
 		conf.AlterPrimaryKey = true
 	})
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2252,6 +2265,9 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2382,6 +2398,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists alter_index_test")
 	tk.MustExec("USE alter_index_test;")
@@ -2647,4 +2666,25 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			restoreConfig()
 		}
 	}
+}
+
+func (s *testIntegrationSuite3) TestIssue22028(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t(a double(0, 0));")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a double);")
+	_, err = tk.Exec("ALTER TABLE t MODIFY COLUMN a DOUBLE(0,0);")
+	c.Assert(err.Error(), Equals, "[types:1439]Display width out of range for column 'a' (max = 255)")
+}
+
+func (s *testIntegrationSuite3) TestIssue21835(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	_, err := tk.Exec("create table t( col decimal(1,2) not null default 0);")
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'col').")
 }

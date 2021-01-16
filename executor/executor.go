@@ -1152,17 +1152,16 @@ func init() {
 			return nil, err
 		}
 		chk := newFirstChunk(exec)
-		for {
-			err = Next(ctx, exec, chk)
-			if err != nil {
-				return nil, err
-			}
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
-			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
-			return row, err
+
+		err = Next(ctx, exec, chk)
+		if err != nil {
+			return nil, err
 		}
+		if chk.NumRows() == 0 {
+			return nil, nil
+		}
+		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+		return row, err
 	}
 }
 
@@ -1393,7 +1392,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := newFirstChunk(e.children[0])
@@ -1402,7 +1401,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	return nil
@@ -1667,9 +1666,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
-		// but should not make DupKeyAsWarning or BadNullAsWarning,
+		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -1683,6 +1683,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !vars.StrictSQLMode
 		sc.InLoadDataStmt = true
+		// return warning instead of error when load data meet no partition for value
+		sc.IgnoreNoPartition = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1765,6 +1767,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
+	sc.IgnoreNoPartition = stmt.IgnoreErr
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated

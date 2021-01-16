@@ -14,7 +14,6 @@
 package statistics
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -23,7 +22,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -58,39 +56,12 @@ const (
 	PseudoRowCount = 10000
 )
 
-// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
-
-// AnalyzeOptionLimit indicates the upper bound of some attribute.
-var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
-	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    100000,
-}
-
-// AnalyzeOptionDefault indicates the default values of some attributes.
-var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       20,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    10000,
-}
-
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
-}
-
-// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
-type ExtendedStatsKey struct {
-	StatsName string
-	DB        string
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -103,13 +74,13 @@ type ExtendedStatsItem struct {
 
 // ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
 type ExtendedStatsColl struct {
-	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	Stats             map[string]*ExtendedStatsItem
 	LastUpdateVersion uint64
 }
 
 // NewExtendedStatsColl allocate an ExtendedStatsColl struct.
 func NewExtendedStatsColl() *ExtendedStatsColl {
-	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
+	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -171,55 +142,13 @@ func (t *Table) Copy() *Table {
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		for key, item := range t.ExtendedStats.Stats {
-			newExtStatsColl.Stats[key] = item
+		for name, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[name] = item
 		}
 		nt.ExtendedStats = newExtStatsColl
-	}
-	return nt
-}
-
-// CopyWithoutBucketsAndCMS copies the current table only with metadata.
-func (t *Table) CopyWithoutBucketsAndCMS() *Table {
-	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		Count:          t.Count,
-		Columns:        make(map[int64]*Column, len(t.Columns)),
-		Indices:        make(map[int64]*Index, len(t.Indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
-	}
-	for id, col := range t.Columns {
-		oldHg := &col.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Columns[id] = &Column{
-			Histogram:  *newHg,
-			PhysicalID: col.PhysicalID,
-			Info:       col.Info,
-			Count:      col.Count,
-			IsHandle:   col.IsHandle,
-			Flag:       col.Flag,
-		}
-	}
-	for id, idx := range t.Indices {
-		oldHg := &idx.Histogram
-		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
-		newHistColl.Indices[id] = &Index{
-			Histogram:  *newHg,
-			PhysicalID: idx.PhysicalID,
-			Info:       idx.Info,
-			StatsVer:   idx.StatsVer,
-			Flag:       idx.Flag,
-		}
-	}
-	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
 	}
 	return nt
 }
@@ -300,40 +229,6 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Unlock()
 }
 
-type tableIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type neededIndexMap struct {
-	m    sync.Mutex
-	idxs map[tableIndexID]struct{}
-}
-
-// AllIdxs returns all the idx with an array
-func (n *neededIndexMap) AllIdxs() []tableIndexID {
-	n.m.Lock()
-	keys := make([]tableIndexID, 0, len(n.idxs))
-	for key := range n.idxs {
-		keys = append(keys, key)
-	}
-	n.m.Unlock()
-	return keys
-}
-
-func (n *neededIndexMap) insert(idx tableIndexID) {
-	n.m.Lock()
-	n.idxs[idx] = struct{}{}
-	n.m.Unlock()
-}
-
-// Delete delete a idx from idxs
-func (n *neededIndexMap) Delete(idx tableIndexID) {
-	n.m.Lock()
-	delete(n.idxs, idx)
-	n.m.Unlock()
-}
-
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
@@ -370,7 +265,10 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoBetweenRate
 	}
-	count := c.BetweenRowCount(a, b)
+	count, err := c.BetweenRowCount(sc, a, b)
+	if err != nil {
+		return 0
+	}
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
@@ -419,7 +317,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(sc, coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -428,7 +326,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer != Version0 {
+	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)

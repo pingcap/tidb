@@ -56,7 +56,7 @@ func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore
 
 // HandleCopRequestWithMPPCtx handles coprocessor request, actually, this is the updated version for
 // HandleCopRequest(after mpp test is supported), however, go does not support function overloading,
-// I have to rename it to HandleCopRequestWithMPPCtx, once unistore is updated, HandleCopRequest will be deleted.
+// I have to rename it to HandleCopRequestWithMPPCtx.
 func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
 	switch req.Tp {
 	case kv.ReqTypeDAG:
@@ -109,7 +109,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 	}
 	closureExec, err := buildClosureExecutor(dagCtx, dagReq, mppCtx)
 	if err != nil {
-		return buildResp(nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return buildResp(nil, nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
 	chunks, err := closureExec.execute()
 	if closureExec.exchangeSenderCtx != nil {
@@ -147,7 +147,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		}
 		return nil
 	}
-	return buildResp(chunks, closureExec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildResp(chunks, closureExec, closureExec.ndvs, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -352,7 +352,7 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	var counts []int64
 	if closureExecutor != nil {
@@ -362,6 +362,7 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, dagReq *ti
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
+		Ndvs:         ndvs,
 	}
 	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {

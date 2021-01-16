@@ -739,8 +739,8 @@ func ParseDateFormat(format string) []string {
 		return nil
 	}
 
-	// Date format must start and end with number.
-	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+	// Date format must start with number.
+	if !isDigit(format[0]) {
 		return nil
 	}
 
@@ -786,7 +786,14 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	return prevParts == 2 && (c == ' ' || c == 'T')
+	if prevParts == 2 && (c == ' ' || c == 'T') {
+		return true
+	}
+
+	if prevParts > 4 && !isDigit(c) {
+		return true
+	}
+	return false
 }
 
 var validIdxCombinations = map[int]struct {
@@ -995,6 +1002,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		}
 	}
 	switch len(seps) {
+	case 0:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 1:
 		l := len(seps[0])
 		// Values specified as numbers
@@ -1083,6 +1092,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
+	case 2:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -1098,7 +1109,14 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
+		seps = seps[:6]
+		// YYYY-MM-DD HH-MM-SS
+		if sc != nil {
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+		}
+		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -1948,6 +1966,17 @@ func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
 func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	// date has no fractional seconds precision
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
+}
+
+// ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
+// Note: the invoker must promise the `year` is in the range [MinYear, MaxYear].
+func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
+	if year == 0 {
+		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
+	}
+
+	dt := FromDate(int(year), 0, 0, 0, 0, 0, 0)
+	return NewTime(dt, mysql.TypeDatetime, DefaultFsp), nil
 }
 
 // ParseTimeFromNum parses a formatted int64,

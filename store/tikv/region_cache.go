@@ -25,10 +25,12 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -141,7 +143,7 @@ func (r *RegionStore) clone() *RegionStore {
 }
 
 // return next follower store's index
-func (r *RegionStore) follower(seed uint32) AccessIndex {
+func (r *RegionStore) follower(seed uint32, op *storeSelectorOp) AccessIndex {
 	l := uint32(r.accessStoreNum(TiKvOnly))
 	if l <= 1 {
 		return r.workTiKVIdx
@@ -153,7 +155,7 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 			followerIdx++
 		}
 		storeIdx, s := r.accessStore(TiKvOnly, followerIdx)
-		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] == atomic.LoadUint32(&s.epoch) && r.filterStoreCandidate(followerIdx, op) {
 			return followerIdx
 		}
 		seed++
@@ -162,20 +164,28 @@ func (r *RegionStore) follower(seed uint32) AccessIndex {
 }
 
 // return next leader or follower store's index
-func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
+func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 	candidates := make([]AccessIndex, 0, r.accessStoreNum(TiKvOnly))
 	for i := 0; i < r.accessStoreNum(TiKvOnly); i++ {
 		storeIdx, s := r.accessStore(TiKvOnly, AccessIndex(i))
-		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) {
+		if r.storeEpochs[storeIdx] != atomic.LoadUint32(&s.epoch) || !r.filterStoreCandidate(AccessIndex(i), op) {
 			continue
 		}
 		candidates = append(candidates, AccessIndex(i))
 	}
-
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
-	return candidates[int32(seed)%int32(len(candidates))]
+	return candidates[seed%uint32(len(candidates))]
+}
+
+func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
+	_, s := r.accessStore(TiKvOnly, aidx)
+	// filter label unmatched store
+	if !s.IsLabelsMatch(op.labels) {
+		return false
+	}
+	return true
 }
 
 // init initializes region after constructed.
@@ -371,9 +381,23 @@ func (c *RPCContext) String() string {
 		c.Region.GetID(), c.Meta, c.Peer, c.Addr, c.AccessIdx, c.AccessMode, runStoreType)
 }
 
+type storeSelectorOp struct {
+	labels []*metapb.StoreLabel
+}
+
+// StoreSelectorOption configures storeSelectorOp.
+type StoreSelectorOption func(*storeSelectorOp)
+
+// WithMatchLabels indicates selecting stores with matched labels
+func WithMatchLabels(labels []*metapb.StoreLabel) StoreSelectorOption {
+	return func(op *storeSelectorOp) {
+		op.labels = labels
+	}
+}
+
 // GetTiKVRPCContext returns RPCContext for a region. If it returns nil, the region
 // must be out of date and already dropped from cache.
-func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32) (*RPCContext, error) {
+func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRead kv.ReplicaReadType, followerStoreSeed uint32, opts ...StoreSelectorOption) (*RPCContext, error) {
 	ts := time.Now().Unix()
 
 	cachedRegion := c.getCachedRegionWithRLock(id)
@@ -392,11 +416,15 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 		storeIdx  int
 		accessIdx AccessIndex
 	)
+	options := &storeSelectorOp{}
+	for _, op := range opts {
+		op(options)
+	}
 	switch replicaRead {
 	case kv.ReplicaReadFollower:
-		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed)
+		store, peer, accessIdx, storeIdx = cachedRegion.FollowerStorePeer(regionStore, followerStoreSeed, options)
 	case kv.ReplicaReadMixed:
-		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed)
+		store, peer, accessIdx, storeIdx = cachedRegion.AnyStorePeer(regionStore, followerStoreSeed, options)
 	default:
 		store, peer, accessIdx, storeIdx = cachedRegion.WorkStorePeer(regionStore)
 	}
@@ -941,6 +969,13 @@ func filterUnavailablePeers(region *pd.Region) {
 // If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
 // when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("loadRegion", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	var backoffErr error
 	searchPrev := false
 	for {
@@ -953,9 +988,9 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		var reg *pd.Region
 		var err error
 		if searchPrev {
-			reg, err = c.pdClient.GetPrevRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetPrevRegion(ctx, key)
 		} else {
-			reg, err = c.pdClient.GetRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetRegion(ctx, key)
 		}
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionError.Inc()
@@ -992,6 +1027,12 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 
 // loadRegionByID loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, error) {
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("loadRegionByID", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	var backoffErr error
 	for {
 		if backoffErr != nil {
@@ -1000,7 +1041,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-		reg, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
+		reg, err := c.pdClient.GetRegionByID(ctx, regionID)
 		if err != nil {
 			tikvRegionCacheCounterWithGetRegionByIDError.Inc()
 		} else {
@@ -1035,6 +1076,12 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	if limit == 0 {
 		return nil, nil
 	}
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("scanRegions", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 
 	var backoffErr error
 	for {
@@ -1044,7 +1091,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		regionsInfo, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		regionsInfo, err := c.pdClient.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
@@ -1279,13 +1326,13 @@ func (r *Region) WorkStorePeer(rs *RegionStore) (store *Store, peer *metapb.Peer
 }
 
 // FollowerStorePeer returns a follower store with follower peer.
-func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed))
+func (r *Region) FollowerStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.follower(followerStoreSeed, op))
 }
 
 // AnyStorePeer returns a leader or follower store with the associated peer.
-func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
-	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed))
+func (r *Region) AnyStorePeer(rs *RegionStore, followerStoreSeed uint32, op *storeSelectorOp) (store *Store, peer *metapb.Peer, accessIdx AccessIndex, storeIdx int) {
+	return r.getKvStorePeer(rs, rs.kvPeer(followerStoreSeed, op))
 }
 
 // RegionVerID is a unique ID that can identify a Region at a specific version.
@@ -1486,8 +1533,8 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
 	tp := kv.TiKV
 	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
+		if label.Key == placement.EngineLabelKey {
+			if label.Value == placement.EngineLabelTiFlash {
 				tp = kv.TiFlash
 			}
 			break

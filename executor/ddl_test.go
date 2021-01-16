@@ -75,6 +75,17 @@ func (s *testSuite6) TestInTxnExecDDLFail(c *C) {
 	result.Check(testkit.Rows("1"))
 }
 
+func (s *testSuite6) TestInTxnExecDDLInvalid(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40));")
+	tk.MustExec("insert into t values (1, 'quizzical hofstadter');")
+	tk.MustExec("begin;")
+	_ = tk.MustQuery("select c_int from t where c_str is not null for update;")
+	tk.MustExec("alter table t add index idx_4 (c_str);")
+}
+
 func (s *testSuite6) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -793,7 +804,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
 
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)

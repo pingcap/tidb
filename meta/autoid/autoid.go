@@ -187,7 +187,7 @@ func (alloc *allocator) End() int64 {
 func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	var autoID int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -215,7 +215,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {
@@ -261,7 +261,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {
@@ -298,7 +298,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err != nil {
@@ -460,12 +460,6 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
 func (alloc *allocator) Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("autoid.Alloc", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		opentracing.ContextWithSpan(ctx, span1)
-	}
-
 	if tableID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
@@ -480,9 +474,9 @@ func (alloc *allocator) Alloc(ctx context.Context, tableID int64, n uint64, incr
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(tableID, n, increment, offset)
+		return alloc.alloc4Unsigned(ctx, tableID, n, increment, offset)
 	}
-	return alloc.alloc4Signed(tableID, n, increment, offset)
+	return alloc.alloc4Signed(ctx, tableID, n, increment, offset)
 }
 
 func (alloc *allocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
@@ -632,7 +626,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(tableID, offset-1, true); err != nil {
@@ -656,7 +650,13 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
+				defer span1.Finish()
+				opentracing.ContextWithSpan(ctx, span1)
+			}
+
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -701,7 +701,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(tableID, uint64(offset-1), true); err != nil {
@@ -725,7 +725,13 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
+				defer span1.Finish()
+				opentracing.ContextWithSpan(ctx, span1)
+			}
+
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -789,7 +795,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err = kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var (
 			err1    error
@@ -924,17 +930,13 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 	alloc.(*allocator).mu.Unlock()
 }
 
-// AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
-// The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
-// These are two type of layout:
-// 1. Signed bigint:
-//   | [sign_bit] | [shard_bits] | [incremental_bits] |
-//   sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
-// 2. Unsigned bigint:
-//   | [shard_bits] | [incremental_bits] |
-//   shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
-// Please always use NewAutoRandomIDLayout() to instantiate.
-type AutoRandomIDLayout struct {
+// ShardIDLayout is used to calculate the bits length of different segments in auto id.
+// Generally, an auto id is consist of 3 segments: sign bit, shard bits and incremental bits.
+// Take ``a BIGINT AUTO_INCREMENT PRIMARY KEY`` as an example, assume that the `shard_row_id_bits` = 5,
+// the layout is like
+//  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
+// Please always use NewShardIDLayout() to instantiate.
+type ShardIDLayout struct {
 	FieldType *types.FieldType
 	ShardBits uint64
 	// Derived fields.
@@ -943,15 +945,15 @@ type AutoRandomIDLayout struct {
 	HasSignBit      bool
 }
 
-// NewAutoRandomIDLayout create an instance of AutoRandomIDLayout.
-func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRandomIDLayout {
+// NewShardIDLayout create an instance of ShardIDLayout.
+func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
 	if hasSignBit {
 		incrementalBits -= 1
 	}
-	return &AutoRandomIDLayout{
+	return &ShardIDLayout{
 		FieldType:       fieldType,
 		ShardBits:       shardBits,
 		TypeBitsLength:  typeBitsLength,
@@ -961,11 +963,11 @@ func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRa
 }
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
-func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
+func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
 	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
 }
 
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
-func (l *AutoRandomIDLayout) IncrementalMask() int64 {
+func (l *ShardIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
 }

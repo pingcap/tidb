@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -313,6 +314,10 @@ type LogicalAggregation struct {
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
+
+	// noCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	noCopPushDown bool
 }
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -516,6 +521,11 @@ type DataSource struct {
 	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
 	preferPartitions map[int][]model.CIStr
 	SampleInfo       *TableSampleInfo
+	is               infoschema.InfoSchema
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
