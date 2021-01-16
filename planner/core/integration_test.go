@@ -2095,6 +2095,17 @@ func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("11 12"))
 }
 
+func (s *testIntegrationSuite) TestSubProjNotInGroupBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY';")
+	tk.MustExec("insert into t1 values (4, 40), (1, 10), (2, 20), (2, 20), (3, 30);")
+	tk.MustGetErrMsg("select (select t1.a) aa, count(distinct b) from t1 group by b",
+		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+}
+
 func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
