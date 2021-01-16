@@ -5502,6 +5502,12 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
 		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
+	if sqpr, ok := expr.(*ast.SubqueryExpr); ok && sqpr.Query != nil {
+		if selSt, ok := sqpr.Query.(*ast.SelectStmt); ok && selSt.From == nil &&
+			len(selSt.Fields.Fields) > 0 {
+			return getInnerFromParenthesesAndUnaryPlus(selSt.Fields.Fields[0].Expr)
+		}
+	}
 	return expr
 }
 
