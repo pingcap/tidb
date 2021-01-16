@@ -408,6 +408,9 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// RecommendLocalScan indicates whether the planner recommends a local tikv replica scan, when
+	// the tidb-server and leader are not in the same AZ/DC.
+	RecommendLocalScan bool
 }
 
 // ResultSubset represents a result subset from a single storage unit.

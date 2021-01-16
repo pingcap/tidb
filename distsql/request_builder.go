@@ -243,6 +243,12 @@ func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	return builder
 }
 
+// SetRecommendLocalScan sets "RecommendLocalScan" flag for "kv.Request".
+func (builder *RequestBuilder) SetRecommendLocalScan(recommendLocalScan bool) *RequestBuilder {
+	builder.Request.RecommendLocalScan = recommendLocalScan
+	return builder
+}
+
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency

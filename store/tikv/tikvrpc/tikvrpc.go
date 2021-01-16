@@ -170,8 +170,9 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadType kv.ReplicaReadType // dirrerent from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
+	RecommendLocalScan bool			   // flag to recommend a local (non-leader) scan
 	StoreTp         kv.StoreType
 }
 
@@ -191,11 +192,12 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 }
 
 // NewReplicaReadRequest returns new kv rpc request with replica read.
-func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, recommendLocalScan bool, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
+	req.RecommendLocalScan = recommendLocalScan
 	return req
 }
 

@@ -870,13 +870,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 	}
 
-	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
-		Priority:       kvPriorityToCommandPri(worker.req.Priority),
-		NotFillCache:   worker.req.NotFillCache,
-		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         worker.req.TaskID,
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead,
+		&worker.replicaReadSeed, worker.req.RecommendLocalScan,
+		kvrpcpb.Context{
+			IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
+			Priority:       kvPriorityToCommandPri(worker.req.Priority),
+			NotFillCache:   worker.req.NotFillCache,
+			RecordTimeStat: true,
+			RecordScanStat: true,
+			TaskId:         worker.req.TaskID,
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -230,7 +232,15 @@ func (s *RegionRequestSender) getRPCContext(
 		if req.ReplicaReadSeed != nil {
 			seed = *req.ReplicaReadSeed
 		}
-		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+
+		if (req.RecommendLocalScan) {
+			// We need to avoid the affection of forced replica read type here, so that the
+			// AZ/DC label matching could take effect.
+			return s.regionCache.GetTiKVRPCContext(bo, regionID, kv.ReplicaReadMixed, seed,
+				WithMatchLabels(getReplicaLabels()))
+		} else {
+			return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+		}
 	case kv.TiFlash:
 		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
 	case kv.TiDB:
@@ -238,6 +248,18 @@ func (s *RegionRequestSender) getRPCContext(
 	default:
 		return nil, errors.Errorf("unsupported storage type: %v", sType)
 	}
+}
+
+func getReplicaLabels() []*metapb.StoreLabel {
+	serverLabels := config.GetGlobalConfig().Labels
+	replicaLabels := make([]*metapb.StoreLabel, len(serverLabels))
+	for key, value := range serverLabels {
+		replicaLabels = append(replicaLabels, &metapb.StoreLabel{
+			Key: key,
+			Value: value,
+		})
+	}
+	return replicaLabels
 }
 
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
