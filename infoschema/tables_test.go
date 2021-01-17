@@ -483,8 +483,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 ", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0 ", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -523,8 +523,8 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -538,11 +538,11 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752)", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0 ", "in transaction", "<nil>"),
 		))
 }
 
