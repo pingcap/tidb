@@ -519,7 +519,7 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if buf.IsNull(i) {
 			continue
 		}
 		if y[i] == 0 {
