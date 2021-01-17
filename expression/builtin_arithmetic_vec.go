@@ -515,11 +515,11 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
 	}
+	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.SetNull(i, true)
+		if result.IsNull(i) {
 			continue
 		}
 		if y[i] == 0 {
@@ -527,9 +527,6 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 				return err
 			}
 			result.SetNull(i, true)
-			continue
-		}
-		if result.IsNull(i) {
 			continue
 		}
 
