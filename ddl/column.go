@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/bits"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1119,6 +1121,10 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
 		}
 
+		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
+		w.reorgCtx.setCurrentElement(reorgInfo.elements[i+1])
+
+		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
@@ -1307,7 +1313,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 // BackfillDataInTxn will backfill the table record in a transaction, lock corresponding rowKey, if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1476,7 +1482,7 @@ func adjustColumnInfoInModifyColumn(
 func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
 	schemaID := job.SchemaID
-	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 
 	// GenAutoRandomID first to prevent concurrent update.
 	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
@@ -1603,7 +1609,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(colNum int) error {
-	if uint32(colNum) > atomic.LoadUint32(&TableColumnCountLimit) {
+	if uint32(colNum) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil

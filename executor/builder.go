@@ -79,6 +79,7 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+	mppTaskID        int64
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -760,6 +761,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
+		rowLen:                    v.RowLen,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -962,7 +964,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		return x
 	}
-	// If reader is union, it means a partitiont table and we should transfer as above.
+	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*UnionExec); ok {
 		for i, child := range x.children {
 			x.children[i] = b.buildUnionScanFromReader(child, v)
@@ -1712,7 +1714,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			joiners:      joiners,
 			corCols:      corCols,
 			concurrency:  v.Concurrency,
-			useCache:     true,
+			useCache:     v.CanUseCache,
 		}
 	}
 	return serialExec
@@ -1938,9 +1940,15 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
+	topNSize := new(int32)
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	statsVersion := new(int32)
+	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		TopNSize:   topNSize,
+		Version:    statsVersion,
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -2014,7 +2022,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			Flags:          sc.PushDownFlags(),
 			TimeZoneOffset: offset,
 		},
-		opts: opts,
+		opts:       opts,
+		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2490,7 +2499,7 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	case 1:
 		for _, p := range v.TablePlans {
 			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalBroadCastJoin:
+			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalHashJoin:
 				e.batchCop = true
 			}
 		}
@@ -2573,6 +2582,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
+		allocTaskID:  &b.mppTaskID,
 	}
 	return gather
 }
@@ -3331,16 +3341,11 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		if meta != nil && meta.IsCommonHandle {
-			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, kvRange...)
-		} else {
-			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
-			ret = append(ret, kvRange...)
+		kvRange, err := distsql.TableHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && meta.IsCommonHandle, h.ranges, nil)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, kvRange...)
 	}
 	return ret, nil
 }
@@ -3357,6 +3362,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
 		Build()
 	if err != nil {
 		return nil, err

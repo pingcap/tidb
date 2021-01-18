@@ -9,12 +9,12 @@
           "└─Apply_13 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
           "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
-          "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
-          "    └─IndexMergeJoin_46 2.00 root  inner join, inner:TableReader_41, outer key:test.t.a, inner key:test.t.a",
-          "      ├─IndexReader_33(Build) 2.00 root  index:IndexRangeScan_32",
-          "      │ └─IndexRangeScan_32 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
-          "      └─TableReader_41(Probe) 1.00 root  data:TableRangeScan_40",
-          "        └─TableRangeScan_40 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:true"
+          "  └─StreamAgg_17(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "    └─HashJoin_44 2.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "      ├─TableReader_32(Build) 2.00 root  data:TableFullScan_31",
+          "      │ └─TableFullScan_31 2.00 cop[tikv] table:t1 keep order:false",
+          "      └─IndexReader_30(Probe) 2.00 root  index:IndexRangeScan_29",
+          "        └─IndexRangeScan_29 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false"
         ]
       },
       {
@@ -383,6 +383,147 @@
           "1 aaaa",
           "2 a"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexRangeForBit",
+    "Cases": [
+      {
+        "SQL": "select * from t;",
+        "Plan": [
+          "TableReader_5 4.00 root partition:all data:TableFullScan_4",
+          "└─TableFullScan_4 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 0;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 0)",
+          "└─TableReader_7 4.00 root partition:p0 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 0 or a = 4;",
+        "Plan": [
+          "Selection_5 3.20 root  or(eq(test.t.a, 0), eq(test.t.a, 4))",
+          "└─TableReader_7 4.00 root partition:p0 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 1)",
+          "└─TableReader_7 4.00 root partition:p1 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = -1;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 3;",
+        "Plan": [
+          "Selection_5 3.20 root  eq(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a < 1;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, 1)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
+        "SQL": "select * from t where a < 3;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a < -1;",
+        "Plan": [
+          "Selection_5 3.20 root  lt(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:dual data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a > 0;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, 0)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a > -1;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, -1)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0",
+          "\u0001 -1",
+          "\u0001 1",
+          "\u0001 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where a > 3;",
+        "Plan": [
+          "Selection_5 3.20 root  gt(test.t.a, 3)",
+          "└─TableReader_7 4.00 root partition:all data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": null
       }
     ]
   }

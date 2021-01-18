@@ -66,6 +66,10 @@ type reorgCtx struct {
 
 	doneKey atomic.Value // nullable kv.Key
 
+	// element is used to record the current element in the reorg process, it can be
+	// accessed by reorg-worker and daemon-worker concurrently.
+	element atomic.Value
+
 	// warnings is used to store the warnings when doing the reorg job under
 	// a certain SQL Mode.
 	mu struct {
@@ -123,6 +127,10 @@ func (rc *reorgCtx) setNextKey(doneKey kv.Key) {
 	rc.doneKey.Store(nullableKey{key: doneKey})
 }
 
+func (rc *reorgCtx) setCurrentElement(element *meta.Element) {
+	rc.element.Store(element)
+}
+
 func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
 	if len(warnings) == 0 || len(warningsCount) == 0 {
 		return
@@ -143,10 +151,11 @@ func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key) {
+func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 	row := atomic.LoadInt64(&rc.rowCount)
 	h, _ := (rc.doneKey.Load()).(nullableKey)
-	return row, h.key
+	element, _ := (rc.element.Load()).(*meta.Element)
+	return row, h.key, element
 }
 
 func (rc *reorgCtx) clean() {
@@ -185,6 +194,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// initial reorgCtx
 		w.reorgCtx.setRowCount(job.GetRowCount())
 		w.reorgCtx.setNextKey(reorgInfo.StartKey)
+		w.reorgCtx.setCurrentElement(reorgInfo.currElement)
 		w.reorgCtx.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 		w.reorgCtx.mu.warningsCount = make(map[errors.ErrorID]int64)
 		go func() {
@@ -206,7 +216,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
-		rowCount, _ := w.reorgCtx.getRowCountAndKey()
+		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
@@ -237,7 +247,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneKey := w.reorgCtx.getRowCountAndKey()
+		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
@@ -246,12 +256,16 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.resetWarnings()
+
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currElement, doneKey)
+		// Since daemon-worker is triggered by timer to store the info half-way.
+		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
+		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
+
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
-			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.ByteString("elementType", currentElement.TypeKey),
+			zap.Int64("elementID", currentElement.ID),
 			zap.Int64("totalAddedRowCount", rowCount),
 			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
 			zap.Error(err))
@@ -408,13 +422,13 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	}
 	var b distsql.RequestBuilder
 	var builder *distsql.RequestBuilder
-	if !tbl.Meta().IsCommonHandle {
-		ranges := ranger.FullIntRange(false)
-		builder = b.SetTableRanges(tbl.GetPhysicalID(), ranges, nil)
+	var ranges []*ranger.Range
+	if tbl.Meta().IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
 	} else {
-		ranges := ranger.FullNotNullRange()
-		builder = b.SetCommonHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), ranges)
+		ranges = ranger.FullIntRange(false)
 	}
+	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges, nil)
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -696,7 +710,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})

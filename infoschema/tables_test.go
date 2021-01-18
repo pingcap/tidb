@@ -1010,10 +1010,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot     \t100    \t\n" +
-		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10    \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1031,10 +1031,11 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot     \t100    \t\n" +
-		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows(
+		"Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+			"\tIndexLookUp_10    \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1081,10 +1082,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot     \t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1100,10 +1101,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot     \t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
@@ -1276,6 +1277,12 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
 		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
+
+	// Test for issue #21642.
+	tk.MustQuery(`select tidb_version()`)
+	rows := tk.MustQuery(`select plan from information_schema.statements_summary
+		where digest_text like "select tidb_version%"`).Rows()
+	c.Assert(strings.Contains(rows[0][0].(string), "Projection"), IsTrue)
 }
 
 // Test error count and warning count.
@@ -1396,12 +1403,10 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	c.Assert(err, IsNil)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 
-	bundles := make(map[string]*placement.Bundle)
-	is.MockBundles(bundles)
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	bundleID := "pd"
-	bundle := &placement.Bundle{
+	is.SetBundle(&placement.Bundle{
 		ID: bundleID,
 		Rules: []*placement.Rule{
 			{
@@ -1411,12 +1416,11 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 				Count:   3,
 			},
 		},
-	}
-	bundles[bundleID] = bundle
+	})
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle = &placement.Bundle{
+	bundle := &placement.Bundle{
 		ID:       bundleID,
 		Index:    3,
 		Override: true,
@@ -1436,7 +1440,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 			},
 		},
 	}
-	bundles[bundleID] = bundle
+	is.SetBundle(bundle)
 	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
 	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
 		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
@@ -1452,7 +1456,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	bundle1.ID = bundleID
 	bundle1.Rules[0].GroupID = bundleID
 	bundle1.Rules[1].GroupID = bundleID
-	bundles[bundleID] = bundle1
+	is.SetBundle(bundle1)
 	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
 		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
 }

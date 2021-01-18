@@ -296,6 +296,10 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
 		e.initIdxScanCtx(idxScan)
+		if collectRangeCounts {
+			e.idxScanCtx.collectNDV = true
+			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
+		}
 		e.scanType = IndexScan
 	case tipb.ExecType_TypeExchangeReceiver:
 		dagCtx.fillColumnInfo(scanExec.ExchangeReceiver.FieldTypes)
@@ -320,6 +324,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	}
 	if collectRangeCounts {
 		e.counts = make([]int64, len(ranges))
+		e.ndvs = make([]int64, len(ranges))
 	}
 	e.kvRanges = ranges
 	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 32)
@@ -495,7 +500,7 @@ func buildTopNProcessor(e *closureExecutor, topN *tipb.TopN) error {
 	ctx := &topNCtx{
 		heap:         heap,
 		orderByExprs: conds,
-		sortRow:      e.newTopNSortRow(),
+		sortRow:      newTopNSortRow(len(conds)),
 		execDetail:   new(execDetail),
 	}
 
@@ -603,6 +608,8 @@ type closureExecutor struct {
 	processor closureProcessor
 
 	counts []int64
+	ndvs   []int64
+	curNdv int64
 }
 
 func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.FieldType) error {
@@ -837,6 +844,8 @@ type idxScanCtx struct {
 	colInfos         []rowcodec.ColInfo
 	primaryColumnIds []int64
 	execDetail       *execDetail
+	collectNDV       bool
+	prevVals         [][]byte
 }
 
 type aggCtx struct {
@@ -922,6 +931,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	dbReader := e.dbReader
 	for i, ran := range e.kvRanges {
+		e.curNdv = 0
 		if e.isPointGetRange(ran) {
 			val, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
@@ -932,6 +942,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			}
 			if e.counts != nil {
 				e.counts[i]++
+				e.ndvs[i] = 1
 			}
 			err = e.processor.Process(ran.StartKey, val)
 			if err != nil {
@@ -947,6 +958,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			delta := int64(e.rowCount - oldCnt)
 			if e.counts != nil {
 				e.counts[i] += delta
+				e.ndvs[i] = e.curNdv
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1101,6 +1113,7 @@ func (e *tableScanProcessor) Process(key, value []byte) error {
 		return dbreader.ScanBreak
 	}
 	e.rowCount++
+	e.curNdv++
 	err := e.tableScanProcessCore(key, value)
 	if e.scanCtx.chk.NumRows() == chunkMaxRows {
 		err = e.chunkToOldChunk(e.scanCtx.chk)
@@ -1252,6 +1265,15 @@ func (e *indexScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
+func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
+	for i := 0; i < isc.columnLen; i++ {
+		if !bytes.Equal(isc.prevVals[i], curVals[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	gotRow := false
 	defer func(begin time.Time) {
@@ -1267,6 +1289,14 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
+	}
+	if e.idxScanCtx.collectNDV {
+		if len(e.idxScanCtx.prevVals[0]) == 0 || !e.idxScanCtx.checkVal(values) {
+			e.curNdv++
+			for i := 0; i < e.idxScanCtx.columnLen; i++ {
+				e.idxScanCtx.prevVals[i] = append(e.idxScanCtx.prevVals[i][:0], values[i]...)
+			}
+		}
 	}
 	chk := e.scanCtx.chk
 	decoder := codec.NewDecoder(chk, e.sc.TimeZone)
@@ -1376,7 +1406,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	if ctx.heap.tryToAddRow(ctx.sortRow) {
 		ctx.sortRow.data[0] = safeCopy(key)
 		ctx.sortRow.data[1] = safeCopy(value)
-		ctx.sortRow = e.newTopNSortRow()
+		ctx.sortRow = newTopNSortRow(len(ctx.orderByExprs))
 	}
 	if ctx.heap.err == nil {
 		gotRow = true
@@ -1384,9 +1414,9 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	return errors.Trace(ctx.heap.err)
 }
 
-func (e *closureExecutor) newTopNSortRow() *sortRow {
+func newTopNSortRow(numOrderByExprs int) *sortRow {
 	return &sortRow{
-		key:  make([]types.Datum, len(e.evalContext.columnInfos)),
+		key:  make([]types.Datum, numOrderByExprs),
 		data: make([][]byte, 2),
 	}
 }
@@ -1500,6 +1530,15 @@ func (e *hashAggProcessor) Finish() error {
 		}
 		e.oldRowBuf = append(e.oldRowBuf, gk...)
 		e.oldChunks = appendRow(e.oldChunks, e.oldRowBuf, i)
+	}
+	if e.aggCtx.execDetail.numIterations == 0 && e.aggCtx.execDetail.numProducedRows == 0 &&
+		len(e.aggCtxsMap) == 0 && len(e.outputOff) == 1 {
+		for _, exec := range e.dagReq.GetExecutors() {
+			if exec.Tp == tipb.ExecType_TypeStreamAgg {
+				e.aggCtx.execDetail.updateOnlyRows(1)
+				e.oldChunks = appendRow(e.oldChunks, make([]byte, 1), 0)
+			}
+		}
 	}
 	return nil
 }

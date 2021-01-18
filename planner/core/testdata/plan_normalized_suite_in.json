@@ -33,6 +33,13 @@
 		]
 	},
 	{
+		"name": "TestPreferRangeScan",
+		"cases": [
+			"select * from test where age=5;",
+			"select * from test where age=5;"
+		]
+	},
+	{
 		"name": "TestNormalizedPlanForDiffStore",
 		"cases": [
 			"explain select /*+ read_from_storage(tiflash[t1]) */ * from t1",
