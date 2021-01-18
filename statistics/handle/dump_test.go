@@ -195,7 +195,7 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	tk.MustExec("insert into t values(1,5),(2,4),(3,3),(4,2),(5,1)")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustExec("alter table t add tidb_stats s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
 
 	is := s.do.InfoSchema()
