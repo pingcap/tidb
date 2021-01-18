@@ -392,6 +392,7 @@ func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	if isTemporalWithDate {
 		datetimeFound = true
 	}
+<<<<<<< HEAD
 	lft := args[0].GetType()
 	for i := range args {
 		rft := args[i].GetType()
@@ -402,6 +403,30 @@ func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 		}
 		if !isStr {
 			isAllStr = false
+=======
+
+	return cmpTp
+}
+
+// resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func resolveType4Extremum(args []Expression) types.EvalType {
+	aggType := aggregateType(args)
+
+	var temporalItem *types.FieldType
+	if aggType.EvalType().IsStringKind() {
+		for i := range args {
+			item := args[i].GetType()
+			// Find the temporal value in the arguments but prefer DateTime value.
+			if types.IsTypeTemporal(item.Tp) {
+				if temporalItem == nil || item.Tp == mysql.TypeDatetime {
+					temporalItem = item
+				}
+			}
+		}
+
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
+			aggType.Tp = temporalItem.Tp
+>>>>>>> 465853679... expression: handle duration type infer in least and greatest (#22271)
 		}
 		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
 		lft = rft
@@ -428,6 +453,14 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
+<<<<<<< HEAD
+=======
+	} else if tp == types.ETDuration {
+		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJSONComparison(ctx, args)
+		tp = types.ETString
+>>>>>>> 465853679... expression: handle duration type infer in least and greatest (#22271)
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -626,10 +659,23 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
+=======
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
+		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
+		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJSONComparison(ctx, args)
+		tp = types.ETString
+>>>>>>> 465853679... expression: handle duration type infer in least and greatest (#22271)
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -655,7 +701,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
