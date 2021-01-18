@@ -127,7 +127,6 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 	for {
 		chk, err := e.children[0].next()
 		if err != nil {
-			panic(err.Error())
 			for _, tunnel := range e.tunnels {
 				tunnel.ErrCh <- err
 			}
@@ -135,7 +134,6 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 			for _, tunnel := range e.tunnels {
 				tipbChunks, err := e.toTiPBChunk(chk)
 				if err != nil {
-					panic(err.Error())
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err
 					}

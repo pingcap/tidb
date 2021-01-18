@@ -49,7 +49,7 @@ const (
 	taskFinished
 )
 
-type MPPExecBuilder struct {
+type mppExecBuilder struct {
 	sc       *stmtctx.StatementContext
 	dbReader *dbreader.DBReader
 	req      *coprocessor.Request
@@ -57,7 +57,7 @@ type MPPExecBuilder struct {
 	dagReq   *tipb.DAGRequest
 }
 
-func (b *MPPExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
+func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
 	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.req.Ranges, false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -76,7 +76,7 @@ func (b *MPPExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 	return ts, err
 }
 
-func (b *MPPExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender, ch *tipb.Executor) (*exchSenderExec, error) {
+func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender, ch *tipb.Executor) (*exchSenderExec, error) {
 	child, err := b.buildMPPExecutor(ch)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (b *MPPExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender, ch *tip
 	return e, nil
 }
 
-func (b *MPPExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*exchRecvExec, error) {
+func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*exchRecvExec, error) {
 	e := &exchRecvExec{
 		baseMPPExec: baseMPPExec{
 			sc:     b.sc,
@@ -129,7 +129,7 @@ func (b *MPPExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*e
 	return e, nil
 }
 
-func (b *MPPExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) (*joinExec, error) {
+func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) (*joinExec, error) {
 	e := &joinExec{
 		baseMPPExec: baseMPPExec{
 			sc:     b.sc,
@@ -179,7 +179,7 @@ func (b *MPPExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	return e, nil
 }
 
-func (b *MPPExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) {
+func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) {
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
 		ts := exec.TblScan
@@ -207,7 +207,7 @@ func handleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	if err != nil {
 		return &coprocessor.Response{OtherError: err.Error()}
 	}
-	builder := MPPExecBuilder{
+	builder := mppExecBuilder{
 		dbReader: dbReader,
 		req:      req,
 		mppCtx:   mppCtx,
@@ -216,12 +216,10 @@ func handleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 	}
 	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
 	if err != nil {
-		panic(err.Error())
 		return &coprocessor.Response{OtherError: err.Error()}
 	}
 	err = mppExec.open()
 	if err != nil {
-		panic(err.Error())
 		return &coprocessor.Response{OtherError: err.Error()}
 	}
 	_, err = mppExec.next()
