@@ -370,6 +370,12 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 				helper.Union(location)
 			}
 		} else {
+			if r.LowVal[0].Kind() == types.KindMinNotNull {
+				r.LowVal[0] = types.GetMinValue(colPrune.ExprCol.GetType())
+			}
+			if r.HighVal[0].Kind() == types.KindMaxValue {
+				r.HighVal[0] = types.GetMaxValue(colPrune.ExprCol.GetType())
+			}
 			locations, err := colPrune.LocateRanges(sc, r.LowVal[0], r.HighVal[0])
 			if err != nil {
 				return nil, false, nil
