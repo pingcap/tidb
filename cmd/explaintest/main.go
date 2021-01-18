@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -656,13 +657,15 @@ func main() {
 		"set @@tidb_window_concurrency=4",
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
-		"set @@tidb_enable_clustered_index=0;",
+		"set @@global.tidb_enable_clustered_index=0;",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
 			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
 		}
 	}
+	// Wait global variables to reload.
+	time.Sleep(domain.GlobalVariableCacheExpiry)
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
 		log.Fatal("set sql_mode='STRICT_TRANS_TABLES' failed", zap.Error(err))

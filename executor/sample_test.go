@@ -72,7 +72,7 @@ func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
 func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	tk := s.initSampleTest(c)
 	tk.MustExec("create table t (a int);")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -122,7 +122,7 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk := s.initSampleTest(c)
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	// Clustered index
 	tk.MustExec("create table t (a varchar(255) primary key, b bigint);")
 	tk.MustExec("insert into t values ('b', 100), ('y', 100);")

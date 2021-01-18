@@ -109,7 +109,7 @@ func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
 	tk.MustExec("create database admin_check_table_clustered_index;")
 	tk.MustExec("use admin_check_table_clustered_index;")
 
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
 	tk.MustExec("insert into t values (1, '1', 1);")

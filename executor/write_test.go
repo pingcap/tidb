@@ -3852,7 +3852,7 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
 	tk.MustExec("insert into t1 values ('a')")
 	tk.MustExec("replace into t1 values ('A')")

@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
@@ -29,7 +30,7 @@ func (s *testClusteredSuite) SetUpTest(c *C) {
 
 func (s *testClusteredSuite) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	return tk
 }
 
@@ -273,4 +274,41 @@ func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
 	tk.MustExec("create index idx on t (b);")
 	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+}
+
+func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
+	const nonClustered, intClustered, commonClustered = `NON-CLUSTERED`, `INT CLUSTERED`, `COMMON CLUSTERED`
+	assertPkType := func(sql string, pkType string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(sql)
+		tk.MustQuery(showPKType).Check(testkit.Rows(pkType))
+	}
+
+	defer config.RestoreFunc()
+	for _, allowAlterPK := range []bool{true, false} {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.AlterPrimaryKey = allowAlterPK
+		})
+		// Test single integer column as the primary key.
+		intPKDefault, commonPKDefault := intClustered, commonClustered
+		if allowAlterPK {
+			intPKDefault = nonClustered
+			commonPKDefault = nonClustered
+		}
+		assertPkType("create table t (a int primary key, b int);", intPKDefault)
+		assertPkType("create table t (a int, b int, primary key(a) clustered);", intClustered)
+		assertPkType("create table t (a int, b int, primary key(a) nonclustered);", nonClustered)
+
+		// Test for clustered index.
+		tk.Se.GetSessionVars().EnableClusteredIndex = false
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", commonClustered)
+		tk.Se.GetSessionVars().EnableClusteredIndex = true
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", commonPKDefault)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", commonClustered)
+	}
 }

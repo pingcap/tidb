@@ -541,10 +541,8 @@ partition by range (a)
 	txn2.Exec("insert into tidb.pt values (666, 'def')")
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
-
-	dbt.mustExec("set @@tidb_enable_clustered_index = 1")
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b))")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 

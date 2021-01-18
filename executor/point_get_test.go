@@ -524,7 +524,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -546,8 +546,8 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 
 func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists pgt")
 	tk.MustExec("create table pgt (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk))")
 	tk.MustExec("insert pgt values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33)")
@@ -569,8 +569,8 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 
 func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
@@ -770,7 +770,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		errCh <- tk1.ExecToErr("set session tidb_enable_clustered_index = 0")
+		tk1.Se.GetSessionVars().EnableClusteredIndex = false
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))

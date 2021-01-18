@@ -349,7 +349,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
 	if s.IsCommonHandle {
-		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.Se.GetSessionVars().EnableClusteredIndex = true
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	} else {
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")

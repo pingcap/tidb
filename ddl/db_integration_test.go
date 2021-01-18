@@ -2637,8 +2637,8 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.EnableGlobalIndex = globalIndex
 			})
-			for _, clusteredIndex := range []int{0, 1} {
-				tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", clusteredIndex))
+			for _, clusteredIndex := range []bool{false, true} {
+				tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
 				for _, t := range tests {
 					tk.MustExec("drop table if exists t;")
 					fields := make([]string, len(t.types))
