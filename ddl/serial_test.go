@@ -650,9 +650,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
+	tk.MustExec("DROP TABLE t_recover")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -894,7 +893,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				return t.DropTableOrView(job.SchemaID, job.TableID, true)
 			})

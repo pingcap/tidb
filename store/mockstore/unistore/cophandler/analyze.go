@@ -83,7 +83,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	}
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
 		statsVer:     statsVer,
 	}
 	if analyzeReq.IdxReq.TopNSize != nil {
@@ -133,9 +133,13 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 }
 
 func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := statistics.Version1
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = int(*analyzeReq.IdxReq.Version)
+	}
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -308,8 +312,12 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 		Collators:       collators,
 		ColsFieldType:   fts,
 	}
+	statsVer := statistics.Version1
+	if analyzeReq.ColReq.Version != nil {
+		statsVer = int(*analyzeReq.ColReq.Version)
+	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statsVer)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth

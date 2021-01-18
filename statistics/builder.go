@@ -32,15 +32,17 @@ type SortedBuilder struct {
 	bucketIdx       int64
 	Count           int64
 	hist            *Histogram
+	needBucketNDV   bool
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType) *SortedBuilder {
+func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType, statsVer int) *SortedBuilder {
 	return &SortedBuilder{
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
 		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
+		needBucketNDV:   statsVer == Version2,
 	}
 }
 
@@ -52,8 +54,14 @@ func (b *SortedBuilder) Hist() *Histogram {
 // Iterate updates the histogram incrementally.
 func (b *SortedBuilder) Iterate(data types.Datum) error {
 	b.Count++
+	appendBucket := b.hist.AppendBucket
+	if b.needBucketNDV {
+		appendBucket = func(lower, upper *types.Datum, count, repeat int64) {
+			b.hist.AppendBucketWithNDV(lower, upper, count, repeat, 1)
+		}
+	}
 	if b.Count == 1 {
-		b.hist.AppendBucket(&data, &data, 1, 1)
+		appendBucket(&data, &data, 1, 1)
 		b.hist.NDV = 1
 		return nil
 	}
@@ -69,7 +77,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		b.hist.Buckets[b.bucketIdx].Repeat++
 	} else if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
 		// The bucket still have room to store a new item, update the bucket.
-		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
+		b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1, b.needBucketNDV)
 		b.hist.NDV++
 	} else {
 		// All buckets are full, we should merge buckets.
@@ -85,11 +93,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		}
 		// We may merge buckets, so we should check it again.
 		if b.hist.Buckets[b.bucketIdx].Count+1-b.lastNumber <= b.valuesPerBucket {
-			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1)
+			b.hist.updateLastBucket(&data, b.hist.Buckets[b.bucketIdx].Count+1, 1, b.needBucketNDV)
 		} else {
 			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
 			b.bucketIdx++
-			b.hist.AppendBucket(&data, &data, b.lastNumber+1, 1)
+			appendBucket(&data, &data, b.lastNumber+1, 1)
 		}
 		b.hist.NDV++
 	}
@@ -165,7 +173,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still have room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor))
+			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.

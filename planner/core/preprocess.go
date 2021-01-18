@@ -230,9 +230,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
 			}
 		}
-	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
-		p.stmtTp = TypeCreate
-		p.checkStatisticsOpGrammar(in)
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	default:
@@ -247,6 +244,14 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(sql[:len(sql)-1])
 	}
+}
+
+// EraseLastSemicolonInSQL removes last semicolon of the SQL.
+func EraseLastSemicolonInSQL(sql string) string {
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		return sql[:len(sql)-1]
+	}
+	return sql
 }
 
 const (
@@ -758,21 +763,6 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 	}
 }
 
-func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
-	var statsName string
-	switch stmt := node.(type) {
-	case *ast.CreateStatisticsStmt:
-		statsName = stmt.StatsName
-	case *ast.DropStatisticsStmt:
-		statsName = stmt.StatsName
-	}
-	if isIncorrectName(statsName) {
-		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
-		p.err = ErrInternal.GenWithStack(msg)
-	}
-	return
-}
-
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.TableToTables[0].OldTable.Name.String()
 	newTable := stmt.TableToTables[0].NewTable.Name.String()
@@ -843,6 +833,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				}
 			default:
 				// Nothing to do now.
+			}
+		case ast.AlterTableAddStatistics, ast.AlterTableDropStatistics:
+			statsName := spec.Statistics.StatsName
+			if isIncorrectName(statsName) {
+				msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+				p.err = ErrInternal.GenWithStack(msg)
+				return
 			}
 		default:
 			// Nothing to do now.
