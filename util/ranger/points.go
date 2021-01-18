@@ -123,8 +123,8 @@ func (r *pointSorter) Swap(i, j int) {
  */
 func getFullRange() []*point {
 	return []*point{
-		&point{start: true},
-		&point{value: types.MaxValueDatum()},
+		{start: true},
+		{value: types.MaxValueDatum()},
 	}
 }
 
