@@ -143,7 +143,7 @@ type backfillWorker struct {
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgBackfillTask
 	resultCh  chan *backfillResult
-	table     table.Table
+	table     table.PhysicalTable
 	closed    bool
 	priority  int
 }
@@ -654,18 +654,19 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64,
+func iterateSnapshotRows(store kv.Storage, priority int, t table.PhysicalTable, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	var firstKey kv.Key
+	recordPrefix := decoder.RecordPrefix(t)
 	if startKey == nil {
-		firstKey = t.RecordPrefix()
+		firstKey = recordPrefix
 	} else {
 		firstKey = startKey
 	}
 
 	var upperBound kv.Key
 	if endKey == nil {
-		upperBound = t.RecordPrefix().PrefixNext()
+		upperBound = recordPrefix.PrefixNext()
 	} else {
 		upperBound = endKey.PrefixNext()
 	}
@@ -681,7 +682,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	defer it.Close()
 
 	for it.Valid() {
-		if !it.Key().HasPrefix(t.RecordPrefix()) {
+		if !it.Key().HasPrefix(recordPrefix) {
 			break
 		}
 
@@ -690,7 +691,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := t.RecordKey(handle)
+		rk := tablecodec.EncodeRecordKey(recordPrefix, handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {

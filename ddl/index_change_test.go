@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/rowDecoder"
 )
 
 var _ = Suite(&testIndexChangeSuite{})
@@ -88,9 +89,9 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	prevState := model.StateNone
 	addIndexDone := false
 	var (
-		deleteOnlyTable table.Table
-		writeOnlyTable  table.Table
-		publicTable     table.Table
+		deleteOnlyTable table.PhysicalTable
+		writeOnlyTable  table.PhysicalTable
+		publicTable     table.PhysicalTable
 		checkErr        error
 	)
 	tc.onJobUpdated = func(job *model.Job) {
@@ -280,7 +281,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
+func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.PhysicalTable) error {
 	// WriteOnlyTable: insert t values (6, 6)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -328,7 +329,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	}
 
 	var rows [][]types.Datum
-	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
+	publicTbl.IterRecords(ctx, decoder.FirstKey(publicTbl), publicTbl.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil

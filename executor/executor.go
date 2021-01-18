@@ -797,7 +797,8 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx)
+		pt := e.table.(table.PhysicalTable)
+		return admin.CheckRecordAndIndex(e.ctx, txn, pt, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()

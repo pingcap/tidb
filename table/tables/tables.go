@@ -220,8 +220,8 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	return nil
 }
 
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (t *TableCommon) DeletableIndices() []table.Index {
+// deletableIndices implements table.Table deletableIndices interface.
+func (t *TableCommon) deletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.
 	return t.indices
 }
@@ -323,14 +323,14 @@ func (t *TableCommon) IndexPrefix() kv.Key {
 	return t.indexPrefix
 }
 
-// RecordKey implements table.Table interface.
-func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
+// recordKey implements table.Table interface.
+func recordKey(t *TableCommon, h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
 // FirstKey implements table.Table interface.
 func (t *TableCommon) FirstKey() kv.Key {
-	return t.RecordKey(kv.IntHandle(math.MinInt64))
+	return recordKey(t, kv.IntHandle(math.MinInt64))
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -418,7 +418,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	key := t.RecordKey(h)
+	key := recordKey(t, h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
@@ -458,7 +458,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 }
 
 func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
-	for _, idx := range t.DeletableIndices() {
+	for _, idx := range t.deletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -725,7 +725,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := t.RecordKey(recordID)
+	key := recordKey(t, recordID)
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
@@ -861,97 +861,6 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	return nil, nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (t *TableCommon) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	// Get raw row data from kv.
-	key := t.RecordKey(h)
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	value, err := txn.Get(context.TODO(), key)
-	if err != nil {
-		return nil, err
-	}
-	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
-	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
-	v := make([]types.Datum, len(cols))
-	colTps := make(map[int64]*types.FieldType, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.IsPKHandleColumn(meta) {
-			if mysql.HasUnsignedFlag(col.Flag) {
-				v[i].SetUint64(uint64(h.IntValue()))
-			} else {
-				v[i].SetInt64(h.IntValue())
-			}
-			continue
-		}
-		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-			pkIdx := FindPrimaryIndex(meta)
-			var idxOfIdx int
-			for i, idxCol := range pkIdx.Columns {
-				if meta.Columns[idxCol.Offset].ID == col.ID {
-					idxOfIdx = i
-					break
-				}
-			}
-			dtBytes := h.EncodedCol(idxOfIdx)
-			_, dt, err := codec.DecodeOne(dtBytes)
-			if err != nil {
-				return nil, nil, err
-			}
-			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
-			if err != nil {
-				return nil, nil, err
-			}
-			v[i] = dt
-			continue
-		}
-		colTps[col.ID] = &col.FieldType
-	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
-	if err != nil {
-		return nil, rowMap, err
-	}
-	defaultVals := make([]types.Datum, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
-			continue
-		}
-		ri, ok := rowMap[col.ID]
-		if ok {
-			v[i] = ri
-			continue
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
-		if col.ChangeStateInfo != nil {
-			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
-		} else {
-			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
-		}
-		if err != nil {
-			return nil, rowMap, err
-		}
-	}
-	return v, rowMap, nil
-}
-
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
 func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
@@ -975,11 +884,6 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 	}
 
 	return idxColumnVal, true, nil
-}
-
-// Row implements table.Table Row interface.
-func (t *TableCommon) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return t.RowWithCols(ctx, h, t.Cols())
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -1111,7 +1015,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 		return err
 	}
 
-	key := t.RecordKey(h)
+	key := recordKey(t, h)
 	return txn.Delete(key)
 }
 
@@ -1121,7 +1025,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 	if err != nil {
 		return err
 	}
-	for _, v := range t.DeletableIndices() {
+	for _, v := range t.deletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
@@ -1237,7 +1141,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 			return err
 		}
 
-		rk := t.RecordKey(handle)
+		rk := recordKey(t, handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return err
@@ -1371,28 +1275,6 @@ func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
 }
 
-// Seek implements table.Table Seek interface.
-func (t *TableCommon) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, false, err
-	}
-	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
-	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
-	if err != nil {
-		return nil, false, err
-	}
-	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
-		// No more records in the table, skip to the end.
-		return nil, false, nil
-	}
-	handle, err := tablecodec.DecodeRowKey(iter.Key())
-	if err != nil {
-		return nil, false, err
-	}
-	return handle, true, nil
-}
-
 // Type implements table.Table Type interface.
 func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
@@ -1467,20 +1349,23 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
 func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
+	physicalTableID := t.Meta().ID
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(sctx, info, data)
 		if err != nil {
 			return err
 		}
-		t = pt.GetPartition(pid)
+		partition := pt.GetPartition(pid)
+		physicalTableID = partition.GetPhysicalID()
 	}
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
 	// Check key exists.
-	recordKey := t.RecordKey(recordID)
+	prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+	recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
 		handleStr := getDuplicateErrorHandleString(t, recordID, data)

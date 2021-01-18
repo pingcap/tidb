@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -43,7 +44,7 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.Table
+	t       table.PhysicalTable
 	ignored bool
 }
 
@@ -101,8 +102,9 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 
 func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
+	var pt table.PhysicalTable
 	if p, ok := t.(table.PartitionedTable); ok {
-		t, err = p.GetPartitionByRow(ctx, row)
+		pt, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -111,6 +113,8 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			}
 			return nil, err
 		}
+	} else {
+		pt = t.(table.PhysicalTable)
 	}
 
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
@@ -149,7 +153,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return str
 		}
 		handleKey = &keyValueWithDupInfo{
-			newKey: t.RecordKey(handle),
+			newKey: tablecodec.EncodeRecordKey(decoder.RecordPrefix(pt), handle),
 			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
@@ -202,7 +206,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		row:        row,
 		handleKey:  handleKey,
 		uniqueKeys: uniqueKeys,
-		t:          t,
+		t:          pt,
 	})
 	return result, nil
 }
@@ -221,15 +225,15 @@ func formatDataForDupError(data []types.Datum) (string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.PhysicalTable, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, t.RecordKey(handle))
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(decoder.RecordPrefix(t), handle))
 	if err != nil {
 		return nil, err
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := decoder.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

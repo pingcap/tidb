@@ -1750,16 +1750,6 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	return nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (it *infoschemaTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
-// Row implements table.Table Row interface.
-func (it *infoschemaTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
 // Cols implements table.Table Cols interface.
 func (it *infoschemaTable) Cols() []*table.Column {
 	return it.cols
@@ -1792,11 +1782,6 @@ func (it *infoschemaTable) Indices() []table.Index {
 
 // WritableIndices implements table.Table WritableIndices interface.
 func (it *infoschemaTable) WritableIndices() []table.Index {
-	return nil
-}
-
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (it *infoschemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
@@ -1877,16 +1862,6 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 	return nil
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
-// Row implements table.Table Row interface.
-func (vt *VirtualTable) Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
 // Cols implements table.Table Cols interface.
 func (vt *VirtualTable) Cols() []*table.Column {
 	return nil
@@ -1919,11 +1894,6 @@ func (vt *VirtualTable) Indices() []table.Index {
 
 // WritableIndices implements table.Table WritableIndices interface.
 func (vt *VirtualTable) WritableIndices() []table.Index {
-	return nil
-}
-
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (vt *VirtualTable) DeletableIndices() []table.Index {
 	return nil
 }
 

@@ -937,7 +937,7 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
-		return w.table.RecordKey(lastHandle).Next()
+		return tablecodec.EncodeRecordKey(decoder.RecordPrefix(w.table), lastHandle).Next()
 	}
 	return taskRange.endKey.Next()
 }

@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -234,14 +235,14 @@ func (s *testDBSuite1) TestRenameIndex(c *C) {
 	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
 }
 
-func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
+func testGetTableByName(c *C, ctx sessionctx.Context, db, tb string) table.PhysicalTable {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
 	c.Assert(err, IsNil)
-	return tbl
+	return tbl.(table.PhysicalTable)
 }
 
 func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo {
@@ -254,7 +255,7 @@ func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo 
 	return dbInfo
 }
 
-func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+func (s *testDBSuite) testGetTable(c *C, name string) table.PhysicalTable {
 	ctx := s.s.(sessionctx.Context)
 	return testGetTableByName(c, ctx, s.schemaName, name)
 }
@@ -1259,7 +1260,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
+	startKey := tablecodec.EncodeRecordKey(decoder.RecordPrefix(t), kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
@@ -2128,7 +2129,7 @@ LOOP:
 			txn.Rollback()
 		}
 	}()
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
+	err = t.IterRecords(ctx, decoder.FirstKey(t), t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -4333,10 +4334,12 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
-	var writeOnlyTable table.Table
+	var writeOnlyTable table.PhysicalTable
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
-			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
+			tmp, ok := s.dom.InfoSchema().TableByID(job.TableID)
+			c.Assert(ok, IsTrue)
+			writeOnlyTable = tmp.(table.PhysicalTable)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -4354,7 +4357,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := writeOnlyTable.RowWithCols(tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
+	oldRow, err := decoder.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)
@@ -5131,12 +5134,12 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 
 	// Test for FindTableByPartitionID.
 	is := domain.GetDomain(tk.Se).InfoSchema()
-	t, dbInfo, _ := is.FindTableByPartitionID(partition.Definitions[0].ID)
-	c.Assert(t, NotNil)
+	t1, dbInfo, _ := is.FindTableByPartitionID(partition.Definitions[0].ID)
+	c.Assert(t1, NotNil)
 	c.Assert(dbInfo, NotNil)
-	c.Assert(t.Meta().Name.L, Equals, "t_flash")
-	t, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
-	c.Assert(t, IsNil)
+	c.Assert(t1.Meta().Name.L, Equals, "t_flash")
+	t1, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
+	c.Assert(t1, IsNil)
 	c.Assert(dbInfo, IsNil)
 	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 

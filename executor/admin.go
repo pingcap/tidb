@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -258,13 +259,13 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	return dagReq, nil
 }
 
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, physicalID int64, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildDAGPB(txn, limitCnt)
 	if err != nil {
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
+	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, physicalID, startHandle)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +312,7 @@ type backfillResult struct {
 	scanRowCount  int64
 }
 
-func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, error) {
+func (e *RecoverIndexExec) backfillIndex(ctx context.Context, pt table.PhysicalTable) (int64, int64, error) {
 	var (
 		currentHandle kv.Handle = nil
 		totalAddedCnt           = int64(0)
@@ -322,7 +323,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 	for {
 		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 			var err error
-			result, err = e.backfillIndexInTxn(ctx, txn, currentHandle)
+			result, err = e.backfillIndexInTxn(ctx, pt, txn, currentHandle)
 			return err
 		})
 		if errInTxn != nil {
@@ -433,8 +434,8 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	return nil
 }
 
-func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, currentHandle kv.Handle) (result backfillResult, err error) {
-	srcResult, err := e.buildTableScan(ctx, txn, currentHandle, uint64(e.batchSize))
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, pt table.PhysicalTable, txn kv.Transaction, currentHandle kv.Handle) (result backfillResult, err error) {
+	srcResult, err := e.buildTableScan(ctx, txn, pt.GetPhysicalID(), currentHandle, uint64(e.batchSize))
 	if err != nil {
 		return result, err
 	}
@@ -457,7 +458,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		recordKey := e.table.RecordKey(row.handle)
+		recordPrefix := decoder.RecordPrefix(pt)
+		recordKey := tablecodec.EncodeRecordKey(recordPrefix, row.handle)
 		err := txn.LockKeys(ctx, new(kv.LockCtx), recordKey)
 		if err != nil {
 			return result, err
@@ -488,21 +490,23 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	var totalAddedCnt, totalScanCnt int64
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
-		pi := e.table.Meta().GetPartitionInfo()
-		for _, p := range pi.Definitions {
-			e.table = tbl.GetPartition(p.ID)
-			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
-			e.physicalID = p.ID
-			addedCnt, scanCnt, err := e.backfillIndex(ctx)
-			totalAddedCnt += addedCnt
-			totalScanCnt += scanCnt
-			if err != nil {
-				return err
+	if pi := e.table.Meta().GetPartitionInfo(); pi != nil {
+		if tbl, ok := e.table.(table.PartitionedTable); ok {
+			for _, p := range pi.Definitions {
+				pt := tbl.GetPartition(p.ID)
+				e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+				e.physicalID = p.ID
+				addedCnt, scanCnt, err := e.backfillIndex(ctx, pt)
+				totalAddedCnt += addedCnt
+				totalScanCnt += scanCnt
+				if err != nil {
+					return err
+				}
 			}
 		}
 	} else {
-		totalAddedCnt, totalScanCnt, err = e.backfillIndex(ctx)
+		pt := e.table.(table.PhysicalTable)
+		totalAddedCnt, totalScanCnt, err = e.backfillIndex(ctx, pt)
 		if err != nil {
 			return err
 		}
@@ -551,9 +555,10 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	return e.idxColFieldTypes
 }
 
-func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
+func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction, pt table.PhysicalTable) (map[string][]byte, error) {
 	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(h))
+		recordPrefix := decoder.RecordPrefix(pt)
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(recordPrefix, h))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -563,7 +568,7 @@ func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte
 	return values, nil
 }
 
-func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[string][]byte) error {
+func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[string][]byte, pt table.PhysicalTable) error {
 	for _, k := range e.batchKeys {
 		if _, found := values[string(k)]; !found {
 			_, handle, err := tablecodec.DecodeRecordKey(k)
@@ -604,8 +609,8 @@ func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 	return idxVals
 }
 
-func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) error {
-	result, err := e.buildIndexScan(ctx, txn)
+func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction, pt table.PhysicalTable) error {
+	result, err := e.buildIndexScan(ctx, txn, pt.GetPhysicalID())
 	if err != nil {
 		return err
 	}
@@ -663,23 +668,25 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
-		pi := e.table.Meta().GetPartitionInfo()
-		for _, p := range pi.Definitions {
-			e.table = tbl.GetPartition(p.ID)
-			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
-			e.physicalID = p.ID
-			err = e.init()
-			if err != nil {
-				return err
-			}
-			err = e.cleanTableIndex(ctx)
-			if err != nil {
-				return err
+	if pi := e.table.Meta().GetPartitionInfo(); pi != nil {
+		if tbl, ok := e.table.(table.PartitionedTable); ok {
+			for _, p := range pi.Definitions {
+				pt := tbl.GetPartition(p.ID)
+				e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+				e.physicalID = p.ID
+				err = e.init()
+				if err != nil {
+					return err
+				}
+				err = e.cleanTableIndex(ctx, pt)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	} else {
-		err = e.cleanTableIndex(ctx)
+		pt := e.table.(table.PhysicalTable)
+		err = e.cleanTableIndex(ctx, pt)
 		if err != nil {
 			return err
 		}
@@ -689,18 +696,18 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
+func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context, pt table.PhysicalTable) error {
 	for {
 		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-			err := e.fetchIndex(ctx, txn)
+			err := e.fetchIndex(ctx, txn, pt)
 			if err != nil {
 				return err
 			}
-			values, err := e.batchGetRecord(txn)
+			values, err := e.batchGetRecord(txn, pt)
 			if err != nil {
 				return err
 			}
-			err = e.deleteDanglingIdx(txn, values)
+			err = e.deleteDanglingIdx(txn, values, pt)
 			if err != nil {
 				return err
 			}
@@ -722,7 +729,7 @@ func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	return nil
 }
 
-func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transaction) (distsql.SelectResult, error) {
+func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transaction, physicalID int64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildIdxDAGPB(txn)
 	if err != nil {
 		return nil, err
@@ -730,7 +737,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	kvReq, err := builder.SetIndexRanges(sc, e.physicalID, e.index.Meta().ID, ranges).
+	kvReq, err := builder.SetIndexRanges(sc, physicalID, e.index.Meta().ID, ranges).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).

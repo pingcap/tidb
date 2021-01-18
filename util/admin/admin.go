@@ -346,14 +346,14 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.PhysicalTable, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
+	startKey := tablecodec.EncodeRecordKey(decoder.RecordPrefix(t), kv.IntHandle(math.MinInt64))
 	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
@@ -405,8 +405,8 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
-	prefix := t.RecordPrefix()
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.PhysicalTable, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
+	prefix := decoder.RecordPrefix(t)
 	keyUpperBound := prefix.PrefixNext()
 
 	it, err := retriever.Iter(startKey, keyUpperBound)
@@ -449,7 +449,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle)
+		recordPrefix := decoder.RecordPrefix(t)
+		rk := tablecodec.EncodeRecordKey(recordPrefix, handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
