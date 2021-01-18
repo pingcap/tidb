@@ -470,6 +470,9 @@ func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyC
 	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hgHigh)
 	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hgHigh)
 	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
+	if math.IsNaN(rangeCount) {
+		return 0.0
+	}
 	return math.Min(rangeCount, float64(modifyCount))
 }
 
