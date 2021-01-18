@@ -350,6 +350,7 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
+	clustered             "CLUSTERED"
 	cycle                 "CYCLE"
 	data                  "DATA"
 	datetimeType          "DATETIME"
@@ -460,6 +461,7 @@ import (
 	nodegroup             "NODEGROUP"
 	nomaxvalue            "NOMAXVALUE"
 	nominvalue            "NOMINVALUE"
+	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
 	nowait                "NOWAIT"
 	nvarcharType          "NVARCHAR"
@@ -1156,6 +1158,7 @@ import (
 	WhereClauseOptional                    "Optional WHERE clause"
 	WhenClause                             "When clause"
 	WhenClauseList                         "When clause list"
+	WithClustered                          "With Clustered Index Enabled"
 	WithReadLockOpt                        "With Read Lock opt"
 	WithGrantOptionOpt                     "With Grant Option opt"
 	WithValidation                         "with validation"
@@ -2139,6 +2142,16 @@ WithValidation:
 		$$ = false
 	}
 
+WithClustered:
+	"CLUSTERED"
+	{
+		$$ = model.PrimaryKeyTypeClustered
+	}
+|	"NONCLUSTERED"
+	{
+		$$ = model.PrimaryKeyTypeNonClustered
+	}
+
 AlgorithmClause:
 	"ALGORITHM" EqOpt "DEFAULT"
 	{
@@ -2806,6 +2819,13 @@ ColumnOption:
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
+	}
+|	PrimaryOpt "KEY" WithClustered
+	{
+		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
+		// can also be specified as just KEY when given in a column definition.
+		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, PrimaryKeyTp: $3.(model.PrimaryKeyType)}
 	}
 |	"UNIQUE" %prec lowerThanKey
 	{
@@ -5122,6 +5142,8 @@ IndexOptionList:
 				opt1.ParserName = opt2.ParserName
 			} else if opt2.Visibility != ast.IndexVisibilityDefault {
 				opt1.Visibility = opt2.Visibility
+			} else if opt2.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
+				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
 			}
 			$$ = opt1
 		}
@@ -5158,6 +5180,12 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Visibility: $1.(ast.IndexVisibility),
+		}
+	}
+|	WithClustered
+	{
+		$$ = &ast.IndexOption{
+			PrimaryKeyTp: $1.(model.PrimaryKeyType),
 		}
 	}
 
@@ -5565,6 +5593,8 @@ UnReservedKeyword:
 |	"PURGE"
 |	"SKIP"
 |	"LOCKED"
+|	"CLUSTERED"
+|	"NONCLUSTERED"
 
 TiDBKeyword:
 	"ADMIN"
