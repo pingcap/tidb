@@ -117,6 +117,10 @@ func (r *pointSorter) Swap(i, j int) {
 	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
 
+/*
+ * If use []point, fullRange will be copied when used.
+ * So for keep this behaver, getFullRange function is introduced.
+ */
 func getFullRange() []*point {
 	return []*point{
 		&point{start: true},
