@@ -469,3 +469,14 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
 }
+
+func (s *testPointGetSuite) TestIssue18042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a));")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("SELECT /*+ MAX_EXECUTION_TIME(100)*/ * FROM t where a = 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	tk.MustExec("drop table t")
+}
