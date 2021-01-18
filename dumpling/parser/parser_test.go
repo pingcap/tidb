@@ -3159,6 +3159,21 @@ func (s *testParserSuite) TestDDL(c *C) {
 
 		// for issue 18149
 		{"create table t (a int, index ``(a))", true, "CREATE TABLE `t` (`a` INT,INDEX ``(`a`))"},
+
+		// for clustered index
+		{"create table t (a int, b varchar(255), primary key(b, a) clustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255),PRIMARY KEY(`b`, `a`) CLUSTERED)"},
+		{"create table t (a int, b varchar(255), primary key(b, a) nonclustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255),PRIMARY KEY(`b`, `a`) NONCLUSTERED)"},
+		{"create table t (a int primary key nonclustered, b varchar(255))", true, "CREATE TABLE `t` (`a` INT PRIMARY KEY NONCLUSTERED,`b` VARCHAR(255))"},
+		{"create table t (a int, b varchar(255) primary key clustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255) PRIMARY KEY CLUSTERED)"},
+		{"create table t (a int, b varchar(255) default 'a' primary key clustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255) DEFAULT _UTF8MB4'a' PRIMARY KEY CLUSTERED)"},
+		{"create table t (a int, b varchar(255) primary key nonclustered, primary key(b, a) nonclustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255) PRIMARY KEY NONCLUSTERED,PRIMARY KEY(`b`, `a`) NONCLUSTERED)"},
+		{"create table t (a int, b varchar(255), primary key(b, a) using RTREE nonclustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255),PRIMARY KEY(`b`, `a`) NONCLUSTERED USING RTREE)"},
+		{"create table t (a int, b varchar(255), primary key(b, a) using RTREE clustered nonclustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255),PRIMARY KEY(`b`, `a`) NONCLUSTERED USING RTREE)"},
+		{"create table t (a int, b varchar(255), primary key(b, a) using RTREE nonclustered clustered)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255),PRIMARY KEY(`b`, `a`) CLUSTERED USING RTREE)"},
+		{"create table t (a int, b varchar(255) clustered primary key)", false, ""},
+		{"create table t (a int, b varchar(255) primary key nonclustered clustered)", false, ""},
+		{"alter table t add primary key (`a`, `b`) clustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) CLUSTERED"},
+		{"alter table t add primary key (`a`, `b`) nonclustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) NONCLUSTERED"},
 	}
 	s.RunTest(c, table)
 }

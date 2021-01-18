@@ -488,6 +488,7 @@ type ColumnOption struct {
 	Enforced bool
 	// Name is only used for Check Constraint name.
 	ConstraintName string
+	PrimaryKeyTp   model.PrimaryKeyType
 }
 
 // Restore implements Node interface.
@@ -497,6 +498,11 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	case ColumnOptionPrimaryKey:
 		ctx.WriteKeyWord("PRIMARY KEY")
+		pkTp := n.PrimaryKeyTp.String()
+		if len(pkTp) != 0 {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(pkTp)
+		}
 	case ColumnOptionNotNull:
 		ctx.WriteKeyWord("NOT NULL")
 	case ColumnOptionAutoIncrement:
@@ -619,12 +625,20 @@ type IndexOption struct {
 	Comment      string
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
+	PrimaryKeyTp model.PrimaryKeyType
 }
 
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
+		ctx.WriteKeyWord(n.PrimaryKeyTp.String())
+		hasPrevOption = true
+	}
 	if n.KeyBlockSize > 0 {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
 		ctx.WriteKeyWord("KEY_BLOCK_SIZE")
 		ctx.WritePlainf("=%d", n.KeyBlockSize)
 		hasPrevOption = true
