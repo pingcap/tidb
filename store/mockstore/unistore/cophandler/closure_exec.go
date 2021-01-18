@@ -106,7 +106,7 @@ func buildClosureExecutorForTiFlash(dagCtx *dagContext, rootExecutor *tipb.Execu
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ce, err := newClosureExecutor(dagCtx, nil, scanExec, false, mppCtx)
+	ce, err := newClosureExecutor(dagCtx, nil, scanExec, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -114,27 +114,14 @@ func buildClosureExecutorForTiFlash(dagCtx *dagContext, rootExecutor *tipb.Execu
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce, mppCtx)
+	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return ce, nil
 }
 
-func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.Executor, ce *closureExecutor, mppCtx *MPPCtx) error {
-	if executors[len(executors)-1].Tp == tipb.ExecType_TypeExchangeSender {
-		ce.exchangeSenderCtx = &exchangeSenderCtx{exchangeSender: executors[len(executors)-1].ExchangeSender}
-		err := ce.exchangeSenderCtx.init(mppCtx)
-		if err != nil {
-			return err
-		}
-	} else {
-		ce.exchangeSenderCtx = nil
-	}
-	extraExecutorLength := 0
-	if ce.exchangeSenderCtx != nil {
-		extraExecutorLength = 1
-	}
+func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.Executor, ce *closureExecutor) error {
 	scanExec := executors[0]
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
 		ce.processor = &tableScanProcessor{closureExecutor: ce}
@@ -144,7 +131,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.processor = &mockReaderScanProcessor{closureExecutor: ce}
 	}
 	outputFieldTypes := make([]*types.FieldType, 0, 1)
-	lastExecutor := executors[len(executors)-1-extraExecutorLength]
+	lastExecutor := executors[len(executors)-1]
 	originalOutputFieldTypes := dagCtx.fieldTps
 	if lastExecutor.Tp == tipb.ExecType_TypeAggregation || lastExecutor.Tp == tipb.ExecType_TypeStreamAgg {
 		originalOutputFieldTypes = nil
@@ -164,7 +151,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 			outputFieldTypes = append(outputFieldTypes, tp)
 		}
 	}
-	if len(executors) == 1+extraExecutorLength {
+	if len(executors) == 1 {
 		ce.resultFieldType = outputFieldTypes
 		return nil
 	}
@@ -201,12 +188,12 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
 // Currently the composition of executors are:
 // 	tableScan|indexScan [selection] [topN | limit | agg]
-func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, mppCtx *MPPCtx) (*closureExecutor, error) {
+func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureExecutor, error) {
 	scanExec, err := getScanExec(dagReq)
 	if err != nil {
 		return nil, err
 	}
-	ce, err := newClosureExecutor(dagCtx, dagReq.OutputOffsets, scanExec, dagReq.GetCollectRangeCounts(), mppCtx)
+	ce, err := newClosureExecutor(dagCtx, dagReq.OutputOffsets, scanExec, dagReq.GetCollectRangeCounts())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -215,7 +202,7 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, mppCtx *M
 		return nil, err1
 	}
 
-	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce, mppCtx)
+	err = buildClosureExecutorFromExecutorList(dagCtx, executors, ce)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +259,7 @@ func getScanExec(dagReq *tipb.DAGRequest) (*tipb.Executor, error) {
 	return getScanExecFromRootExec(dagReq.RootExecutor)
 }
 
-func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *tipb.Executor, collectRangeCounts bool, mppCtx *MPPCtx) (*closureExecutor, error) {
+func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *tipb.Executor, collectRangeCounts bool) (*closureExecutor, error) {
 	e := &closureExecutor{
 		dagContext: dagCtx,
 		outputOff:  outputOffsets,
@@ -301,20 +288,6 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
 		}
 		e.scanType = IndexScan
-	case tipb.ExecType_TypeExchangeReceiver:
-		dagCtx.fillColumnInfo(scanExec.ExchangeReceiver.FieldTypes)
-		e.unique = false
-		e.scanCtx.desc = false
-		e.initExchangeScanCtx(scanExec.ExchangeReceiver, mppCtx)
-		e.scanType = ExchangeScan
-	case tipb.ExecType_TypeJoin:
-		e.unique = false
-		e.scanCtx.desc = false
-		err := e.initJoinScanCtx(dagCtx, scanExec.Join, mppCtx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.scanType = JoinScan
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", scanExec.Tp))
 	}
@@ -329,7 +302,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	e.kvRanges = ranges
 	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 32)
 	if e.scanType == TableScan {
-		e.scanCtx.decoder, err = e.evalContext.newRowDecoder()
+		e.scanCtx.decoder, err = newRowDecoder(e.evalContext.columnInfos, e.evalContext.fieldTps, e.evalContext.primaryCols, e.evalContext.sc.TimeZone)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -570,10 +543,6 @@ const (
 	TableScan scanType = iota
 	// IndexScan means reading from a table by index scan
 	IndexScan
-	// JoinScan means reading from a join result
-	JoinScan
-	// ExchangeScan means reading from exchange client(used in MPP execution)
-	ExchangeScan
 )
 
 // closureExecutor is an execution engine that flatten the DAGRequest.Executors to a single closure `processor` that
@@ -581,23 +550,22 @@ const (
 // optimized one for some frequently used query.
 type closureExecutor struct {
 	*dagContext
-	outputOff         []uint32
-	resultFieldType   []*types.FieldType
-	seCtx             sessionctx.Context
-	kvRanges          []kv.KeyRange
-	startTS           uint64
-	ignoreLock        bool
-	lockChecked       bool
-	scanType          scanType
-	scanCtx           scanCtx
-	idxScanCtx        *idxScanCtx
-	joinScanCtx       *joinScanCtx
-	exchangeScanCtx   *exchangeScanCtx
-	selectionCtx      selectionCtx
-	aggCtx            aggCtx
-	topNCtx           *topNCtx
-	exchangeSenderCtx *exchangeSenderCtx
-	mockReader        *mockReader
+	outputOff       []uint32
+	resultFieldType []*types.FieldType
+	seCtx           sessionctx.Context
+	kvRanges        []kv.KeyRange
+	startTS         uint64
+	ignoreLock      bool
+	lockChecked     bool
+	scanType        scanType
+	scanCtx         scanCtx
+	idxScanCtx      *idxScanCtx
+	joinScanCtx     *joinScanCtx
+	exchangeScanCtx *exchangeScanCtx
+	selectionCtx    selectionCtx
+	aggCtx          aggCtx
+	topNCtx         *topNCtx
+	mockReader      *mockReader
 
 	rowCount int
 	unique   bool
@@ -654,95 +622,6 @@ type joinScanCtx struct {
 	finalSchema []*types.FieldType
 	innerIndex  int
 	join        *tipb.Join
-}
-
-func (joinCtx *joinScanCtx) doJoin() error {
-	buildPbChunks, err := joinCtx.buildExec.execute()
-	if err != nil {
-		return err
-	}
-	buildChunk := chunk.NewChunkWithCapacity(joinCtx.buildExec.fieldTps, 0)
-	for _, pbChunk := range buildPbChunks {
-		chk := chunk.NewChunkWithCapacity(joinCtx.buildExec.fieldTps, 0)
-		err = pbChunkToChunk(pbChunk, chk, joinCtx.buildExec.fieldTps)
-		if err != nil {
-			return err
-		}
-		buildChunk.Append(chk, 0, chk.NumRows())
-	}
-	probePbChunks, err := joinCtx.probeExec.execute()
-	if err != nil {
-		return err
-	}
-	probeChunk := chunk.NewChunkWithCapacity(joinCtx.probeExec.fieldTps, 0)
-	for _, pbChunk := range probePbChunks {
-		chk := chunk.NewChunkWithCapacity(joinCtx.probeExec.fieldTps, 0)
-		err = pbChunkToChunk(pbChunk, chk, joinCtx.probeExec.fieldTps)
-		if err != nil {
-			return err
-		}
-		probeChunk.Append(chk, 0, chk.NumRows())
-	}
-	// build hash table
-	hashMap := make(map[string][]int)
-	for i := 0; i < buildChunk.NumRows(); i++ {
-		keyColString := string(buildChunk.Column(joinCtx.buildKey.Index).GetRaw(i))
-		if rowSet, ok := hashMap[keyColString]; ok {
-			rowSet = append(rowSet, i)
-			hashMap[keyColString] = rowSet
-		} else {
-			hashMap[keyColString] = []int{i}
-		}
-	}
-	joinCtx.chk = chunk.NewChunkWithCapacity(joinCtx.finalSchema, 0)
-	// probe
-	for i := 0; i < probeChunk.NumRows(); i++ {
-		if rowSet, ok := hashMap[string(probeChunk.Column(joinCtx.probeKey.Index).GetRaw(i))]; ok {
-			// construct output row
-			if joinCtx.innerIndex == 0 {
-				// build is child 0, probe is child 1
-				for _, idx := range rowSet {
-					wide := joinCtx.chk.AppendRowByColIdxs(buildChunk.GetRow(idx), nil)
-					joinCtx.chk.AppendPartialRow(wide, probeChunk.GetRow(i))
-				}
-			} else {
-				// build is child 1, probe is child 0
-				for _, idx := range rowSet {
-					wide := joinCtx.chk.AppendRowByColIdxs(probeChunk.GetRow(i), nil)
-					joinCtx.chk.AppendPartialRow(wide, buildChunk.GetRow(idx))
-				}
-			}
-		}
-	}
-	return nil
-}
-
-type exchangeSenderCtx struct {
-	exchangeSender *tipb.ExchangeSender
-	tunnels        []*ExchangerTunnel
-}
-
-func (e *exchangeSenderCtx) init(mppCtx *MPPCtx) error {
-	for _, taskMeta := range e.exchangeSender.EncodedTaskMeta {
-		targetTask := new(mpp.TaskMeta)
-		err := targetTask.Unmarshal(taskMeta)
-		if err != nil {
-			return err
-		}
-		tunnel := &ExchangerTunnel{
-			DataCh:     make(chan *tipb.Chunk, 10),
-			sourceTask: mppCtx.TaskHandler.Meta,
-			targetTask: targetTask,
-			active:     false,
-			ErrCh:      make(chan error, 1),
-		}
-		e.tunnels = append(e.tunnels, tunnel)
-		err = mppCtx.TaskHandler.registerTunnel(tunnel)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type exchangeScanCtx struct {
@@ -889,42 +768,6 @@ func (e *closureExecutor) scanFromMockReader(startKey, endKey []byte, limit int,
 }
 
 func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
-	if e.scanType == ExchangeScan || e.scanType == JoinScan {
-		// read from exchange client
-		e.mockReader = &mockReader{chk: nil, currentIndex: 0}
-		if e.scanType == ExchangeScan {
-			serverMetas := make([]*mpp.TaskMeta, 0, len(e.exchangeScanCtx.exchangeReceiver.EncodedTaskMeta))
-			for _, encodedMeta := range e.exchangeScanCtx.exchangeReceiver.EncodedTaskMeta {
-				meta := new(mpp.TaskMeta)
-				err := meta.Unmarshal(encodedMeta)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				serverMetas = append(serverMetas, meta)
-			}
-			for _, meta := range serverMetas {
-				e.exchangeScanCtx.wg.Add(1)
-				go e.exchangeScanCtx.runTunnelWorker(e.exchangeScanCtx.mppCtx.TaskHandler, meta)
-			}
-			e.exchangeScanCtx.wg.Wait()
-			if e.exchangeScanCtx.err != nil {
-				return nil, e.exchangeScanCtx.err
-			}
-			e.mockReader.chk = e.exchangeScanCtx.chk
-		} else {
-			err := e.joinScanCtx.doJoin()
-			if err != nil {
-				return nil, err
-			}
-			e.mockReader.chk = e.joinScanCtx.chk
-		}
-		err := e.scanFromMockReader(nil, nil, math.MaxInt64, e.startTS, e.processor)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = e.processor.Finish()
-		return e.oldChunks, err
-	}
 	err := e.checkRangeLock()
 	if err != nil {
 		return nil, errors.Trace(err)

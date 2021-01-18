@@ -262,7 +262,7 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
 		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
 	}
-	decoder, err := evalCtx.newRowDecoder()
+	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone)
 	if err != nil {
 		return nil, err
 	}

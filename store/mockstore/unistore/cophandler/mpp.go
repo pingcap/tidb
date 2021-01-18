@@ -18,14 +18,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
+	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
 )
@@ -43,6 +48,188 @@ const (
 	taskFailed
 	taskFinished
 )
+
+type MPPExecBuilder struct {
+	sc       *stmtctx.StatementContext
+	dbReader *dbreader.DBReader
+	req      *coprocessor.Request
+	mppCtx   *MPPCtx
+	dagReq   *tipb.DAGRequest
+}
+
+func (b *MPPExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ts := &tableScanExec{
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
+		startTS:     b.req.StartTs,
+		kvRanges:    ranges,
+		dbReader:    b.dbReader,
+	}
+	for _, col := range pb.Columns {
+		ft := fieldTypeFromPBColumn(col)
+		ts.fieldTypes = append(ts.fieldTypes, ft)
+	}
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	return ts, err
+}
+
+func (b *MPPExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender, ch *tipb.Executor) (*exchSenderExec, error) {
+	child, err := b.buildMPPExecutor(ch)
+	if err != nil {
+		return nil, err
+	}
+
+	e := &exchSenderExec{
+		baseMPPExec: baseMPPExec{
+			sc:         b.sc,
+			mppCtx:     b.mppCtx,
+			children:   []mppExec{child},
+			fieldTypes: child.getFieldTypes(),
+		},
+	}
+
+	for _, taskMeta := range pb.EncodedTaskMeta {
+		targetTask := new(mpp.TaskMeta)
+		err := targetTask.Unmarshal(taskMeta)
+		if err != nil {
+			return nil, err
+		}
+		tunnel := &ExchangerTunnel{
+			DataCh:     make(chan *tipb.Chunk, 10),
+			sourceTask: b.mppCtx.TaskHandler.Meta,
+			targetTask: targetTask,
+			active:     false,
+			ErrCh:      make(chan error, 1),
+		}
+		e.tunnels = append(e.tunnels, tunnel)
+		err = b.mppCtx.TaskHandler.registerTunnel(tunnel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	e.outputOffsets = b.dagReq.OutputOffsets
+	return e, nil
+}
+
+func (b *MPPExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*exchRecvExec, error) {
+	e := &exchRecvExec{
+		baseMPPExec: baseMPPExec{
+			sc:     b.sc,
+			mppCtx: b.mppCtx,
+		},
+		exchangeReceiver: pb,
+	}
+
+	for _, pbType := range pb.FieldTypes {
+		e.fieldTypes = append(e.fieldTypes, expression.FieldTypeFromPB(pbType))
+	}
+	return e, nil
+}
+
+func (b *MPPExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) (*joinExec, error) {
+	e := &joinExec{
+		baseMPPExec: baseMPPExec{
+			sc:     b.sc,
+			mppCtx: b.mppCtx,
+		},
+		Join:         pb,
+		hashMap:      make(map[string][]chunk.Row),
+		buildSideIdx: pb.InnerIdx,
+	}
+	leftCh, err := b.buildMPPExecutor(children[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rightCh, err := b.buildMPPExecutor(children[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// because the field type is immutable, so this kind of appending is safe.
+	e.fieldTypes = append(leftCh.getFieldTypes(), rightCh.getFieldTypes()...)
+	if pb.InnerIdx == 1 {
+		e.probeChild = leftCh
+		e.buildChild = rightCh
+		probeExpr, err := expression.PBToExpr(pb.LeftJoinKeys[0], leftCh.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.probeKey = probeExpr.(*expression.Column)
+		buildExpr, err := expression.PBToExpr(pb.RightJoinKeys[0], rightCh.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.buildKey = buildExpr.(*expression.Column)
+	} else {
+		e.probeChild = rightCh
+		e.buildChild = leftCh
+		buildExpr, err := expression.PBToExpr(pb.LeftJoinKeys[0], leftCh.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.buildKey = buildExpr.(*expression.Column)
+		probeExpr, err := expression.PBToExpr(pb.RightJoinKeys[0], rightCh.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.probeKey = probeExpr.(*expression.Column)
+	}
+	return e, nil
+}
+
+func (b *MPPExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) {
+	switch exec.Tp {
+	case tipb.ExecType_TypeTableScan:
+		ts := exec.TblScan
+		return b.buildMPPTableScan(ts)
+	case tipb.ExecType_TypeExchangeReceiver:
+		rec := exec.ExchangeReceiver
+		return b.buildMPPExchangeReceiver(rec)
+	case tipb.ExecType_TypeExchangeSender:
+		send := exec.ExchangeSender
+		ch := send.Child
+		return b.buildMPPExchangeSender(send, ch)
+	case tipb.ExecType_TypeJoin:
+		join := exec.Join
+		return b.buildMPPJoin(join, join.Children)
+	default:
+		return nil, errors.Errorf("Do not support executor %s", exec.Tp.String())
+	}
+}
+
+// handleMPPDAGReq handles a cop request that is converted from mpp request.
+// It returns nothing. Real data will return by stream rpc.
+func handleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
+	dagReq := new(tipb.DAGRequest)
+	err := proto.Unmarshal(req.Data, dagReq)
+	if err != nil {
+		return &coprocessor.Response{OtherError: err.Error()}
+	}
+	builder := MPPExecBuilder{
+		dbReader: dbReader,
+		req:      req,
+		mppCtx:   mppCtx,
+		sc:       flagsToStatementContext(dagReq.Flags),
+		dagReq:   dagReq,
+	}
+	mppExec, err := builder.buildMPPExecutor(dagReq.RootExecutor)
+	if err != nil {
+		panic(err.Error())
+		return &coprocessor.Response{OtherError: err.Error()}
+	}
+	err = mppExec.open()
+	if err != nil {
+		panic(err.Error())
+		return &coprocessor.Response{OtherError: err.Error()}
+	}
+	_, err = mppExec.next()
+	if err != nil {
+		return &coprocessor.Response{OtherError: err.Error()}
+	}
+	return &coprocessor.Response{}
+}
 
 // MPPTaskHandler exists in a single store.
 type MPPTaskHandler struct {
