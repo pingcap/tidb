@@ -302,10 +302,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		if unicode.IsDigit(rune(valStr[0])) || (len(valStr) >= 2 && valStr[0] == '.' && unicode.IsDigit(rune(valStr[1]))) {
 			err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
 		} else {
-			err = dbterror.ClassTable.NewStdErr(
-				errno.ErrTruncatedWrongValueForField,
-				mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
-			).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+			err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 		}
 	} else if types.ErrTruncatedWrongVal.Equal(err) && types.IsTypeTemporal(colTp) {
 		valStr, err1 := val.ToString()
