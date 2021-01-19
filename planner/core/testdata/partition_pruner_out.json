@@ -400,7 +400,7 @@
         "SQL": "select * from t3 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "TableReader_7 888.89 root partition:p1 data:Selection_6",
           "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.a, 10), gt(test_partition.t3.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
@@ -433,7 +433,7 @@
           "<nil> <nil> <nil>"
         ],
         "Plan": [
-          "TableReader_7 898.00 root partition:all data:Selection_6",
+          "TableReader_7 898.00 root partition:p1 data:Selection_6",
           "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t3.a, test_partition.t3.id), and(gt(test_partition.t3.id, 10), gt(test_partition.t3.a, 10))), isnull(test_partition.t3.a))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
@@ -1586,7 +1586,7 @@
           "  │   └─HashAgg_18 15.98 cop[tikv]  group by:test_partition.t2.b, ",
           "  │     └─Selection_22 19.98 cop[tikv]  in(test_partition.t2.a, 1, 2), not(isnull(test_partition.t2.b))",
           "  │       └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader_30(Probe) 9990.00 root partition:all data:Selection_29",
+          "  └─TableReader_30(Probe) 9990.00 root partition:p0,p1 data:Selection_29",
           "    └─Selection_29 9990.00 cop[tikv]  not(isnull(test_partition.t1.a))",
           "      └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1597,7 +1597,7 @@
           "  │ └─IndexReader_29 159.84 root partition:p0 index:HashAgg_24",
           "  │   └─HashAgg_24 159.84 cop[tikv]  group by:test_partition_1.t2.b, ",
           "  │     └─IndexRangeScan_27 199.80 cop[tikv] table:t2, index:a(a, b, id) range:[1 -inf,1 +inf], [2 -inf,2 +inf], keep order:false, stats:pseudo",
-          "  └─IndexReader_18(Probe) 1.25 root partition:all index:Selection_17",
+          "  └─IndexReader_18(Probe) 1.25 root partition:p0,p1 index:Selection_17",
           "    └─Selection_17 1.25 cop[tikv]  not(isnull(test_partition_1.t1.a))",
           "      └─IndexRangeScan_16 1.25 cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.a, test_partition_1.t2.b)], keep order:false, stats:pseudo"
         ]
@@ -1616,7 +1616,7 @@
           "  │   └─HashAgg_18 15.98 cop[tikv]  group by:test_partition.t1.b, ",
           "  │     └─Selection_22 19.98 cop[tikv]  in(test_partition.t1.a, 1, 2), not(isnull(test_partition.t1.b))",
           "  │       └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader_30(Probe) 9990.00 root partition:all data:Selection_29",
+          "  └─TableReader_30(Probe) 9990.00 root partition:p0,p1 data:Selection_29",
           "    └─Selection_29 9990.00 cop[tikv]  not(isnull(test_partition.t1.a))",
           "      └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -1627,7 +1627,7 @@
           "  │ └─IndexReader_29 159.84 root partition:p0 index:HashAgg_24",
           "  │   └─HashAgg_24 159.84 cop[tikv]  group by:test_partition_1.t1.b, ",
           "  │     └─IndexRangeScan_27 199.80 cop[tikv] table:t1, index:a(a, b, id) range:[1 -inf,1 +inf], [2 -inf,2 +inf], keep order:false, stats:pseudo",
-          "  └─IndexReader_18(Probe) 1.25 root partition:all index:Selection_17",
+          "  └─IndexReader_18(Probe) 1.25 root partition:p0,p1 index:Selection_17",
           "    └─Selection_17 1.25 cop[tikv]  not(isnull(test_partition_1.t1.a))",
           "      └─IndexRangeScan_16 1.25 cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.a, test_partition_1.t1.b)], keep order:false, stats:pseudo"
         ]

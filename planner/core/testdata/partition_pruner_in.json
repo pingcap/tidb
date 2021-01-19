@@ -268,11 +268,11 @@
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t2 where a in (1,2)) order by a",
-        "Pruner": "t1: all; t2: p0"
+        "Pruner": "t1: p0,p1; t2: p0"
       },
       {
         "SQL": "select * from t1 where t1.a in (select b from t1 where a in (1,2)) order by a",
-        "Pruner": "t1: all; t1: p0"
+        "Pruner": "t1: p0; t1: p0,p1"
       },
       {
         "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a=1 or t1.a = 3) and t2.a in (6,7,8)",
