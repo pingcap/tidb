@@ -474,10 +474,8 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
 				}
-				if table.PKIsHandle {
-					pkType = "INT CLUSTERED"
-				} else if table.IsCommonHandle {
-					pkType = "COMMON CLUSTERED"
+				if table.PKIsHandle || table.IsCommonHandle {
+					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(

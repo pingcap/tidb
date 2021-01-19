@@ -279,7 +279,7 @@ func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
 func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
-	const nonClustered, intClustered, commonClustered = `NON-CLUSTERED`, `INT CLUSTERED`, `COMMON CLUSTERED`
+	const nonClustered, clustered = `NON-CLUSTERED`, `CLUSTERED`
 	assertPkType := func(sql string, pkType string) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec(sql)
@@ -292,14 +292,13 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 			conf.AlterPrimaryKey = allowAlterPK
 		})
 		// Test single integer column as the primary key.
-		intPKDefault, commonPKDefault := intClustered, commonClustered
+		clusteredDefault := clustered
 		if allowAlterPK {
-			intPKDefault = nonClustered
-			commonPKDefault = nonClustered
+			clusteredDefault = nonClustered
 		}
-		assertPkType("create table t (a int primary key, b int);", intPKDefault)
-		assertPkType("create table t (a int, b int, primary key(a) clustered);", intClustered)
-		assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] clustered */);", intClustered)
+		assertPkType("create table t (a int primary key, b int);", clusteredDefault)
+		assertPkType("create table t (a int, b int, primary key(a) clustered);", clustered)
+		assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] clustered */);", clustered)
 		assertPkType("create table t (a int, b int, primary key(a) nonclustered);", nonClustered)
 		assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);", nonClustered)
 
@@ -307,12 +306,12 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 		tk.Se.GetSessionVars().EnableClusteredIndex = false
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
-		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", commonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
 		tk.Se.GetSessionVars().EnableClusteredIndex = true
-		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", commonPKDefault)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", clusteredDefault)
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
-		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", commonClustered)
-		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", commonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
 	}
 }
