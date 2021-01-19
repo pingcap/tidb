@@ -294,7 +294,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncatedWrongVal.Equal(err) && (types.IsTypeInteger(colTp) || colTp == mysql.TypeYear || colTp == mysql.TypeFloat || colTp == mysql.TypeDouble) {
+	} else if types.ErrTruncatedWrongVal.Equal(err) && types.IsTypeInteger(colTp) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			// do nothing
