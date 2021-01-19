@@ -331,6 +331,36 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+
+	//test for Issue#17832
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`
+	 CREATE TABLE t (
+	  id1 tinyint DEFAULT NULL,
+	  id2 smallint DEFAULT NULL,
+	  id3 mediumint DEFAULT NULL,
+	  id4 float DEFAULT NULL,
+	  id5 double DEFAULT NULL,
+	  id6 bigint DEFAULT NULL,
+	  id7 int DEFAULT NULL,
+	  id8 year DEFAULT NULL
+	)`)
+	tk.MustGetErrCode(`insert into t(id2) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id3) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id4) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id5) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id6) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id7) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id8) values('1asdf')`, errno.WarnDataTruncated)
+	tk.MustGetErrCode(`insert into t(id1) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id2) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id3) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id4) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id5) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id6) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id7) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode(`insert into t(id8) values('asdf')`, errno.ErrTruncatedWrongValueForField)
+	tk.MustExec(`drop table if exists t;`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {

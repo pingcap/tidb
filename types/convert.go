@@ -280,6 +280,9 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
+		if err != nil {
+			return iVal, ErrTruncatedWrongVal
+		}
 		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
 	}
 	return iVal, errors.Trace(err)

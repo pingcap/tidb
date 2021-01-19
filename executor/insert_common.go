@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"unicode"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -293,7 +294,20 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
+	} else if types.ErrTruncatedWrongVal.Equal(err) && (types.IsTypeInteger(colTp) || colTp == mysql.TypeYear || colTp == mysql.TypeFloat || colTp == mysql.TypeDouble) {
+		valStr, err1 := val.ToString()
+		if err1 != nil {
+			// do nothing
+		}
+		if unicode.IsDigit(rune(valStr[0])) || (len(valStr) >= 2 && valStr[0] == '.' && unicode.IsDigit(rune(valStr[1]))) {
+			err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+		} else {
+			err = dbterror.ClassTable.NewStdErr(
+				errno.ErrTruncatedWrongValueForField,
+				mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
+			).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		}
+	} else if types.ErrTruncatedWrongVal.Equal(err) && types.IsTypeTemporal(colTp) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			// do nothing
