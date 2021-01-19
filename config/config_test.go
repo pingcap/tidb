@@ -188,11 +188,14 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
-mem-quota-statistics = 10000
-nested-loop-join-cache-capacity = 100
 max-index-length = 3080
+index-limit = 70
+table-column-count-limit = 4000
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
+txn-scope = "dc-1"
+enable-enum-length-limit = false
+stores-refresh-interval = 30
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -201,9 +204,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
-enable-one-pc=true
 [tikv-client.async-commit]
-enable=true
 keys-limit=123
 total-key-size-limit=1024
 [stmt-summary]
@@ -214,6 +215,7 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -239,10 +241,8 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
-	c.Assert(conf.TiKVClient.AsyncCommit.Enable, Equals, true)
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
 	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
-	c.Assert(conf.TiKVClient.EnableOnePC, Equals, true)
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
@@ -261,16 +261,20 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.MemQuotaStatistics, Equals, int64(10000))
-	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.IndexLimit, Equals, 70)
+	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
 	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
+	c.Assert(conf.TxnScope, Equals, "dc-1")
+	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
 [log.file]
@@ -470,6 +474,30 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxIndexLength-1, false)
 	checkValid(DefMaxOfMaxIndexLength, true)
 	checkValid(DefMaxOfMaxIndexLength+1, false)
+}
+
+func (s *testConfigSuite) TestIndexLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLimit int, shouldBeValid bool) {
+		conf.IndexLimit = indexLimit
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefIndexLimit, true)
+	checkValid(DefIndexLimit-1, false)
+	checkValid(DefMaxOfIndexLimit, true)
+	checkValid(DefMaxOfIndexLimit+1, false)
+}
+
+func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
+		conf.TableColumnCountLimit = uint32(tableColumnLimit)
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefTableColumnCountLimit, true)
+	checkValid(DefTableColumnCountLimit-1, false)
+	checkValid(DefMaxOfTableColumnCountLimit, true)
+	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {

@@ -44,6 +44,7 @@ type Feedback struct {
 	Upper  *types.Datum
 	Count  int64
 	Repeat int64
+	Ndv    int64
 }
 
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
@@ -236,7 +237,7 @@ func (q *QueryFeedback) DecodeIntValues() *QueryFeedback {
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.Feedback = make([]Feedback, 0, len(ranges))
 	for _, ran := range ranges {
-		q.Feedback = append(q.Feedback, Feedback{&ran.LowVal[0], &ran.HighVal[0], 0, 0})
+		q.Feedback = append(q.Feedback, Feedback{&ran.LowVal[0], &ran.HighVal[0], 0, 0, 0})
 	}
 }
 
@@ -258,7 +259,7 @@ func (q *QueryFeedback) Actual() int64 {
 
 // Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
 // the range for update. `counts` is the scan counts of each range, used to update the feedback count info.
-func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
+func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
 	// Older versions do not have the counts info.
 	if len(counts) == 0 {
 		q.Invalidate()
@@ -292,6 +293,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		for i := 0; i < len(counts)/2; i++ {
 			j := len(counts) - i - 1
 			counts[i], counts[j] = counts[j], counts[i]
+			ndvs[i], ndvs[j] = ndvs[j], ndvs[i]
 		}
 	}
 	// Update the feedback count info.
@@ -301,6 +303,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 			break
 		}
 		q.Feedback[i+idx].Count += count
+		q.Feedback[i+idx].Ndv += ndvs[i]
 	}
 }
 
@@ -503,23 +506,25 @@ type bucket = Feedback
 // calculates the count for each new bucket, merge the new bucket whose count
 // is smaller than "minBucketFraction*totalCount" with the next new bucket
 // until the last new bucket.
-func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originBucketCount float64) []bucket {
+func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originBucketCount float64, originalNdv int64) []bucket {
 	// Split the bucket.
 	bounds := b.getBoundaries(newNumBkts + 1)
 	bkts := make([]bucket, 0, len(bounds)-1)
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	for i := 1; i < len(bounds); i++ {
-		newBkt := bucket{&bounds[i-1], bounds[i].Clone(), 0, 0}
+		newBkt := bucket{&bounds[i-1], bounds[i].Clone(), 0, 0, 0}
 		// get bucket count
-		_, ratio := getOverlapFraction(Feedback{b.lower, b.upper, int64(originBucketCount), 0}, newBkt)
+		_, ratio := getOverlapFraction(Feedback{b.lower, b.upper, int64(originBucketCount), 0, 0}, newBkt)
 		countInNewBkt := originBucketCount * ratio
-		countInNewBkt = b.refineBucketCount(sc, newBkt, countInNewBkt)
+		ndvInNewBkt := int64(float64(originalNdv) * ratio)
+		countInNewBkt, ndvInNewBkt = b.refineBucketCount(sc, newBkt, countInNewBkt, ndvInNewBkt)
 		// do not split if the count of result bucket is too small.
 		if countInNewBkt < minBucketFraction*totalCount {
 			bounds[i] = bounds[i-1]
 			continue
 		}
 		newBkt.Count = int64(countInNewBkt)
+		newBkt.Ndv = ndvInNewBkt
 		bkts = append(bkts, newBkt)
 		// To guarantee that each bucket's range will not overlap.
 		setNextValue(&bounds[i])
@@ -556,45 +561,51 @@ func getOverlapFraction(fb Feedback, bkt bucket) (float64, float64) {
 }
 
 // mergeFullyContainedFeedback merges the max fraction of non-overlapped feedbacks that are fully contained in the bucket.
-func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, bool) {
+func (b *BucketFeedback) mergeFullyContainedFeedback(sc *stmtctx.StatementContext, bkt bucket) (float64, float64, int64, bool) {
 	feedbacks := make([]Feedback, 0, len(b.feedback))
 	// Get all the fully contained feedbacks.
 	for _, fb := range b.feedback {
 		res, err := outOfRange(sc, bkt.Lower, bkt.Upper, fb.Lower)
 		if res != 0 || err != nil {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		res, err = outOfRange(sc, bkt.Lower, bkt.Upper, fb.Upper)
 		if res != 0 || err != nil {
-			return 0, 0, false
+			return 0, 0, 0, false
 		}
 		feedbacks = append(feedbacks, fb)
 	}
 	if len(feedbacks) == 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	sortedFBs, ok := NonOverlappedFeedbacks(sc, feedbacks)
 	if !ok {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	var sumFraction, sumCount float64
+	var (
+		sumFraction, sumCount float64
+		ndv                   int64
+	)
 	for _, fb := range sortedFBs {
 		fraction, _ := getOverlapFraction(fb, bkt)
 		sumFraction += fraction
 		sumCount += float64(fb.Count)
+		ndv += fb.Ndv
 	}
-	return sumFraction, sumCount, true
+	return sumFraction, sumCount, ndv, true
 }
 
 // refineBucketCount refine the newly split bucket count. It uses the feedback that overlaps most
 // with the bucket to get the bucket count.
-func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt bucket, defaultCount float64) float64 {
+func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt bucket, defaultCount float64, defaultNdv int64) (float64, int64) {
 	bestFraction := minBucketFraction
 	count := defaultCount
-	sumFraction, sumCount, ok := b.mergeFullyContainedFeedback(sc, bkt)
+	ndv := defaultNdv
+	sumFraction, sumCount, sumNdv, ok := b.mergeFullyContainedFeedback(sc, bkt)
 	if ok && sumFraction > bestFraction {
 		bestFraction = sumFraction
 		count = sumCount / sumFraction
+		ndv = int64(float64(sumNdv) / sumFraction)
 	}
 	for _, fb := range b.feedback {
 		fraction, ratio := getOverlapFraction(fb, bkt)
@@ -602,9 +613,10 @@ func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt buc
 		if fraction > bestFraction {
 			bestFraction = fraction
 			count = float64(fb.Count) * ratio
+			ndv = int64(float64(fb.Ndv) * ratio)
 		}
 	}
-	return count
+	return count, ndv
 }
 
 const (
@@ -685,6 +697,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 			bkts[bktCursor-1].Upper = bkts[i].Upper
 			bkts[bktCursor-1].Count += bkts[i].Count
 			bkts[bktCursor-1].Repeat = bkts[i].Repeat
+			bkts[bktCursor-1].Ndv += bkts[i].Ndv
 			idCursor++
 		} else {
 			bkts[bktCursor] = bkts[i]
@@ -705,13 +718,13 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
 		if !ok {
-			buckets = append(buckets, bucket{h.GetLower(i), h.GetUpper(i), h.bucketCount(i), h.Buckets[i].Repeat})
+			buckets = append(buckets, bucket{h.GetLower(i), h.GetUpper(i), h.bucketCount(i), h.Buckets[i].Repeat, h.Buckets[i].NDV})
 			isNewBuckets = append(isNewBuckets, false)
 			continue
 		}
 		// Distribute the total split count to bucket based on number of bucket feedback.
 		newBktNums := splitCount * len(bktFB.feedback) / numTotalFBs
-		bkts := bktFB.splitBucket(newBktNums, h.TotalRowCount(), float64(h.bucketCount(i)))
+		bkts := bktFB.splitBucket(newBktNums, h.TotalRowCount(), float64(h.bucketCount(i)), h.Buckets[i].NDV)
 		buckets = append(buckets, bkts...)
 		if len(bkts) == 1 {
 			isNewBuckets = append(isNewBuckets, false)
@@ -729,19 +742,32 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 }
 
 // UpdateHistogram updates the histogram according buckets.
-func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
+func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
+	if statsVer < Version2 {
+		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
+		for i := range feedback.Feedback {
+			feedback.Feedback[i].Ndv = 0
+		}
+	}
 	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
 	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {
 		hist.NDV = int64(hist.TotalRowCount())
+		// If we maintained the NDV of bucket. We can also update the total ndv.
+	} else if feedback.Tp == IndexType && statsVer == 2 {
+		totNdv := int64(0)
+		for _, bkt := range buckets {
+			totNdv += bkt.Ndv
+		}
+		hist.NDV = totNdv
 	}
 	return hist
 }
 
-// UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
+// UpdateCMSketchAndTopN updates the CMSketch and TopN by feedback.
+func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
 	if c == nil || len(eqFeedbacks) == 0 {
 		return c, t
 	}
@@ -757,7 +783,7 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.Tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
-		hist.AppendBucket(bkt.Lower, bkt.Upper, bkt.Count+preCount, bkt.Repeat)
+		hist.AppendBucketWithNDV(bkt.Lower, bkt.Upper, bkt.Count+preCount, bkt.Repeat, bkt.Ndv)
 		preCount += bkt.Count
 	}
 	return hist
@@ -776,6 +802,8 @@ type queryFeedback struct {
 	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
 	ColumnRanges [][]byte
+
+	Ndvs []int64
 }
 
 func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
@@ -795,6 +823,7 @@ func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 		}
 		pb.IntRanges = append(pb.IntRanges, low, high)
 		pb.Counts = append(pb.Counts, fb.Count)
+		pb.Ndvs = append(pb.Ndvs, fb.Ndv)
 	}
 	return pb, nil
 }
@@ -806,9 +835,11 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 		if bytes.Compare(kv.Key(fb.Lower.GetBytes()).PrefixNext(), fb.Upper.GetBytes()) >= 0 {
 			pb.IndexPoints = append(pb.IndexPoints, fb.Lower.GetBytes())
 			pointCounts = append(pointCounts, fb.Count)
+			pb.Ndvs = append(pb.Ndvs, fb.Ndv)
 		} else {
 			pb.IndexRanges = append(pb.IndexRanges, fb.Lower.GetBytes(), fb.Upper.GetBytes())
 			pb.Counts = append(pb.Counts, fb.Count)
+			pb.Ndvs = append(pb.Ndvs, fb.Ndv)
 		}
 	}
 	pb.Counts = append(pb.Counts, pointCounts...)
@@ -859,7 +890,7 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch, t 
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
 		lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
-		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0})
+		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0, pb.Ndvs[i/2]})
 	}
 	if c != nil {
 		// decode the index point feedback, just set value count in CM Sketch
@@ -888,7 +919,7 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 			lower.SetInt64(pb.IntRanges[i])
 			upper.SetInt64(pb.IntRanges[i+1])
 		}
-		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0})
+		q.Feedback = append(q.Feedback, Feedback{&lower, &upper, pb.Counts[i/2], 0, pb.Ndvs[i/2]})
 	}
 }
 
@@ -927,7 +958,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.Fiel
 		if err != nil {
 			return err
 		}
-		q.Feedback = append(q.Feedback, Feedback{&low[0], &high[0], pb.Counts[i/2], 0})
+		q.Feedback = append(q.Feedback, Feedback{&low[0], &high[0], pb.Counts[i/2], 0, 0})
 	}
 	return nil
 }
@@ -963,6 +994,21 @@ func SplitFeedbackByQueryType(feedbacks []Feedback) ([]Feedback, []Feedback) {
 		}
 	}
 	return eqFB, ranFB
+}
+
+// CleanRangeFeedbackByTopN will not update the part containing the TopN.
+func CleanRangeFeedbackByTopN(feedbacks []Feedback, topN *TopN) []Feedback {
+	for i := len(feedbacks) - 1; i >= 0; i-- {
+		lIdx, lMatch := topN.LowerBound(feedbacks[i].Lower.GetBytes())
+		rIdx, _ := topN.LowerBound(feedbacks[i].Upper.GetBytes())
+		// If the LowerBound return the same result for the range's upper bound and lower bound and the lower one isn't matched,
+		// we can indicate that no top-n overlaps the feedback's ranges.
+		if lIdx == rIdx && !lMatch {
+			continue
+		}
+		feedbacks = append(feedbacks[:i], feedbacks[i+1:]...)
+	}
+	return feedbacks
 }
 
 // setNextValue sets the next value for the given datum. For types like float,

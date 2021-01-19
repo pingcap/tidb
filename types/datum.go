@@ -101,6 +101,11 @@ func (d *Datum) Collation() string {
 	return d.collation
 }
 
+// SetCollation sets the collation of the datum.
+func (d *Datum) SetCollation(collation string) {
+	d.collation = collation
+}
+
 // Frac gets the frac of the datum.
 func (d *Datum) Frac() int {
 	return int(d.decimal)
@@ -897,8 +902,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
 		return 0, overflow(f, target.Tp)
+	}
+	if target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
+		if f > 0 {
+			return math.MaxFloat32, overflow(f, target.Tp)
+		}
+		return -math.MaxFloat32, overflow(f, target.Tp)
 	}
 	return f, nil
 }
@@ -947,10 +958,14 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
+		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed part is all whitespaces
+		var overflowed string
+		var characterLen int
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			characterLen := utf8.RuneCountInString(s)
+			characterLen = utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
@@ -967,13 +982,27 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				overflowed = s[truncateLen:]
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
-			err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+			characterLen = len(s)
+			overflowed = s[flen:]
 			s = truncateStr(s, flen)
-		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
+		}
+
+		if len(overflowed) != 0 {
+			trimed := strings.TrimRight(overflowed, " \t\n\r")
+			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.Tp) {
+				if tp.Tp == mysql.TypeVarchar {
+					sc.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
+				}
+			} else {
+				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+			}
+		}
+
+		if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}
@@ -1042,7 +1071,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlJSON:
 		var i64 int64
-		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
+		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true, tp)
 		val = uint64(i64)
 	default:
 		return invalidConv(d, target.Tp)
@@ -1258,11 +1287,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 		dec.FromUint(val)
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1342,6 +1371,12 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = int64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
+	case KindMysqlJSON:
+		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
@@ -1352,11 +1387,61 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = ret.GetInt64()
 	}
 	y, err = AdjustYear(y, adjust)
-	if err != nil {
-		err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
-	}
 	ret.SetInt64(y)
+	return ret, errors.Trace(err)
+}
+
+// ConvertDatumToFloatYear converts datum into MySQL year with float type
+func ConvertDatumToFloatYear(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
+	return d.convertToMysqlFloatYear(sc, types.NewFieldType(mysql.TypeYear))
+}
+
+func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+	var (
+		ret    Datum
+		y      float64
+		err    error
+		adjust bool
+	)
+	switch d.k {
+	case KindString, KindBytes:
+		s := d.GetString()
+		trimS := strings.TrimSpace(s)
+		y, err = StrToFloat(sc, trimS, false)
+		if err != nil {
+			ret.SetFloat64(0)
+			return ret, errors.Trace(err)
+		}
+		// condition:
+		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
+		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
+			adjust = true
+		}
+	case KindMysqlTime:
+		y = float64(d.GetMysqlTime().Year())
+	case KindMysqlDuration:
+		y = float64(time.Now().Year())
+	default:
+		ret, err = d.convertToFloat(sc, NewFieldType(mysql.TypeDouble))
+		if err != nil {
+			_, err = invalidConv(d, target.Tp)
+			ret.SetFloat64(0)
+			return ret, err
+		}
+		y = ret.GetFloat64()
+	}
+	y = adjustYearForFloat(y, adjust)
+	ret.SetFloat64(y)
 	return ret, err
+}
+
+func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
+	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
+	if err != nil {
+		// It cannot be converted to bit type, so we need to convert it to int type.
+		return BinaryLiteral(d.b).ToInt(sc)
+	}
+	return bitStr.ToInt(sc)
 }
 
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
@@ -1364,8 +1449,24 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	var uintValue uint64
 	var err error
 	switch d.k {
-	case KindString, KindBytes:
+	case KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindString:
+		// For single bit value, we take string like "true", "1" as 1, and "false", "0" as 0,
+		// this behavior is not documented in MySQL, but it behaves so, for more information, see issue #18681
+		s := BinaryLiteral(d.b).ToString()
+		if target.Flen == 1 {
+			switch strings.ToLower(s) {
+			case "true", "1":
+				uintValue = 1
+			case "false", "0":
+				uintValue = 0
+			default:
+				uintValue, err = d.convertStringToMysqlBit(sc)
+			}
+		} else {
+			uintValue, err = d.convertStringToMysqlBit(sc)
+		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
@@ -1394,12 +1495,12 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
-		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
+	case KindString, KindBytes, KindBinaryLiteral:
+		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
-		e, err = ParseEnumName(target.Elems, d.GetMysqlSet().Name, target.Collate)
+		e, err = ParseEnum(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1421,12 +1522,12 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
-		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
+	case KindString, KindBytes, KindBinaryLiteral:
+		s, err = ParseSet(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		s, err = ParseSetName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		s, err = ParseSet(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
-		s, err = ParseSetName(target.Elems, d.GetMysqlSet().Name, target.Collate)
+		s, err = ParseSet(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1551,11 +1652,11 @@ func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, e
 		dec.FromUint(val)
 		err = err1
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
 	}
@@ -1648,7 +1749,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
+		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
@@ -1913,29 +2014,6 @@ func MaxValueDatum() Datum {
 	return Datum{k: KindMaxValue}
 }
 
-// EqualDatums compare if a and b contains the same datum values.
-func EqualDatums(sc *stmtctx.StatementContext, a []Datum, b []Datum) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	if a == nil && b == nil {
-		return true, nil
-	}
-	if a == nil || b == nil {
-		return false, nil
-	}
-	for i, ai := range a {
-		v, err := ai.CompareDatum(sc, &b[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if v != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 // SortDatums sorts a slice of datum.
 func SortDatums(sc *stmtctx.StatementContext, datums []Datum) error {
 	sorter := datumsSorter{datums: datums, sc: sc}
@@ -1964,17 +2042,6 @@ func (ds *datumsSorter) Less(i, j int) bool {
 
 func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
-	if sc.IgnoreTruncate {
-		return nil
-	}
-	if !sc.TruncateAsWarning {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
 }
 
 // DatumsToString converts several datums to formatted string.

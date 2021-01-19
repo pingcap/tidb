@@ -15,16 +15,21 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -36,12 +41,6 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -134,6 +133,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	}
+	if err := e.verifyTxnScope(); err != nil {
+		return err
+	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -180,6 +182,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	} else {
 		tblID = e.tblInfo.ID
 	}
+	if e.lock {
+		e.updateDeltaForTableID(tblID)
+	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
@@ -202,13 +207,19 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-			if len(e.handleVal) == 0 {
-				// handle is not found, try lock the index key if isolation level is not read consistency
-				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-					return nil
+
+			// try lock the index key if isolation level is not read consistency
+			// also lock key if read consistency read a value
+			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+				err = e.lockKeyIfNeeded(ctx, e.idxKey)
+				if err != nil {
+					return err
 				}
-				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
+			if len(e.handleVal) == 0 {
+				return nil
+			}
+
 			var iv kv.Handle
 			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
@@ -318,10 +329,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if len(key) == 0 {
 		return nil, kv.ErrNotExist
 	}
+
+	var (
+		val []byte
+		err error
+	)
+
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err := e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -329,14 +346,60 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return nil, err
 		}
 		// key does not exist in mem buffer, check the lock cache
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return val, nil
+		if e.lock {
+			var ok bool
+			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok {
+				return val, nil
+			}
 		}
 		// fallthrough to snapshot get.
 	}
+
+	lock := e.tblInfo.Lock
+	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+		if e.ctx.GetSessionVars().EnablePointGetCache {
+			cacheDB := e.ctx.GetStore().GetMemCache()
+			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	}
+	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
+}
+
+func (e *PointGetExecutor) verifyTxnScope() error {
+	txnScope := e.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
+	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+		return nil
+	}
+	var tblID int64
+	var tblName string
+	var partName string
+	is := infoschema.GetInfoSchema(e.ctx)
+	if e.partInfo != nil {
+		tblID = e.partInfo.ID
+		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+		partName = partInfo.Name.String()
+	} else {
+		tblID = e.tblInfo.ID
+		tblInfo, _ := is.TableByID(tblID)
+		tblName = tblInfo.Meta().Name.String()
+	}
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
+	if valid {
+		return nil
+	}
+	if len(partName) > 0 {
+		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+	}
+	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
@@ -435,20 +498,20 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, i int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	if col.ID == model.ExtraHandleID {
-		chk.AppendInt64(i, handle.IntValue())
+		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
 			if col.ID == hid {
-				_, err := decoder.DecodeOne(handle.EncodedCol(i), i, col.RetType)
+				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

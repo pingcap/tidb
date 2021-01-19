@@ -44,7 +44,7 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
@@ -126,6 +126,9 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 				NewRulePushSelDownUnionAll(),
 				NewRulePushSelDownWindow(),
 				NewRuleMergeAdjacentSelection(),
+			},
+			memo.OperandJoin: {
+				NewRuleTransformJoinCondToSel(),
 			},
 		},
 		TransformationRuleBatch{ // TiKV layer

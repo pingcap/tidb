@@ -37,10 +37,11 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -148,10 +149,6 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeSetDefaultRole(x)
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
-	case *ast.CreateStatisticsStmt:
-		err = e.executeCreateStatistics(x)
-	case *ast.DropStatisticsStmt:
-		err = e.executeDropStatistics(x)
 	case *ast.AdminStmt:
 		err = e.executeAdminReloadStatistics(x)
 	}
@@ -557,10 +554,17 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
+	// If `START TRANSACTION READ ONLY WITH TIMESTAMP BOUND` is the first statement in TxnCtx, we should
+	// always create a new Txn instead of reusing it.
+	if s.ReadOnly && s.Bound != nil {
+		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
+	}
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
+	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
+	// always create a new transaction.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.History != nil {
+	if txnCtx.History != nil || txnCtx.IsStaleness {
 		err := e.ctx.NewTxn(ctx)
 		if err != nil {
 			return err
@@ -585,6 +589,49 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		txn.SetOption(kv.Pessimistic, true)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx context.Context, s *ast.BeginStmt) error {
+	opt := sessionctx.StalenessTxnOption{}
+	opt.Mode = s.Bound.Mode
+	switch s.Bound.Mode {
+	case ast.TimestampBoundReadTimestamp:
+		// TODO: support funcCallExpr in future
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, v.GetString(), v.GetType().Tp, types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		gt, err := t.GoTime(e.ctx.GetSessionVars().TimeZone)
+		if err != nil {
+			return err
+		}
+		startTS := oracle.ComposeTS(gt.Unix()*1000, 0)
+		opt.StartTS = startTS
+	case ast.TimestampBoundExactStaleness:
+		// TODO: support funcCallExpr in future
+		v, ok := s.Bound.Timestamp.(*driver.ValueExpr)
+		if !ok {
+			return errors.New("Invalid value for Bound Timestamp")
+		}
+		d, err := types.ParseDuration(e.ctx.GetSessionVars().StmtCtx, v.GetString(), types.GetFsp(v.GetString()))
+		if err != nil {
+			return err
+		}
+		opt.PrevSec = uint64(d.Seconds())
+	}
+	err := e.ctx.NewTxnWithStalenessOption(ctx, opt)
+	if err != nil {
+		return err
+	}
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	return nil
 }
 
@@ -1081,11 +1128,25 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
+	if !config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		conf := config.GetGlobalConfig()
+		if s.TiDBExtension || conf.CompatibleKillQuery {
+			sm := e.ctx.GetSessionManager()
+			if sm == nil {
+				return nil
+			}
+			sm.Kill(s.ConnectionID, s.Query)
+		} else {
+			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return nil
+	}
+
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil
 	}
-
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
@@ -1152,7 +1213,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
@@ -1261,59 +1322,12 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	}
 }
 
-func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
-	// Not support Cardinality and Dependency statistics type for now.
-	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
-		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Cardinality and Dependency statistics types are not supported")
-	}
-	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
-	}
-	t, err := e.is.TableByName(s.Table.Schema, s.Table.Name)
-	if err != nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
-	}
-	tblInfo := t.Meta()
-	colIDs := make([]int64, 0, 2)
-	// Check whether columns exist.
-	for _, colName := range s.Columns {
-		col := table.FindCol(t.VisibleCols(), colName.Name.L)
-		if col == nil {
-			return dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits).GenWithStack("column does not exist: %s", colName.Name.L)
-		}
-		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			warn := errors.New("No need to create correlation statistics on the integer primary key column")
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-			return nil
-		}
-		colIDs = append(colIDs, col.ID)
-	}
-	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
-		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
-	}
-	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
-		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
-	}
-	// TODO: check whether covering index exists for cardinality / dependency types.
-
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return domain.GetDomain(e.ctx).StatsHandle().InsertExtendedStats(s.StatsName, s.Table.Schema.L, colIDs, int(s.StatsType), tblInfo.ID, s.IfNotExists)
-}
-
-func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
-	db := e.ctx.GetSessionVars().CurrentDB
-	if db == "" {
-		return core.ErrNoDB
-	}
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return domain.GetDomain(e.ctx).StatsHandle().MarkExtendedStatsDeleted(s.StatsName, db, -1)
-}
-
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+		return errors.New("This AdminStmt is not ADMIN RELOAD TIDB_STATS")
+	}
+	if !e.ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

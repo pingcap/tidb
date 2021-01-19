@@ -31,12 +31,19 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
+
+func (s *testPessimisticSuite) newAsyncCommitTestKitWithInit(c *C) *testkit.TestKit {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableAsyncCommit = true
+	return tk
+}
 
 type testPessimisticSuite struct {
 	testSessionSuiteBase
@@ -377,6 +384,11 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 }
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
+	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 1000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists conflict")
@@ -489,7 +501,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateNoWait(c *C) {
 	tk3.MustQuery("select * from tk where c1 > 3 for update nowait").Check(testkit.Rows("4 14", "5 15"))
 	tk3.MustExec("commit")
 
-	//delete
+	// delete
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("delete from tk where c1 <= 2")
 	tk.MustExec("begin pessimistic")
@@ -643,6 +655,11 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -675,12 +692,13 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	// Parallel the blocking tests to accelerate CI.
 	var wg sync.WaitGroup
 	wg.Add(2)
+	timeoutErrCh := make(chan error, 2)
 	go func() {
 		defer wg.Done()
 		// tk3 try lock c1 = 1 timeout 1sec
 		tk3.MustExec("begin pessimistic")
 		_, err := tk3.Exec("select * from tk where c1 = 1 for update")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk3.MustExec("commit")
 	}()
 
@@ -691,9 +709,16 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 		tk5.MustExec("set innodb_lock_wait_timeout = 2")
 		tk5.MustExec("begin pessimistic")
 		_, err := tk5.Exec("update tk set c2 = c2 - 1 where c1 = 1")
-		c.Check(err.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+		timeoutErrCh <- err
 		tk5.MustExec("rollback")
 	}()
+
+	timeoutErr := <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	timeoutErr = <-timeoutErrCh
+	c.Assert(timeoutErr, NotNil)
+	c.Assert(timeoutErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
 
 	// tk4 lock c1 = 2
 	tk4.MustExec("begin pessimistic")
@@ -759,6 +784,11 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 }
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
+	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	defer func() {
+		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	}()
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer tk.MustExec("drop table if exists tk")
@@ -1330,6 +1360,36 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int primary key, v int, a int not null, b int not null,
+		index ia (a), index ib (b))`)
+	tk.MustExec("insert into t values (1, 10, 1, 1)")
+
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t set v = 11 where id = 1")
+
+	// Make sure index merge plan is used.
+	plan := tk.MustQuery("explain select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Rows()[0][0].(string)
+	c.Assert(strings.Contains(plan, "IndexMerge_"), IsTrue)
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+}
+
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
 	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
@@ -1556,6 +1616,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 
 	// tk2 starts a pessimistic transaction and make some changes on table t1.
 	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
 	tk2.MustExec("alter table t1 add column c3 int after c1")
@@ -1570,6 +1631,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
+
 func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -1582,6 +1644,7 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
 
 	// Extend column field length is acceptable.
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update t1 set c2 = c1 * 10")
 	tk2.MustExec("alter table t1 modify column c2 bigint")
@@ -1850,6 +1913,7 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(4, 4, 4)")
 	tk2.MustExec("alter table t1 add column new_col int")
@@ -1857,6 +1921,7 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
 
 	// Set off the global variable.
 	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
@@ -1874,9 +1939,6 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk2.MustExec("alter table t1 add column new_col2 int")
 	tk4.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
-
-	// Restore.
-	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
 }
 
 func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
@@ -1931,17 +1993,16 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newAsyncCommitTestKitWithInit(c)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2)")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := s.newAsyncCommitTestKitWithInit(c)
+	tk3 := s.newAsyncCommitTestKitWithInit(c)
 
 	tk2.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
@@ -1950,14 +2011,14 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
-		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
 		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
-	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	tk2.MustExec("commit")
 
@@ -1977,7 +2038,6 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
@@ -1986,43 +2046,57 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck"), IsNil)
 	}()
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newAsyncCommitTestKitWithInit(c)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into tk values(1, 1, 1)")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := s.newAsyncCommitTestKitWithInit(c)
+	tk3 := s.newAsyncCommitTestKitWithInit(c)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2 2"))
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10 1"))
 	tk3.MustExec("admin check table tk")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update tk set c3 = 20 where c1 = 2")
 	tk.MustExec("insert into tk values(3, 3, 3)")
 	tk.MustExec("commit")
 	// Add index for c3 after commit
 	tk2.MustExec("alter table tk add index k3(c3)")
+	tk3.MustQuery("select * from tk where c3 = 2").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c3 = 20").Check(testkit.Rows("2 2 20"))
 	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
-	// should fail if prewrite takes too long
-	err := tk.ExecToErr("commit")
-	c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }
@@ -2035,39 +2109,345 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk := s.newAsyncCommitTestKitWithInit(c)
+	tk2 := s.newAsyncCommitTestKitWithInit(c)
+	tk3 := s.newAsyncCommitTestKitWithInit(c)
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values (1, 1)")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
-	_ = tk.ExecToErr("commit")
-	// TODO: Check the error after supporting falling back to 2PC in TiKV.
-	// c.Assert(err, IsNil)
+	tk.MustExec("commit")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
+}
+
+func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
+	tk2.MustExec("insert into t1 values(1, 1, 1);")
+	tk2.MustExec("insert into t1 values(2, 2, 2);")
+
+	// New value has duplicates.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("insert into t1 values(4, 4, 3)")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	err := tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("alter table t1 drop index uk1")
+	tk2.MustExec("admin check table t1")
+
+	// New values has duplicates with old values.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("insert into t1 values(4, 4, 1)")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t1")
+
+	// Put new values.
+	tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("1 1 1", "2 2 2"))
+	tk2.MustExec("alter table t1 drop index uk1")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	tk.MustExec("insert into t1 values(5, 5, 5)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t1")
+
+	// Update the old value with same unique key value, should abort.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c);")
+	tk.MustExec("update t set c = 2 where id = 3;")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	finishCh := make(chan error)
+	go func() {
+		err := tk2.ExecToErr("alter table t add unique index uk(c);")
+		finishCh <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	tk.MustExec("commit")
+	err = <-finishCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	/* TODO this case could not pass using unistore because of https://github.com/ngaut/unistore/issues/428.
+	// Reopen it after fix the unistore issue.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c);")
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	*/
+
+	// Test pessimistic retry for unique index amend.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 1), (2, 2);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c)")
+	tk.MustExec("insert into t values(3, 5)")
+	tk.MustExec("update t set c = 4 where c = 2")
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		err = tk2.ExecToErr("begin pessimistic")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("insert into t values(5, 5)")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		err = tk2.ExecToErr("delete from t where id = 5")
+		if err != nil {
+			errCh <- err
+			return
+		}
+		// let commit in tk start.
+		errCh <- err
+		time.Sleep(time.Millisecond * 100)
+		err = tk2.ExecToErr("commit")
+		errCh <- err
+	}()
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+	err = <-errCh
+	c.Assert(err, Equals, nil)
+}
+
+func (s *testPessimisticSuite) TestAmendWithColumnTypeChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_change_column_type = 1;")
+	defer func() {
+		tk.MustExec("set global tidb_enable_change_column_type = 0;")
+	}()
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+
+	tk2.MustExec("drop table if exists t")
+	tk2.MustExec("create table t (id int primary key, v varchar(10));")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (1, \"123456789\")")
+	tk2.MustExec("alter table t modify column v varchar(5);")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+}
+
+func (s *testPessimisticSuite) TestIssue21498(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
+
+	for _, partition := range []bool{false, true} {
+		//RC test
+		tk.MustExec("drop table if exists t, t1")
+		createTable := "create table t (id int primary key, v int, index iv (v))"
+		if partition {
+			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
+		}
+		tk.MustExec(createTable)
+		tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30), (4, 40)")
+		tk.MustExec("create table t1(id int)")
+		tk.MustExec("insert into t1 values(1)")
+
+		tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows("1 10"))
+
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
+
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 11").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 11"))
+		tk.MustExec("admin check table t")
+		tk.MustExec("commit")
+
+		tk.MustExec("drop table if exists t")
+		createTable = "create table t (id int primary key, v int, index iv (v), v2 int)"
+		if partition {
+			createTable += " partition by range (id) (partition p0 values less than (0),partition p1 values less than (1),partition p2 values less than (2),partition p3 values less than (3),partition pn values less than MAXVALUE)"
+		}
+		tk.MustExec(createTable)
+		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300), (4, 40, 400)")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t use index (iv) where v = 10").Check(testkit.Rows("1 10 100"))
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 11 where id = 1")
+		err := tk.ExecToErr("select * from t use index (iv) where v = 10")
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		tk2.MustExec("update t set id = 5 where id = 1")
+		err = tk.ExecToErr("select * from t use index (iv) where v = 10") // select with
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustQuery("select * from t where v = 10").Check(testkit.Rows())
+		if !partition {
+			// amend transaction does not support partition table
+			tk.MustExec("insert into t(id, v, v2) select 6, v + 20, v2 + 200 from t where id = 4") // insert ... select with index unchanged
+		}
+		err = tk.ExecToErr("insert into t(id, v, v2) select 7, v + 30, v2 + 300 from t use index (iv) where id = 4") // insert ... select with index changed
+		c.Assert(err.Error(), Equals, "[planner:1176]Key 'iv' doesn't exist in table 't'")
+		tk.MustExec("admin check table t") // check consistency inside txn
+		tk.MustExec("commit")
+		if !partition {
+			tk.MustQuery("select * from t").Check(testkit.Rows("2 20 200", "3 30 300", "4 40 400", "5 11 100", "6 60 600"))
+		}
+		tk.MustExec("admin check table t") // check consistency out of txn
+
+		// RR test for non partition
+		if partition {
+			continue
+		}
+
+		tk.MustExec("set tx_isolation = 'REPEATABLE-READ'")
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 21 where v = 20")
+		tk2.MustExec("update t set v = 31 where v = 30")
+		tk.MustExec("update t set v = 22 where v = 21") // fast path
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 23 where v = 22")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("update t set v = 32 where v >= 31 and v < 40") // common path
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("2 23 200", "3 32 300", "4 40 400", "5 11 100", "6 60 600"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 24 where v = 23")
+		tk2.MustExec("update t set v = 41 where v = 40")
+		// fast path
+		tk.MustQuery("select * from t where v = 23").Check(testkit.Rows("2 23 200"))
+		tk.MustQuery("select * from t where v = 24").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 23 for update").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v = 24 for update").Check(testkit.Rows("2 24 200"))
+		tk.MustQuery("select (select id from t where v = 23), id from t1 for update").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id from t where v = 24), id from t1 for update").Check(testkit.Rows("<nil> 1"))
+		tk.MustQuery("select (select id from t where v = 23 for update), id from t1").Check(testkit.Rows("<nil> 1"))
+		tk.MustQuery("select (select id from t where v = 24 for update), id from t1").Check(testkit.Rows("2 1"))
+		tk.MustQuery("select (select id + 1 from t where v = 24 for update), id from t1").Check(testkit.Rows("3 1"))
+		// sub queries
+		tk.MustQuery("select (select id from (select id from t where v = 24 for update) tmp for update), (select id from t where v = 23), id from t where v = 23").Check(testkit.Rows("2 2 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp), id from t where v = 23").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp for update), id from t where v = 23").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23 for update) from (select id from t where v = 24 for update) tmp), id from t where v = 23").Check(testkit.Rows("<nil> 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23 for update) from (select id from t where v = 24 for update) tmp for update), id from t where v = 23").Check(testkit.Rows("<nil> 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 23) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 23) from (select id from t where v = 24 for update) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+		tk.MustQuery("select (select id + (select id from t where v = 24 for update) from (select id from t where v = 23) tmp), id from t where v = 24 for update").Check(testkit.Rows("4 2"))
+
+		// test index look up
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id for update").Check(testkit.Rows())
+		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id for update").Check(testkit.Rows("2 24 200 2 24 200"))
+		tk.MustExec("delete from t where v = 24")
+		tk.CheckExecResult(1, 0)
+		// common path
+		tk.MustQuery("select * from t where v >= 41 and v < 50").Check(testkit.Rows())
+		tk.MustQuery("select * from t where v >= 41 and v < 50 for update").Check(testkit.Rows("4 41 400"))
+		tk.MustExec("delete from t where v >= 41 and v < 50")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 32 300", "5 11 100", "6 60 600"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 33 where v = 32")
+		tk.MustExec("insert into t(id, v, v2) select 3 * id, 3 * v, 3 * v2 from t where v = 33")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("insert into t(id, v, v2) select (select 4 * id from t where v = 32) id, 4 * v, 4 * v2 from t where v = 33")
+		tk.CheckExecResult(1, 0)
+		err = tk.ExecToErr("insert into t(id, v, v2) select (select 4 * id from t where v = 33) id, 4 * v, 4 * v2 from t where v = 33")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[table:1048]Column 'id' cannot be null")
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t").Check(testkit.Rows("3 33 300", "5 11 100", "6 60 600", "9 99 900", "12 132 1200"))
+
+		tk2.MustExec("alter table t add unique index iv(v)")
+		tk2.MustExec("drop table if exists t1")
+		tk2.MustExec("create table t1(id int primary key, v int, index iv (v), v2 int)")
+		tk.MustExec("begin pessimistic")
+		tk2.MustExec("alter table t drop index iv")
+		tk2.MustExec("update t set v = 34 where v = 33")
+		tk2.MustExec("update t set v = 12 where v = 11")
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 33")
+		tk.CheckExecResult(0, 0)
+		tk.MustExec("insert into t1(id, v, v2) select * from t where v = 12")
+		tk.CheckExecResult(1, 0)
+		tk.MustExec("commit")
+		tk.MustQuery("select * from t1").Check(testkit.Rows("5 12 100"))
+	}
 }

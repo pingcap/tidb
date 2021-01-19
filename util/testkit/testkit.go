@@ -120,6 +120,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
+	}
+}
+
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	tk := NewTestKit(c, store)
@@ -310,7 +319,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(err, check.IsNil, comment)
+	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 

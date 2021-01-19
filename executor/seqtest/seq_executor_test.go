@@ -177,6 +177,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -256,7 +259,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
-			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			"  `c1` decimal(10,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -320,15 +323,15 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
 		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL",
 		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
@@ -616,7 +619,8 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c6 enum('s', 'm', 'l', 'xl') default 'xl',
 		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
 		c8 datetime default current_timestamp on update current_timestamp,
-		c9 year default '2014'
+		c9 year default '2014',
+		c10 enum('2', '3', '4') default 2
 	);`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
 		"c0|int(11)|YES||1|",
@@ -629,6 +633,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c7|set('a','b','c','d')|YES||a,c|",
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
+		"c10|enum('2','3','4')|YES||3|",
 	))
 
 	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
@@ -1315,6 +1320,52 @@ func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
 	for _, e := range err {
 		c.Assert(e, IsNil)
 	}
+}
+
+func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	tk.MustExec("create table src (a int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wgCount := concurrency + 1
+	wg.Add(wgCount)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	var insertErr error
+	go func() {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		for i := 0; i < 10; i++ {
+			_, e := tk.Exec("insert into src values (null);")
+			if e != nil {
+				insertErr = e
+				wg.Done()
+				return
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
+	c.Assert(insertErr, IsNil)
 }
 
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {

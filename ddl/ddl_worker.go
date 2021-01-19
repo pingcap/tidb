@@ -154,7 +154,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(err))
+			logutil.Logger(w.logCtx).Warn("[ddl] handle DDL job failed", zap.Error(err))
 		}
 	}
 }
@@ -224,7 +224,7 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -265,7 +265,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -350,8 +350,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(job)
 		}
 	}
-	switch job.Type {
-	case model.ActionRecoverTable:
+	if job.Type == model.ActionRecoverTable {
 		err = finishRecoverTable(w, t, job)
 	}
 	if err != nil {
@@ -431,7 +430,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			runJobErr error
 		)
 		waitTime := 2 * d.lease
-		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
 				return nil
@@ -516,6 +515,13 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		ctx, cancel := context.WithTimeout(w.ctx, waitTime)
 		w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
 		cancel()
+
+		if RunInGoTest {
+			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+			d.mu.RLock()
+			d.mu.hook.OnSchemaStateChanged()
+			d.mu.RUnlock()
+		}
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)
@@ -618,7 +624,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifySchemaCharsetAndCollate:
 		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
-		ver, err = onDropSchema(t, job)
+		ver, err = onDropSchema(d, t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionRepairTable:
@@ -690,7 +696,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
 	case model.ActionAlterTableAlterPartition:
-		ver, err = onAlterTablePartition(t, job)
+		ver, err = onAlterTableAlterPartition(t, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(t, job)
 	case model.ActionRenameTables:
@@ -935,7 +941,14 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			}
 		}
 	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.CtxVars[0].(int64)
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			diff.AffectedOpts = []*model.AffectedOption{
+				{
+					TableID: job.CtxVars[0].(int64),
+				},
+			}
+		}
 	default:
 		diff.TableID = job.TableID
 	}

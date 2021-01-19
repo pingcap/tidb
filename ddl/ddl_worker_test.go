@@ -142,7 +142,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Table ID or schema ID is wrong, so getting table is failed.
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -160,7 +160,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Schema ID is wrong, so creating table is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 	// Table exists, so creating table is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
 }
@@ -189,7 +189,7 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	// Schema ID is wrong and orReplace is false, so creating view is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 	// View exists and orReplace is false, so creating view is failed.
-	tblInfo.ID = tblInfo.ID + 1
+	tblInfo.ID++
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 
 }
@@ -339,7 +339,7 @@ func testCheckOwner(c *C, d *ddl, expectedVal bool) {
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -355,7 +355,7 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 }
 
 func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaState) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -456,7 +456,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 18}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 19)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
 
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 21)}, cancelState: model.StatePublic},
@@ -773,7 +773,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// modify none-state column
 	col.DefaultValue = "1"
 	updateTest(&tests[15])
-	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
+	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -782,15 +782,16 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// modify delete-only-state column,
 	col.FieldType.Tp = mysql.TypeTiny
-	col.FieldType.Flen = col.FieldType.Flen - 1
+	col.FieldType.Flen--
 	updateTest(&tests[16])
-	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
-	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs)
+	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
+	cancelState = model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	changedCol = model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
-	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeTiny)
-	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen)
+	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen+1)
 	col.FieldType.Flen++
 
 	// Test add foreign key failed cause by canceled.
@@ -1163,7 +1164,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
 	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.EnQueueDDLJob(job1)
 		c.Assert(err, IsNil)
@@ -1182,7 +1183,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
 		c.Assert(err, IsNil)
@@ -1190,7 +1191,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
 		c.Assert(err, IsNil)
@@ -1198,7 +1199,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
 		c.Assert(err, IsNil)
@@ -1206,7 +1207,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job10)
 		c.Assert(err, IsNil)
@@ -1214,7 +1215,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job12)
 		c.Assert(err, IsNil)
@@ -1307,7 +1308,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 			qLen1 := int64(0)
 			qLen2 := int64(0)
 			for {
-				checkErr = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+				checkErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
 					qLen1, err = m.DDLJobQueueLen()
 					if err != nil {
@@ -1377,7 +1378,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	// check results.
 	isChecked := false
 	for !isChecked {
-		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			lastJob, err := m.GetHistoryDDLJob(job11.ID)
 			c.Assert(err, IsNil)

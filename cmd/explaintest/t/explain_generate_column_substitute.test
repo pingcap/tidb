@@ -152,11 +152,11 @@ create table t0(c0 float(25), c1 double as (c0) unique);
 explain select c0 from t0; -- IndexRead
 
 drop table if exists t0;
-create table t0(c0 double(24), c1 double as (c0) unique);
+create table t0(c0 double, c1 double as (c0) unique);
 explain select c0 from t0; -- IndexRead
 
 drop table if exists t0;
-create table t0(c0 double(25), c1 double as (c0) unique);
+create table t0(c0 double, c1 double as (c0) unique);
 explain select c0 from t0; -- IndexRead
 
 drop table if exists t0;
@@ -168,9 +168,9 @@ create table t0(c0 float(25), c1 float as (c0) unique);
 explain select c0 from t0; -- TableRead
 
 drop table if exists t0;
-create table t0(c0 double(24), c1 float as (c0) unique);
+create table t0(c0 double, c1 float as (c0) unique);
 explain select c0 from t0; -- TableRead
 
 drop table if exists t0;
-create table t0(c0 double(25), c1 float as (c0) unique);
+create table t0(c0 double, c1 float as (c0) unique);
 explain select c0 from t0; -- TableRead

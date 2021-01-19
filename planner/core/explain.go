@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,7 +29,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // A plan is dataAccesser means it can access underlying data.
@@ -55,11 +59,16 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isFullScan() {
-			return "IndexFullScan_" + strconv.Itoa(p.id)
-		}
-		return "IndexRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalIndexScan) TP() string {
+	if p.isFullScan() {
+		return plancodec.TypeIndexFullScan
+	}
+	return plancodec.TypeIndexRangeScan
 }
 
 // ExplainInfo implements Plan interface.
@@ -163,13 +172,18 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isChildOfIndexLookUp {
-			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if p.isFullScan() {
-			return "TableFullScan_" + strconv.Itoa(p.id)
-		}
-		return "TableRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalTableScan) TP() string {
+	if p.isChildOfIndexLookUp {
+		return plancodec.TypeTableRowIDScan
+	} else if p.isFullScan() {
+		return plancodec.TypeTableFullScan
+	}
+	return plancodec.TypeTableRangeScan
 }
 
 // ExplainInfo implements Plan interface.
@@ -487,10 +501,15 @@ func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.explainInfo(false, false)
 }
 
-func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
+// ExplainInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
+	return p.explainInfo(false, true)
+}
+
+func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
@@ -510,6 +529,18 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
 	}
+
+	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
+		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
+		for i := range p.OuterHashKeys {
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
+			exprs = append(exprs, expr)
+		}
+		fmt.Fprintf(buffer, ", equal cond:%s",
+			sortedExplainExpressionList(exprs))
+	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
 			sortedExplainExpressionList(p.LeftConditions))
@@ -527,7 +558,12 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+	return p.explainInfo(true, false)
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo(true, true)
 }
 
 // ExplainInfo implements Plan interface.
@@ -620,32 +656,6 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo()
-}
-
-func (p *PhysicalBroadCastJoin) explainInfo() string {
-	buffer := new(bytes.Buffer)
-
-	buffer.WriteString(p.JoinType.String())
-
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.RightJoinKeys))
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -744,8 +754,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
+	explainIds := make([]fmt.Stringer, len(p.DataSources))
+	for i := range p.DataSources {
+		explainIds[i] = p.DataSources[i].ExplainID()
+	}
+
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIds)
 	return buffer.String()
 }
 
@@ -833,6 +848,31 @@ func (p *DataSource) ExplainInfo() string {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExchangeSender) ExplainInfo() string {
+	buffer := bytes.NewBufferString("ExchangeType: ")
+	switch p.ExchangeType {
+	case tipb.ExchangeType_PassThrough:
+		fmt.Fprintf(buffer, "PassThrough")
+	case tipb.ExchangeType_Broadcast:
+		fmt.Fprintf(buffer, "Broadcast")
+	case tipb.ExchangeType_Hash:
+		fmt.Fprintf(buffer, "HashPartition")
+		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
+	}
+	if len(p.Tasks) > 0 {
+		fmt.Fprintf(buffer, ", tasks: [")
+		for idx, task := range p.Tasks {
+			if idx != 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "%v", task.ID)
+		}
+		fmt.Fprintf(buffer, "]")
 	}
 	return buffer.String()
 }

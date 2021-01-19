@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -195,7 +196,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)
@@ -445,7 +446,7 @@ func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint
 
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
-	currVer, err := ctx.GetStore().CurrentVersion()
+	currVer, err := ctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

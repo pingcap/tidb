@@ -14,13 +14,15 @@
 package cophandler
 
 import (
+	"bytes"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/twmb/murmur3"
 	"golang.org/x/net/context"
 )
 
@@ -74,9 +77,17 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 }
 
 func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := int32(statistics.Version1)
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = *analyzeReq.IdxReq.Version
+	}
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsVer:     statsVer,
+	}
+	if analyzeReq.IdxReq.TopNSize != nil {
+		processor.topNCount = *analyzeReq.IdxReq.TopNSize
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -87,10 +98,32 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			return nil, err
 		}
 	}
+	if statsVer == statistics.Version2 {
+		if processor.topNCurValuePair.Count != 0 {
+			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
+		}
+		sort.Slice(processor.topNValuePairs, func(i, j int) bool {
+			if processor.topNValuePairs[i].Count > processor.topNValuePairs[j].Count {
+				return true
+			} else if processor.topNValuePairs[i].Count < processor.topNValuePairs[j].Count {
+				return false
+			}
+			return bytes.Compare(processor.topNValuePairs[i].Encoded, processor.topNValuePairs[j].Encoded) < 0
+		})
+		if len(processor.topNValuePairs) > int(processor.topNCount) {
+			processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
+		}
+	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		if statsVer == statistics.Version2 {
+			for _, valueCnt := range processor.topNValuePairs {
+				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
+				processor.cms.SubValue(h1, h2, valueCnt.Count)
+			}
+		}
+		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -100,9 +133,13 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 }
 
 func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+	statsVer := statistics.Version1
+	if analyzeReq.IdxReq.Version != nil {
+		statsVer = int(*analyzeReq.IdxReq.Version)
+	}
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -116,7 +153,7 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		cm = statistics.CMSketchToProto(processor.cms)
+		cm = statistics.CMSketchToProto(processor.cms, nil)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -132,18 +169,35 @@ type analyzeIndexProcessor struct {
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
 	rowBuf       []byte
+
+	statsVer         int32
+	topNCount        int32
+	topNValuePairs   []statistics.TopNMeta
+	topNCurValuePair statistics.TopNMeta
 }
 
-func (p *analyzeIndexProcessor) Process(key, value []byte) error {
+func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 	values, _, err := tablecodec.CutIndexKeyNew(key, p.colLen)
 	if err != nil {
 		return err
 	}
 	p.rowBuf = p.rowBuf[:0]
+
 	for _, val := range values {
 		p.rowBuf = append(p.rowBuf, val...)
 		if p.cms != nil {
 			p.cms.InsertBytes(p.rowBuf)
+		}
+	}
+	if p.statsVer == statistics.Version2 {
+		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
+			p.topNCurValuePair.Count++
+		} else {
+			if p.topNCurValuePair.Count > 0 {
+				p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
+			}
+			p.topNCurValuePair.Encoded = safeCopy(p.rowBuf)
+			p.topNCurValuePair.Count = 1
 		}
 	}
 	rowData := safeCopy(p.rowBuf)
@@ -258,8 +312,12 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 		Collators:       collators,
 		ColsFieldType:   fts,
 	}
+	statsVer := statistics.Version1
+	if analyzeReq.ColReq.Version != nil {
+		statsVer = int(*analyzeReq.ColReq.Version)
+	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statsVer)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth

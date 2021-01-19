@@ -14,8 +14,8 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
-	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -99,6 +101,9 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 		}
 		// Virtual columns cannot be used in primary key.
 		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
+			if lastCol.Hidden {
+				return nil, ErrFunctionalIndexPrimaryKey
+			}
 			return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
 		}
 	}
@@ -511,7 +516,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.AddIndexProgress.Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
@@ -927,22 +932,14 @@ func (w *baseIndexWorker) cleanRowMap() {
 	}
 }
 
-// getNextHandle gets next handle of entry that we are going to process.
-func (w *baseIndexWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool) (nextHandle kv.Handle) {
+// getNextKey gets next key of entry that we are going to process.
+func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool) (nextKey kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
-		return w.idxRecords[len(w.idxRecords)-1].handle.Next()
+		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
+		return w.table.RecordKey(lastHandle).Next()
 	}
-
-	// The task is done. So we need to choose a handle outside this range.
-	// Some corner cases should be considered:
-	// - The end of task range is MaxInt64.
-	// - The end of the task is excluded in the range.
-	if (taskRange.endHandle.IsInt() && taskRange.endHandle.IntValue() == math.MaxInt64) || !taskRange.endIncluded {
-		return taskRange.endHandle
-	}
-
-	return taskRange.endHandle.Next()
+	return taskRange.endKey.Next()
 }
 
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, rawRecord []byte) error {
@@ -960,7 +957,7 @@ func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, r
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Handle, bool, error) {
+func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
@@ -968,17 +965,13 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if !taskRange.endIncluded {
-				taskDone = handle.Compare(taskRange.endHandle) >= 0
-			} else {
-				taskDone = handle.Compare(taskRange.endHandle) > 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) > 0
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -1000,7 +993,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			// the generated value, so we need to clear up the reusing map.
 			w.cleanRowMap()
 
-			if handle.Equal(taskRange.endHandle) {
+			if recordKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
 				return false, nil
@@ -1014,7 +1007,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
+	return w.idxRecords, w.getNextKey(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
 func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
@@ -1024,6 +1017,73 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 
 	w.batchCheckKeys = w.batchCheckKeys[:0]
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+}
+
+func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle kv.Handle) error {
+	idxInfo := w.index.Meta()
+	tblInfo := w.table.Meta()
+	name := w.index.Meta().Name.String()
+
+	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleDefault, colInfo)
+	if err != nil {
+		return err
+	}
+
+	if !w.table.Meta().IsCommonHandle {
+		_, d, err := codec.DecodeOne(values[len(colInfo)])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if d.GetInt64() == handle.IntValue() {
+			return nil
+		}
+	} else {
+		// We expect the two handle have the same number of columns, because they come from a same table.
+		// But we still need to check it explicitly, otherwise we will encounter undesired index out of range panic,
+		// or undefined behavior if someone change the format of the value returned by tablecodec.DecodeIndexKV.
+		colsOfHandle := len(values) - len(colInfo)
+		if w.index.Meta().Global {
+			colsOfHandle--
+		}
+		if colsOfHandle != handle.NumCols() {
+			// We can claim these two handle are different, because they have different length.
+			// But we'd better report an error at here to detect compatibility problem introduced in other package during tests.
+			return errors.New("number of columns in two handle is different")
+		}
+
+		for i := 0; i < handle.NumCols(); i++ {
+			if bytes.Equal(values[i+len(colInfo)], handle.EncodedCol(i)) {
+				colsOfHandle--
+			}
+		}
+		if colsOfHandle == 0 {
+			return nil
+		}
+	}
+
+	valueStr := make([]string, 0, len(colInfo))
+	for i, val := range values[:len(colInfo)] {
+		d, err := tablecodec.DecodeColumnValue(val, colInfo[i].Ft, time.Local)
+		if err != nil {
+			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
+		}
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
+		}
+		valueStr = append(valueStr, str)
+	}
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), name)
 }
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
@@ -1059,22 +1119,19 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
-				if err1 != nil {
-					return errors.Trace(err1)
-				}
-
-				if handle != idxRecords[i].handle {
-					return errors.Trace(kv.ErrKeyExists)
+				if err := w.checkHandleExists(key, val, idxRecords[i].handle); err != nil {
+					return errors.Trace(err)
 				}
 			}
 			idxRecords[i].skip = true
-		} else {
+		} else if w.distinctCheckFlags[i] {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tablecodec.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
+			val, err := w.index.GenIndexValue(stmtCtx, idxRecords[i].vals, w.distinctCheckFlags[i], false, idxRecords[i].handle)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			batchVals[string(key)] = val
 		}
 	}
 	// Constrains is already checked.
@@ -1094,16 +1151,16 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		idxRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		taskCtx.nextHandle = nextHandle
+		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
@@ -1213,14 +1270,17 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID = start, end, pid
+	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = reorg.UpdateReorgMeta(start)
-	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),
-		zap.String("endHandle", toString(end)), zap.Error(err))
+	logutil.BgLogger().Info("[ddl] job update reorgInfo",
+		zap.Int64("jobID", reorg.Job.ID),
+		zap.ByteString("elementType", reorg.currElement.TypeKey),
+		zap.Int64("elementID", reorg.currElement.ID),
+		zap.Int64("partitionTableID", pid),
+		zap.String("startHandle", tryDecodeToHandleString(start)),
+		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 
@@ -1303,16 +1363,16 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		idxRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		taskCtx.nextHandle = nextHandle
+		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
 		n := len(w.indexes)
@@ -1389,14 +1449,14 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID = start, end, pid
+	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartHandle)
+	err = reorg.UpdateReorgMeta(reorg.StartKey)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),
-		zap.String("endHandle", toString(end)), zap.Error(err))
+		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
+		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }
 

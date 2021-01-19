@@ -222,6 +222,9 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			continue
 		}
 
+		// Only try to decode handle when there is no corresponding column in the value.
+		// This is because the information in handle may be incomplete in some cases.
+		// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
 		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
 			continue
 		}
@@ -254,6 +257,9 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	}
 	for i, id := range decoder.handleColIDs {
 		if col.ID == id {
+			if types.CommonHandleNeedRestoredData(col.Ft) {
+				return false
+			}
 			coder := codec.NewDecoder(chk, decoder.loc)
 			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
 			if err != nil {
@@ -382,14 +388,17 @@ func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, h
 		tp := fieldType2Flag(col.Ft.Tp, col.Ft.Flag&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
-		if decoder.tryDecodeHandle(values, offset, col, handle, cacheBytes) {
-			continue
-		}
-
 		idx, isNil, notFound := r.findColID(colID)
 		if !notFound && !isNil {
 			val := r.getData(idx)
 			values[offset] = decoder.encodeOldDatum(tp, val)
+			continue
+		}
+
+		// Only try to decode handle when there is no corresponding column in the value.
+		// This is because the information in handle may be incomplete in some cases.
+		// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
+		if decoder.tryDecodeHandle(values, offset, col, handle, cacheBytes) {
 			continue
 		}
 
@@ -417,6 +426,9 @@ func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, h
 func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *ColInfo,
 	handle kv.Handle, cacheBytes []byte) bool {
 	if handle == nil {
+		return false
+	}
+	if types.CommonHandleNeedRestoredData(col.Ft) {
 		return false
 	}
 	if col.IsPKHandle || col.ID == model.ExtraHandleID {

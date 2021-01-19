@@ -606,9 +606,9 @@
           "fill": 1,
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 12,
             "x": 0,
-            "y": 19
+            "y": 25
           },
           "id": 112,
           "legend": {
@@ -634,24 +634,24 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_process_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_proc",
+              "legendFormat": "all_proc_{{sql_type}}",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_cop_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_cop_proc",
+              "legendFormat": "all_cop_proc_{{sql_type}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_slow_query_wait_duration_seconds_bucket[1m])) by (le,sql_type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "all_cop_wait",
+              "legendFormat": "all_cop_wait_{{sql_type}}",
               "refId": "C"
             }
           ],
@@ -675,6 +675,134 @@
           },
           "yaxes": [
             {
+              "format": "s",
+              "label": null,
+              "logBase": 2,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB connection idle durations",
+          "fill": 1,
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 12,
+            "y": 25
+          },
+          "id": 218,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "99-in-txn",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "99-not-in-txn",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "90-in-txn",
+              "refId": "C"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "90-not-in-txn",
+              "refId": "D"
+            },
+            {
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "80-in-txn",
+              "refId": "E"
+            },
+            {
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "80-not-in-txn",
+              "refId": "F"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Connection Idle Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:518",
               "format": "s",
               "label": null,
               "logBase": 2,
@@ -9127,7 +9255,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB DDL add index progress in percentage. The value is [0,100]",
+          "description": "TiDB DDL backfill progress in percentage. The value is [0,100]",
           "fill": 1,
           "gridPos": {
             "h": 8,
@@ -9162,18 +9290,25 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "tidb_ddl_add_index_percentage_progress",
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{type=\"add_index\"}[1m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}",
               "refId": "A"
+            },
+            {
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{type=\"modify_column\"}[1m])",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL add index progress in percentage",
+          "title": "DDL backfill progress in percentage",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -9538,10 +9673,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_statistics_pseudo_estimation_total[1m]))",
+              "expr": "sum(rate(tidb_statistics_pseudo_estimation_total[30s])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Pseudo OPS",
+              "legendFormat": "{{type}}",
               "refId": "A",
               "step": 30
             }

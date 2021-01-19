@@ -417,6 +417,11 @@ func overrideConfig(cfg *config.Config) {
 		cfg.Host = *host
 	}
 	if actualFlags[nmAdvertiseAddress] {
+		var err error
+		if len(strings.Split(*advertiseAddress, " ")) > 1 {
+			err = errors.Errorf("Only support one advertise-address")
+		}
+		terror.MustNil(err)
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
@@ -527,6 +532,8 @@ func setGlobalVars() {
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
+	util.SetGOGC(cfg.Performance.GOGC)
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
@@ -554,16 +561,16 @@ func setGlobalVars() {
 	variable.ForcePriority = int32(priority)
 
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
-	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.TIDBMemQuotaStatistics, strconv.FormatInt(cfg.MemQuotaStatistics, 10))
 	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
-	variable.SetSysVar(variable.LogBin, variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable))
+	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(config.GetGlobalConfig().Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
+	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)

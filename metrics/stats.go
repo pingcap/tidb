@@ -45,13 +45,13 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 14),
 		})
 
-	PseudoEstimation = prometheus.NewCounter(
+	PseudoEstimation = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
 			Name:      "pseudo_estimation_total",
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
-		})
+		}, []string{LblType})
 
 	DumpFeedbackCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
