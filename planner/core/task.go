@@ -1303,6 +1303,7 @@ func BuildFinalModeAggregation(
 // convertAvgForMPP converts avg() to if(count(arg)=0, null, sum(arg)/count(arg)), in detail:
 // 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
 // 2.replace avg() with if(count(arg)=0, null, sum(arg)/count(arg)) and reuse the original schema of the final aggregation.
+// If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *PhysicalProjection {
 	newSchema := expression.NewSchema()
 	newSchema.Keys = p.schema.Keys

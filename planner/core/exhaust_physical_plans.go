@@ -1709,7 +1709,9 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
 		return nil
 	}
-
+	if prop.PartitionTp == property.BroadcastType {
+		return nil
+	}
 	lkeys, rkeys, _, nullEQ := p.GetJoinKeys()
 	if nullEQ {
 		return nil
@@ -2250,10 +2252,10 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
-		return
+		return nil
 	}
 	if prop.PartitionTp == property.BroadcastType {
-		return
+		return nil
 	}
 	partitionCols := la.GetGroupByCols()
 	if len(partitionCols) != 0 {
@@ -2262,7 +2264,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
 			} else {
 				// do not satisfy the property of its parent, so return empty
-				return
+				return nil
 			}
 		}
 		// TODO: permute various partition columns from group-by columns
@@ -2279,7 +2281,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg.MppRunMode = Mpp2Phase
 		agg.PartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
-		// agg runs on TiDB
+		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
 			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
