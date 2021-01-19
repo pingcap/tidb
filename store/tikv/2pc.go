@@ -833,6 +833,12 @@ type ttlManager struct {
 }
 
 func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
+	failpoint.Inject("runTTLManager", func() {
+		logutil.BgLogger().Info("[failpoint] injected failure at running ttlManager",
+			zap.Uint64("txnStartTS", c.startTS))
+		failpoint.Return()
+	})
+
 	// Run only once.
 	if !atomic.CompareAndSwapUint32((*uint32)(&tm.state), uint32(stateUninitialized), uint32(stateRunning)) {
 		return
