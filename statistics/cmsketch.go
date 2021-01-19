@@ -307,11 +307,12 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 // MergeTopNAndUpdateCMSketch merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
 func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
 	topNs := []*TopN{src, dst}
-	dst, popedTopNPair := MergeTopN(topNs, numTop)
-	if dst == nil {
+	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
+	if mergedTopN == nil {
 		// dst == nil means the total count of the input TopN are equal to zero
 		return popedTopNPair
 	}
+	dst.TopN = mergedTopN.TopN
 	for _, topNMeta := range popedTopNPair {
 		c.InsertBytesByCount(topNMeta.Encoded, topNMeta.Count)
 	}
