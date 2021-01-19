@@ -34,8 +34,9 @@ import (
 // testAsyncCommitCommon is used to put common parts that will be both used by
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
 type testAsyncCommitCommon struct {
-	cluster cluster.Cluster
-	store   *tikvStore
+	cluster    cluster.Cluster
+	store      *tikvStore
+	initRegion uint64
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
@@ -46,7 +47,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
+	_, _, s.initRegion = unistore.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)

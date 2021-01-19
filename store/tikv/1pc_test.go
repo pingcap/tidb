@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/tracingtest"
 )
 
 func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
@@ -40,6 +41,62 @@ var _ = SerialSuites(&testOnePCSuite{})
 func (s *testOnePCSuite) SetUpTest(c *C) {
 	s.testAsyncCommitCommon.setUpTest(c)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
+}
+
+func (s *testOnePCSuite) Test1PCOnRegionSplit(c *C) {
+	k2, k1 := kv.Key("z"), kv.Key("a")
+	box := tracingtest.NewSandbox()
+
+	// check standard 1pc behavior firstly.
+	txn1 := s.begin1PC(c)
+	err := txn1.Set(k1, []byte{2})
+	c.Assert(err, IsNil)
+	err = txn1.Set(k2, []byte{2})
+	c.Assert(err, IsNil)
+	ctx1 := box.StartRoutine(context.WithValue(context.Background(), sessionctx.ConnID, uint64(1)), "txn1")
+	err = txn1.Commit(ctx1)
+	c.Assert(err, IsNil)
+	c.Assert(txn1.committer.isOnePC(), IsTrue)
+
+	// test split during 1pc handle.
+	txn2 := s.begin1PC(c)
+	err = txn2.Set(k1, []byte{1})
+	c.Assert(err, IsNil)
+	err = txn2.Set(k2, []byte{1})
+	c.Assert(err, IsNil)
+	ctx2 := box.StartRoutine(context.WithValue(context.Background(), sessionctx.ConnID, uint64(1)), "txn2")
+	tracingtest.EnableBreakpoint(ctx2, "beforeSendPrewrite")
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			done <- struct{}{}
+		}()
+		err = txn2.Commit(ctx2)
+		c.Assert(err, IsNil)
+	}()
+	tracingtest.EnsureWaitOnBreakpoint(ctx2, "beforeSendPrewrite")
+	c.Assert(txn2.committer.isOnePC(), IsTrue)
+
+	// split region before sending 1PC request.
+	region2 := s.cluster.AllocID()
+	newPeers := []uint64{s.cluster.AllocID(), s.cluster.AllocID()}
+	s.cluster.Split(s.initRegion, region2, []byte("m"), newPeers, newPeers[0])
+
+	// resume routine from breakpoint and want it can fallback to 2pc.
+	tracingtest.ContinueBreakpoint(ctx2, "beforeSendPrewrite")
+	<-done
+	c.Assert(txn2.committer.isOnePC(), IsFalse)
+
+	// assert 2 txn execution path: txn1 only send 1 prewrite no commit and txn2 resend 2 prewrite and need commit
+	c.Assert(box.CollectLogs(), tracingtest.LogsEquals, `[1] txn1: load region 2 from pd, due to cache-miss
+	[1] txn1: send Prewrite request to region 2 at store1
+	[2] txn2: send Prewrite request to region 2 at store1
+	[2] txn2: load region 4 from pd, due to cache-miss
+	[2] txn2: send Prewrite request to region 4 at store1
+	[2] txn2: send Prewrite request to region 2 at store1
+	[2] txn2: start get commit ts
+	[2] txn2: finish get commit ts
+	[2] txn2: send Commit request to region 2 at store1`)
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {

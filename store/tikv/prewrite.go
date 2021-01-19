@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracingtest"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -144,6 +145,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	}
 
 	req := c.buildPrewriteRequest(batch, txnSize)
+	tracingtest.CheckBreakpoint(bo.ctx, "beforeSendPrewrite")
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
