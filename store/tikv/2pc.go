@@ -25,6 +25,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/tracingtest"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
@@ -742,6 +744,11 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
 		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 		go func() {
+			if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
+				span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitSecondaries", opentracing.ChildOf(span.Context()))
+				defer span1.Finish()
+				secondaryBo.ctx = opentracing.ContextWithSpan(secondaryBo.ctx, span1)
+			}
 			if c.connID > 0 {
 				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
 					if s, ok := v.(string); !ok {
@@ -755,7 +762,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					}
 				})
 			}
-
+			tracingtest.CheckBreakpoint(bo.ctx, "beforeCommitSecondaries")
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -763,6 +770,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					zap.Stringer("action type", action),
 					zap.Error(e))
 				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
+			} else {
+				logutil.Event(secondaryBo.ctx, "commit secondary keys success")
 			}
 		}()
 	} else {
