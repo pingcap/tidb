@@ -827,6 +827,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
+		buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -864,6 +865,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+		}
+		if idxInfo.Primary {
+			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] CLUSTERED */"))
+			} else {
+				buf.WriteString(fmt.Sprintf(" /*T![clustered_index] NONCLUSTERED */"))
+			}
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")

@@ -483,7 +483,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `a` int(11) NOT NULL DEFAULT '1',\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`a`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
@@ -497,7 +497,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  `aa` mediumint(9) DEFAULT NULL,\n" +
-		"  PRIMARY KEY (`c`),\n" +
+		"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`aa`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +

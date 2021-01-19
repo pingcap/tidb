@@ -1794,7 +1794,7 @@ func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 		"  `a` int(11) NOT NULL,\n"+
 		"  `b` int(11) NOT NULL,\n"+
 		"  KEY `idx` (`a`),\n"+
-		"  PRIMARY KEY (`a`,`b`)\n"+
+		"  PRIMARY KEY (`a`,`b`) /*T![clustered_index] NONCLUSTERED */\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table test_add_pk2 drop primary key")
 	tk.MustQuery("desc test_add_pk2").Check(testutil.RowsWithSep(",", ""+
@@ -2794,7 +2794,7 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := tk.MustQuery("show create table origin")
-	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 

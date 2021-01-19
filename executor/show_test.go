@@ -673,7 +673,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `END_TIME` datetime NOT NULL,\n"+
 			"  `USER_TYPE` int(11) DEFAULT NULL,\n"+
 			"  `APP_ID` int(11) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`LOG_ID`,`END_TIME`),\n"+
+			"  PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,\n"+
 			"  KEY `IDX_EndTime` (`END_TIME`),\n"+
 			"  KEY `IDX_RoundId` (`ROUND_ID`),\n"+
 			"  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)\n"+
@@ -789,7 +789,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -803,7 +803,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `parent_id` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`id`),\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `par_ind` (`parent_id`),\n"+
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -887,7 +887,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -898,7 +898,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -908,7 +908,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	// Test show auto_random table option.
@@ -918,7 +918,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
 	// Test implicit auto_random with auto_random table option.
@@ -928,7 +928,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
 	))
 	// Test auto_random table option already with special comment.
@@ -937,7 +937,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 		""+
 			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
 	))
 }
@@ -953,7 +953,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
 	))
 	tk.MustExec("drop table if exists t")
@@ -963,7 +963,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  `b` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`b`),\n"+
+			"  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `a` (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
 	))
@@ -973,7 +973,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`a`)\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
 }
@@ -995,7 +995,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`),\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
@@ -1006,7 +1006,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`),\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
@@ -1043,7 +1043,7 @@ func (s *testSuite5) TestShowEscape(c *C) {
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`c``olum\"n`)\n"+
+			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -1054,7 +1054,7 @@ func (s *testSuite5) TestShowEscape(c *C) {
 		""+
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (\"c`olum\"\"n\")\n"+
+			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
