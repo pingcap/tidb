@@ -646,7 +646,7 @@ func NewTopN(n int) *TopN {
 // The output parameters are the newly generated global-level TopN structure and a new TopN structure consisting of the remaining numbers.
 // We need to guarantee that both n and len(topNs) in the input parameters are greater than 0.
 // Notice: the second output parameter may be nil.
-func MergePartitionTopN2GlobalTopN(topNs []*TopN, n int) (*TopN, *TopN) {
+func MergePartitionTopN2GlobalTopN(topNs []*TopN, n int) (*TopN, []TopNMeta) {
 	allTopNVal := make(map[hack.MutableString]uint64)
 	for _, topN := range topNs {
 		for _, val := range topN.TopN {
@@ -668,8 +668,7 @@ func MergePartitionTopN2GlobalTopN(topNs []*TopN, n int) (*TopN, *TopN) {
 			break
 		}
 	}
-	var finalTopN, remainTopN TopN
+	var finalTopN TopN
 	finalTopN.TopN = allTopN.TopN[:n]
-	remainTopN.TopN = allTopN.TopN[n:]
-	return &finalTopN, &remainTopN
+	return &finalTopN, allTopN.TopN[n:]
 }

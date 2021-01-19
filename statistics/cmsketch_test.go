@@ -378,8 +378,8 @@ func (s *testStatisticsSuite) TestMergePartitionStats2GlobalStats(c *C) {
 			minTopNCnt = topNMeta.Count
 		}
 		if remainTopN != nil {
-			cnt += len(remainTopN.TopN)
-			for _, remainTopNMeta := range remainTopN.TopN {
+			cnt += len(remainTopN)
+			for _, remainTopNMeta := range remainTopN {
 				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
 				c.Assert(err, IsNil)
 				c.Assert(remainTopNMeta.Count, Equals, res[val])
