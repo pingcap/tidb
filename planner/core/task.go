@@ -1581,8 +1581,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	inputRows := mpp.count()
 	switch p.MppRunMode {
 	case Mpp1Phase:
-		/// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
-		/// only push down the original agg
+		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+		// only push down the original agg
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: mpp.hashCols}
 		proj := p.convertAvgForMPP(prop)
 		p.self.SetChildren(mpp.p)
@@ -1594,7 +1594,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		mpp.addCost(p.GetCost(inputRows, false))
 		return mpp
 	case Mpp2Phase:
-		/// 2-phase agg: partial + final agg for hash partition
+		// 2-phase agg: partial + final agg for hash partition
 		if len(p.PartitionCols) == 0 {
 			return invalidTask
 		}

@@ -47,11 +47,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		isMppFinal := false
-		if aggFunc.Mode == aggregation.FinalMode && p.MppRunMode == Mpp2Phase {
-			isMppFinal = true
-		}
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc, isMppFinal))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc, aggFunc.Mode == aggregation.FinalMode && p.MppRunMode == Mpp2Phase))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
