@@ -366,7 +366,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 				if err := cms.MergeCMSketch(cm); err != nil {
 					return nil, nil, nil, err
 				}
-				statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
+				statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]))
 			}
 		}
 	}
@@ -1110,7 +1110,7 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		statistics.MergeTopN(topN, curTopN, cmSketch, numTop, false)
+		statistics.MergeTopN(topN, curTopN, cmSketch, numTop)
 	}
 	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))

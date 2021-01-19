@@ -305,7 +305,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 }
 
 // MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
-func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopNMeta {
+func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
 	if dst.TotalCount()+src.TotalCount() == 0 {
 		return nil
 	}
@@ -315,11 +315,7 @@ func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopN
 		counter[hack.String(meta.Encoded)] += meta.Count
 	}
 	for _, meta := range src.TopN {
-		if usingMax {
-			counter[hack.String(meta.Encoded)] = mathutil.MaxUint64(counter[hack.String(meta.Encoded)], meta.Count)
-		} else {
-			counter[hack.String(meta.Encoded)] += meta.Count
-		}
+		counter[hack.String(meta.Encoded)] += meta.Count
 	}
 	sorted := make([]uint64, len(counter))
 	for _, cnt := range counter {
