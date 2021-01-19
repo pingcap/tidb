@@ -1586,11 +1586,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		// only push down the original agg
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: mpp.hashCols}
 		proj := p.convertAvgForMPP(prop)
-		p.self.SetChildren(mpp.p)
-		mpp.p = p.self
+		attachPlan2Task(p.self, mpp)
 		if proj != nil {
-			proj.SetChildren(mpp.p)
-			mpp.p = proj
+			attachPlan2Task(proj, mpp)
 		}
 		mpp.addCost(p.GetCost(inputRows, false))
 		return mpp
@@ -1609,14 +1607,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg == nil {
 			return invalidTask
 		}
-		partialAgg.SetChildren(mpp.p)
-		mpp.p = partialAgg
+		attachPlan2Task(partialAgg, mpp)
 		newMpp := mpp.enforceExchangerImpl(prop)
-		finalAgg.SetChildren(newMpp.p)
-		newMpp.p = finalAgg
+		attachPlan2Task(finalAgg, newMpp)
 		if proj != nil {
-			proj.SetChildren(newMpp.p)
-			newMpp.p = proj
+			attachPlan2Task(proj, newMpp)
 		}
 		// TODO: how to set 2-phase cost?
 		newMpp.addCost(p.GetCost(inputRows/2, false))
@@ -1624,8 +1619,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
 		if partialAgg != nil {
-			partialAgg.SetChildren(mpp.p)
-			mpp.p = partialAgg
+			attachPlan2Task(partialAgg, mpp)
 		}
 		mpp.addCost(p.GetCost(inputRows, false))
 		t = mpp.convertToRootTask(p.ctx)
