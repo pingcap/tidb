@@ -858,7 +858,7 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 	return location, nil
 }
 
-// LocatePartition locates partition by the column value
+// LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, lv types.Datum, hv types.Datum) ([]ListPartitionLocation, error) {
 	lowKey, err := lp.genKey(sc, lv)
 	if err != nil {
