@@ -299,7 +299,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		if err1 != nil {
 			// do nothing
 		}
-		if unicode.IsDigit(rune(valStr[0])) || (len(valStr) >= 2 && valStr[0] == '.' && unicode.IsDigit(rune(valStr[1]))) {
+		if (len(valStr) >= 1 && unicode.IsDigit(rune(valStr[0]))) || (len(valStr) >= 2 && valStr[0] == '.' && unicode.IsDigit(rune(valStr[1]))) {
 			err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
 		} else {
 			err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
