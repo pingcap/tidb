@@ -640,3 +640,36 @@ func (c *TopN) Equal(cc *TopN) bool {
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
 }
+
+// MergePartitionTopN2GlobalTopN is used to merge partition-level TopN structures to generate a new global-level TopN struct by the given size.
+// The input parameters are the TopN structure from multiple partition tables and the size of the global-level TopN that will be generated.
+// The output parameters are the newly generated global-level TopN structure and a new TopN structure consisting of the remaining numbers.
+// We need to guarantee that both n and len(topNs) in the input parameters are greater than 0.
+// Notice: the second output parameter may be nil.
+func MergePartitionTopN2GlobalTopN(topNs []*TopN, n int) (*TopN, *TopN) {
+	allTopNVal := make(map[hack.MutableString]uint64)
+	for _, topN := range topNs {
+		for _, val := range topN.TopN {
+			allTopNVal[hack.String(val.Encoded)] += val.Count
+		}
+	}
+	NumAllTopN := len(allTopNVal)
+	allTopN := NewTopN(NumAllTopN)
+	for val, cnt := range allTopNVal {
+		allTopN.TopN = append(allTopN.TopN, TopNMeta{[]byte(val), cnt})
+	}
+	sort.Slice(allTopN.TopN, func(i, j int) bool {
+		return allTopN.TopN[i].Count >= allTopN.TopN[j].Count
+	})
+	for ind := n + 1; ind < NumAllTopN; ind++ {
+		if allTopN.TopN[ind-1].Count == allTopN.TopN[ind].Count {
+			n++
+		} else {
+			break
+		}
+	}
+	var finalTopN, remainTopN TopN
+	finalTopN.TopN = allTopN.TopN[:n]
+	remainTopN.TopN = allTopN.TopN[n:]
+	return &finalTopN, &remainTopN
+}

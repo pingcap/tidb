@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -302,4 +303,90 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 	// do not panic
 	DecodeCMSketchAndTopN([]byte{}, rows)
+}
+
+func (s *testStatisticsSuite) TestMergePartitionStats2GlobalStats(c *C) {
+	tests := []struct {
+		topnNum    int
+		n          int
+		maxTopNVal int
+		maxTopNCnt int
+	}{
+		{
+			topnNum:    10,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    1,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 5,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 10,
+			maxTopNCnt: 100,
+		},
+	}
+	for _, t := range tests {
+		topnNum, n := t.topnNum, t.n
+		maxTopNVal, maxTopNCnt := t.maxTopNVal, t.maxTopNCnt
+
+		// the number of maxTopNVal should be bigger than n.
+		ok := maxTopNVal >= n
+		c.Assert(ok, Equals, true)
+
+		topNs := make([]*TopN, 0, topnNum)
+		res := make(map[int]uint64)
+		rand.Seed(time.Now().Unix())
+		for i := 0; i < topnNum; i++ {
+			topN := NewTopN(n)
+			occur := make(map[int]bool)
+			for j := 0; j < n; j++ {
+				// The range of numbers in the topn structure is in [0, maxTopNVal)
+				// But there cannot be repeated occurrences of value in a topN structure.
+				randNum := rand.Intn(maxTopNVal)
+				for occur[randNum] {
+					randNum = rand.Intn(maxTopNVal)
+				}
+				occur[randNum] = true
+				tString := []byte(fmt.Sprintf("%d", randNum))
+				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
+				randCnt := uint64(rand.Intn(maxTopNCnt))
+				res[randNum] += randCnt
+				topNMeta := TopNMeta{tString, randCnt}
+				topN.TopN = append(topN.TopN, topNMeta)
+			}
+			topNs = append(topNs, topN)
+		}
+		topN, remainTopN := MergePartitionTopN2GlobalTopN(topNs, n)
+		cnt := len(topN.TopN)
+		var minTopNCnt uint64
+		for _, topNMeta := range topN.TopN {
+			val, err := strconv.Atoi(string(topNMeta.Encoded))
+			c.Assert(err, IsNil)
+			c.Assert(topNMeta.Count, Equals, res[val])
+			minTopNCnt = topNMeta.Count
+		}
+		if remainTopN != nil {
+			cnt += len(remainTopN.TopN)
+			for _, remainTopNMeta := range remainTopN.TopN {
+				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
+				c.Assert(err, IsNil)
+				c.Assert(remainTopNMeta.Count, Equals, res[val])
+				ok = minTopNCnt > remainTopNMeta.Count
+				c.Assert(ok, Equals, true)
+			}
+		}
+		c.Assert(cnt, Equals, len(res))
+	}
 }
