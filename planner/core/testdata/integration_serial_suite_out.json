@@ -1529,28 +1529,28 @@
       {
         "SQL": "desc select avg(value) as b,id from t group by id",
         "Plan": [
-          "TableReader_26 8000.00 root  data:ExchangeSender_25",
-          "└─ExchangeSender_25 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_21 8000.00 cop[tiflash]  if(eq(Column#8, 0), <nil>, div(Column#4, cast(Column#8, decimal(20,0) BINARY)))->Column#4, test.t.id",
-          "    └─HashAgg_22 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#9)->Column#8, funcs:sum(Column#10)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "      └─ExchangeReceiver_24 8000.00 cop[tiflash]  ",
-          "        └─ExchangeSender_23 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "          └─HashAgg_8 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#9, funcs:sum(test.t.value)->Column#10",
-          "            └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader_27 8000.00 root  data:ExchangeSender_26",
+          "└─ExchangeSender_26 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_22 8000.00 cop[tiflash]  if(eq(Column#9, 0), <nil>, div(Column#4, cast(Column#9, decimal(20,0) BINARY)))->Column#4, test.t.id",
+          "    └─HashAgg_23 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#10)->Column#9, funcs:sum(Column#11)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "      └─ExchangeReceiver_25 8000.00 cop[tiflash]  ",
+          "        └─ExchangeSender_24 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "          └─HashAgg_8 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#11",
+          "            └─TableFullScan_21 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
         "Plan": [
           "HashAgg_7 1.00 root  funcs:sum(Column#4)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
-          "└─TableReader_29 8000.00 root  data:ExchangeSender_28",
-          "  └─ExchangeSender_28 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_24 8000.00 cop[tiflash]  if(eq(Column#9, 0), <nil>, div(Column#4, cast(Column#9, decimal(20,0) BINARY)))->Column#4, test.t.id",
-          "      └─HashAgg_25 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#10)->Column#9, funcs:sum(Column#11)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver_27 8000.00 cop[tiflash]  ",
-          "          └─ExchangeSender_26 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#11",
-          "              └─TableFullScan_23 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader_30 8000.00 root  data:ExchangeSender_29",
+          "  └─ExchangeSender_29 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_25 8000.00 cop[tiflash]  if(eq(Column#10, 0), <nil>, div(Column#4, cast(Column#10, decimal(20,0) BINARY)))->Column#4, test.t.id",
+          "      └─HashAgg_26 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─ExchangeReceiver_28 8000.00 cop[tiflash]  ",
+          "          └─ExchangeSender_27 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "            └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
+          "              └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1558,42 +1558,42 @@
         "Plan": [
           "Projection_6 6400.00 root  test.t.id",
           "└─Selection_7 6400.00 root  gt(Column#4, 0)",
-          "  └─TableReader_29 8000.00 root  data:ExchangeSender_28",
-          "    └─ExchangeSender_28 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─Projection_24 8000.00 cop[tiflash]  if(eq(Column#9, 0), <nil>, div(Column#4, cast(Column#9, decimal(20,0) BINARY)))->Column#4, test.t.id",
-          "        └─HashAgg_25 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#10)->Column#9, funcs:sum(Column#11)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "          └─ExchangeReceiver_27 8000.00 cop[tiflash]  ",
-          "            └─ExchangeSender_26 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "              └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#11",
-          "                └─TableFullScan_23 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─TableReader_30 8000.00 root  data:ExchangeSender_29",
+          "    └─ExchangeSender_29 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─Projection_25 8000.00 cop[tiflash]  if(eq(Column#10, 0), <nil>, div(Column#4, cast(Column#10, decimal(20,0) BINARY)))->Column#4, test.t.id",
+          "        └─HashAgg_26 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "          └─ExchangeReceiver_28 8000.00 cop[tiflash]  ",
+          "            └─ExchangeSender_27 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "              └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
+          "                └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc select avg(value),id from t group by id having avg(value)>0",
         "Plan": [
           "Selection_7 6400.00 root  gt(Column#4, 0)",
-          "└─TableReader_29 8000.00 root  data:ExchangeSender_28",
-          "  └─ExchangeSender_28 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_24 8000.00 cop[tiflash]  if(eq(Column#10, 0), <nil>, div(Column#4, cast(Column#10, decimal(20,0) BINARY)))->Column#4, test.t.id",
-          "      └─HashAgg_25 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver_27 8000.00 cop[tiflash]  ",
-          "          └─ExchangeSender_26 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
-          "              └─TableFullScan_23 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader_30 8000.00 root  data:ExchangeSender_29",
+          "  └─ExchangeSender_29 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_25 8000.00 cop[tiflash]  if(eq(Column#11, 0), <nil>, div(Column#4, cast(Column#11, decimal(20,0) BINARY)))->Column#4, test.t.id",
+          "      └─HashAgg_26 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#12)->Column#11, funcs:sum(Column#13)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─ExchangeReceiver_28 8000.00 cop[tiflash]  ",
+          "          └─ExchangeSender_27 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "            └─HashAgg_11 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#12, funcs:sum(test.t.value)->Column#13",
+          "              └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc select avg(value) +1,id from t group by id",
         "Plan": [
           "Projection_4 8000.00 root  plus(Column#4, 1)->Column#5, test.t.id",
-          "└─TableReader_26 8000.00 root  data:ExchangeSender_25",
-          "  └─ExchangeSender_25 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_21 8000.00 cop[tiflash]  if(eq(Column#10, 0), <nil>, div(Column#4, cast(Column#10, decimal(20,0) BINARY)))->Column#4, test.t.id",
-          "      └─HashAgg_22 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#11)->Column#10, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver_24 8000.00 cop[tiflash]  ",
-          "          └─ExchangeSender_23 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "            └─HashAgg_8 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#11, funcs:sum(test.t.value)->Column#12",
-          "              └─TableFullScan_20 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader_27 8000.00 root  data:ExchangeSender_26",
+          "  └─ExchangeSender_26 8000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_22 8000.00 cop[tiflash]  if(eq(Column#11, 0), <nil>, div(Column#4, cast(Column#11, decimal(20,0) BINARY)))->Column#4, test.t.id",
+          "      └─HashAgg_23 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(Column#12)->Column#11, funcs:sum(Column#13)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─ExchangeReceiver_25 8000.00 cop[tiflash]  ",
+          "          └─ExchangeSender_24 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
+          "            └─HashAgg_8 8000.00 cop[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#12, funcs:sum(test.t.value)->Column#13",
+          "              └─TableFullScan_21 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -516,7 +517,7 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 		store := &metapb.Store{}
 		store.State = state
 		if hasEngineLabel {
-			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
+			store.Labels = []*metapb.StoreLabel{{Key: placement.EngineLabelKey, Value: engineLabel}}
 		}
 		return store
 	}
@@ -530,12 +531,12 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 		res, err = needsGCOperationForStore(newStore(state, true, ""))
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, needGC)
-		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiKV))
+		res, err = needsGCOperationForStore(newStore(state, true, placement.EngineLabelTiKV))
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, needGC)
 
 		// TiFlash does not need these operations.
-		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiFlash))
+		res, err = needsGCOperationForStore(newStore(state, true, placement.EngineLabelTiFlash))
 		c.Assert(err, IsNil)
 		c.Assert(res, IsFalse)
 	}
