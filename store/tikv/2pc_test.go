@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/tracingtest"
 )
 
 type testCommitterSuite struct {
@@ -133,6 +134,61 @@ func randKV(keyLen, valLen int) (string, string) {
 		v[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(k), string(v)
+}
+
+func (s *testCommitterSuite) TestCommitSecondarySlow(c *C) {
+	// split 3 keys into 3 regions
+	s.cluster.SplitKeys(kv.Key("d"), kv.Key("a"), 4)
+	k1, k2, k3 := kv.Key("a"), kv.Key("b"), kv.Key("c")
+
+	box := tracingtest.NewSandbox()
+	ctx1, ctx2 := box.StartRoutine(context.Background(), "txn1"), box.StartRoutine(context.Background(), "txn2")
+
+	// commit txn1 but let secondaries waiting in commit phase.
+	txn1 := s.begin(c)
+	err := txn1.Set(k1, []byte{1})
+	c.Assert(err, IsNil)
+	err = txn1.Set(k2, []byte{1})
+	c.Assert(err, IsNil)
+	tracingtest.EnableBreakpoint(ctx1, "beforeCommitSecondaries")
+	err = txn1.Commit(ctx1)
+	c.Assert(err, IsNil)
+	tracingtest.EnsureWaitOnBreakpoint(ctx1, "beforeCommitSecondaries")
+
+	// commit txn2 with overlap key, it will meet txn1's k2 and will resolve & prewrite & commit it.
+	txn2 := s.begin(c)
+	err = txn2.Set(k3, []byte{1})
+	c.Assert(err, IsNil)
+	err = txn2.Set(k2, []byte{2})
+	c.Assert(err, IsNil)
+	err = txn2.Commit(ctx2)
+	c.Assert(err, IsNil)
+
+	// make txn1 continue commit k2 and ensure background goroutine exit
+	gid := tracingtest.ContinueBreakpoint(ctx1, "beforeCommitSecondaries")
+	tracingtest.EnsureGoroutineFinished(gid)
+
+	// check trace log to ensure two txn works as desired
+	c.Assert(box.CollectLogs(), tracingtest.LogsEquals, `[1] txn1: load region 4 from pd, due to cache-miss
+	[1] txn1: load region 5 from pd, due to cache-miss
+	[1] txn1: send Prewrite request to region 5 at store1
+	[1] txn1: send Prewrite request to region 4 at store1
+	[1] txn1: start get commit ts
+	[1] txn1: finish get commit ts
+	[1] txn1: send Commit request to region 4 at store1
+	[1] txn1: send Commit request to region 5 at store1
+	[1] txn1: commit secondary keys success
+	[2] txn2: load region 6 from pd, due to cache-miss
+	[2] txn2: send Prewrite request to region 6 at store1
+	[2] txn2: send Prewrite request to region 5 at store1
+	[2] txn2: send CheckTxnStatus request to region 4 at store1
+	[2] txn2: send ResolveLock request to region 5 at store1
+	[2] txn2: send Prewrite request to region 5 at store1
+	[2] txn2: start get commit ts
+	[2] txn2: finish get commit ts
+	[2] txn2: send Commit request to region 5 at store1
+	[2] txn2: send Commit request to region 6 at store1
+	[2] txn2: commit secondary keys success`)
 }
 
 func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
