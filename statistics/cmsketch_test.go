@@ -305,7 +305,7 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	DecodeCMSketchAndTopN([]byte{}, rows)
 }
 
-func (s *testStatisticsSuite) TestMergePartitionStats2GlobalStats(c *C) {
+func (s *testStatisticsSuite) TestMergeTopN(c *C) {
 	tests := []struct {
 		topnNum    int
 		n          int
@@ -368,7 +368,7 @@ func (s *testStatisticsSuite) TestMergePartitionStats2GlobalStats(c *C) {
 			}
 			topNs = append(topNs, topN)
 		}
-		topN, remainTopN := MergePartitionTopN2GlobalTopN(topNs, n)
+		topN, remainTopN := MergeTopN(topNs, uint32(n))
 		cnt := len(topN.TopN)
 		var minTopNCnt uint64
 		for _, topNMeta := range topN.TopN {
