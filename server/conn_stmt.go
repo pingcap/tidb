@@ -46,8 +46,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -186,9 +188,24 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 	}
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if err != nil && terror.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) {
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		prevErr := err
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
+		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
+	}
+	return err
+}
+
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) error {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
 		return cc.writeOK(ctx)
@@ -212,7 +229,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	defer terror.Call(rs.Close)
 	err = cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	return nil
 }

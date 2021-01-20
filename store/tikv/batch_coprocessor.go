@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -145,6 +146,15 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 		if needRetry {
 			// Backoff once for each retry.
 			err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// Actually ErrRegionUnavailable would be thrown out rather than ErrTiFlashServerTimeout. However, since currently
+			// we don't have MockTiFlash, we inject ErrTiFlashServerTimeout to simulate the situation that TiFlash is down.
+			if storeType == kv.TiFlash {
+				failpoint.Inject("errorMockTiFlashServerTimeout", func(val failpoint.Value) {
+					if val.(bool) {
+						failpoint.Return(nil, errors.Trace(ErrTiFlashServerTimeout))
+					}
+				})
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
