@@ -35,12 +35,10 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
-	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -55,18 +53,30 @@ type baseHashAggWorker struct {
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
 	stats        *AggWorkerStat
-	memTracker   *memory.Tracker
+
+	memTracker *memory.Tracker
+	// Used for estimating memory usage.
+	BInMap      *int
+	overflowNum *int
 }
+
+// defMemoryUsageForPerLineInMap = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
+const defMemoryUsageForPerLineInMap = 8*(16+24) + 8 + 8
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
-	return baseHashAggWorker{
+	BInMap := 1
+	overflowNum := 13
+	baseWorker := baseHashAggWorker{
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
 		memTracker:   memTrack,
+		BInMap:       &BInMap,
+		overflowNum:  &overflowNum,
 	}
+	return baseWorker
 }
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
@@ -215,12 +225,6 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
-	runtime.GC()
-	runtime.GC()
-
-	logutil.BgLogger().Info("testGetPartialResult", zap.Int64("testGetPartialResult", testGetPartialResult.MaxConsumed()))
-	logutil.BgLogger().Info("testBSum", zap.Uint64("testBSum", atomic.LoadUint64(&testBSum)))
-
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
@@ -475,8 +479,6 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 			partialResultMap: w.partialResultsMap,
 		}
 	}
-	atomic.AddUint64(&testBSum, 1<<getB(w.partialResultsMap))
-	logutil.BgLogger().Info("partB", zap.Uint64("partB", uint64(getB(w.partialResultsMap))))
 }
 
 // getGroupKey evaluates the group items and args of aggregate functions.
@@ -532,14 +534,15 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		}
 		str := string(groupKey[i])
 		mapper[str] = partialResults[i]
-		w.memTracker.Consume(int64(len(str)) +
-			16 /* unsafe.Sizeof(string) */ + 24 /* unsafe.Sizeof(slice) */ + 16 /* key-value pointer*/ + 2 /* hash */)
-		testGetPartialResult.Consume(
-			((16 /* unsafe.Sizeof(string) */ +
-				24 /* unsafe.Sizeof(slice) */ +
-				16 /* key-value pointer*/ +
-				2 /* hash */) *
-				16) / 13)
+		w.memTracker.Consume(int64(len(str)))
+		if len(mapper) > *w.overflowNum {
+			if *w.BInMap > 1 {
+				w.memTracker.Consume(-defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
+			}
+			*w.BInMap++
+			*w.overflowNum *= 2
+			w.memTracker.Consume(defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
+		}
 	}
 	return partialResults
 }
@@ -669,8 +672,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		w.outputCh <- &AfFinalResult{err: err}
 	}
 	w.getFinalResult(ctx)
-	logutil.BgLogger().Info("partB", zap.Uint64("partB", uint64(getB(w.partialResultMap))))
-	atomic.AddUint64(&testBSum, 1<<getB(w.partialResultMap))
 }
 
 // Next implements the Executor Next interface.
@@ -1670,59 +1671,4 @@ func (e *vecGroupChecker) reset() {
 	if e.lastRowDatums != nil {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
-}
-
-// A header for a Go map.
-type hmap struct {
-	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
-	// Make sure this stays in sync with the compiler's definition.
-	count     int // # live cells == size of map.  Must be first (used by len() builtin)
-	flags     uint8
-	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
-	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details
-	hash0     uint32 // hash seed
-
-	buckets    unsafe.Pointer // array of 2^B Buckets. may be nil if count==0.
-	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing
-	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
-
-	extra *mapextra // optional fields
-}
-
-// mapextra holds fields that are not present on all maps.
-type mapextra struct {
-	// If both key and elem do not contain pointers and are inline, then we mark bucket
-	// type as containing no pointers. This avoids scanning such maps.
-	// However, bmap.overflow is a pointer. In order to keep overflow buckets
-	// alive, we store pointers to all overflow buckets in hmap.extra.overflow and hmap.extra.oldoverflow.
-	// overflow and oldoverflow are only used if key and elem do not contain pointers.
-	// overflow contains overflow buckets for hmap.buckets.
-	// oldoverflow contains overflow buckets for hmap.oldbuckets.
-	// The indirection allows to store a pointer to the slice in hiter.
-	overflow    *[]*bmap
-	oldoverflow *[]*bmap
-
-	// nextOverflow holds a pointer to a free overflow bucket.
-	nextOverflow *bmap
-}
-
-const bucketCnt = 8
-
-// A bucket for a Go map.
-type bmap struct {
-	// tophash generally contains the top byte of the hash value
-	// for each key in this bucket. If tophash[0] < minTopHash,
-	// tophash[0] is a bucket evacuation state instead.
-	tophash [bucketCnt]uint8
-	// Followed by bucketCnt keys and then bucketCnt elems.
-	// NOTE: packing all the keys together and then all the elems together makes the
-	// code a bit more complicated than alternating key/elem/key/elem/... but it allows
-	// us to eliminate padding which would be needed for, e.g., map[int64]int8.
-	// Followed by an overflow pointer.
-}
-
-func getB(m aggPartialResultMapper) int {
-	point := (**hmap)(unsafe.Pointer(&m))
-	value := *point
-	return int(value.B)
 }
