@@ -160,8 +160,17 @@ type AggFunc interface {
 	// usage.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
+	// Vectorized indicates whether the aggregate function supports vectorized
+	// execution for hash aggregate.
+	// TODO: vectorize stream aggregate
 	Vectorized() bool
 
+	// VecUpdatePartialResult evaluates the input chunk and iterates on each row
+	// to update each corresponding partial result. It converts the PartialResults
+	// to the specific data structures which store the partial results for each
+	// row, and then update these partial results according to the functionality
+	// and the state of the aggregate function. The returned value is the memDelta
+	// used to trace memory usage.
 	VecUpdatePartialResult(sctx sessionctx.Context, input *chunk.Chunk, prs []PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
