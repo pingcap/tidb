@@ -601,6 +601,18 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	for _, r := range rows {
 		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2") // statsVer = 2
 	}
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
 }
 
 func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {

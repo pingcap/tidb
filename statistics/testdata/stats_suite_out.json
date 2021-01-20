@@ -1,131 +1,215 @@
 [
   {
     "Name": "TestUniqCompEqualEst",
+    "Cases": null
+  },
+  {
+    "Name": "TestStatsVer2",
     "Cases": [
       [
-        "Point_Get_5 1.00 root table:t, clustered index:PRIMARY(a, b) "
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.a, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.a, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.a, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:singular(a) range:[1,1], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:singular(a) range:[4,4], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:singular(a) range:[8,8], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:singular(a) range:[1.00000000000000000000,1.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:singular(a) range:[4.00000000000000000000,4.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:singular(a) range:[8.00000000000000000000,8.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tstring, index:singular(a) range:[\"1\",\"1\"], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tstring, index:singular(a) range:[\"4\",\"4\"], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tstring, index:singular(a) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 1), eq(test.tint.c, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 4), eq(test.tint.c, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 8), eq(test.tint.c, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdouble, index:multi(b, c) range:[1 1,1 1], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdouble, index:multi(b, c) range:[4 4,4 4], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdouble, index:multi(b, c) range:[8 8,8 8], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdecimal, index:multi(b, c) range:[1.00000000000000000000 1.00000000000000000000,1.00000000000000000000 1.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000 4.00000000000000000000,4.00000000000000000000 4.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 0.10 root  ",
+        "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:tdecimal, index:multi(b, c) range:[8.00000000000000000000 8.00000000000000000000,8.00000000000000000000 8.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 1), eq(cast(test.tstring.c), 1)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 4), eq(cast(test.tstring.c), 4)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 8), eq(cast(test.tstring.c), 8)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 1)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 4)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 8)",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:multi(b, c) range:[1,1], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:multi(b, c) range:[4,4], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdouble, index:multi(b, c) range:[8,8], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdouble keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[1.00000000000000000000,1.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000,4.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "IndexLookUp_10 10.00 root  ",
+        "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[8.00000000000000000000,8.00000000000000000000], keep order:false, stats:pseudo",
+        "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tdecimal keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 1)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 4)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_7 8000.00 root  data:Selection_6",
+        "└─Selection_6 8000.00 cop[tikv]  eq(cast(test.tstring.b), 8)",
+        "  └─TableFullScan_5 10000.00 cop[tikv] table:tstring keep order:false, stats:pseudo"
       ]
     ]
   },
   {
     "Name": "TestColumnIndexNullEstimation",
-    "Cases": [
-      [
-        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
-      ],
-      [
-        "IndexReader_6 1.00 root  index:IndexFullScan_5",
-        "└─IndexFullScan_5 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
-      ],
-      [
-        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
-      ],
-      [
-        "IndexReader_5 5.00 root  index:IndexFullScan_4",
-        "└─IndexFullScan_4 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
-      ],
-      [
-        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
-      ],
-      [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  isnull(test.t.a)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
-      ],
-      [
-        "TableReader_7 4.00 root  data:Selection_6",
-        "└─Selection_6 4.00 cop[tikv]  not(isnull(test.t.a))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
-      ],
-      [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
-      ],
-      [
-        "TableReader_5 5.00 root  data:TableFullScan_4",
-        "└─TableFullScan_4 5.00 cop[tikv] table:t keep order:false"
-      ],
-      [
-        "TableReader_7 3.00 root  data:Selection_6",
-        "└─Selection_6 3.00 cop[tikv]  lt(test.t.a, 4)",
-        "  └─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
-      ]
-    ]
+    "Cases": null
   },
   {
     "Name": "TestDiscreteDistribution",
-    "Cases": [
-      [
-        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:idx(a, b) range:[\"tw\" -inf,\"tw\" 0), keep order:false"
-      ]
-    ]
+    "Cases": null
   },
   {
     "Name": "TestPrimaryKeySelectivity",
-    "Cases": [
-      [
-        "TableReader_7 3333.33 root  data:Selection_6",
-        "└─Selection_6 3333.33 cop[tikv]  gt(test.t.a, \"t\")",
-        "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
-      ],
-      [
-        "TableReader_6 3333.33 root  data:TableRangeScan_5",
-        "└─TableRangeScan_5 3333.33 cop[tikv] table:t range:(1,+inf], keep order:false, stats:pseudo"
-      ]
-    ]
+    "Cases": null
   },
   {
     "Name": "TestSelectCombinedLowBound",
-    "Cases": [
-      [
-        "IndexReader_6 7.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 7.00 cop[tikv] table:t, index:kid(kid, pid) range:[1,1], keep order:false"
-      ]
-    ]
+    "Cases": null
   },
   {
     "Name": "TestCollationColumnEstimate",
-    "Cases": [
-      [
-        "test t  a 0 0 2 2 \u0000A\u0000A\u0000A \u0000A\u0000A\u0000A 0",
-        "test t  a 0 1 4 2 \u0000B\u0000B\u0000B \u0000B\u0000B\u0000B 0"
-      ],
-      [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
-      ],
-      [
-        "TableReader_7 2.00 root  data:Selection_6",
-        "└─Selection_6 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
-      ]
-    ]
+    "Cases": null
   },
   {
     "Name": "TestDNFCondSelectivity",
-    "Cases": [
-      {
-        "SQL": "select * from t where b > 7 or c < 4",
-        "Selectivity": 0.34375
-      },
-      {
-        "SQL": "select * from t where d < 5 or b > 6",
-        "Selectivity": 0.625
-      },
-      {
-        "SQL": "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
-        "Selectivity": 0.82421875
-      },
-      {
-        "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
-        "Selectivity": 0.3125
-      }
-    ]
+    "Cases": null
   }
 ]
