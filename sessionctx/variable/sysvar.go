@@ -360,6 +360,15 @@ func RegisterSysVar(sv *SysVar) {
 	sysVarsLock.Unlock()
 }
 
+// UnregisterSysVar removes a sysvar from the SysVars list
+// currently only used in tests.
+func UnregisterSysVar(name string) {
+	name = strings.ToLower(name)
+	sysVarsLock.Lock()
+	delete(sysVars, name)
+	sysVarsLock.Unlock()
+}
+
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
@@ -651,7 +660,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW"},
 	{Scope: ScopeGlobal, Name: TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(DefTiDBMaxDeltaSchemaCount), Type: TypeUnsigned, MinValue: 100, MaxValue: 16384, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Type: TypeBool},
@@ -1029,8 +1038,6 @@ const (
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
 type GlobalVarAccessor interface {
-	// GetAllSysVars gets all the global system variable values.
-	GetAllSysVars() (map[string]string, error)
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.

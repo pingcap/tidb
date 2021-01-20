@@ -1098,7 +1098,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		return err
 	}
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
-	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
+	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Add(1)

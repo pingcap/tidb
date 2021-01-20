@@ -1015,31 +1015,6 @@ func (s *session) varFromTiDBTable(name string) bool {
 	return false
 }
 
-// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (s *session) GetAllSysVars() (map[string]string, error) {
-	if s.Value(sessionctx.Initing) != nil {
-		return nil, nil
-	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
-	rows, _, err := s.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	ret := make(map[string]string, len(rows))
-	for _, r := range rows {
-		k, v := r.GetString(0), r.GetString(1)
-		if s.varFromTiDBTable(k) {
-			if v, err = s.getTiDBTableValue(k, v); err != nil {
-				ret[k] = v
-			}
-		} else {
-			ret[k] = v
-		}
-	}
-	return ret, nil
-}
-
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if name == variable.TiDBSlowLogMasking {
@@ -1369,6 +1344,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
+		return nil, err
+	}
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
@@ -1409,6 +1387,30 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	return recordSet, nil
+}
+
+func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
+	vars := s.GetSessionVars()
+	if !vars.TxnCtx.IsStaleness {
+		return nil
+	}
+	errMsg := "only support read-only statement during read-only staleness transactions"
+	node := stmtNode.(ast.Node)
+	switch node.(type) {
+	case *ast.SplitRegionStmt:
+		return nil
+	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
+		return nil
+	default:
+	}
+	// covered DeleteStmt/InsertStmt/UpdateStmt/CallStmt/LoadDataStmt
+	if _, ok := stmtNode.(ast.DMLNode); ok {
+		return errors.New(errMsg)
+	}
+	return nil
 }
 
 // querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
@@ -2319,7 +2321,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 
 	var ver int64
 	// check in kv store
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
@@ -2342,7 +2344,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
 		return err
