@@ -69,15 +69,37 @@ var (
 
 const (
 	updated  int32 = iota // region is updated and no need to reload.
-	needSync              //  need sync new region info.
+	needSync              // need sync new region info.
+)
+
+// InvalidReason is the reason why a cached region is invalidated.
+// The region cache may take different strategies to handle different reasons.
+// For example, when a cached region is invalidated due to no leader, region cache
+// will always access to a different peer.
+type InvalidReason int32
+
+const (
+	// Ok indicates the cached region is valid
+	Ok InvalidReason = iota
+	// NoLeader indicates it's invalidated due to no leader
+	NoLeader
+	// RegionNotFound indicates it's invalidated due to region not found in the store
+	RegionNotFound
+	// EpochNotMatch indicates it's invalidated due to epoch not match
+	EpochNotMatch
+	// StoreNotFound indicates it's invalidated due to store not found in PD
+	StoreNotFound
+	// Other indicates it's invalidated due to other reasons
+	Other
 )
 
 // Region presents kv region
 type Region struct {
-	meta       *metapb.Region // raw region meta from PD immutable after init
-	store      unsafe.Pointer // point to region store info, see RegionStore
-	syncFlag   int32          // region need be sync in next turn
-	lastAccess int64          // last region access time, see checkRegionCacheTTL
+	meta          *metapb.Region // raw region meta from PD immutable after init
+	store         unsafe.Pointer // point to region store info, see RegionStore
+	syncFlag      int32          // region need be sync in next turn
+	lastAccess    int64          // last region access time, see checkRegionCacheTTL
+	invalidReason InvalidReason  // the reason why the region is invalidated
 }
 
 // AccessMode uses to index stores for different region cache access requirements.
@@ -247,8 +269,9 @@ func (r *Region) checkRegionCacheTTL(ts int64) bool {
 }
 
 // invalidate invalidates a region, next time it will got null result.
-func (r *Region) invalidate() {
+func (r *Region) invalidate(reason InvalidReason) {
 	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK.Inc()
+	atomic.StoreInt32((*int32)(&r.invalidReason), int32(reason))
 	atomic.StoreInt64(&r.lastAccess, invalidatedLastAccessTime)
 }
 
@@ -440,13 +463,13 @@ func (c *RegionCache) GetTiKVRPCContext(bo *Backoffer, id RegionVerID, replicaRe
 	})
 	if store == nil || len(addr) == 0 {
 		// Store not found, region must be out of date.
-		cachedRegion.invalidate()
+		cachedRegion.invalidate(StoreNotFound)
 		return nil, nil
 	}
 
 	storeFailEpoch := atomic.LoadUint32(&store.epoch)
 	if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
-		cachedRegion.invalidate()
+		cachedRegion.invalidate(Other)
 		logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 			zap.Uint64("region", id.GetID()),
 			zap.String("store", store.addr))
@@ -489,7 +512,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			return nil, err
 		}
 		if len(addr) == 0 {
-			cachedRegion.invalidate()
+			cachedRegion.invalidate(StoreNotFound)
 			return nil, nil
 		}
 		if store.getResolveState() == needCheck {
@@ -499,7 +522,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		peer := cachedRegion.meta.Peers[storeIdx]
 		storeFailEpoch := atomic.LoadUint32(&store.epoch)
 		if storeFailEpoch != regionStore.storeEpochs[storeIdx] {
-			cachedRegion.invalidate()
+			cachedRegion.invalidate(Other)
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
@@ -517,7 +540,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 		}, nil
 	}
 
-	cachedRegion.invalidate()
+	cachedRegion.invalidate(Other)
 	return nil, nil
 }
 
@@ -828,11 +851,16 @@ func (c *RegionCache) BatchLoadRegionsFromKey(bo *Backoffer, startKey []byte, co
 
 // InvalidateCachedRegion removes a cached Region.
 func (c *RegionCache) InvalidateCachedRegion(id RegionVerID) {
+	c.InvalidateCachedRegionWithReason(id, Other)
+}
+
+// InvalidateCachedRegionWithReason removes a cached Region with the reason why it's invalidated.
+func (c *RegionCache) InvalidateCachedRegionWithReason(id RegionVerID, reason InvalidReason) {
 	cachedRegion := c.getCachedRegionWithRLock(id)
 	if cachedRegion == nil {
 		return
 	}
-	cachedRegion.invalidate()
+	cachedRegion.invalidate(reason)
 }
 
 // UpdateLeader update some region cache with newer leader info.
@@ -859,7 +887,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 			zap.Uint64("regionID", regionID.GetID()),
 			zap.Int("currIdx", int(currentPeerIdx)),
 			zap.Uint64("leaderStoreID", leaderStoreID))
-		r.invalidate()
+		r.invalidate(StoreNotFound)
 	} else {
 		logutil.BgLogger().Info("switch region leader to specific leader due to kv return NotLeader",
 			zap.Uint64("regionID", regionID.GetID()),
@@ -869,13 +897,26 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64, c
 }
 
 // insertRegionToCache tries to insert the Region to cache.
+// It should be protected by c.mu.Lock().
 func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	old := c.mu.sorted.ReplaceOrInsert(newBtreeItem(cachedRegion))
 	if old != nil {
+		store := cachedRegion.getStore()
+		oldRegion := old.(*btreeItem).cachedRegion
+		oldRegionStore := oldRegion.getStore()
+		// Joint consensus is enabled in v5.0, which is possible to make a leader step down as a learner during a conf change.
+		// And hibernate region is also enabled by default in v5.0, so after the leader step down, there can be a long time
+		// that there is no leader in the region and the leader info in PD is stale until requests are sent to followers
+		// or hibernate timeout.
+		// To solve it, one solution is always to try a different peer if the invalid reason of the old cached region is no-leader.
+		// There is a small probability that the current peer who reports no-leader becomes a leader and TiDB has to retry once in this case.
+		if oldRegion.invalidReason == NoLeader {
+			store.workTiKVIdx = (oldRegionStore.workTiKVIdx + 1) % AccessIndex(store.accessStoreNum(TiKvOnly))
+		}
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
-		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
-		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
+		store.workTiFlashIdx = oldRegionStore.workTiFlashIdx
+		delete(c.mu.regions, oldRegion.VerID())
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
 }
@@ -1249,7 +1290,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 	if needInvalidateOld {
 		cachedRegion, ok := c.mu.regions[ctx.Region]
 		if ok {
-			cachedRegion.invalidate()
+			cachedRegion.invalidate(EpochNotMatch)
 		}
 	}
 	return nil

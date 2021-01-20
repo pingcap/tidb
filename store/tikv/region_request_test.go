@@ -565,3 +565,31 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 		c.Assert(resp, NotNil)
 	}()
 }
+
+func (s *testRegionRequestToThreeStoresSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var leaderAddr string
+	s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+		if leaderAddr == "" {
+			leaderAddr = addr
+		}
+		// Returns OK when switches to a different peer.
+		if leaderAddr != addr {
+			return &tikvrpc.Response{Resp: &kvrpcpb.RawPutResponse{}}, nil
+		}
+		return &tikvrpc.Response{Resp: &kvrpcpb.RawPutResponse{
+			RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}},
+		}}, nil
+	}}
+
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+
+	bo := NewBackofferWithVars(context.Background(), 5, nil)
+	loc, err := s.cache.LocateKey(s.bo, []byte("key"))
+	c.Assert(err, IsNil)
+	resp, err := s.regionRequestSender.SendReq(bo, req, loc.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+}

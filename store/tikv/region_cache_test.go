@@ -1309,6 +1309,25 @@ func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
 	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{30}), IsFalse)
 }
 
+func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
+	var prevCtx *RPCContext
+	for i := 0; i <= len(s.cluster.GetAllStores()); i++ {
+		loc, err := s.cache.LocateKey(s.bo, []byte("a"))
+		c.Assert(err, IsNil)
+		ctx, err := s.cache.GetTiKVRPCContext(s.bo, loc.Region, kv.ReplicaReadLeader, 0)
+		c.Assert(err, IsNil)
+		if prevCtx == nil {
+			c.Assert(i, Equals, 0)
+		} else {
+			c.Assert(ctx.AccessIdx, Not(Equals), prevCtx.AccessIdx)
+			c.Assert(ctx.Peer, Not(DeepEquals), prevCtx.Peer)
+		}
+		s.cache.InvalidateCachedRegionWithReason(loc.Region, NoLeader)
+		c.Assert(s.cache.getCachedRegionWithRLock(loc.Region).invalidReason, Equals, NoLeader)
+		prevCtx = ctx
+	}
+}
+
 func BenchmarkOnRequestFail(b *testing.B) {
 	/*
 			This benchmark simulate many concurrent requests call OnSendRequestFail method
