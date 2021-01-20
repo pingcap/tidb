@@ -17,6 +17,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,16 +40,9 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
-	"sort"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
-
-var testGetPartialResult *memory.Tracker
-var testBSum uint64 = 0
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
@@ -56,25 +54,27 @@ type baseHashAggWorker struct {
 
 	memTracker *memory.Tracker
 	// Used for estimating memory usage.
-	BInMap      *int
-	overflowNum *int
+	BInMap *int // incident B in Go map
 }
 
-// defMemoryUsageForPerLineInMap = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
-const defMemoryUsageForPerLineInMap = 8*(16+24) + 8 + 8
+const (
+	// defMemoryUsageForPerLineInMap = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
+	defMemoryUsageForPerLineInMap = 8*(16+24) + 8 + 8
+	// loadFactorNum
+	loadFactorNum = 13
+	// loadFactorDen
+	loadFactorDen = 2
+)
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
-	BInMap := 1
-	overflowNum := 13
 	baseWorker := baseHashAggWorker{
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
 		memTracker:   memTrack,
-		BInMap:       &BInMap,
-		overflowNum:  &overflowNum,
+		BInMap:       new(int),
 	}
 	return baseWorker
 }
@@ -276,10 +276,6 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		return nil
 	}
 	e.initForParallelExec(e.ctx)
-
-	testGetPartialResult = memory.NewTracker(-1, -1)
-	atomic.StoreUint64(&testBSum, 0)
-
 	return nil
 }
 
@@ -448,11 +444,11 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			if memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+			if err != nil {
 				return err
-			} else {
-				w.memTracker.Consume(memDelta)
 			}
+			w.memTracker.Consume(memDelta)
 		}
 	}
 	return nil
@@ -532,15 +528,13 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 			partialResults[i] = append(partialResults[i], partialResult)
 			w.memTracker.Consume(memDelta)
 		}
-		str := string(groupKey[i])
-		mapper[str] = partialResults[i]
-		w.memTracker.Consume(int64(len(str)))
-		if len(mapper) > *w.overflowNum {
-			if *w.BInMap > 1 {
+		mapper[string(groupKey[i])] = partialResults[i]
+		w.memTracker.Consume(int64(len(groupKey[i])))
+		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
+			if *w.BInMap > 0 {
 				w.memTracker.Consume(-defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
 			}
 			*w.BInMap++
-			*w.overflowNum *= 2
 			w.memTracker.Consume(defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
 		}
 	}
