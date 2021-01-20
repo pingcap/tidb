@@ -896,7 +896,7 @@ func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
 
 	// Unrelated code, to make this test pass in the unit test.
 	// The `tikv_gc_safe_point` global variable must be there, otherwise the 'set @@tidb_snapshot' operation fails.
-	timeSafe := time.Now().Add(-time.Duration(48 * 60 * 60 * time.Second)).Format("20060102-15:04:05 -0700 MST")
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
