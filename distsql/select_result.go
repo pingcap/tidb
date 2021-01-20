@@ -149,9 +149,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
