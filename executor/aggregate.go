@@ -17,11 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
-	"sync"
-	"sync/atomic"
-	"time"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,9 +35,18 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"runtime"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
+
+var testGetPartialResult *memory.Tracker
+var testBSum uint64 = 0
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
@@ -51,14 +55,17 @@ type baseHashAggWorker struct {
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
 	stats        *AggWorkerStat
+	memTracker   *memory.Tracker
 }
 
-func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
+func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
+	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
 	return baseHashAggWorker{
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
+		memTracker:   memTrack,
 	}
 }
 
@@ -76,8 +83,7 @@ type HashAggPartialWorker struct {
 	groupKey          [][]byte
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
-	chk        *chunk.Chunk
-	memTracker *memory.Tracker
+	chk *chunk.Chunk
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
@@ -209,6 +215,12 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	runtime.GC()
+	runtime.GC()
+
+	logutil.BgLogger().Info("testGetPartialResult", zap.Int64("testGetPartialResult", testGetPartialResult.MaxConsumed()))
+	logutil.BgLogger().Info("testBSum", zap.Uint64("testBSum", atomic.LoadUint64(&testBSum)))
+
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
@@ -260,6 +272,10 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		return nil
 	}
 	e.initForParallelExec(e.ctx)
+
+	testGetPartialResult = memory.NewTracker(-1, -1)
+	atomic.StoreUint64(&testBSum, 0)
+
 	return nil
 }
 
@@ -296,7 +312,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
+			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.memTracker),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -305,7 +321,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupByItems:      e.GroupByItems,
 			chk:               newFirstChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
-			memTracker:        e.memTracker,
 		}
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -324,7 +339,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
 		w := HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
+			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
@@ -406,8 +421,19 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
+func getGroupKeyMemUsage(groupKey [][]byte) int64 {
+	mem := int64(0)
+	for _, key := range groupKey {
+		mem += int64(cap(key))
+	}
+	mem += 12 * int64(cap(groupKey))
+	return mem
+}
+
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
+	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err
 	}
@@ -418,8 +444,10 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			if _, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
+			if memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
 				return err
+			} else {
+				w.memTracker.Consume(memDelta)
 			}
 		}
 	}
@@ -447,6 +475,8 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 			partialResultMap: w.partialResultsMap,
 		}
 	}
+	atomic.AddUint64(&testBSum, 1<<getB(w.partialResultsMap))
+	logutil.BgLogger().Info("partB", zap.Uint64("partB", uint64(getB(w.partialResultsMap))))
 }
 
 // getGroupKey evaluates the group items and args of aggregate functions.
@@ -496,10 +526,20 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 			continue
 		}
 		for _, af := range w.aggFuncs {
-			partialResult, _ := af.AllocPartialResult()
+			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
+			w.memTracker.Consume(memDelta)
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
+		str := string(groupKey[i])
+		mapper[str] = partialResults[i]
+		w.memTracker.Consume(int64(len(str)) +
+			16 /* unsafe.Sizeof(string) */ + 24 /* unsafe.Sizeof(slice) */ + 16 /* key-value pointer*/ + 2 /* hash */)
+		testGetPartialResult.Consume(
+			((16 /* unsafe.Sizeof(string) */ +
+				24 /* unsafe.Sizeof(slice) */ +
+				16 /* key-value pointer*/ +
+				2 /* hash */) *
+				16) / 13)
 	}
 	return partialResults
 }
@@ -541,10 +581,12 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for reachEnd := false; !reachEnd; {
 			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			groupKeysLen := len(groupKeys)
+			memSize := getGroupKeyMemUsage(w.groupKeys)
 			w.groupKeys = w.groupKeys[:0]
 			for i := 0; i < groupKeysLen; i++ {
 				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
 			}
+			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 			for i, groupKey := range groupKeys {
 				if !w.groupSet.Exist(groupKey) {
@@ -627,6 +669,8 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		w.outputCh <- &AfFinalResult{err: err}
 	}
 	w.getFinalResult(ctx)
+	logutil.BgLogger().Info("partB", zap.Uint64("partB", uint64(getB(w.partialResultMap))))
+	atomic.AddUint64(&testBSum, 1<<getB(w.partialResultMap))
 }
 
 // Next implements the Executor Next interface.
@@ -1626,4 +1670,59 @@ func (e *vecGroupChecker) reset() {
 	if e.lastRowDatums != nil {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
+}
+
+// A header for a Go map.
+type hmap struct {
+	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
+	// Make sure this stays in sync with the compiler's definition.
+	count     int // # live cells == size of map.  Must be first (used by len() builtin)
+	flags     uint8
+	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details
+	hash0     uint32 // hash seed
+
+	buckets    unsafe.Pointer // array of 2^B Buckets. may be nil if count==0.
+	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing
+	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
+
+	extra *mapextra // optional fields
+}
+
+// mapextra holds fields that are not present on all maps.
+type mapextra struct {
+	// If both key and elem do not contain pointers and are inline, then we mark bucket
+	// type as containing no pointers. This avoids scanning such maps.
+	// However, bmap.overflow is a pointer. In order to keep overflow buckets
+	// alive, we store pointers to all overflow buckets in hmap.extra.overflow and hmap.extra.oldoverflow.
+	// overflow and oldoverflow are only used if key and elem do not contain pointers.
+	// overflow contains overflow buckets for hmap.buckets.
+	// oldoverflow contains overflow buckets for hmap.oldbuckets.
+	// The indirection allows to store a pointer to the slice in hiter.
+	overflow    *[]*bmap
+	oldoverflow *[]*bmap
+
+	// nextOverflow holds a pointer to a free overflow bucket.
+	nextOverflow *bmap
+}
+
+const bucketCnt = 8
+
+// A bucket for a Go map.
+type bmap struct {
+	// tophash generally contains the top byte of the hash value
+	// for each key in this bucket. If tophash[0] < minTopHash,
+	// tophash[0] is a bucket evacuation state instead.
+	tophash [bucketCnt]uint8
+	// Followed by bucketCnt keys and then bucketCnt elems.
+	// NOTE: packing all the keys together and then all the elems together makes the
+	// code a bit more complicated than alternating key/elem/key/elem/... but it allows
+	// us to eliminate padding which would be needed for, e.g., map[int64]int8.
+	// Followed by an overflow pointer.
+}
+
+func getB(m aggPartialResultMapper) int {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return int(value.B)
 }
