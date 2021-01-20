@@ -570,6 +570,39 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
+func (s *testStatsSuite) TestStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists tint")
+	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tint")
+
+	testKit.MustExec("drop table if exists tdouble")
+	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdouble")
+
+	testKit.MustExec("drop table if exists tdecimal")
+	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdecimal")
+
+	testKit.MustExec("drop table if exists tstring")
+	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
+	testKit.MustExec("analyze table tstring")
+
+	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
+	c.Assert(len(rows), Equals, 4*(3+2)) // 4 tables * (3 columns + 2 indexes)
+	for _, r := range rows {
+		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2") // statsVer = 2
+	}
+}
+
 func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
