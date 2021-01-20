@@ -927,9 +927,11 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	}
 	switch op.FuncName.L {
 	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
-		switch p.partFn.FuncName.L {
-		case ast.Plus, ast.Minus, ast.Mul, ast.Div:
-			return ret, false
+		if p.partFn != nil {
+			switch p.partFn.FuncName.L {
+			case ast.Plus, ast.Minus, ast.Mul, ast.Div:
+				return ret, false
+			}
 		}
 		ret.op = op.FuncName.L
 	case ast.IsNull:
