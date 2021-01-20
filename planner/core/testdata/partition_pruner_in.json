@@ -311,5 +311,11 @@
         "Pruner": "t1: p0; t1: p1"
       }
     ]
+  },
+  {
+    "name": "TestIssue22396",
+    "cases": [
+      "select * from tbl_311 where col1 = 1"
+    ]
   }
 ]

@@ -1868,5 +1868,21 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue22396",
+    "Cases": [
+      {
+        "SQL": "select * from tbl_311 where col1 = 1",
+        "Result": [
+          "1 a 11 <nil> <nil>"
+        ],
+        "Plan": [
+          "IndexLookUp_10 10.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tbl_311, index:PRIMARY(COL1, COL2, COL3) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:tbl_311 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

@@ -447,3 +447,42 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 		}
 	}
 }
+
+func (s *testPartitionPruneSuit) TestIssue22396(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_partition;")
+	tk.MustExec("create database test_partition")
+	tk.MustExec("use test_partition")
+	tk.MustExec("CREATE TABLE tbl_311 ( COL1 INT, COL2 VARCHAR(20), COL3 bigint, COL4 FLOAT, COL5 DATETIME, primary key (COL1, col2, col3)) PARTITION BY RANGE (COL1 + COL3) (" +
+		"PARTITION p0 VALUES LESS THAN (0)," +
+		"PARTITION p1 VALUES LESS THAN(10)," +
+		"PARTITION p2 VALUES LESS THAN(20)," +
+		"PARTITION p3 VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("insert into tbl_311(col1, col2, col3) values (1, 'a', 11), (2, 'b', 22), (3, 'c', 33), (10, 'd', 44), (9, 'e', 55);")
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+		Plan   []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	valid := false
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			fmt.Printf("sql %v\n", tt)
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			fmt.Printf("result %v\n", output[i].Result)
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		result := tk.MustQuery(tt)
+		result.Check(testkit.Rows(output[i].Result...))
+		//If the query doesn't specified the partition, compare the result with normal table
+		if !strings.Contains(tt, "partition(") {
+			result.Check(tk.MustQuery(tt).Rows())
+			valid = true
+		}
+		c.Assert(valid, IsTrue)
+	}
+}
