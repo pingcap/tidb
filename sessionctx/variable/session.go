@@ -802,6 +802,15 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	*TemporaryTable
+}
+
+type TemporaryTable struct {
+	InfoSchema interface{}
+	kv.Storage
+
+	Txn kv.Transaction
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.

@@ -97,6 +97,10 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	return tableFromMeta(allocs, tblInfo, false)
+}
+
+func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, temporary bool) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -138,6 +142,12 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 	var t TableCommon
 	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs)
+	if temporary {
+		var ret temporaryTable
+		ret.TableCommon = t
+		return &ret, nil
+	}
+
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -341,7 +351,11 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return err
 	}
+	return t.updateRecordWithTxn(ctx, txn, sctx, h, oldData, newData, touched)
+}
 
+func (t *TableCommon) updateRecordWithTxn(ctx context.Context, txn kv.Transaction, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+	var err error
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -596,7 +610,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if err != nil {
 		return nil, err
 	}
+	return t.addRecordWithTxn(sctx, txn, r, opts...)
+}
 
+func (t *TableCommon) addRecordWithTxn(sctx sessionctx.Context, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)

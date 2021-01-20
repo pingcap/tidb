@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -447,6 +448,15 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
+	if tmpTable := s.sessionVars.TemporaryTable; tmpTable != nil {
+		if tmpTable.Txn != nil {
+			fmt.Println("temporary table not null ... size of the txn is ==", tmpTable.Txn.Size(), tmpTable.Txn.Len())
+			tmpTable.Txn.Commit(ctx)
+			tmpTable.Txn = nil
+		}
+	}
+
 	if s.txn.IsReadOnly() {
 		return nil
 	}
@@ -498,7 +508,8 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
-	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	ctx = sessionctx.SetCommitCtx(ctx, s)
+	return s.txn.Commit(ctx)
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -1728,6 +1739,17 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
+
+		// Create a Txn for temporary table.
+		// Writes to the temporary table will be cached in this txn before commit.
+		if s.sessionVars.TemporaryTable != nil {
+			tmpStore := s.sessionVars.TemporaryTable.Storage
+			tmpTxn, err := tmpStore.BeginWithStartTS(s.GetSessionVars().TxnCtx.TxnScope, s.txn.StartTS())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			s.sessionVars.TemporaryTable.Txn = tmpTxn
+		}
 	}
 	return &s.txn, nil
 }
@@ -2551,6 +2573,15 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 
 	is := domain.GetDomain(s).InfoSchema()
+	// Override the infoschema if the session has temporary table.
+	if s.sessionVars.TemporaryTable != nil {
+		fmt.Println("temporary table is not nil!!")
+		is = &infoschema.TemporarySchema{
+			InfoSchema: is,
+			Temp: s.sessionVars.TemporaryTable.InfoSchema.(map[string]table.Table),
+		}
+	}
+	
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),

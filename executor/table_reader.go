@@ -234,6 +234,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
 		SetFromInfoSchema(infoschema.GetInfoSchema(e.ctx)).
+		SetTemporaryTableFlag(e.table.Type() == table.TemporaryTable).
 		Build()
 	if err != nil {
 		return nil, err

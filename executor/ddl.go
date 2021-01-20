@@ -1,4 +1,3 @@
-// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -202,6 +206,83 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
+	if s.IsTemporary {
+		// ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+		// is := d.GetInfoSchemaWithInterceptor(ctx)
+		// schema, ok := is.SchemaByName(ident.Schema)
+		// if !ok {
+		// 	return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+		// }
+		// tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, schema.Charset, schema.Collate)
+		tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, "", "")
+		if err != nil {
+			return err
+		}
+		tbInfo.ID = 666 // TODO
+		tbInfo.State = model.StatePublic
+		if tbInfo.Partition != nil {
+			// TODO
+		}
+
+		sessVars := e.ctx.GetSessionVars()
+		if sessVars.TemporaryTable == nil {
+			s, err := store.New("unistore:///tmp/temporary")
+			if err != nil {
+				return err
+			}
+			// handle := infoschema.NewHandle(s)
+			// builder := infoschema.NewBuilder(handle)
+			kv.RunInNewTxn(context.Background(), s, true, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				dbInfo := model.DBInfo{
+					ID: 0,
+					Name: model.NewCIStr("temporary"),
+					State: model.StatePublic,
+				}
+				if err := m.CreateDatabase(&dbInfo); err != nil {
+					return err
+				}
+
+				if err := m.CreateTableOrView(0, tbInfo); err != nil {
+					return err
+				}
+				return nil
+			})
+
+
+			allocs := autoid.NewAllocatorsFromTblInfo(s, 0, tbInfo)
+			tbl, err := tables.TemporaryTableFromMeta(allocs, tbInfo)
+			if err != nil {
+				return err
+			}
+			is := make(map[string]table.Table)
+			is[tbInfo.Name.L] = tbl
+			sessVars.TemporaryTable = &variable.TemporaryTable{
+				InfoSchema: is,
+				Storage: s,
+			}
+		} else {
+			fmt.Println("Run here, executeCreateTable")
+			// TODO: Run here
+			// tbl, err := tables.TableFromMeta(allocs, tblInfo)
+			// if err != nil {
+			// 	return nil, errors.Trace(err)
+			// }
+			// tableNames := b.is.schemaMap[dbInfo.Name.L]
+			// tableNames.tables[tblInfo.Name.L] = tbl
+			// bucketIdx := tableBucketIdx(tableID)
+			// sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
+			// sortedTbls = append(sortedTbls, tbl)
+			// sort.Sort(sortedTbls)
+			// b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
+
+			// newTbl, ok := b.is.TableByID(tableID)
+			// if ok {
+			// 	dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
+			// }
+		}
+		return nil
+	}
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
 	return err
 }

@@ -266,6 +266,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+
+	fmt.Println(" commit ----- mutation length", committer.mutations.Len())
+
 	if committer.mutations.Len() == 0 {
 		return nil
 	}

@@ -157,6 +157,9 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	return result
 }
 
+type Temporary struct {
+}
+
 var _ InfoSchema = (*infoSchema)(nil)
 
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {

@@ -40,6 +40,8 @@ const (
 	VirtualTable
 	// ClusterTable contains the `VirtualTable` in the all cluster tidb nodes.
 	ClusterTable
+	// TemporaryTable is a temporary table exists in the session.
+	TemporaryTable
 )
 
 // IsNormalTable checks whether the table is a normal table type.

@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"fmt"
 	"context"
 	"unsafe"
 
@@ -73,8 +74,20 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
+
+	var cli kv.Client
+	if kvReq.IsTemporaryTable {
+		sessVars := sctx.GetSessionVars()
+		tempTable := sessVars.TemporaryTable
+		store := tempTable.Storage
+		cli = store.GetClient()
+		fmt.Println("run here ... select ...use another client")
+	} else {
+		cli = sctx.GetClient()
+	}
+
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
+	resp := cli.Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err

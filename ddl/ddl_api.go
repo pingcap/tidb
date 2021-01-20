@@ -1631,12 +1631,12 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return BuildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
 }
 
-// buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
+// BuildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func BuildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
 	if err != nil {
 		return nil, err
@@ -5455,7 +5455,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := BuildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
