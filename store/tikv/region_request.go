@@ -429,21 +429,24 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 
 	injectFailOnSend := false
 	failpoint.Inject("rpcFailOnSend", func(val failpoint.Value) {
+		inject := true
 		// Optional filters
 		if s, ok := val.(string); ok {
 			if s == "greengc" && !req.IsGreenGCRequest() {
-				return
+				inject = false
 			} else if s == "write" && !req.IsTxnWriteRequest() {
-				return
+				inject = false
 			}
 		} else if connID == 0 {
-			return
+			inject = false
 		}
 
-		logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
-			zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-		injectFailOnSend = true
-		err = errors.New("injected RPC error on send")
+		if inject {
+			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
+				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+			injectFailOnSend = true
+			err = errors.New("injected RPC error on send")
+		}
 	})
 
 	if !injectFailOnSend {
@@ -463,21 +466,24 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 
 		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {
+			inject := true
 			// Optional filters
 			if s, ok := val.(string); ok {
 				if s == "greengc" && !req.IsGreenGCRequest() {
-					return
+					inject = false
 				} else if s == "write" && !req.IsTxnWriteRequest() {
-					return
+					inject = false
 				}
 			} else if connID == 0 {
-				return
+				inject = false
 			}
 
-			logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
-				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
-			err = errors.New("injected RPC error on recv")
-			resp = nil
+			if inject {
+				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
+					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+				err = errors.New("injected RPC error on recv")
+				resp = nil
+			}
 		})
 
 		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
