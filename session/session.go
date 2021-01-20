@@ -1118,35 +1118,6 @@ func (rs *execStmtResult) Close() error {
 	return finishStmt(context.Background(), se, err, rs.sql)
 }
 
-func (s *session) executeStatement(ctx context.Context, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	logStmt(stmt, s.sessionVars)
-	recordSet, err := runStmt(ctx, s, stmt)
-	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
-			logutil.Logger(ctx).Warn("run statement failed",
-				zap.Int64("schemaVersion", s.sessionVars.TxnCtx.SchemaVersion),
-				zap.Error(err),
-				zap.String("session", s.String()))
-		}
-		return nil, err
-	}
-
-	if inMulitQuery && recordSet == nil {
-		recordSet = &multiQueryNoDelayRecordSet{
-			affectedRows: s.AffectedRows(),
-			lastMessage:  s.LastMessage(),
-			warnCount:    s.sessionVars.StmtCtx.WarningCount(),
-			lastInsertID: s.sessionVars.StmtCtx.LastInsertID,
-			status:       s.sessionVars.Status,
-		}
-	}
-
-	if recordSet != nil {
-		recordSets = append(recordSets, recordSet)
-	}
-	return recordSets, nil
-}
-
 func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
@@ -1163,10 +1134,37 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
-	if recordSets, err = s.execute(ctx, sql); err != nil {
+
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+	parseStartTime := time.Now()
+	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+		}
+		return nil, util.SyntaxError(err)
+	}
+	if len(stmtNodes) != 1 {
+		return nil, errors.New("Execute() API doesn't support multiple statements any more")
+	}
+	durParse := time.Since(parseStartTime)
+	s.GetSessionVars().DurationParse = durParse
+
+	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
+	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
-	return
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	if rs == nil {
+		return nil, err
+	}
+	return []sqlexec.RecordSet{rs}, err
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -1254,89 +1252,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	return recordSet, nil
-}
-
-func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
-	s.PrepareTxnCtx(ctx)
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return nil, err
-	}
-
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
-	// Step1: Compile query string to abstract syntax trees(ASTs).
-	parseStartTime := time.Now()
-	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
-	if err != nil {
-		s.rollbackOnError(ctx)
-
-		// Only print log message when this SQL is from the user.
-		// Mute the warning for internal SQLs.
-		if !s.sessionVars.InRestrictedSQL {
-			if s.sessionVars.EnableRedactLog {
-				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			} else {
-				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
-		}
-		return nil, util.SyntaxError(err)
-	}
-	durParse := time.Since(parseStartTime)
-	s.GetSessionVars().DurationParse = durParse
-	isInternal := s.isInternal()
-	if isInternal {
-		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
-	} else {
-		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-	}
-
-	compiler := executor.Compiler{Ctx: s}
-	multiQuery := len(stmtNodes) > 1
-	for _, stmtNode := range stmtNodes {
-		s.sessionVars.StartTime = time.Now()
-		s.PrepareTxnCtx(ctx)
-
-		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		// Some executions are done in compile stage, so we reset them before compile.
-		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
-			return nil, err
-		}
-		stmt, err := compiler.Compile(ctx, stmtNode)
-		if err != nil {
-			s.rollbackOnError(ctx)
-
-			// Only print log message when this SQL is from the user.
-			// Mute the warning for internal SQLs.
-			if !s.sessionVars.InRestrictedSQL {
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", sql))
-			}
-			return nil, err
-		}
-		durCompile := time.Since(s.sessionVars.StartTime)
-		s.GetSessionVars().DurationCompile = durCompile
-		if isInternal {
-			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
-		} else {
-			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
-		}
-		s.currentPlan = stmt.Plan
-
-		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, stmt, recordSets, multiQuery); err != nil {
-			return nil, err
-		}
-	}
-
-	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
-		// return the first recordset if client doesn't support ClientMultiResults.
-		recordSets = recordSets[:1]
-	}
-
-	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
-	return recordSets, nil
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2405,38 +2320,4 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
-}
-
-type multiQueryNoDelayRecordSet struct {
-	sqlexec.RecordSet
-
-	affectedRows uint64
-	lastMessage  string
-	status       uint16
-	warnCount    uint16
-	lastInsertID uint64
-}
-
-func (c *multiQueryNoDelayRecordSet) Close() error {
-	return nil
-}
-
-func (c *multiQueryNoDelayRecordSet) AffectedRows() uint64 {
-	return c.affectedRows
-}
-
-func (c *multiQueryNoDelayRecordSet) LastMessage() string {
-	return c.lastMessage
-}
-
-func (c *multiQueryNoDelayRecordSet) WarnCount() uint16 {
-	return c.warnCount
-}
-
-func (c *multiQueryNoDelayRecordSet) Status() uint16 {
-	return c.status
-}
-
-func (c *multiQueryNoDelayRecordSet) LastInsertID() uint64 {
-	return c.lastInsertID
 }
