@@ -1594,10 +1594,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		return mpp
 	case Mpp2Phase:
 		// 2-phase agg: partial + final agg for hash partition
-		if len(p.PartitionCols) == 0 {
+		if len(p.MppPartitionCols) == 0 {
 			return invalidTask
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.PartitionCols}
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.MppPartitionCols}
 		// if mpp does not need to enforce exchange, i.e., the child is properly partitioned, then this 2-phase agg is invalid
 		if !mpp.needEnforce(prop) {
 			return invalidTask

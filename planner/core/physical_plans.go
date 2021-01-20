@@ -932,10 +932,10 @@ const (
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs      []*aggregation.AggFuncDesc
-	GroupByItems  []expression.Expression
-	MppRunMode    AggMppRunMode
-	PartitionCols []*expression.Column
+	AggFuncs         []*aggregation.AggFuncDesc
+	GroupByItems     []expression.Expression
+	MppRunMode       AggMppRunMode
+	MppPartitionCols []*expression.Column
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

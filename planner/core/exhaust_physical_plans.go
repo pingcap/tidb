@@ -2232,19 +2232,16 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
+		// TiFlash does not support distinct now
 		if agg.HasDistinct {
 			return false
 		}
 		switch agg.Name {
-		case ast.AggFuncSum, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncAvg:
-		default:
-			return false
-		}
-		if !expression.CanExprsPushDown(la.SCtx().GetSessionVars().StmtCtx, agg.Args, la.SCtx().GetClient(), kv.TiFlash) {
+		case ast.AggFuncApproxCountDistinct:
 			return false
 		}
 	}
-	return true
+	return CheckAggCanPushCop(la.ctx, la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
@@ -2279,7 +2276,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
-		agg.PartitionCols = partitionCols
+		agg.MppPartitionCols = partitionCols
 		hashAggs = append(hashAggs, agg)
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
