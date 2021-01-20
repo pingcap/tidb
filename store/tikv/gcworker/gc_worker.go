@@ -801,12 +801,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return nil
 }
 
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-	engineLabelTiKV    = "tikv"
-)
-
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
@@ -819,23 +813,21 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 	engineLabel := ""
 	for _, label := range store.GetLabels() {
-		if label.GetKey() == engineLabelKey {
+		if label.GetKey() == placement.EngineLabelKey {
 			engineLabel = label.GetValue()
 			break
 		}
 	}
 
 	switch engineLabel {
-	case engineLabelTiFlash:
+	case placement.EngineLabelTiFlash:
 		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
 		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
 		// skip physical resolve locks for it.
 		return false, nil
 
-	case "":
+	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
-		fallthrough
-	case engineLabelTiKV:
 		return true, nil
 
 	default:
@@ -1817,7 +1809,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			var err1 error
 			t := meta.NewMeta(txn)
 			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
