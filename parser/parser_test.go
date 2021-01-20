@@ -108,7 +108,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
 		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
 		"chain", "error", "general", "nvarchar", "pack_keys", "parser", "shard_row_id_bits", "pre_split_regions",
-		"constraints", "role", "replicas", "policy", "s3",
+		"constraints", "role", "replicas", "policy", "s3", "strict", "running", "stop",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -1092,6 +1092,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show backup", false, ""},
 		{"show restore", false, ""},
 		{"show imports", true, "SHOW IMPORTS"},
+		// for show create import
+		{"show create import test", true, "SHOW CREATE IMPORT `test`"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -5688,9 +5690,8 @@ func (s *testParserSuite) TestBRIE(c *C) {
 		{"backup database * to 'noop://' rate_limit 500 MB/second snapshot 5 minute ago", true, "BACKUP DATABASE * TO 'noop://' RATE_LIMIT = 500 MB/SECOND SNAPSHOT = 300000000 MICROSECOND AGO"},
 		{"backup database * to 'noop://' snapshot = '2020-03-18 18:13:54'", true, "BACKUP DATABASE * TO 'noop://' SNAPSHOT = '2020-03-18 18:13:54'"},
 		{"backup database * to 'noop://' snapshot = 1234567890", true, "BACKUP DATABASE * TO 'noop://' SNAPSHOT = 1234567890"},
-		{"restore table g from 'noop://' concurrency 40 checksum 0 online 1", true, "RESTORE TABLE `g` FROM 'noop://' CONCURRENCY = 40 CHECKSUM = 0 ONLINE = 1"},
+		{"restore table g from 'noop://' concurrency 40 checksum 0 online 1", true, "RESTORE TABLE `g` FROM 'noop://' CONCURRENCY = 40 CHECKSUM = OFF ONLINE = 1"},
 		{
-			// FIXME: should we really include the access key in the Restore() text???
 			"backup table x to 's3://bucket/path/?endpoint=https://test-cluster-s3.local&access-key=aaaaaaaaa&secret-access-key=bbbbbbbb&force-path-style=1'",
 			true,
 			"BACKUP TABLE `x` TO 's3://bucket/path/?endpoint=https://test-cluster-s3.local&access-key=aaaaaaaaa&secret-access-key=bbbbbbbb&force-path-style=1'",
@@ -5705,49 +5706,7 @@ func (s *testParserSuite) TestBRIE(c *C) {
 			true,
 			"RESTORE DATABASE * FROM 'gcs://bucket/path/?endpoint=https://test-cluster.gcs.local&storage-class=coldline&predefined-acl=OWNER&credentials-file=/data/private/creds.json'",
 		},
-
-		{"IMPORT DATABASE * FROM 'file:///data/dump'", true, "IMPORT DATABASE * FROM 'file:///data/dump'"},
-		{
-			"import schema * from 'file:///d/' checkpoint false analyze off checksum optional backend 'importer' tikv_importer '10.0.1.1:8287'",
-			true,
-			"IMPORT DATABASE * FROM 'file:///d/' CHECKPOINT = 0 ANALYZE = OFF CHECKSUM = OPTIONAL BACKEND = 'importer' TIKV_IMPORTER = '10.0.1.1:8287'",
-		},
-		{
-			"IMPORT DATABASE * FROM 'file:///d/' BACKEND TIDB ON DUPLICATE IGNORE SKIP_SCHEMA_FILES TRUE",
-			true,
-			"IMPORT DATABASE * FROM 'file:///d/' BACKEND = 'tidb' ON_DUPLICATE = 'ignore' SKIP_SCHEMA_FILES = 1",
-		},
-		{
-			"import schema * from 'file:///d/' csv_header = columns strict_format = true csv_backslash_escape = true csv_delimiter = '''' csv_not_null = false csv_null = 'Null' csv_separator = '|' csv_trim_last_separators = true",
-			true,
-			"IMPORT DATABASE * FROM 'file:///d/' CSV_HEADER = COLUMNS STRICT_FORMAT = 1 CSV_BACKSLASH_ESCAPE = 1 CSV_DELIMITER = '''' CSV_NOT_NULL = 0 CSV_NULL = 'Null' CSV_SEPARATOR = '|' CSV_TRIM_LAST_SEPARATORS = 1",
-		},
-		{"import table db1.tbl1 from 'file:///d/' csv_header = 0", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CSV_HEADER = 0"},
-		{"import table db1.tbl1 from 'file:///d/' csv_header = 1", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CSV_HEADER = 1"},
-		{"import table db1.tbl1 from 'file:///d/' csv_header = 9001", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CSV_HEADER = 9001"},
-		{"import table db1.tbl1 from 'file:///d/' csv_header = fields", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CSV_HEADER = COLUMNS"},
-		{"import table db1.tbl1 from 'file:///d/' csv_header = 'columns'", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' on_duplicate = ignore", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' ON_DUPLICATE = 'ignore'"},
-		{"import table db1.tbl1 from 'file:///d/' on_duplicate = replace", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' ON_DUPLICATE = 'replace'"},
-		{"import table db1.tbl1 from 'file:///d/' on_duplicate = error", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' ON_DUPLICATE = 'error'"},
-		{"import table db1.tbl1 from 'file:///d/' backend = local", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' BACKEND = 'local'"},
-		{"import table db1.tbl1 from 'file:///d/' backend = tidb", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' BACKEND = 'tidb'"},
-		{"import table db1.tbl1 from 'file:///d/' backend = importer", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' BACKEND = 'importer'"},
-		{"import table db1.tbl1 from 'file:///d/' checkpoint = 'false'", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' checkpoint = 30", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CHECKPOINT = 1"},
-		{"import table db1.tbl1 from 'file:///d/' csv_null = null", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' csv_null = false", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' csv_null = 0", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' csv_null = abcdefgh", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' resume 1", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' RESUME = 1"},
-		{"import table db1.tbl1 from 'file:///d/' resume abc", false, ""},
-		{"import table db1.tbl1 from 'file:///d/' analyze = optional", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' ANALYZE = OPTIONAL"},
-		{"import table db1.tbl1 from 'file:///d/' analyze = abc", false, ""},
-		// still support boolean checksum/analyze, non-zero represent true thus goes REQUIRED
-		{"import table db1.tbl1 from 'file:///d/' checksum true analyze 2", true, "IMPORT TABLE `db1`.`tbl1` FROM 'file:///d/' CHECKSUM = REQUIRED ANALYZE = REQUIRED"},
-		// restore could use OFF/REQUIRED, but now it won't restore to those value because br only support boolean checksum
-		// but OPTIONAL should be restored to keep same semantics
-		{"restore table g from 'noop://' checksum off", true, "RESTORE TABLE `g` FROM 'noop://' CHECKSUM = 0"},
+		{"restore table g from 'noop://' checksum off", true, "RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OFF"},
 		{"restore table g from 'noop://' checksum optional", true, "RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OPTIONAL"},
 	}
 
@@ -5758,6 +5717,62 @@ func (s *testParserSuite) TestPurge(c *C) {
 	cases := []testCase{
 		{"purge import 100", true, "PURGE IMPORT 100"},
 		{"purge import abc", false, ""},
+	}
+	s.RunTest(c, cases)
+}
+
+func (s *testParserSuite) TestAsyncImport(c *C) {
+	cases := []testCase{
+		{"create import test from 'file:///d/'", true, "CREATE IMPORT `test` FROM 'file:///d/'"},
+		{
+			"create import if not exists test from 'file:///d/' skip all csv_header = columns strict_format = true csv_backslash_escape = true",
+			true,
+			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' SKIP ALL CSV_HEADER = COLUMNS STRICT_FORMAT = 1 CSV_BACKSLASH_ESCAPE = 1",
+		},
+		{
+			"create import if not exists test from 'file:///d/' replace SKIP_SCHEMA_FILES TRUE",
+			true,
+			"CREATE IMPORT IF NOT EXISTS `test` FROM 'file:///d/' REPLACE SKIP_SCHEMA_FILES = 1",
+		},
+		{"create import test from 'file:///d/' csv_header = 0", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 0"},
+		{"create import test from 'file:///d/' csv_header = 1", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 1"},
+		{"create import test from 'file:///d/' csv_header = 9001", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = 9001"},
+		{"create import test from 'file:///d/' csv_header = fields", true, "CREATE IMPORT `test` FROM 'file:///d/' CSV_HEADER = COLUMNS"},
+		{"create import test from 'file:///d/' csv_header = 'columns'", false, ""},
+		{"create import test from 'file:///d/' on_duplicate = ignore", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'ignore'"},
+		{"create import test from 'file:///d/' on_duplicate = replace", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'replace'"},
+		{"create import test from 'file:///d/' on_duplicate = error", true, "CREATE IMPORT `test` FROM 'file:///d/' ON_DUPLICATE = 'error'"},
+		{"create import test from 'file:///d/' backend = local", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'local'"},
+		{"create import test from 'file:///d/' backend = tidb", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'tidb'"},
+		{"create import test from 'file:///d/' backend = importer", true, "CREATE IMPORT `test` FROM 'file:///d/' BACKEND = 'importer'"},
+		{"create import test from 'file:///d/' checkpoint = 'false'", false, ""},
+		{"create import test from 'file:///d/' checkpoint = 30", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKPOINT = 1"},
+		{"create import test from 'file:///d/' csv_null = null", false, ""},
+		{"create import test from 'file:///d/' csv_null = false", false, ""},
+		{"create import test from 'file:///d/' csv_null = 0", false, ""},
+		{"create import test from 'file:///d/' csv_null = abcdefgh", false, ""},
+		{"create import test from 'file:///d/' resume 1", true, "CREATE IMPORT `test` FROM 'file:///d/' RESUME = 1"},
+		{"create import test from 'file:///d/' resume abc", false, ""},
+		{"create import test from 'file:///d/' analyze = optional", true, "CREATE IMPORT `test` FROM 'file:///d/' ANALYZE = OPTIONAL"},
+		{"create import test from 'file:///d/' analyze = abc", false, ""},
+		// still support boolean checksum/analyze, non-zero represent true thus goes REQUIRED
+		{"create import test from 'file:///d/' checksum true analyze 2", true, "CREATE IMPORT `test` FROM 'file:///d/' CHECKSUM = REQUIRED ANALYZE = REQUIRED"},
+		{"stop import test", true, "STOP IMPORT `test`"},
+		{"stop import if running test", true, "STOP IMPORT IF RUNNING `test`"},
+		{"resume import test", true, "RESUME IMPORT `test`"},
+		{"resume import if not running test", true, "RESUME IMPORT IF NOT RUNNING `test`"},
+		// empty alter import is OK
+		{"alter import test", true, "ALTER IMPORT `test`"},
+		{"alter import test truncate all", true, "ALTER IMPORT `test` TRUNCATE ALL"},
+		{"alter import test skip duplicate csv_delimiter = '''' truncate errors table tbl", true, "ALTER IMPORT `test` SKIP DUPLICATE CSV_DELIMITER = '''' TRUNCATE ERRORS TABLE `tbl`"},
+		{"alter import test truncate errors table db.tbl", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tbl`"},
+		{"alter import test truncate errors table db.tb1, tb2", true, "ALTER IMPORT `test` TRUNCATE ERRORS TABLE `db`.`tb1`, `tb2`"},
+		{"drop import test", true, "DROP IMPORT `test`"},
+		{"drop import if exists test", true, "DROP IMPORT IF EXISTS `test`"},
+		{"show import test", true, "SHOW IMPORT `test`"},
+		{"show import test table tbl", true, "SHOW IMPORT `test` TABLE `tbl`"},
+		{"show import test errors table tbl", true, "SHOW IMPORT `test` ERRORS TABLE `tbl`"},
+		{"show import test errors table tb1, db.tb2", true, "SHOW IMPORT `test` ERRORS TABLE `tb1`, `db`.`tb2`"},
 	}
 	s.RunTest(c, cases)
 }
