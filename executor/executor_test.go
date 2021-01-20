@@ -7561,7 +7561,7 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 	}
 }
 
-func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
+func (s *testSerialSuite) TestStaleReadKVRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -7591,13 +7591,12 @@ func (s *testSerialSuite) TestStoreLabelsInStaleRead(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(fmt.Sprintf("set @@txn_scope=%v", testcase.txnScope))
-		// refresh txnScope's last TSO
-		tk.MustExec(`begin`)
-		tk.MustExec(`commit`)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleFlag", `return(true)`), IsNil)
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStoreLabels", fmt.Sprintf(`return("%v")`, testcase.txnScope)), IsNil)
 		tk.MustQuery(testcase.sql)
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
+		failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStaleFlag")
 		tk.MustExec(`commit`)
 	}
 }

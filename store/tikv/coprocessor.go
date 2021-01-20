@@ -985,6 +985,14 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
 func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string, opts ...StoreSelectorOption) (*tikvrpc.Response, *RPCContext, string, error) {
+	failpoint.Inject("assertStaleFlag", func(val failpoint.Value) {
+		if val.(bool) {
+			if !req.StaleRead {
+				panic("tikvRpc.Request's StaleRead should be enabled")
+			}
+		}
+	})
+
 	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
