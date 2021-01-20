@@ -179,7 +179,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
-	if !plannercore.PreparedPlanCacheEnabled() {
+	// plan cache will be disabled if there is staleness transaction
+	if !plannercore.PreparedPlanCacheEnabled() || e.ctx.GetSessionVars().TxnCtx.IsStaleness {
 		prepared.UseCache = false
 	} else {
 		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {

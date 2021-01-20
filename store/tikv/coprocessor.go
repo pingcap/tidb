@@ -886,6 +886,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
+	failpoint.Inject("assertStaleAndCache", func(val failpoint.Value) {
+		if val.(bool) {
+			if worker.req.IsStaleness && worker.req.Cacheable {
+				panic("staleness and coprocessor cache shouldn't be enabled at the same time")
+			}
+		}
+	})
 	var ops []StoreSelectorOption
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, WithMatchLabels(worker.req.MatchStoreLabels))

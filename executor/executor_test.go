@@ -7625,3 +7625,37 @@ func (s *testSuite) TestIssue22201(c *C) {
 	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS char(1000000000000000000)));").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of weight_string() was larger than max_allowed_packet (67108864) - truncated"))
 }
+
+func (s *testSerialSuite) TestStalenessWithPreparePlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
+	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND EXACT STALENESS '00:00:20';`)
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt1")
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt2")
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt3")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
+	tk.MustExec(`commit`)
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt1")
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt2")
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt3")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+}
+
+func (s *testSerialSuite) TestStalenessWithCoprocessorCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key);")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/assertStaleAndCache", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/assertStoreLabels")
+	tk.MustQuery(`select * from t`)
+}

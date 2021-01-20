@@ -51,6 +51,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if err != nil {
 		builder.err = err
 	}
+	builder.disableCacheIfNeeded()
 	return &builder.Request, builder.err
 }
 
@@ -275,6 +276,13 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *Requ
 	}
 	builder.is = is
 	return builder
+}
+
+// If the request is for the staleness transaction, the coprocessor cache should be disabled
+func (builder *RequestBuilder) disableCacheIfNeeded() {
+	if builder.IsStaleness {
+		builder.Cacheable = false
+	}
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
