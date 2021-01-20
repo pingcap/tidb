@@ -74,6 +74,14 @@ func (rp *point) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
+func (rp *point) CloneNewValue(value types.Datum) *point {
+	return &point{
+		value: value,
+		excl:  rp.excl,
+		start: rp.start,
+	}
+}
+
 type pointSorter struct {
 	points []*point
 	err    error

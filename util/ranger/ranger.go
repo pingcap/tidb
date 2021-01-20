@@ -105,36 +105,36 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 	if err != nil {
 		return point, errors.Trace(err)
 	}
-	point.value = casted
+	npoint := point.CloneNewValue(casted)
 	if valCmpCasted == 0 {
-		return point, nil
+		return npoint, nil
 	}
-	if point.start {
-		if point.excl {
+	if npoint.start {
+		if npoint.excl {
 			if valCmpCasted < 0 {
 				// e.g. "a > 1.9" convert to "a >= 2".
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted > 0 {
 				// e.g. "a >= 1.1 convert to "a > 1"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	} else {
-		if point.excl {
+		if npoint.excl {
 			if valCmpCasted > 0 {
 				// e.g. "a < 1.1" convert to "a <= 1"
-				point.excl = false
+				npoint.excl = false
 			}
 		} else {
 			if valCmpCasted < 0 {
 				// e.g. "a <= 1.9" convert to "a < 2"
-				point.excl = true
+				npoint.excl = true
 			}
 		}
 	}
-	return point, nil
+	return npoint, nil
 }
 
 // appendPoints2Ranges appends additional column ranges for multi-column index.
