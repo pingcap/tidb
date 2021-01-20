@@ -2460,7 +2460,6 @@ type BRIEOptionType uint16
 const (
 	BRIEKindBackup BRIEKind = iota
 	BRIEKindRestore
-	BRIEKindImport
 
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
@@ -2510,8 +2509,6 @@ func (kind BRIEKind) String() string {
 		return "BACKUP"
 	case BRIEKindRestore:
 		return "RESTORE"
-	case BRIEKindImport:
-		return "IMPORT"
 	default:
 		return ""
 	}
@@ -2587,6 +2584,35 @@ type BRIEOption struct {
 	UintValue uint64
 }
 
+func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(opt.Tp.String())
+	ctx.WritePlain(" = ")
+	switch opt.Tp {
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator:
+		ctx.WriteString(opt.StrValue)
+	case BRIEOptionBackupTimeAgo:
+		ctx.WritePlainf("%d ", opt.UintValue/1000)
+		ctx.WriteKeyWord("MICROSECOND AGO")
+	case BRIEOptionRateLimit:
+		ctx.WritePlainf("%d ", opt.UintValue/1048576)
+		ctx.WriteKeyWord("MB")
+		ctx.WritePlain("/")
+		ctx.WriteKeyWord("SECOND")
+	case BRIEOptionCSVHeader:
+		if opt.UintValue == BRIECSVHeaderIsColumns {
+			ctx.WriteKeyWord("COLUMNS")
+		} else {
+			ctx.WritePlainf("%d", opt.UintValue)
+		}
+	case BRIEOptionChecksum, BRIEOptionAnalyze:
+		// BACKUP/RESTORE doesn't support OPTIONAL value for now, should warn at executor
+		ctx.WriteKeyWord(BRIEOptionLevel(opt.UintValue).String())
+	default:
+		ctx.WritePlainf("%d", opt.UintValue)
+	}
+	return nil
+}
+
 // BRIEStmt is a statement for backup, restore, import and export.
 type BRIEStmt struct {
 	stmtNode
@@ -2644,47 +2670,15 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	switch n.Kind {
 	case BRIEKindBackup:
 		ctx.WriteKeyWord(" TO ")
-	case BRIEKindRestore, BRIEKindImport:
+	case BRIEKindRestore:
 		ctx.WriteKeyWord(" FROM ")
 	}
 	ctx.WriteString(n.Storage)
 
 	for _, opt := range n.Options {
 		ctx.WritePlain(" ")
-		ctx.WriteKeyWord(opt.Tp.String())
-		ctx.WritePlain(" = ")
-		switch opt.Tp {
-		case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator:
-			ctx.WriteString(opt.StrValue)
-		case BRIEOptionBackupTimeAgo:
-			ctx.WritePlainf("%d ", opt.UintValue/1000)
-			ctx.WriteKeyWord("MICROSECOND AGO")
-		case BRIEOptionRateLimit:
-			ctx.WritePlainf("%d ", opt.UintValue/1048576)
-			ctx.WriteKeyWord("MB")
-			ctx.WritePlain("/")
-			ctx.WriteKeyWord("SECOND")
-		case BRIEOptionCSVHeader:
-			if opt.UintValue == BRIECSVHeaderIsColumns {
-				ctx.WriteKeyWord("COLUMNS")
-			} else {
-				ctx.WritePlainf("%d", opt.UintValue)
-			}
-		case BRIEOptionChecksum, BRIEOptionAnalyze:
-			switch opt.UintValue {
-			case 0, 1:
-				if n.Kind == BRIEKindImport {
-					ctx.WriteKeyWord(BRIEOptionLevel(opt.UintValue).String())
-				} else {
-					ctx.WritePlainf("%d", opt.UintValue)
-				}
-			default:
-				// BACKUP/RESTORE doesn't support this value for now
-				ctx.WriteKeyWord(BRIEOptionLevel(opt.UintValue).String())
-			}
-
-		default:
-			ctx.WritePlainf("%d", opt.UintValue)
+		if err := opt.Restore(ctx); err != nil {
+			return err
 		}
 	}
 
@@ -2737,6 +2731,264 @@ func (n *PurgeImportStmt) Accept(v Visitor) (Node, bool) {
 
 func (n *PurgeImportStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlainf("PURGE IMPORT %d", n.TaskID)
+	return nil
+}
+
+// ErrorHandlingOption is used in async IMPORT related stmt
+type ErrorHandlingOption uint64
+
+const (
+	ErrorHandleError ErrorHandlingOption = iota
+	ErrorHandleReplace
+	ErrorHandleSkipAll
+	ErrorHandleSkipConstraint
+	ErrorHandleSkipDuplicate
+	ErrorHandleSkipStrict
+)
+
+func (o ErrorHandlingOption) String() string {
+	switch o {
+	case ErrorHandleError:
+		return ""
+	case ErrorHandleReplace:
+		return "REPLACE"
+	case ErrorHandleSkipAll:
+		return "SKIP ALL"
+	case ErrorHandleSkipConstraint:
+		return "SKIP CONSTRAINT"
+	case ErrorHandleSkipDuplicate:
+		return "SKIP DUPLICATE"
+	case ErrorHandleSkipStrict:
+		return "SKIP STRICT"
+	default:
+		return ""
+	}
+}
+
+type CreateImportStmt struct {
+	stmtNode
+
+	IfNotExists   bool
+	Name          string
+	Storage       string
+	ErrorHandling ErrorHandlingOption
+	Options       []*BRIEOption
+}
+
+func (n *CreateImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*CreateImportStmt)
+	return v.Leave(n)
+}
+
+func (n *CreateImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE IMPORT ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.Name)
+	ctx.WriteKeyWord(" FROM ")
+	ctx.WriteString(n.Storage)
+	if n.ErrorHandling != ErrorHandleError {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord(n.ErrorHandling.String())
+	}
+	for _, opt := range n.Options {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SecureText implements SensitiveStmtNode
+func (n *CreateImportStmt) SecureText() string {
+	// FIXME: this solution is not scalable, and duplicates some logic from BR.
+	redactedStorage := n.Storage
+	u, err := url.Parse(n.Storage)
+	if err == nil {
+		if u.Scheme == "s3" {
+			query := u.Query()
+			for key := range query {
+				switch strings.ToLower(strings.ReplaceAll(key, "_", "-")) {
+				case "access-key", "secret-access-key":
+					query[key] = []string{"xxxxxx"}
+				}
+			}
+			u.RawQuery = query.Encode()
+			redactedStorage = u.String()
+		}
+	}
+
+	redactedStmt := &CreateImportStmt{
+		IfNotExists:   n.IfNotExists,
+		Name:          n.Name,
+		Storage:       redactedStorage,
+		ErrorHandling: n.ErrorHandling,
+		Options:       n.Options,
+	}
+
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
+type StopImportStmt struct {
+	stmtNode
+
+	IfRunning bool
+	Name      string
+}
+
+func (n *StopImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*StopImportStmt)
+	return v.Leave(n)
+}
+
+func (n *StopImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("STOP IMPORT ")
+	if n.IfRunning {
+		ctx.WriteKeyWord("IF RUNNING ")
+	}
+	ctx.WriteName(n.Name)
+	return nil
+}
+
+type ResumeImportStmt struct {
+	stmtNode
+
+	IfNotRunning bool
+	Name         string
+}
+
+func (n *ResumeImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*ResumeImportStmt)
+	return v.Leave(n)
+}
+
+func (n *ResumeImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESUME IMPORT ")
+	if n.IfNotRunning {
+		ctx.WriteKeyWord("IF NOT RUNNING ")
+	}
+	ctx.WriteName(n.Name)
+	return nil
+}
+
+type ImportTruncate struct {
+	IsErrorsOnly bool
+	TableNames   []*TableName
+}
+
+type AlterImportStmt struct {
+	stmtNode
+
+	Name          string
+	ErrorHandling ErrorHandlingOption
+	Options       []*BRIEOption
+	Truncate      *ImportTruncate
+}
+
+func (n *AlterImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*AlterImportStmt)
+	return v.Leave(n)
+}
+
+func (n *AlterImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER IMPORT ")
+	ctx.WriteName(n.Name)
+	if n.ErrorHandling != ErrorHandleError {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord(n.ErrorHandling.String())
+	}
+	for _, opt := range n.Options {
+		ctx.WritePlain(" ")
+		if err := opt.Restore(ctx); err != nil {
+			return err
+		}
+	}
+	if n.Truncate != nil {
+		if n.Truncate.IsErrorsOnly {
+			ctx.WriteKeyWord(" TRUNCATE ERRORS")
+		} else {
+			ctx.WriteKeyWord(" TRUNCATE ALL")
+		}
+		if len(n.Truncate.TableNames) != 0 {
+			ctx.WriteKeyWord(" TABLE")
+		}
+		for i := range n.Truncate.TableNames {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := n.Truncate.TableNames[i].Restore(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type DropImportStmt struct {
+	stmtNode
+
+	IfExists bool
+	Name     string
+}
+
+func (n *DropImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*DropImportStmt)
+	return v.Leave(n)
+}
+
+func (n *DropImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP IMPORT ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.Name)
+	return nil
+}
+
+type ShowImportStmt struct {
+	stmtNode
+
+	Name       string
+	ErrorsOnly bool
+	TableNames []*TableName
+}
+
+func (n *ShowImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*ShowImportStmt)
+	return v.Leave(n)
+}
+
+func (n *ShowImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SHOW IMPORT ")
+	ctx.WriteName(n.Name)
+	if n.ErrorsOnly {
+		ctx.WriteKeyWord(" ERRORS")
+	}
+	if len(n.TableNames) != 0 {
+		ctx.WriteKeyWord(" TABLE")
+	}
+	for i := range n.TableNames {
+		if i == 0 {
+			ctx.WritePlain(" ")
+		} else {
+			ctx.WritePlain(", ")
+		}
+		if err := n.TableNames[i].Restore(ctx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
