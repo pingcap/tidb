@@ -636,6 +636,18 @@ func (c *TopN) Equal(cc *TopN) bool {
 	return true
 }
 
+// RemoveVal remove the val from TopN if it exists.
+func (c *TopN) RemoveVal(val []byte) {
+	if c == nil {
+		return
+	}
+	pos := c.findTopN(val)
+	if pos == -1 {
+		return
+	}
+	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
+}
+
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}

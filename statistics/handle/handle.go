@@ -221,6 +221,26 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
+// UpdateSessionVar updates the necessary session variables for the stats reader.
+func (h *Handle) UpdateSessionVar() error {
+	reader, err := h.getStatsReader(nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
+		}
+	}()
+
+	verInString, err := reader.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	ver, err := strconv.ParseInt(verInString, 10, 64)
+	reader.ctx.GetSessionVars().AnalyzeVersion = int(ver)
+	return err
+}
+
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
 	if is.SchemaMetaVersion() != h.mu.schemaVersion {
 		h.mu.schemaVersion = is.SchemaMetaVersion()
@@ -510,6 +530,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
+				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
@@ -1172,4 +1193,20 @@ func (h *Handle) RefreshVars() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.mu.ctx.RefreshVars(context.Background())
+}
+
+// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) (bool, error) {
+	// We simply choose one physical id to get its stats.
+	var tbl *statistics.Table
+	for _, pid := range physicalIDs {
+		tbl = h.GetPartitionStats(tblInfo, pid)
+		if !tbl.Pseudo {
+			break
+		}
+	}
+	if tbl == nil || tbl.Pseudo {
+		return true, nil
+	}
+	return statistics.CheckAnalyzeVerOnTable(tbl, version), nil
 }

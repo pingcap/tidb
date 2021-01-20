@@ -513,6 +513,77 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	})
 }
 
+func (s *testStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+	do := s.do
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+	}()
+	h := do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := do.InfoSchema()
+	err := h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// Auto analyze when global ver is 1.
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl1 := h.GetTableStats(tbl.Meta())
+	// Check that all the version of t's stats are 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 2")
+	err = h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1), (2), (3), (4)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// Auto analyze t whose version is 1 after setting global ver to 2.
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	statsTbl1 = h.GetTableStats(tbl.Meta())
+	c.Assert(statsTbl1.Count, Equals, int64(5))
+	// All of its statistics should still be version 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	// Add a new table after the analyze version set to 2.
+	tk.MustExec("create table tt(a int, index idx(a))")
+	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
+	for _, idx := range statsTbl2.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(2))
+	}
+	for _, col := range statsTbl2.Columns {
+		c.Assert(col.StatsVer, Equals, int64(2))
+	}
+}
+
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)

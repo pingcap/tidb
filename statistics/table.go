@@ -896,3 +896,34 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 	}
 	return
 }
+
+// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
+// If not, it will return false and set the version to the tbl's.
+func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
+	for _, col := range tbl.Columns {
+		// Version0 means no statistics is collected currently.
+		if col.StatsVer == Version0 {
+			continue
+		}
+		if col.StatsVer != int64(*version) {
+			*version = int(col.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	for _, idx := range tbl.Indices {
+		// Version0 means no statistics is collected currently.
+		if idx.StatsVer == Version0 {
+			continue
+		}
+		if idx.StatsVer != int64(*version) {
+			*version = int(idx.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	// This table has no statistics yet. We can directly return true.
+	return true
+}

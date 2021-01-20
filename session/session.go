@@ -867,6 +867,10 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 		}()
 	}
 
+	if execOption.AnalyzeVer != 0 {
+		se.GetSessionVars().AnalyzeVersion = execOption.AnalyzeVer
+	}
+
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()

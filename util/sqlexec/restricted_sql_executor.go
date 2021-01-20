@@ -48,6 +48,7 @@ type RestrictedSQLExecutor interface {
 type ExecOption struct {
 	IgnoreWarning bool
 	SnapshotTS    uint64
+	AnalyzeVer    int
 }
 
 // OptionFuncAlias is defined for the optional paramater of ExecRestrictedSQLWithContext.
@@ -56,6 +57,16 @@ type OptionFuncAlias = func(option *ExecOption)
 // ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to ignore the warnings.
 var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
 	option.IgnoreWarning = true
+}
+
+// ExecOptionAnalyzeVer1 tells ExecRestrictedSQLWithContext to collect statistics with version1.
+var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
+	option.AnalyzeVer = 1
+}
+
+// ExecOptionAnalyzeVer2 tells ExecRestrictedSQLWithContext to collect statistics with version2.
+var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
+	option.AnalyzeVer = 2
 }
 
 // ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.

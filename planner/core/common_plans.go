@@ -814,6 +814,7 @@ type analyzeInfo struct {
 	PartitionName string
 	TableID       AnalyzeTableID
 	Incremental   bool
+	StatsVersion  int
 }
 
 // AnalyzeColumnsTask is used for analyze columns.

@@ -913,26 +913,36 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
-		h.execAutoAnalyze(sql)
+		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(sql, tableStatsVer)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql)
+			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(sql, tableStatsVer)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) {
+var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
+	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+}
+
+func (h *Handle) execAutoAnalyze(sql string, statsVer int) {
 	startTime := time.Now()
 	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
 	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
 	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
-	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning)
+	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning, execOptionForAnalyze[statsVer])
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
