@@ -442,7 +442,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 		}
 	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
 		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64 - a) || (a < 0 && -b > math.MinInt64 - a) {
-				return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
 		// We need `(a >= 0 && b == math.MinInt64)` due to `-(math.MinInt64) == math.MinInt64`.
