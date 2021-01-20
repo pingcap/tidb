@@ -842,20 +842,16 @@
           "11"
         ],
         "Plan": [
-          "Projection_6 1.00 root  Column#5",
-          "└─Sort_7 1.00 root  test_partition.t1.id, test_partition.t1.a",
-          "  └─StreamAgg_20 1.00 root  funcs:count(Column#10)->Column#5, funcs:firstrow(Column#11)->test_partition.t1.id, funcs:firstrow(Column#12)->test_partition.t1.a",
-          "    └─TableReader_21 1.00 root partition:all data:StreamAgg_12",
-          "      └─StreamAgg_12 1.00 cop[tikv]  funcs:count(1)->Column#10, funcs:firstrow(test_partition.t1.id)->Column#11, funcs:firstrow(test_partition.t1.a)->Column#12",
-          "        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "StreamAgg_17 1.00 root  funcs:count(Column#8)->Column#5",
+          "└─TableReader_18 1.00 root partition:all data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Projection_6 1.00 root  Column#5",
-          "└─Sort_7 1.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
-          "  └─StreamAgg_24 1.00 root  funcs:count(Column#13)->Column#5, funcs:firstrow(Column#14)->test_partition_1.t1.id, funcs:firstrow(Column#15)->test_partition_1.t1.a",
-          "    └─IndexReader_25 1.00 root partition:all index:StreamAgg_12",
-          "      └─StreamAgg_12 1.00 cop[tikv]  funcs:count(1)->Column#13, funcs:firstrow(test_partition_1.t1.id)->Column#14, funcs:firstrow(test_partition_1.t1.a)->Column#15",
-          "        └─IndexFullScan_23 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+          "StreamAgg_21 1.00 root  funcs:count(Column#17)->Column#5",
+          "└─TableReader_22 1.00 root partition:all data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#17",
+          "    └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
