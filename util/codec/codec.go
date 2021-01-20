@@ -954,7 +954,7 @@ func peek(b []byte) (length int, err error) {
 	}
 	length += l
 	if length > originLength {
-		return 0, errors.Errorf("invalid encoded key, " +
+		return 0, errors.Errorf("invalid encoded key, "+
 			"expected length: %d, actual length: %d", length, originLength)
 	}
 	return
