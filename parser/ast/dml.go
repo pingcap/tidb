@@ -2286,6 +2286,7 @@ const (
 	ShowBackups
 	ShowRestores
 	ShowImports
+	ShowCreateImport
 )
 
 const (
@@ -2489,6 +2490,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PRIVILEGES")
 	case ShowBuiltins:
 		ctx.WriteKeyWord("BUILTINS")
+	case ShowCreateImport:
+		ctx.WriteKeyWord("CREATE IMPORT ")
+		ctx.WriteName(n.DBName)
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
