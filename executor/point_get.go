@@ -118,7 +118,8 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 	snapshotTS := e.startTS
 	if e.lock {
 		snapshotTS = txnCtx.GetForUpdateTS()
@@ -128,7 +129,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err != nil {
 		return err
 	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if sessVars.InTxn() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})

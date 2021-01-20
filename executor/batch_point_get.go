@@ -84,7 +84,8 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 	if e.lock {
 		e.snapshotTS = txnCtx.GetForUpdateTS()
 	}
@@ -94,7 +95,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.txn = txn
 	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if sessVars.InTxn() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
