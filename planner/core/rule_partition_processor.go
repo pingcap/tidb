@@ -925,9 +925,6 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	if !ok {
 		return ret, false
 	}
-	if op.FuncName.L != p.partFn.FuncName.L {
-		return ret, false
-	}
 	switch op.FuncName.L {
 	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
 		ret.op = op.FuncName.L
@@ -961,6 +958,10 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
 	if p.partFn != nil {
+		// If the partition function is not equal with the op function, pruning should not be allowed.
+		if p.partFn.FuncName.L != op.FuncName.L {
+			return ret, false
+		}
 		// If the partition function is not monotone, only EQ condition can be pruning.
 		if p.monotonous == monotoneModeInvalid && ret.op != ast.EQ {
 			return ret, false
