@@ -758,15 +758,9 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		fn = raw
 		args := fn.GetArgs()
 		if len(args) > 0 {
-			colCount := 0
-			for _, arg := range args {
-				if c, ok1 := arg.(*expression.Column); ok1 {
-					col = c
-					colCount++
-				}
-			}
-			if colCount > 1 {
-				return nil, raw, monotoneModeNonStrict, nil
+			arg0 := args[0]
+			if c, ok1 := arg0.(*expression.Column); ok1 {
+				col = c
 			}
 		}
 		monotonous = getMonotoneMode(raw.FuncName.L)
@@ -983,6 +977,9 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	} else {
 		// If the partition expression is col, use constExpr.
 		constExpr = con
+	}
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
