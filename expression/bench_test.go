@@ -975,6 +975,8 @@ type vecExprBenchCase struct {
 	// chunkSize is used to specify the chunk size of children, the maximum is 1024.
 	// This field is optional, 1024 by default.
 	chunkSize int
+	// sqlMode defines sql Mode of session, e.g.support unsigned subtraction or not (for MinusInt test purpose)
+	sqlMode mysql.SQLMode
 }
 
 type vecExprBenchCases map[string][]vecExprBenchCase
