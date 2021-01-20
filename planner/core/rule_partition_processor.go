@@ -758,9 +758,15 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		fn = raw
 		args := fn.GetArgs()
 		if len(args) > 0 {
-			arg0 := args[0]
-			if c, ok1 := arg0.(*expression.Column); ok1 {
-				col = c
+			colCount := 0
+			for _, arg := range args {
+				if c, ok1 := arg.(*expression.Column); ok1 {
+					col = c
+					colCount++
+				}
+			}
+			if colCount > 1 {
+				return nil, raw, monotoneModeNonStrict, nil
 			}
 		}
 		monotonous = getMonotoneMode(raw.FuncName.L)
@@ -927,12 +933,6 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	}
 	switch op.FuncName.L {
 	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
-		if p.partFn != nil {
-			switch p.partFn.FuncName.L {
-			case ast.Plus, ast.Minus, ast.Mul, ast.Div:
-				return ret, false
-			}
-		}
 		ret.op = op.FuncName.L
 	case ast.IsNull:
 		// isnull(col)
