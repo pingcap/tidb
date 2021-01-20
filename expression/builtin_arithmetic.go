@@ -433,15 +433,15 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 
 	switch {
 	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64 - a) || (a < 0 && -b > math.MinInt64 - a) {
+		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b > math.MinInt64-a) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64 - a) || (a < 0 && -b > math.MinInt64 - a) {
+		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b > math.MinInt64-a) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64 - a) || (a < 0 && -b > math.MinInt64 - a) {
+		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b > math.MinInt64-a) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
