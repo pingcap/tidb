@@ -978,6 +978,9 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 		// If the partition expression is col, use constExpr.
 		constExpr = con
 	}
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+		return ret, false
+	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
