@@ -450,9 +450,9 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPrunerRandom(c *C) {
 
 func (s *testPartitionPruneSuit) TestIssue22396(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_partition;")
-	tk.MustExec("create database test_partition")
-	tk.MustExec("use test_partition")
+	tk.MustExec("drop database if exists test_22396;")
+	tk.MustExec("create database test_22396")
+	tk.MustExec("use test_22396")
 	tk.MustExec("CREATE TABLE tbl_311 ( COL1 INT, COL2 VARCHAR(20), COL3 bigint, COL4 FLOAT, COL5 DATETIME, primary key (COL1, col2, col3)) PARTITION BY RANGE (COL1 + COL3) (" +
 		"PARTITION p0 VALUES LESS THAN (0)," +
 		"PARTITION p1 VALUES LESS THAN(10)," +
