@@ -437,11 +437,13 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b > math.MinInt64-a) {
+		if (a < 0 && b > 0 && uint64(a) > uint64(math.MaxInt64+b)) ||
+			(a < 0 && b <= 0) ||
+			(a >= 0 && b < 0 && (b == math.MinInt64 || -b > math.MaxInt64-a)){
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b > math.MinInt64-a) {
+		if  (a >= 0 && b < 0 && uint64(b) - uint64(a) > uint64(math.MaxInt64))|| (a < 0 && b >= 0 && -b < math.MinInt64 - a) || (a < 0 && b < 0) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
