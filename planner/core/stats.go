@@ -312,10 +312,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
-	for i := 1; i < len(ds.possibleAccessPaths); i++ {
-		if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-			needConsiderIndexMerge = false
-			break
+	if len(ds.indexMergeHints) == 0 {
+		for i := 1; i < len(ds.possibleAccessPaths); i++ {
+			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+				needConsiderIndexMerge = false
+				break
+			}
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
@@ -422,8 +424,22 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			}
 			partialPaths = append(partialPaths, partialPath)
 		}
+		// If all of the partialPaths use the same index, we will not use the indexMerge.
+		singlePath := true
+		for i := len(partialPaths) - 1; i >= 1; i-- {
+			if partialPaths[i].Index != partialPaths[i-1].Index {
+				singlePath = false
+				break
+			}
+		}
+		if singlePath {
+			continue
+		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			if possiblePath == nil {
+				return
+			}
 
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
@@ -552,8 +568,15 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	tableFilterCnt := 0
 	for _, path := range partialPaths {
+		// IndexMerge should not be used when the SQL is like 'select x from t WHERE (key1=1 AND key2=2) OR (key1=4 AND key3=6);'.
+		// Check issue https://github.com/pingcap/tidb/issues/22105 for details.
 		if len(path.TableFilters) > 0 {
+			tableFilterCnt++
+			if tableFilterCnt > 1 {
+				return nil
+			}
 			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
 		}
 	}

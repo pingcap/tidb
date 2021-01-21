@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -45,6 +46,9 @@ func init() {
 	ast.NewDecimal = func(str string) (interface{}, error) {
 		dec := new(types.MyDecimal)
 		err := dec.FromString(hack.Slice(str))
+		if err == types.ErrTruncated {
+			err = nil
+		}
 		return dec, err
 	}
 	ast.NewHexLiteral = func(str string) (interface{}, error) {
@@ -96,11 +100,15 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case types.KindString:
-		if n.Type.Charset != "" {
+		// This part is used to process flag HasStringWithoutDefaultCharset, which means if we have this flag and the
+		// charset is mysql.DefaultCharset, we don't need to write the default.
+		if n.Type.Charset != "" &&
+			(!ctx.Flags.HasStringWithoutDefaultCharset() || n.Type.Charset != mysql.DefaultCharset) {
 			ctx.WritePlain("_")
 			ctx.WriteKeyWord(n.Type.Charset)
 		}
-		ctx.WriteString(n.GetString())
+		// Replace '\' to '\\' regardless of sql_mode "NO_BACKSLASH_ESCAPES", which is the same as MySQL.
+		ctx.WriteString(strings.ReplaceAll(n.GetString(), "\\", "\\\\"))
 	case types.KindBytes:
 		ctx.WriteString(n.GetString())
 	case types.KindMysqlDecimal:

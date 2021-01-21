@@ -81,7 +81,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		execDetail:     new(execDetail),
 		hdStatus:       tablecodec.HandleNotNeeded,
 	}
-	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
+	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
 	var cms *statistics.CMSketch
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -111,7 +111,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if cms != nil {
-		cm = statistics.CMSketchToProto(cms)
+		cm = statistics.CMSketchToProto(cms, nil)
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {
@@ -212,7 +212,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		ColsFieldType:   fts,
 	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth

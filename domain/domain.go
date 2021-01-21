@@ -653,6 +653,7 @@ type ddlCallback struct {
 	do *Domain
 }
 
+// OnChanged overrides ddl Callback interface.
 func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
@@ -665,6 +666,14 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 
 	return nil
+}
+
+// OnSchemaStateChange overrides the ddl Callback interface.
+func (c *ddlCallback) OnSchemaStateChanged() {
+	err := c.do.Reload()
+	if err != nil {
+		logutil.BgLogger().Error("domain callback failed on schema state changed", zap.Error(err))
+	}
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
@@ -765,20 +774,22 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return err
 	}
 
-	if do.etcdClient != nil {
-		err := do.acquireServerID(ctx)
-		if err != nil {
-			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-			do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
-		} else {
-			do.isLostConnectionToPD.Set(0)
-		}
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Set(0)
+			}
 
-		do.wg.Add(1)
-		go do.serverIDKeeper()
-	} else {
-		// set serverID for standalone deployment to enable 'KILL'.
-		atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
 	}
 
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -1087,20 +1098,20 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		return err
 	}
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
-	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
+	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Add(1)
 		go do.loadStatsWorker()
 	}
+	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
-		go do.syncIndexUsageWorker()
+		go do.syncIndexUsageWorker(owner)
 	}
 	if do.statsLease <= 0 {
 		return nil
 	}
-	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.wg.Add(1)
 	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
@@ -1168,9 +1179,10 @@ func (do *Domain) loadStatsWorker() {
 	}
 }
 
-func (do *Domain) syncIndexUsageWorker() {
+func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
 	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
+	gcStatsTicker := time.NewTicker(100 * do.indexUsageSyncLease)
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
@@ -1185,6 +1197,13 @@ func (do *Domain) syncIndexUsageWorker() {
 		case <-idxUsageSyncTicker.C:
 			if err := handle.DumpIndexUsageToKV(); err != nil {
 				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
+			}
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			if err := handle.GCIndexUsage(); err != nil {
+				logutil.BgLogger().Error("[stats] gc index usage failed", zap.Error(err))
 			}
 		}
 	}

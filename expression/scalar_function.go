@@ -203,7 +203,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
-	typeInferForNull(funcArgs)
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.Nullif:
+		// Do nothing. Because it will call InferType4ControlFuncs.
+	default:
+		typeInferForNull(funcArgs)
+	}
+
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
@@ -422,29 +428,6 @@ func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
-	if sf.FuncName.L == ast.In {
-		args := []Expression{}
-		switch inFunc := sf.Function.(type) {
-		case *builtinInIntSig:
-			args = inFunc.nonConstArgs
-		case *builtinInStringSig:
-			args = inFunc.nonConstArgs
-		case *builtinInTimeSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDurationSig:
-			args = inFunc.nonConstArgs
-		case *builtinInRealSig:
-			args = inFunc.nonConstArgs
-		case *builtinInDecimalSig:
-			args = inFunc.nonConstArgs
-		}
-		for _, arg := range args {
-			err := arg.resolveIndices(schema)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	for _, arg := range sf.GetArgs() {
 		err := arg.resolveIndices(schema)
 		if err != nil {
