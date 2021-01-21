@@ -15,7 +15,7 @@ This document was created to discuss the design of Dynamic Privileges. It is int
 
 ## Background
 
-MySQL 8.0 introduced the concept of “dynamic privileges” (see [WL#8131](https://dev.mysql.com/worklog/task/?id=8131)). The intention behind this functionality is that plugins can create new named privileges to suit their purposes, such as “Firewall Admin” or “Audit Admin” instead of requiring the SUPER privilege, which becomes overloaded and too coarse.
+MySQL 8.0 introduced the concept of “dynamic privileges” (see [WL#8131](https://dev.mysql.com/worklog/task/?id=8131)). The intention behind this functionality is that plugins can create new named privileges to suit their purposes, such as “Firewall Admin” or “Audit Admin” instead of requiring the `SUPER` privilege, which becomes overloaded and too coarse.
 
 Dynamic privileges are different from static privileges in the following ways:
 
@@ -46,7 +46,7 @@ CREATE TABLE `global_grants` (
 
 There is an existing table called “global_priv” which provides similar functionality, except:
 * The priv is expected to be a JSON encoded string
-* There is no column named WITH_GRANT_OPTION.
+* There is no column named `WITH_GRANT_OPTION`.
 
 I looked at repurposing this table (which stores TLS options), but because the `PRIV` value is the data and not the key, it gets messy. I instead plan to use the same schema as MySQL.
 
@@ -65,7 +65,7 @@ if pm.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) {
 ```
 
 This is not suitable because:
-* The privilege mysql.ProcessPriv must be predefined (i.e. it's not dynamic).
+* The privilege `mysql.ProcessPriv` must be predefined (i.e. it's not dynamic).
 * The 3 empty string values (schema, table, column) are never applicable to dynamic privileges.
 * Dynamic privileges are grantable individually. There may be scenarios where code wants to check if a user has both a dynamic privilege and the ability to grant it (such as in the output of `SHOW GRANTS`).
 
@@ -81,8 +81,8 @@ if pm.RequestDynamicVerification(activeRoles, “BACKUP_ADMIN”, false) {
 
 #### SHOW GRANTS
 
-The output of SHOW GRANTS needs to be modified to show each of the dynamic privileges applicable to a user, following static privileges. I.e.
-
+The output of `SHOW GRANTS` needs to be modified to show each of the dynamic privileges applicable to a user, following static privileges. I.e.
+```
 mysql [localhost:8023] {root} (test) > show grants for 'u1';
 +---------------------------------------------------------+
 | Grants for u1@%                                         |
@@ -92,7 +92,7 @@ mysql [localhost:8023] {root} (test) > show grants for 'u1';
 | GRANT BACKUP_ADMIN ON *.* TO `u1`@`%` WITH GRANT OPTION |
 +---------------------------------------------------------+
 3 rows in set (0.00 sec)
-
+```
 #### Information_schema
 
 The table `user_privileges` should show a hybrid of both static and dynamic privileges:
@@ -146,7 +146,7 @@ mysql [localhost:8023] {root} (test) > show grants for u1;
 3 rows in set (0.00 sec)
 ```
 
-Currently TiDB does not expand "GRANT ALL" when the value is read back from `SHOW GRANTS`. It is possible to maintain this current behavior difference.
+Currently TiDB does not expand `GRANT ALL` when the value is read back from `SHOW GRANTS`. It is possible to maintain this current behavior difference.
 
 #### Alter User
 
