@@ -3414,6 +3414,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("-11 20.99 78 12 <nil> <nil> <nil>"))
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
+	// unsigned minus unsigned, without result forced to signed
 	tk.MustExec("INSERT INTO t SELECT 1, 4;")
 	rs, err = tk.Exec("SELECT a-b FROM t;")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3423,6 +3424,24 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
 	c.Assert(rs.Close(), IsNil)
+
+	// minusUU
+	tk.MustExec("select cast(1 as unsigned) - cast(4 as unsigned);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	// TODO: make error compatible with MySQL, should be BIGINT UNSIGNED value is out of range in '(cast(1 as unsigned) - cast(4 as unsigned))
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(1 - 4)'")
+	c.Assert(rs.Close(), IsNil)
+
+	// minusUU, a < 0 && b < 0 && a > b
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-12 as unsigned);").Check(testkit.Rows("11"))
+	// minusUU, a < 0 && b > 0
+	tk.MustQuery("select cast(-1 as unsigned) - cast(0 as unsigned);").Check(testkit.Rows("18446744073709551615"))
+
+	// minusSU, overflow case: a < 0
 	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
@@ -3431,6 +3450,18 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
 	c.Assert(rs.Close(), IsNil)
+
+	// overflow case: a > 0 && a < b
+	rs, err = tk.Exec("select cast(1 as signed) - cast(-1 as unsigned);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(1 - 18446744073709551615)'")
+	c.Assert(rs.Close(), IsNil)
+
+	// minusUS
 	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rs, NotNil)
@@ -3439,14 +3470,70 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
 	c.Assert(rs.Close(), IsNil)
-	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
+
+	// minusUS, cornercase where a - b == math.MaxUint64
+	tk.MustQuery("select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);").Check(testkit.Rows("18446744073709551615"))
+
+	// overflow case: a - b == math.MaxUint64 + 1
+	rs, err = tk.Exec("select cast(-9223372036854775808 as unsigned) - (-9223372036854775808);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(9223372036854775808 - -9223372036854775808)'")
+	c.Assert(rs.Close(), IsNil)
+
+	// overflow case: a < b
+	rs, err = tk.Exec("select cast(12 as unsigned) - (14);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 14)'")
+	c.Assert(rs.Close(), IsNil)
+
+	tk.MustQuery("select cast(-3 as unsigned) - cast(-1 as signed);").Check(testkit.Rows("18446744073709551614"))
 	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
 	tk.MustExec(`create table tb5(a int(10));`)
 	tk.MustExec(`insert into tb5 (a) values (10);`)
 	e := tk.QueryToErr(`select * from tb5 where a - -9223372036854775808;`)
 	c.Assert(e, NotNil)
 	c.Assert(strings.HasSuffix(e.Error(), `BIGINT value is out of range in '(Column#0 - -9223372036854775808)'`), IsTrue, Commentf("err: %v", err))
+
+	// minusSS overflow case: a - b > math.MaxInt64
+	rs, err = tk.Exec("select cast(9223372036854775807 as signed) - cast(-1 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(9223372036854775807 - -1)'")
+	c.Assert(rs.Close(), IsNil)
+
+	// overflow case: a - b < math.MinInt64
+	rs, err = tk.Exec("select cast(-9223372036854775808 as signed) - cast(1 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775808 - 1)'")
+	c.Assert(rs.Close(), IsNil)
 	tk.MustExec(`drop table tb5`)
+
+	// overflow cornercase: a >= 0 && b == math.MinInt64
+	rs, err = tk.Exec("select cast(12 as signed) - cast(-9223372036854775808 as signed);")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(12 - -9223372036854775808)'")
+	c.Assert(rs.Close(), IsNil)
+	tk.MustExec(`drop table tb5`)
+	//
 
 	// for multiply
 	tk.MustQuery("select 1234567890 * 1234567890").Check(testkit.Rows("1524157875019052100"))
