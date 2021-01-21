@@ -53,16 +53,15 @@ type baseHashAggWorker struct {
 	stats        *AggWorkerStat
 
 	memTracker *memory.Tracker
-	// Used for estimating memory usage.
-	BInMap *int // incident B in Go map
+	BInMap     *int // incident B in Go map
 }
 
 const (
-	// defMemoryUsageForPerLineInMap = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
-	defMemoryUsageForPerLineInMap = 8*(16+24) + 8 + 8
-	// loadFactorNum
+	// defBucketMemoryUsage = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
+	defBucketMemoryUsage = 8*(16+24) + 8 + 8
+	// Maximum average load of a bucket that triggers growth is 6.5.
+	// Represent as loadFactorNum/loadFactorDen, to allow integer math.
 	loadFactorNum = 13
-	// loadFactorDen
 	loadFactorDen = 2
 )
 
@@ -532,10 +531,10 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		w.memTracker.Consume(int64(len(groupKey[i])))
 		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
 			if *w.BInMap > 0 {
-				w.memTracker.Consume(-defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
+				w.memTracker.Consume(-defBucketMemoryUsage * (1 << *w.BInMap))
 			}
 			*w.BInMap++
-			w.memTracker.Consume(defMemoryUsageForPerLineInMap * (1 << *w.BInMap))
+			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 		}
 	}
 	return partialResults
