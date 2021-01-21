@@ -1338,7 +1338,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	case model.PartitionTypeList:
 		if len(pi.Columns) == 0 {
 			sql = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
-		} else {
+		} else if len(pi.Columns) == 1 {
 			sql = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
