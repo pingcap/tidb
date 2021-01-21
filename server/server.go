@@ -98,7 +98,7 @@ var (
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil)) // MySQL returns a parse error
+	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.

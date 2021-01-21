@@ -2211,6 +2211,8 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (A INT, B INT, UNIQUE KEY ((A * 2)));")
 
 	// Test experiment switch.
 	config.UpdateGlobal(func(conf *config.Config) {
