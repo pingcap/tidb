@@ -538,15 +538,15 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback", "sleep(100)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback"), IsNil)
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
-	// The lock rollback of this statement is delayed by failpoint AsyncRollBackSleep.
+	// The lock rollback of this statement is delayed by failpoint beforeAsyncPessimisticRollback.
 	_, err := tk2.Exec("select * from tk where c1 > 0 for update nowait")
 	c.Check(err, NotNil)
 	tk.MustExec("commit")

@@ -2486,6 +2486,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
+	variable.TiDBMultiStatementMode,
 }
 
 var (
@@ -2579,6 +2580,11 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context) {
+	if s.sessionVars.SnapshotTS != 0 {
+		// Do nothing when @@tidb_snapshot is set.
+		// In case the latest tso is misused.
+		return
+	}
 	if !s.txn.validOrPending() {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
