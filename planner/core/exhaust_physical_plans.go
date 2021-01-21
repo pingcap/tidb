@@ -2232,12 +2232,12 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
-		// TiFlash does not support distinct now
+		// MPP does not support distinct now
 		if agg.HasDistinct {
 			return false
 		}
-		switch agg.Name {
-		case ast.AggFuncApproxCountDistinct:
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
 			return false
 		}
 	}

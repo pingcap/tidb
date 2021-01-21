@@ -919,7 +919,7 @@ type PhysicalUnionAll struct {
 type AggMppRunMode int
 
 const (
-	// NoMpp means the default value which runs not in MPP
+	// NoMpp means the default value which does not run in MPP
 	NoMpp AggMppRunMode = iota
 	// Mpp1Phase runs only 1 phase but requires its child's partition property
 	Mpp1Phase
