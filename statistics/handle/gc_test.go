@@ -100,8 +100,8 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("create statistics s1(correlation) on t(a,b)")
-	testKit.MustExec("create statistics s2(correlation) on t(b,c)")
+	testKit.MustExec("alter table t add tidb_stats s1 correlation(a,b)")
+	testKit.MustExec("alter table t add tidb_stats s2 correlation(b,c)")
 	testKit.MustExec("analyze table t")
 
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
