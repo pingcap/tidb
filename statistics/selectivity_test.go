@@ -570,7 +570,10 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
-func (s *testStatsSuite) prepareStatsVer2(c *C, testKit *testkit.TestKit) {
+
+func (s *testStatsSuite) TestStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("set tidb_analyze_version=2")
 
@@ -600,12 +603,6 @@ func (s *testStatsSuite) prepareStatsVer2(c *C, testKit *testkit.TestKit) {
 		// ensure statsVer = 2
 		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2")
 	}
-}
-
-func (s *testStatsSuite) TestStatsVer2Selectivity(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	s.prepareStatsVer2(c, testKit)
 
 	var (
 		input  []string

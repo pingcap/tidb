@@ -6,8 +6,10 @@
     ]
   },
   {
-    "name": "TestStatsVer2Selectivity",
+    "name": "TestStatsVer2",
     "cases": [
+      "show stats_histograms",
+      "show stats_topn",
       "explain select * from tint where a=1",
       "explain select * from tint where a=4",
       "explain select * from tint where a=8",
@@ -29,9 +31,9 @@
       "explain select * from tdecimal where b=1 and c=1",
       "explain select * from tdecimal where b=4 and c=4",
       "explain select * from tdecimal where b=8 and c=8",
-      "explain select * from tstring where b=1 and c=1",
-      "explain select * from tstring where b=4 and c=4",
-      "explain select * from tstring where b=8 and c=8",
+      "explain select * from tstring where b='1' and c='1'",
+      "explain select * from tstring where b='4' and c='4'",
+      "explain select * from tstring where b='8' and c='8'",
       "explain select * from tint where b=1",
       "explain select * from tint where b=4",
       "explain select * from tint where b=8",
@@ -41,9 +43,9 @@
       "explain select * from tdecimal where b=1",
       "explain select * from tdecimal where b=4",
       "explain select * from tdecimal where b=8",
-      "explain select * from tstring where b=1",
-      "explain select * from tstring where b=4",
-      "explain select * from tstring where b=8"
+      "explain select * from tstring where b='1'",
+      "explain select * from tstring where b='4'",
+      "explain select * from tstring where b='8'"
     ]
   },
   {
