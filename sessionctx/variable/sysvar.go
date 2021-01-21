@@ -62,13 +62,24 @@ const (
 	TypeUnsigned TypeFlag = 5
 	// TypeTime for time of day (a TiDB extension)
 	TypeTime TypeFlag = 6
+	// TypeDuration for a golang duration (a TiDB extension)
+	TypeDuration TypeFlag = 7
 
 	// BoolOff is the canonical string representation of a boolean false.
 	BoolOff = "OFF"
 	// BoolOn is the canonical string representation of a boolean true.
 	BoolOn = "ON"
+
+	// On is the canonical string for ON
+	On = "ON"
+
+	// Off is the canonical string for OFF
+	Off = "OFF"
+
 	// Nightly indicate the nightly version.
 	Nightly = "NIGHTLY"
+	// Warn means return warnings
+	Warn = "WARN"
 )
 
 // SysVar is for system variable.
@@ -136,6 +147,8 @@ func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkEnumSystemVar(value, vars)
 	case TypeTime:
 		return sv.checkTimeSystemVar(value, vars)
+	case TypeDuration:
+		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
 }
@@ -158,6 +171,22 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 		return "", err
 	}
 	return t.Format(FullDayTimeFormat), nil
+}
+
+func (sv *SysVar) checkDurationSystemVar(value string, vars *SessionVars) (string, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// Check for min/max violations
+	if int64(d) < sv.MinValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	if uint64(d) > sv.MaxValue {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
+	}
+	// return a string representation of the duration
+	return d.String(), nil
 }
 
 func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string, error) {
@@ -337,6 +366,15 @@ func RegisterSysVar(sv *SysVar) {
 	name := strings.ToLower(sv.Name)
 	sysVarsLock.Lock()
 	sysVars[name] = sv
+	sysVarsLock.Unlock()
+}
+
+// UnregisterSysVar removes a sysvar from the SysVars list
+// currently only used in tests.
+func UnregisterSysVar(name string) {
+	name = strings.ToLower(name)
+	sysVarsLock.Lock()
+	delete(sysVars, name)
 	sysVarsLock.Unlock()
 }
 
@@ -631,7 +669,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW"},
 	{Scope: ScopeGlobal, Name: TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(DefTiDBMaxDeltaSchemaCount), Type: TypeUnsigned, MinValue: 100, MaxValue: 16384, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Type: TypeBool},
@@ -712,6 +750,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Warn, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}},
+
+	/* tikv gc metrics */
+	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
+	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -1002,8 +1048,6 @@ const (
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
 type GlobalVarAccessor interface {
-	// GetAllSysVars gets all the global system variable values.
-	GetAllSysVars() (map[string]string, error)
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
