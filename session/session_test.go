@@ -2488,3 +2488,17 @@ func (s *testSessionSuite) TestMaxExeucteTime(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("drop table if exists MaxExecTime;")
 }
+
+func (s *testSessionSuite) TestForIssue1152(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// https://github.com/pingcap/tidb-test/issues/1152
+	// An attacker may construct such SQL to bypass the privilege check.
+	// Use `;` and ExecRestrictedSQL(), they can do whatever they want.
+	_, err := tk.Exec(`CREATE USER '\';      drop database test;       SELECT \''@'%' IDENTIFIED BY '';`)
+	c.Assert(err, NotNil)
+
+	// Check the table is not dropped.
+	tk.MustExec("use test")
+}

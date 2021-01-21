@@ -887,6 +887,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			zap.String("sql", sql))
 		return nil, errors.Trace(err)
 	}
+	if s.GetSessionVars().InRestrictedSQL {
+		if len(stmtNodes) > 1 {
+			// Prohibit multiple statements in restricted SQL can prevent malicious injected SQL to some extent.
+			// For example, the input is someting like this:
+			// mysql> CREATE USER '\';      drop database test;       SELECT \''@'%' IDENTIFIED BY '';
+			// See https://github.com/pingcap/tidb-test/issues/1152 for more details.
+			return nil, errors.New("ExecRestrictedSQL() API doesn't support multiple statements")
+		}
+	}
 	durParse := time.Since(startTS)
 	s.GetSessionVars().DurationParse = durParse
 	label := s.getSQLLabel()
