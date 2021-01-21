@@ -952,19 +952,19 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 }
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64) (err error) {
-	// TODO remove this if branch after supporting ALTER TABLE DROP STATISTICS.
-	if tableID < 0 {
-		sql := fmt.Sprintf("SELECT table_id FROM mysql.stats_extended WHERE name = '%s'", statsName)
-		rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(rows) == 0 {
+func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
+	sql := fmt.Sprintf("SELECT name FROM mysql.stats_extended WHERE name = '%s' and table_id = %d", statsName, tableID)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		if ifExists {
 			return nil
 		}
-		tableID = rows[0].GetInt64(0)
+		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table does not exist", statsName))
 	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1067,6 +1067,9 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
+	if len(samplesX) == 0 {
+		return nil
+	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
 	sampleNum := len(samplesX)
