@@ -2504,8 +2504,7 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	_, err = tk2.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(5)})
 	c.Assert(err, IsNil)
 	tk2.CheckExecResult(1, 0)
-	// FIXME: should hit plan cache here
-	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("commit")
 	tk2.MustExec("commit")

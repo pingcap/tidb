@@ -579,4 +579,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	plannercore.IsReadOnly = IsReadOnly
 }
