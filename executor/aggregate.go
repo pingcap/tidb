@@ -321,6 +321,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			chk:               newFirstChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
 		}
+		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, w.stats)
@@ -348,6 +349,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
 		}
+		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -529,12 +531,10 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
+		// map will expand in high probability when count > bucketNum * loadFactor.
 		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
-			if *w.BInMap > 0 {
-				w.memTracker.Consume(-defBucketMemoryUsage * (1 << *w.BInMap))
-			}
-			*w.BInMap++
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+			*w.BInMap++
 		}
 	}
 	return partialResults
