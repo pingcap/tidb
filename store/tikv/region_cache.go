@@ -910,7 +910,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 		// or hibernate timeout.
 		// To solve it, one solution is always to try a different peer if the invalid reason of the old cached region is no-leader.
 		// There is a small probability that the current peer who reports no-leader becomes a leader and TiDB has to retry once in this case.
-		if oldRegion.invalidReason == NoLeader {
+		if InvalidReason(atomic.LoadInt32((*int32)(&oldRegion.invalidReason))) == NoLeader {
 			store.workTiKVIdx = (oldRegionStore.workTiKVIdx + 1) % AccessIndex(store.accessStoreNum(TiKvOnly))
 		}
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
