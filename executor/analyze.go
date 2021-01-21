@@ -124,14 +124,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			if result.TableID.PersistID != result.TableID.CollectIDs[0] && needGlobalStats {
+			if result.TableID.IsPartitionTable() && needGlobalStats {
 				idxID := int64(0)
 				if result.IsIndex != 0 {
 					idxID = hg.ID
 				}
-				globalStatsKey := fmt.Sprintf("%d_%d", result.TableID.CollectIDs[0], idxID)
+				globalStatsKey := fmt.Sprintf("%d_%d", result.TableID.FatherID, idxID)
 				if _, ok := globalStatsMap[globalStatsKey]; !ok {
-					globalStatsMap[globalStatsKey] = additionGlobalStatsInfo{result.TableID.CollectIDs[0], result.IsIndex, hg.ID, result.StatsVer}
+					globalStatsMap[globalStatsKey] = additionGlobalStatsInfo{result.TableID.FatherID, result.IsIndex, hg.ID, result.StatsVer}
 				}
 			}
 			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
@@ -321,9 +321,9 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
-		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, true, ranges, nil)
+		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.PersistID}, true, ranges, nil)
 	} else {
-		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, e.idxInfo.ID, ranges)
+		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.PersistID}, e.idxInfo.ID, ranges)
 	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
@@ -540,7 +540,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.FatherID}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -787,7 +787,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			}
 		}()
 		var partition string
-		if e.tableID.StoreAsCollectID() && e.tblInfo.ID != e.tableID.PersistID {
+		if e.tableID.IsPartitionTable() && e.tblInfo.ID != e.tableID.FatherID {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.PersistID {
 					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
@@ -854,37 +854,36 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	accessRegionsCounter := 0
-	for _, pid := range e.tableID.CollectIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
-		targetKey := startKey
-		for {
-			// Search for the region which contains the targetKey.
-			loc, err := e.cache.LocateKey(bo, targetKey)
-			if err != nil {
-				return err
-			}
-			if bytes.Compare(endKey, loc.StartKey) < 0 {
-				break
-			}
-			accessRegionsCounter++
+	pid := e.tableID.PersistID
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
+	targetKey := startKey
+	for {
+		// Search for the region which contains the targetKey.
+		loc, err := e.cache.LocateKey(bo, targetKey)
+		if err != nil {
+			return err
+		}
+		if bytes.Compare(endKey, loc.StartKey) < 0 {
+			break
+		}
+		accessRegionsCounter++
 
-			// Set the next search key.
-			targetKey = loc.EndKey
+		// Set the next search key.
+		targetKey = loc.EndKey
 
-			// If the KV pairs in the region all belonging to the table, add it to the sample task.
-			if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-				e.sampTasks = append(e.sampTasks, loc)
-				continue
-			}
+		// If the KV pairs in the region all belonging to the table, add it to the sample task.
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+			e.sampTasks = append(e.sampTasks, loc)
+			continue
+		}
 
-			e.scanTasks = append(e.scanTasks, loc)
-			if bytes.Compare(loc.StartKey, startKey) < 0 {
-				loc.StartKey = startKey
-			}
-			if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
-				loc.EndKey = endKey
-				break
-			}
+		e.scanTasks = append(e.scanTasks, loc)
+		if bytes.Compare(loc.StartKey, startKey) < 0 {
+			loc.StartKey = startKey
+		}
+		if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
+			loc.EndKey = endKey
+			break
 		}
 	}
 	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))

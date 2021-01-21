@@ -1699,7 +1699,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				// static mode or static-but-prepare-dynamic mode not belong auto analyze need analyze each partition
 				// for static-but-prepare-dynamic mode with auto analyze, echo partition will be check before analyze partition.
 				for i, id := range physicalIDs {
-					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 						IndexInfo:   idx,
 						analyzeInfo: info,
@@ -1708,19 +1708,21 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 			}
 			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					IndexInfo:   idx,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
-				})
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tbl.TableInfo.ID}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+						IndexInfo:   idx,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
 			}
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo)
 		if len(colInfo) > 0 || handleCols != nil {
 			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 				for i, id := range physicalIDs {
-					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 						HandleCols:  handleCols,
 						ColsInfo:    colInfo,
@@ -1730,13 +1732,15 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				}
 			}
 			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
-					HandleCols:  handleCols,
-					ColsInfo:    colInfo,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
-				})
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tbl.TableInfo.ID}, Incremental: as.Incremental}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+						HandleCols:  handleCols,
+						ColsInfo:    colInfo,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
 			}
 		}
 	}
@@ -1761,13 +1765,15 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if handleCols != nil {
 				if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 					for i, id := range physicalIDs {
-						info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+						info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 						p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 					}
 				}
 				if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					for i, id := range physicalIDs {
+						info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tblInfo.ID}, Incremental: as.Incremental}
+						p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					}
 				}
 				continue
 			}
@@ -1778,13 +1784,15 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tblInfo.ID}, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			}
 		}
 	}
 	return p, nil
@@ -1806,13 +1814,15 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		if idx.State == model.StatePublic {
 			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 				for i, id := range physicalIDs {
-					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 				}
 			}
 			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tblInfo.ID}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				}
 			}
 		}
 	}
@@ -1820,13 +1830,15 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if handleCols != nil {
 		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: id}, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, FatherID: tblInfo.ID}, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			}
 		}
 	}
 	return p, nil

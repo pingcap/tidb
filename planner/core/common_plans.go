@@ -761,18 +761,20 @@ type Delete struct {
 
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
-	PersistID  int64
-	CollectIDs []int64
+	PersistID int64
+	// FatherID just used in the partition table.
+	// It represents the ID of the table to which the partition belongs.
+	FatherID int64
 }
 
-// StoreAsCollectID indicates whether collect table id is same as persist table id.
+// IsPartitionTable indicates whether the table is partition table.
 // for new partition implementation is TRUE but FALSE for old partition implementation
-func (h *AnalyzeTableID) StoreAsCollectID() bool {
-	return h.PersistID == h.CollectIDs[0]
+func (h *AnalyzeTableID) IsPartitionTable() bool {
+	return h.PersistID == h.FatherID
 }
 
 func (h *AnalyzeTableID) String() string {
-	return fmt.Sprintf("%d => %v", h.CollectIDs, h.PersistID)
+	return fmt.Sprintf("%d => %v", h.FatherID, h.PersistID)
 }
 
 // Equals indicates whether two table id is equal.
@@ -786,25 +788,7 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 	if h.PersistID != t.PersistID {
 		return false
 	}
-	if len(h.CollectIDs) != len(t.CollectIDs) {
-		return false
-	}
-	if len(h.CollectIDs) == 1 {
-		return h.CollectIDs[0] == t.CollectIDs[0]
-	}
-	for _, hp := range h.CollectIDs {
-		var matchOne bool
-		for _, tp := range t.CollectIDs {
-			if tp == hp {
-				matchOne = true
-				break
-			}
-		}
-		if !matchOne {
-			return false
-		}
-	}
-	return true
+	return h.FatherID == t.FatherID
 }
 
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
