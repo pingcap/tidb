@@ -8,7 +8,6 @@
   {
     "name": "TestStatsVer2",
     "cases": [
-      "show stats_histograms",
       "show stats_topn",
       "explain select * from tint where a=1",
       "explain select * from tint where a=4",
