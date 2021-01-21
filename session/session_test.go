@@ -4053,6 +4053,7 @@ func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	}
 	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
 	for _, testcase := range testcases {
+		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true)
 		tk.MustExec(testcase.sql)

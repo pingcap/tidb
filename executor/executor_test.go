@@ -7577,7 +7577,7 @@ func (s *testSuite) TestStalenessAndHistoryRead(c *C) {
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
 	tk.MustExec("commit")
-	// set @@tidb_snapshot before staleness txn
+	// set @@tidb_snapshot during staleness txn
 	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
 	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
 	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
