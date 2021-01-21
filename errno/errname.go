@@ -1081,6 +1081,17 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
+<<<<<<< HEAD
+=======
+	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
+
+	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+
+	ErrInvalidPlacementSpec:   mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
+	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
+
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:      mysql.Message("TiKV server timeout", nil),

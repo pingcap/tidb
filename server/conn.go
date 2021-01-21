@@ -1376,10 +1376,50 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
+<<<<<<< HEAD
 	status := atomic.LoadInt32(&cc.status)
 	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		for _, rs := range rss {
 			terror.Call(rs.Close)
+=======
+
+	if len(stmts) == 0 {
+		return cc.writeOK(ctx)
+	}
+
+	warns := sc.GetWarnings()
+	parserWarns := warns[len(prevWarns):]
+
+	var pointPlans []plannercore.Plan
+	if len(stmts) > 1 {
+
+		// The client gets to choose if it allows multi-statements, and
+		// probably defaults OFF. This helps prevent against SQL injection attacks
+		// by early terminating the first statement, and then running an entirely
+		// new statement.
+
+		capabilities := cc.ctx.GetSessionVars().ClientCapability
+		if capabilities&mysql.ClientMultiStatements < 1 {
+			// The client does not have multi-statement enabled. We now need to determine
+			// how to handle an unsafe sitution based on the multiStmt sysvar.
+			switch cc.ctx.GetSessionVars().MultiStatementMode {
+			case variable.OffInt:
+				err = errMultiStatementDisabled
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+				return err
+			case variable.OnInt:
+				// multi statement is fully permitted, do nothing
+			default:
+				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: errMultiStatementDisabled}
+				parserWarns = append(parserWarns, warn)
+			}
+		}
+
+		// Only pre-build point plans for multi-statement query
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
+		if err != nil {
+			return err
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 		}
 		return executor.ErrQueryInterrupted
 	}

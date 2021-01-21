@@ -2096,7 +2096,17 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBEnableRateLimitAction,
+<<<<<<< HEAD
 	variable.TiDBMemoryUsageAlarmRatio,
+=======
+	variable.TiDBEnableAsyncCommit,
+	variable.TiDBEnable1PC,
+	variable.TiDBGuaranteeExternalConsistency,
+	variable.TiDBAnalyzeVersion,
+	variable.TiDBEnableIndexMergeJoin,
+	variable.TiDBTrackAggregateMemoryUsage,
+	variable.TiDBMultiStatementMode,
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 }
 
 var (

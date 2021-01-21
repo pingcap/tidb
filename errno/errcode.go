@@ -1044,6 +1044,12 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+<<<<<<< HEAD
+=======
+	ErrInvalidTableSample                  = 8128
+	ErrJSONObjectKeyTooLong                = 8129
+	ErrMultiStatementDisabled              = 8130
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
