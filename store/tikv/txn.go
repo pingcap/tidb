@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"runtime/trace"
 	"sort"
 	"sync"
@@ -561,6 +562,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
+<<<<<<< HEAD
 		failpoint.Inject("AsyncRollBackSleep", func(sleepTimeMS failpoint.Value) {
 			if tmp, ok := sleepTimeMS.(int); ok {
 				if tmp < 10000 {
@@ -573,6 +575,25 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 			}
 		})
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), CommitterMutations{keys: keys})
+=======
+		failpoint.Inject("beforeAsyncPessimisticRollback", func(val failpoint.Value) {
+			if s, ok := val.(string); ok {
+				if s == "skip" {
+					logutil.Logger(ctx).Info("[failpoint] injected skip async pessimistic rollback",
+						zap.Uint64("txnStartTS", txn.startTS))
+					wg.Done()
+					failpoint.Return()
+				} else if s == "delay" {
+					duration := time.Duration(rand.Int63n(int64(time.Second) * 2))
+					logutil.Logger(ctx).Info("[failpoint] injected delay before async pessimistic rollback",
+						zap.Uint64("txnStartTS", txn.startTS), zap.Duration("duration", duration))
+					time.Sleep(duration)
+				}
+			}
+		})
+
+		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
+>>>>>>> 030a00e55... store/tikv: Add more failpoints (#22362)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}

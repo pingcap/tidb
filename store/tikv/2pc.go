@@ -859,7 +859,14 @@ func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 		return
 	}
 	tm.lockCtx = lockCtx
-	go tm.keepAlive(c)
+	noKeepAlive := false
+	failpoint.Inject("doNotKeepAlive", func() {
+		noKeepAlive = true
+	})
+
+	if !noKeepAlive {
+		go tm.keepAlive(c)
+	}
 }
 
 func (tm *ttlManager) close() {

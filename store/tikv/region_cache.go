@@ -224,6 +224,10 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
+	// Only consider use percentage on this failpoint, for example, "2%return"
+	failpoint.Inject("invalidateRegionCache", func() {
+		r.invalidate()
+	})
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
 		if ts-lastAccess > RegionCacheTTLSec {
