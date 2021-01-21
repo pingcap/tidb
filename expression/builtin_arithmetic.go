@@ -419,18 +419,6 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	//if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
-	//	// wrong result under: a < 0 && b < 0 && a > b
-	//	if a < 0 {
-	//		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	//	}
-	//}
-	//if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
-	//	if b < 0 {
-	//		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	//	}
-	//}
-
 	switch {
 	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
 		ua, ub, uMaxInt64, uMinInt64 := uint64(a), uint64(b), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
