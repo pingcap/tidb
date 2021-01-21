@@ -471,8 +471,15 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
+<<<<<<< HEAD
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// This variable is currently not recommended to be turned on.
+=======
+	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
+	MultiStatementMode int
+
+	// AllowWriteRowID variable is currently not recommended to be turned on.
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
@@ -1665,6 +1672,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
+	case TiDBMultiStatementMode:
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	}
 	s.systems[name] = val
 	return nil

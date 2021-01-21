@@ -2321,6 +2321,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
+	variable.TiDBMultiStatementMode,
 }
 
 var (

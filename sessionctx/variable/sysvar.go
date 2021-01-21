@@ -67,8 +67,17 @@ const (
 	BoolOff = "OFF"
 	// BoolOn is the canonical string representation of a boolean true.
 	BoolOn = "ON"
+
+	// On is the canonical string for ON
+	On = "ON"
+
+	// Off is the canonical string for OFF
+	Off = "OFF"
+
 	// Nightly indicate the nightly version.
 	Nightly = "NIGHTLY"
+	// Warn means return warnings
+	Warn = "WARN"
 )
 
 // SysVar is for system variable.
@@ -1192,6 +1201,17 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTrackAggregateMemoryUsage, Value: BoolToOnOff(DefTiDBTrackAggregateMemoryUsage), Type: TypeBool},
+<<<<<<< HEAD
+=======
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Warn, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}},
+
+	/* tikv gc metrics */
+	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: BoolOn, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBGCRunInterval, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiDBGCLifetime, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TiDBGCConcurrency, Value: "-1", Type: TypeInt, MinValue: 1, MaxValue: 128, AllowAutoValue: true},
+	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
+>>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
 }
 
 // SynonymsSysVariables is synonyms of system variables.
