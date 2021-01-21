@@ -1006,6 +1006,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		Limit:      gcScanLockLimit,
 	})
 
+	failpoint.Inject("lowScanLockLimit", func() {
+		req.ScanLock().Limit = 3
+	})
+
 	var stat tikv.RangeTaskStat
 	key := startKey
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
@@ -2038,12 +2042,16 @@ type scanLockResult struct {
 }
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
-	return &mergeLockScanner{
+	scanner := &mergeLockScanner{
 		safePoint:     safePoint,
 		client:        client,
 		stores:        stores,
 		scanLockLimit: gcScanLockLimit,
 	}
+	failpoint.Inject("lowPhysicalScanLockLimit", func() {
+		scanner.scanLockLimit = 3
+	})
+	return scanner
 }
 
 // Start initializes the scanner and enables retrieving items from the scanner.
