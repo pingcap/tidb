@@ -990,6 +990,7 @@ const (
 	ErrBRIEExportFailed                    = 8127
 	ErrInvalidTableSample                  = 8128
 	ErrJSONObjectKeyTooLong                = 8129
+	ErrMultiStatementDisabled              = 8130
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
