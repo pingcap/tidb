@@ -6,7 +6,7 @@
     ]
   },
   {
-    "name": "TestStatsVer2",
+    "name": "TestStatsVer2Selectivity",
     "cases": [
       "explain select * from tint where a=1",
       "explain select * from tint where a=4",

@@ -8,7 +8,7 @@
     ]
   },
   {
-    "Name": "TestStatsVer2",
+    "Name": "TestStatsVer2Selectivity",
     "Cases": [
       [
         "TableReader_7 1.00 root  data:Selection_6",
