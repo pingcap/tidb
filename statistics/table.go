@@ -526,7 +526,9 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 			if i >= usedColsLen {
 				break
 			}
-			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+			if col, ok := coll.Columns[colID]; ok {
+				ndv = mathutil.MaxInt64(ndv, col.NDV)
+			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
