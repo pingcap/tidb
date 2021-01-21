@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -859,14 +860,20 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 }
 
 // LocateRanges locates partition ranges by the column range
-func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, lv types.Datum, hv types.Datum) ([]ListPartitionLocation, error) {
-	lowKey, err := lp.genKey(sc, lv)
+func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
+	lowKey, err := lp.genKey(sc, r.LowVal[0])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	highKey, err := lp.genKey(sc, hv)
+	highKey, err := lp.genKey(sc, r.HighVal[0])
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if r.LowExclude {
+		lowKey = kv.Key(lowKey).PrefixNext()
+	}
+	if !r.HighExclude {
+		highKey = kv.Key(highKey).PrefixNext()
 	}
 	locations := make([]ListPartitionLocation, 0, lp.sorted.Len())
 	lp.sorted.AscendRange(newBtreeListColumnSearchItem(string(lowKey)), newBtreeListColumnSearchItem(string(highKey)), func(item btree.Item) bool {

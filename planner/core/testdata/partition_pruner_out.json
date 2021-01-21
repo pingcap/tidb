@@ -382,7 +382,7 @@
         "SQL": "select * from t1 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 888.89 root partition:p1 data:Selection_6",
+          "TableReader_7 888.89 root partition:dual data:Selection_6",
           "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.a, 10), gt(test_partition.t1.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -400,7 +400,7 @@
         "SQL": "select * from t3 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 888.89 root partition:p1 data:Selection_6",
+          "TableReader_7 888.89 root partition:dual data:Selection_6",
           "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.a, 10), gt(test_partition.t3.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
@@ -799,9 +799,767 @@
         ],
         "Plan": [
           "Sort_5 3343.33 root  test_partition.t7.a",
-          "└─TableReader_10 3343.33 root partition:p0,p1,pnull,p2 data:Selection_9",
+          "└─TableReader_10 3343.33 root partition:p1,pnull,p2 data:Selection_9",
           "  └─Selection_9 3343.33 cop[tikv]  or(isnull(test_partition.t7.a), gt(test_partition.t7.a, 0))",
           "    └─TableFullScan_8 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id <= 6 and a <= 6",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1104.45 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition.t1.a, 6), le(test_partition.t1.id, 6)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id <= 6 and a >= 6 and b >= 6",
+        "Result": [
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 369.26 root partition:all data:Selection_6",
+          "└─Selection_6 369.26 cop[tikv]  ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 6), le(test_partition.t2.id, 6)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id <= 6 and a >= 6",
+        "Result": [
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1107.78 root partition:p1 data:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  ge(test_partition.t3.a, 6), le(test_partition.t3.id, 6)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id <= 6 and (a >= 6 or a is null)",
+        "Result": [
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1111.10 root partition:p1 data:Selection_6",
+          "└─Selection_6 1111.10 cop[tikv]  le(test_partition.t1.id, 6), or(ge(test_partition.t1.a, 6), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id <= 6 and (a <= 6 and b <= 6 ) or ( a is null and b >= 6 )",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 370.26 root partition:all data:Selection_6",
+          "└─Selection_6 370.26 cop[tikv]  or(and(le(test_partition.t2.id, 6), and(le(test_partition.t2.a, 6), le(test_partition.t2.b, 6))), and(isnull(test_partition.t2.a), ge(test_partition.t2.b, 6)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id <= 6 and (a <= 6 or a is null)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1107.78 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  le(test_partition.t3.id, 6), or(le(test_partition.t3.a, 6), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id <= 6 and (a <= 2 or a is null)",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 1107.78 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  le(test_partition.t1.id, 6), or(le(test_partition.t1.a, 2), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id <= 6 and (a <= 6 and b <= 6) or ( a is null and b >= 6)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 370.26 root partition:all data:Selection_6",
+          "└─Selection_6 370.26 cop[tikv]  or(and(le(test_partition.t2.id, 6), and(le(test_partition.t2.a, 6), le(test_partition.t2.b, 6))), and(isnull(test_partition.t2.a), ge(test_partition.t2.b, 6)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id <= 6 and (a >= 1 or a is null)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1111.10 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1111.10 cop[tikv]  le(test_partition.t3.id, 6), or(ge(test_partition.t3.a, 1), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (id >= 1 and a >= 1) or a is null",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10",
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 1120.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1120.00 cop[tikv]  or(and(ge(test_partition.t1.id, 1), ge(test_partition.t1.a, 1)), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where (id >= 1 and a >= 1 and b >= 1) or (a is null and b is null)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10",
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 370.38 root partition:all data:Selection_6",
+          "└─Selection_6 370.38 cop[tikv]  or(and(ge(test_partition.t2.id, 1), and(ge(test_partition.t2.a, 1), ge(test_partition.t2.b, 1))), and(isnull(test_partition.t2.a), isnull(test_partition.t2.b)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (id >= 1 and a >= 1) or a is null",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10",
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 1120.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1120.00 cop[tikv]  or(and(ge(test_partition.t3.id, 1), ge(test_partition.t3.a, 1)), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (id >= 1 and a >= 1) or (a >= 1 and id >= 1)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 2098.77 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 2098.77 cop[tikv]  or(and(ge(test_partition.t1.id, 1), ge(test_partition.t1.a, 1)), and(ge(test_partition.t1.a, 1), ge(test_partition.t1.id, 1)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where (id <= 1 and a <= 1 and b <= 1) or (a >= 1 and id >= 1 and b>=1)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 723.82 root partition:all data:Selection_6",
+          "└─Selection_6 723.82 cop[tikv]  or(and(le(test_partition.t2.id, 1), and(le(test_partition.t2.a, 1), le(test_partition.t2.b, 1))), and(ge(test_partition.t2.a, 1), and(ge(test_partition.t2.id, 1), ge(test_partition.t2.b, 1))))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (id <= 1 and a <= 1) or (a <= 1 and id <= 1)",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 2086.93 root partition:p0 data:Selection_6",
+          "└─Selection_6 2086.93 cop[tikv]  or(and(le(test_partition.t3.id, 1), le(test_partition.t3.a, 1)), and(le(test_partition.t3.a, 1), le(test_partition.t3.id, 1)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=id and id >10",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 888.89 root partition:dual data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.a, 10), gt(test_partition.t1.id, 10)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a=id and id >10",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.id), gt(test_partition.t2.a, 10), gt(test_partition.t2.id, 10)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=id and id >10",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 888.89 root partition:dual data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id), gt(test_partition.t3.a, 10), gt(test_partition.t3.id, 10)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=id and id >10 or a is null",
+        "Result": [
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 898.00 root partition:p1 data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t1.a, test_partition.t1.id), and(gt(test_partition.t1.id, 10), gt(test_partition.t1.a, 10))), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a=id and id >10 or a is null",
+        "Result": [
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 898.00 root partition:all data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t2.a, test_partition.t2.id), and(gt(test_partition.t2.id, 10), gt(test_partition.t2.a, 10))), isnull(test_partition.t2.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=id and id >10 or a is null",
+        "Result": [
+          "<nil> <nil> <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 898.00 root partition:p1 data:Selection_6",
+          "└─Selection_6 898.00 cop[tikv]  or(and(eq(test_partition.t3.a, test_partition.t3.id), and(gt(test_partition.t3.id, 10), gt(test_partition.t3.a, 10))), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a between 1 and 2 or a<=4",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(and(ge(test_partition.t1.a, 1), le(test_partition.t1.a, 2)), le(test_partition.t1.a, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a between 1 and 2 or a<=4",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:all data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(and(ge(test_partition.t2.a, 1), le(test_partition.t2.a, 2)), le(test_partition.t2.a, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a between 1 and 2 or a<=4",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(and(ge(test_partition.t3.a, 1), le(test_partition.t3.a, 2)), le(test_partition.t3.a, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a between 1 and 2 or a<=6",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(and(ge(test_partition.t1.a, 1), le(test_partition.t1.a, 2)), le(test_partition.t1.a, 6))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where (a between 1 and 2 or a>=7) and b <= 2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 1190.86 root partition:all data:Selection_6",
+          "└─Selection_6 1190.86 cop[tikv]  le(test_partition.t2.b, 2), or(and(ge(test_partition.t2.a, 1), le(test_partition.t2.a, 2)), ge(test_partition.t2.a, 7))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (a between 1 and 2) or a>=8",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 3583.33 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 3583.33 cop[tikv]  or(and(ge(test_partition.t3.a, 1), le(test_partition.t3.a, 2)), ge(test_partition.t3.a, 8))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id >= 1 or b >= 1",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 5555.56 root partition:all data:Selection_6",
+          "└─Selection_6 5555.56 cop[tikv]  or(ge(test_partition.t1.id, 1), ge(test_partition.t1.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id >= 1 or b >= 1",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 5555.56 root partition:all data:Selection_6",
+          "└─Selection_6 5555.56 cop[tikv]  or(ge(test_partition.t2.id, 1), ge(test_partition.t2.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id >= 1 or b >= 1",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 5555.56 root partition:all data:Selection_6",
+          "└─Selection_6 5555.56 cop[tikv]  or(ge(test_partition.t3.id, 1), ge(test_partition.t3.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 100",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  le(test_partition.t1.a, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a <= 100 and b <= 100",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 1104.45 root partition:all data:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition.t2.a, 100), le(test_partition.t2.b, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a <= 100",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  le(test_partition.t3.a, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 partition(p0) where a between 1 and 7",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7"
+        ],
+        "Plan": [
+          "TableReader_7 250.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 250.00 cop[tikv]  ge(test_partition.t1.a, 1), le(test_partition.t1.a, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 partition(p0) where b between 1 and 7",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5"
+        ],
+        "Plan": [
+          "TableReader_7 250.00 root partition:p0 data:Selection_6",
+          "└─Selection_6 250.00 cop[tikv]  ge(test_partition.t2.b, 1), le(test_partition.t2.b, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 partition(p1) where a between 1 and 7",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7"
+        ],
+        "Plan": [
+          "TableReader_7 250.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 250.00 cop[tikv]  ge(test_partition.t1.a, 1), le(test_partition.t1.a, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 partition(p1) where a between 1 and 7",
+        "Result": [
+          "6 6 6",
+          "7 7 7"
+        ],
+        "Plan": [
+          "TableReader_7 250.00 root partition:p1 data:Selection_6",
+          "└─Selection_6 250.00 cop[tikv]  ge(test_partition.t2.a, 1), le(test_partition.t2.a, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and (t2.a <= 6 and t2.b <= 6)",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3"
+        ],
+        "Plan": [
+          "Projection_9 1379.19 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.a, test_partition.t2.id, test_partition.t2.b",
+          "└─HashJoin_11 1379.19 root  inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id)]",
+          "  ├─TableReader_14(Build) 1103.35 root partition:all data:Selection_13",
+          "  │ └─Selection_13 1103.35 cop[tikv]  le(test_partition.t2.a, 6), le(test_partition.t2.b, 6), not(isnull(test_partition.t2.id))",
+          "  │   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3320.01 root partition:p0 data:Selection_16",
+          "    └─Selection_16 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 left join t3 on t1.id = t3.id where (t1.a<=1 or t1.a <= 3) and t3.a between 6 and 8",
+        "Result": null,
+        "Plan": [
+          "HashJoin_7 312.19 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t3.id)]",
+          "├─TableReader_14(Build) 249.75 root partition:p1 data:Selection_13",
+          "│ └─Selection_13 249.75 cop[tikv]  ge(test_partition.t3.a, 6), le(test_partition.t3.a, 8), not(isnull(test_partition.t3.id))",
+          "│   └─TableFullScan_12 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3320.01 root partition:p0 data:Selection_10",
+          "  └─Selection_10 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 right join t2 on t3.id = t2.id where (t3.a>=1 or t3.a >= 3) and (t2.a between 6 and 8) and t2.b >= 6",
+        "Result": [
+          "6 6 6 6 6 6",
+          "7 7 7 7 7 7",
+          "8 8 8 8 8 8"
+        ],
+        "Plan": [
+          "HashJoin_7 104.06 root  inner join, equal:[eq(test_partition.t3.id, test_partition.t2.id)]",
+          "├─TableReader_14(Build) 83.25 root partition:all data:Selection_13",
+          "│ └─Selection_13 83.25 cop[tikv]  ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 6), le(test_partition.t2.a, 8), not(isnull(test_partition.t2.id))",
+          "│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3330.00 root partition:p0,p1 data:Selection_10",
+          "  └─Selection_10 3330.00 cop[tikv]  not(isnull(test_partition.t3.id)), or(ge(test_partition.t3.a, 1), ge(test_partition.t3.a, 3))",
+          "    └─TableFullScan_9 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on true where t1.a<=5 and (t2.a between 6 and 8) and t1.a-t2.a=1 and t2.b >= 6",
+        "Result": null,
+        "Plan": [
+          "Projection_9 664666.67 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.a, test_partition.t2.id, test_partition.t2.b",
+          "└─HashJoin_11 664666.67 root  CARTESIAN inner join, other cond:eq(minus(test_partition.t1.a, test_partition.t2.a), 1)",
+          "  ├─TableReader_14(Build) 200.00 root partition:all data:Selection_13",
+          "  │ └─Selection_13 200.00 cop[tikv]  1, ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 6), le(test_partition.t2.a, 8)",
+          "  │   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3323.33 root partition:p0 data:Selection_16",
+          "    └─Selection_16 3323.33 cop[tikv]  1, le(test_partition.t1.a, 5)",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 6 union select * from t1 where a >= 1 order by a",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "Sort_12 5325.33 root  Column#10",
+          "└─HashAgg_14 5325.33 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "  └─Union_15 6656.67 root  ",
+          "    ├─TableReader_19 3323.33 root partition:p0,p1 data:Selection_18",
+          "    │ └─Selection_18 3323.33 cop[tikv]  le(test_partition.t1.a, 6)",
+          "    │   └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader_23 3333.33 root partition:p0,p1 data:Selection_22",
+          "      └─Selection_22 3333.33 cop[tikv]  ge(test_partition.t1.a, 1)",
+          "        └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t4 join t5 on t4.id = t5.id where (t4.a<=1 or t4.a <= 3) and (t5.a <= 1 or t5.a <= 6) and t5.b between 1 and 6",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3"
+        ],
+        "Plan": [
+          "HashJoin_9 3.75 root  inner join, equal:[eq(test_partition.t4.id, test_partition.t5.id)]",
+          "├─TableReader_12(Build) 3.00 root partition:p0 data:Selection_11",
+          "│ └─Selection_11 3.00 cop[tikv]  not(isnull(test_partition.t4.id))",
+          "│   └─TableRangeScan_10 3333.33 cop[tikv] table:t4 range:[-inf,3], keep order:false, stats:pseudo",
+          "└─IndexLookUp_20(Probe) 83.00 root partition:all ",
+          "  ├─Selection_18(Build) 83.08 cop[tikv]  ge(test_partition.t5.b, 1), le(test_partition.t5.b, 6)",
+          "  │ └─IndexRangeScan_16 3323.33 cop[tikv] table:t5, index:a(a, b) range:[-inf,6], keep order:false, stats:pseudo",
+          "  └─Selection_19(Probe) 83.00 cop[tikv]  not(isnull(test_partition.t5.id))",
+          "    └─TableRowIDScan_17 83.08 cop[tikv] table:t5 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t4 t1 join t4 t2 on t1.id = t2.id where t1.a between 1 and 4 and t2.a between 1 and 100",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3",
+          "4 4 4 4 4 4"
+        ],
+        "Plan": [
+          "HashJoin_9 3.75 root  inner join, equal:[eq(test_partition.t4.id, test_partition.t4.id)]",
+          "├─TableReader_12(Build) 3.00 root partition:p0 data:Selection_11",
+          "│ └─Selection_11 3.00 cop[tikv]  not(isnull(test_partition.t4.id))",
+          "│   └─TableRangeScan_10 3.00 cop[tikv] table:t1 range:[1,4], keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 98.90 root partition:p0,p1 data:Selection_14",
+          "  └─Selection_14 98.90 cop[tikv]  not(isnull(test_partition.t4.id))",
+          "    └─TableRangeScan_13 99.00 cop[tikv] table:t2 range:[1,100], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t6 t1 join t6 t2 on t1.id = t2.id where t1.a between 1 and 4 and t2.a between 1 and 100",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3",
+          "4 4 4 4 4 4"
+        ],
+        "Plan": [
+          "HashJoin_8 312.19 root  inner join, equal:[eq(test_partition.t6.id, test_partition.t6.id)]",
+          "├─IndexLookUp_23(Build) 249.75 root partition:p0,p1 ",
+          "│ ├─IndexRangeScan_20(Build) 250.00 cop[tikv] table:t2, index:a(a, b) range:[1,100], keep order:false, stats:pseudo",
+          "│ └─Selection_22(Probe) 249.75 cop[tikv]  not(isnull(test_partition.t6.id))",
+          "│   └─TableRowIDScan_21 250.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp_16(Probe) 249.75 root partition:p0 ",
+          "  ├─IndexRangeScan_13(Build) 250.00 cop[tikv] table:t1, index:a(a, b) range:[1,4], keep order:false, stats:pseudo",
+          "  └─Selection_15(Probe) 249.75 cop[tikv]  not(isnull(test_partition.t6.id))",
+          "    └─TableRowIDScan_14 250.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(*) from t6 join t5 on t6.b = t5.b where t6.a between 1 and 2 and t5.a between 1 and 6 and t5.b between 1 and 6",
+        "Result": [
+          "2"
+        ],
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_19 7.81 root  inner join, equal:[eq(test_partition.t6.b, test_partition.t5.b)]",
+          "  ├─IndexReader_18(Build) 6.25 root partition:all index:Selection_17",
+          "  │ └─Selection_17 6.25 cop[tikv]  ge(test_partition.t5.b, 1), le(test_partition.t5.b, 6), not(isnull(test_partition.t5.b))",
+          "  │   └─IndexRangeScan_16 250.00 cop[tikv] table:t5, index:a(a, b) range:[1,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_15(Probe) 6.25 root partition:p0 index:Selection_14",
+          "    └─Selection_14 6.25 cop[tikv]  ge(test_partition.t6.b, 1), le(test_partition.t6.b, 6), not(isnull(test_partition.t6.b))",
+          "      └─IndexRangeScan_13 250.00 cop[tikv] table:t6, index:a(a, b) range:[1,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t6,t5) */ count(*) from t6 join t5 on t6.b = t5.b where (t6.a between 1 and 2) and (t5.a between 1 and 6) and (t5.b between 1 and 6)",
+        "Result": [
+          "2"
+        ],
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_18 7.81 root  inner join, equal:[eq(test_partition.t6.b, test_partition.t5.b)]",
+          "  ├─IndexReader_17(Build) 6.25 root partition:all index:Selection_16",
+          "  │ └─Selection_16 6.25 cop[tikv]  ge(test_partition.t5.b, 1), le(test_partition.t5.b, 6), not(isnull(test_partition.t5.b))",
+          "  │   └─IndexRangeScan_15 250.00 cop[tikv] table:t5, index:a(a, b) range:[1,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_14(Probe) 6.25 root partition:p0 index:Selection_13",
+          "    └─Selection_13 6.25 cop[tikv]  ge(test_partition.t6.b, 1), le(test_partition.t6.b, 6), not(isnull(test_partition.t6.b))",
+          "      └─IndexRangeScan_12 250.00 cop[tikv] table:t6, index:a(a, b) range:[1,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN(t5,t6) */ count(*) from t6 join t5 on t6.b = t5.b where (t6.a between 1 and 2) and (t5.a between 1 and 6) and (t5.b between 1 and 6)",
+        "Result": [
+          "2"
+        ],
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_18 7.81 root  inner join, equal:[eq(test_partition.t6.b, test_partition.t5.b)]",
+          "  ├─IndexReader_17(Build) 6.25 root partition:all index:Selection_16",
+          "  │ └─Selection_16 6.25 cop[tikv]  ge(test_partition.t5.b, 1), le(test_partition.t5.b, 6), not(isnull(test_partition.t5.b))",
+          "  │   └─IndexRangeScan_15 250.00 cop[tikv] table:t5, index:a(a, b) range:[1,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_14(Probe) 6.25 root partition:p0 index:Selection_13",
+          "    └─Selection_13 6.25 cop[tikv]  ge(test_partition.t6.b, 1), le(test_partition.t6.b, 6), not(isnull(test_partition.t6.b))",
+          "      └─IndexRangeScan_12 250.00 cop[tikv] table:t6, index:a(a, b) range:[1,2], keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1863,6 +2621,916 @@
           "    └─IndexReader_25 30.00 root partition:p1 index:Selection_24",
           "      └─Selection_24 30.00 cop[tikv]  in(test_partition_1.t1.b, 6, 7, 8)",
           "        └─IndexFullScan_23 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 1 or b < 2",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 5542.21 root partition:p0 data:Selection_6",
+          "└─Selection_6 5542.21 cop[tikv]  or(lt(test_partition.t1.a, 1), lt(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5542.21 root partition:p0 index:Selection_9",
+          "└─Selection_9 5542.21 cop[tikv]  or(lt(test_partition_1.t1.a, 1), lt(test_partition_1.t1.b, 2))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where a < 1 or b < 2",
+        "Result": [
+          "1"
+        ],
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:count(Column#7)->Column#5",
+          "└─TableReader_21 1.00 root partition:p0 data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "    └─Selection_19 5542.21 cop[tikv]  or(lt(test_partition.t1.a, 1), lt(test_partition.t1.b, 2))",
+          "      └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "StreamAgg_27 1.00 root  funcs:count(Column#10)->Column#5",
+          "└─IndexReader_28 1.00 root partition:p0 index:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#10",
+          "    └─Selection_26 5542.21 cop[tikv]  or(lt(test_partition_1.t1.a, 1), lt(test_partition_1.t1.b, 2))",
+          "      └─IndexFullScan_25 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 1 and b < 2",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 1104.45 root partition:dual data:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  lt(test_partition.t1.a, 1), lt(test_partition.t1.b, 2)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1104.45 root partition:dual index:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  lt(test_partition_1.t1.b, 2)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 3 or b > 4",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 5548.89 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 5548.89 cop[tikv]  or(lt(test_partition.t1.a, 3), gt(test_partition.t1.b, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5548.89 root partition:p0,p1 index:Selection_9",
+          "└─Selection_9 5548.89 cop[tikv]  or(lt(test_partition_1.t1.a, 3), gt(test_partition_1.t1.b, 4))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and b > 4",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 1107.78 root partition:dual data:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  gt(test_partition.t1.b, 4), lt(test_partition.t1.a, 3)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1107.78 root partition:dual index:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  gt(test_partition_1.t1.b, 4)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and b >= 3",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 1107.78 root partition:dual data:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  ge(test_partition.t1.b, 3), lt(test_partition.t1.a, 3)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1107.78 root partition:dual index:Selection_6",
+          "└─Selection_6 1107.78 cop[tikv]  ge(test_partition_1.t1.b, 3)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a < 3 and (b >= 1 and b <= 3)",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 83.08 root partition:p0 data:Selection_6",
+          "└─Selection_6 83.08 cop[tikv]  ge(test_partition.t1.b, 1), le(test_partition.t1.b, 3), lt(test_partition.t1.a, 3)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 83.08 root partition:p0 index:Selection_6",
+          "└─Selection_6 83.08 cop[tikv]  ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 3)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 or b <= 3",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3"
+        ],
+        "Plan": [
+          "TableReader_7 5542.21 root partition:p0 data:Selection_6",
+          "└─Selection_6 5542.21 cop[tikv]  or(le(test_partition.t1.a, 3), le(test_partition.t1.b, 3))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5542.21 root partition:p0 index:Selection_9",
+          "└─Selection_9 5542.21 cop[tikv]  or(le(test_partition_1.t1.a, 3), le(test_partition_1.t1.b, 3))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (a<=1 and b<=1) or (a >=6 and b>=6)",
+        "Result": [
+          "1 1 1",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 2092.85 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 2092.85 cop[tikv]  or(and(le(test_partition.t1.a, 1), le(test_partition.t1.b, 1)), and(ge(test_partition.t1.a, 6), ge(test_partition.t1.b, 6)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 5325.33 root partition:p0,p1 index:Selection_6",
+          "└─Selection_6 5325.33 cop[tikv]  or(and(le(test_partition_1.t1.a, 1), le(test_partition_1.t1.b, 1)), and(ge(test_partition_1.t1.a, 6), ge(test_partition_1.t1.b, 6)))",
+          "  └─IndexRangeScan_5 6656.67 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1], [6,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 100 and b <= 100",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 1104.45 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition.t1.a, 100), le(test_partition.t1.b, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1104.45 root partition:p0,p1 index:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition_1.t1.b, 100)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,100], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a <= 3 and (t1.b >= 3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7",
+        "Result": null,
+        "Plan": [
+          "HashJoin_9 34.62 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
+          "├─TableReader_12(Build) 27.69 root partition:p0 data:Selection_11",
+          "│ └─Selection_11 27.69 cop[tikv]  ge(test_partition.t1.b, 3), ge(test_partition.t1.id, 7), le(test_partition.t1.a, 3), le(test_partition.t1.b, 5), not(isnull(test_partition.t1.id))",
+          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 27.78 root partition:p1 data:Selection_14",
+          "  └─Selection_14 27.78 cop[tikv]  ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 7), ge(test_partition.t2.id, 7), le(test_partition.t2.a, 8), not(isnull(test_partition.t2.id))",
+          "    └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "HashJoin_9 34.62 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
+          "├─IndexReader_12(Build) 27.69 root partition:p0 index:Selection_11",
+          "│ └─Selection_11 27.69 cop[tikv]  ge(test_partition_1.t1.b, 3), ge(test_partition_1.t1.id, 7), le(test_partition_1.t1.b, 5), not(isnull(test_partition_1.t1.id))",
+          "│   └─IndexRangeScan_10 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo",
+          "└─IndexReader_15(Probe) 27.78 root partition:p1 index:Selection_14",
+          "  └─Selection_14 27.78 cop[tikv]  ge(test_partition_1.t2.b, 7), ge(test_partition_1.t2.id, 7), not(isnull(test_partition_1.t2.id))",
+          "    └─IndexRangeScan_13 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 left join t2 on true where (t1.a <=1 or t1.a <= 3 and (t1.b >=3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7 order by t1.id,t1.a",
+        "Result": [
+          "1 1 1 8 8 8",
+          "1 1 1 7 7 7",
+          "3 3 3 8 8 8",
+          "3 3 3 7 7 7"
+        ],
+        "Plan": [
+          "Sort_7 675761.06 root  test_partition.t1.id, test_partition.t1.a",
+          "└─HashJoin_10 675761.06 root  CARTESIAN inner join",
+          "  ├─TableReader_17(Build) 200.00 root partition:p1 data:Selection_16",
+          "  │ └─Selection_16 200.00 cop[tikv]  1, ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 7), ge(test_partition.t2.id, 7), le(test_partition.t2.a, 8)",
+          "  │   └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_14(Probe) 3378.81 root partition:p0 data:Selection_13",
+          "    └─Selection_13 3378.81 cop[tikv]  1, or(le(test_partition.t1.a, 1), and(le(test_partition.t1.a, 3), and(ge(test_partition.t1.b, 3), le(test_partition.t1.b, 5))))",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Sort_7 224577.93 root  test_partition_1.t1.id, test_partition_1.t1.a",
+          "└─HashJoin_10 224577.93 root  CARTESIAN inner join",
+          "  ├─IndexReader_17(Build) 200.00 root partition:p1 index:Selection_16",
+          "  │ └─Selection_16 200.00 cop[tikv]  ge(test_partition_1.t2.b, 7), ge(test_partition_1.t2.id, 7)",
+          "  │   └─IndexRangeScan_15 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo",
+          "  └─IndexReader_14(Probe) 1122.89 root partition:p0 index:Selection_13",
+          "    └─Selection_13 1122.89 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(le(test_partition_1.t1.a, 3), and(ge(test_partition_1.t1.b, 3), le(test_partition_1.t1.b, 5))))",
+          "      └─IndexRangeScan_12 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  le(test_partition.t1.a, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_6 3323.33 root partition:p0 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where b <= 1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  le(test_partition.t1.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 3323.33 root partition:p0 index:Selection_9",
+          "└─Selection_9 3323.33 cop[tikv]  le(test_partition_1.t1.b, 1)",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or b <= 2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 5542.21 root partition:p0 data:Selection_6",
+          "└─Selection_6 5542.21 cop[tikv]  or(le(test_partition.t1.a, 1), le(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5542.21 root partition:p0 index:Selection_9",
+          "└─Selection_9 5542.21 cop[tikv]  or(le(test_partition_1.t1.a, 1), le(test_partition_1.t1.b, 2))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a <= 2 and b <= 2) or (a <= 5 or b <= 5)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5"
+        ],
+        "Plan": [
+          "TableReader_7 6034.55 root partition:p0 data:Selection_6",
+          "└─Selection_6 6034.55 cop[tikv]  or(or(le(test_partition.t1.a, 1), and(le(test_partition.t1.a, 2), le(test_partition.t1.b, 2))), or(le(test_partition.t1.a, 5), le(test_partition.t1.b, 5)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 6034.55 root partition:p0 index:Selection_9",
+          "└─Selection_9 6034.55 cop[tikv]  or(or(le(test_partition_1.t1.a, 1), and(le(test_partition_1.t1.a, 2), le(test_partition_1.t1.b, 2))), or(le(test_partition_1.t1.a, 5), le(test_partition_1.t1.b, 5)))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a is null and b >= 10)",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 3325.56 root partition:p0 data:Selection_6",
+          "└─Selection_6 3325.56 cop[tikv]  or(le(test_partition.t1.a, 1), and(isnull(test_partition.t1.a), ge(test_partition.t1.b, 10)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 200.00 root partition:p0 index:Selection_6",
+          "└─Selection_6 200.00 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(isnull(test_partition_1.t1.a), ge(test_partition_1.t1.b, 10)))",
+          "  └─IndexRangeScan_5 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[NULL,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 or (a <= 10 and b is null)",
+        "Result": [
+          "1 1 1",
+          "<nil> 10 <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 3325.55 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 3325.55 cop[tikv]  or(le(test_partition.t1.a, 1), and(le(test_partition.t1.a, 10), isnull(test_partition.t1.b)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 2658.67 root partition:p0,p1 index:Selection_6",
+          "└─Selection_6 2658.67 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(le(test_partition_1.t1.a, 10), isnull(test_partition_1.t1.b)))",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,10], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 8 or b <= 9",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9"
+        ],
+        "Plan": [
+          "TableReader_7 5542.21 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 5542.21 cop[tikv]  or(le(test_partition.t1.a, 8), le(test_partition.t1.b, 9))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5542.21 root partition:p0,p1 index:Selection_9",
+          "└─Selection_9 5542.21 cop[tikv]  or(le(test_partition_1.t1.a, 8), le(test_partition_1.t1.b, 9))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 and false",
+        "Result": null,
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ],
+        "IndexPlan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 and true",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  le(test_partition.t1.a, 3)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_6 3323.33 root partition:p0 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 3 or false",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:p0 data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(le(test_partition.t1.a, 3), 0)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_6 3323.33 root partition:p0 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 3 or true order by id,a",
+        "Result": [
+          "<nil> 10 <nil>",
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "Sort_5 10000.00 root  test_partition.t1.id, test_partition.t1.a",
+          "└─TableReader_10 10000.00 root partition:all data:Selection_9",
+          "  └─Selection_9 10000.00 cop[tikv]  or(eq(test_partition.t1.a, 3), 1)",
+          "    └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Sort_5 10000.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
+          "└─IndexReader_9 10000.00 root partition:all index:IndexFullScan_8",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 3 or (b >= 100 and b <= 200)",
+        "Result": [
+          "3 3 3"
+        ],
+        "Plan": [
+          "TableReader_7 259.75 root partition:p0 data:Selection_6",
+          "└─Selection_6 259.75 cop[tikv]  or(eq(test_partition.t1.a, 3), and(ge(test_partition.t1.b, 100), le(test_partition.t1.b, 200)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 259.75 root partition:p0 index:Selection_9",
+          "└─Selection_9 259.75 cop[tikv]  or(eq(test_partition_1.t1.a, 3), and(ge(test_partition_1.t1.b, 100), le(test_partition_1.t1.b, 200)))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or b >= 1 and b <= 2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 259.75 root partition:p0 data:Selection_6",
+          "└─Selection_6 259.75 cop[tikv]  or(eq(test_partition.t1.a, 100), and(ge(test_partition.t1.b, 1), le(test_partition.t1.b, 2)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 259.75 root partition:p0 index:Selection_9",
+          "└─Selection_9 259.75 cop[tikv]  or(eq(test_partition_1.t1.a, 100), and(ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 2)))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or b >= 1 and b <= 6",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 259.75 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 259.75 cop[tikv]  or(eq(test_partition.t1.a, 100), and(ge(test_partition.t1.b, 1), le(test_partition.t1.b, 6)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 259.75 root partition:p0,p1 index:Selection_9",
+          "└─Selection_9 259.75 cop[tikv]  or(eq(test_partition_1.t1.a, 100), and(ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 6)))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 100 or (b >= 100 and b <= 200)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 259.75 root partition:dual data:Selection_6",
+          "└─Selection_6 259.75 cop[tikv]  or(eq(test_partition.t1.a, 100), and(ge(test_partition.t1.b, 100), le(test_partition.t1.b, 200)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 259.75 root partition:dual index:Selection_9",
+          "└─Selection_9 259.75 cop[tikv]  or(eq(test_partition_1.t1.a, 100), and(ge(test_partition_1.t1.b, 100), le(test_partition_1.t1.b, 200)))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (a >= 1 and a <= 6) or (b >= 1 and b <= 2) or (a<=3 and b <=3)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 1543.67 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1543.67 cop[tikv]  or(and(ge(test_partition.t1.a, 1), le(test_partition.t1.a, 6)), or(and(ge(test_partition.t1.b, 1), le(test_partition.t1.b, 2)), and(le(test_partition.t1.a, 3), le(test_partition.t1.b, 3))))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 1543.67 root partition:p0,p1 index:Selection_9",
+          "└─Selection_9 1543.67 cop[tikv]  or(and(ge(test_partition_1.t1.a, 1), le(test_partition_1.t1.a, 6)), or(and(ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 2)), and(le(test_partition_1.t1.a, 3), le(test_partition_1.t1.b, 3))))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a >= 1 and a <= 6",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6"
+        ],
+        "Plan": [
+          "TableReader_7 250.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 250.00 cop[tikv]  ge(test_partition.t1.a, 1), le(test_partition.t1.a, 6)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_6 250.00 root partition:p0,p1 index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,6], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (a >= 1 and a <= 6) or (a>=3 and b >=3)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5",
+          "6 6 6",
+          "7 7 7",
+          "8 8 8",
+          "9 9 9",
+          "10 10 10"
+        ],
+        "Plan": [
+          "TableReader_7 1333.33 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 1333.33 cop[tikv]  or(and(ge(test_partition.t1.a, 1), le(test_partition.t1.a, 6)), and(ge(test_partition.t1.a, 3), ge(test_partition.t1.b, 3)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 2666.67 root partition:p0,p1 index:Selection_6",
+          "└─Selection_6 2666.67 cop[tikv]  or(and(ge(test_partition_1.t1.a, 1), le(test_partition_1.t1.a, 6)), and(ge(test_partition_1.t1.a, 3), ge(test_partition_1.t1.b, 3)))",
+          "  └─IndexRangeScan_5 3333.33 cop[tikv] table:t1, index:a(a, b, id) range:[1,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
+        "Result": null,
+        "Plan": [
+          "TableDual_5 8000.00 root  rows:0"
+        ],
+        "IndexPlan": [
+          "TableDual_5 8000.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 1 and (b>=6 or a>=6)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 1846.30 root partition:dual data:Selection_6",
+          "└─Selection_6 1846.30 cop[tikv]  le(test_partition.t1.a, 1), or(ge(test_partition.t1.b, 6), ge(test_partition.t1.a, 6))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1846.30 root partition:dual index:Selection_6",
+          "└─Selection_6 1846.30 cop[tikv]  or(ge(test_partition_1.t1.b, 6), ge(test_partition_1.t1.a, 6))",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 100 and (b<=200 or a<=200)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.00 root partition:dual data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.a, 100), or(le(test_partition.t1.b, 200), 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_6 100.00 root partition:dual index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 100.00 cop[tikv] table:t1, index:a(a, b, id) range:[100 NULL,100 +inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a <= 5 or (a+b=3)",
+        "Result": [
+          "1 1 1",
+          "2 2 2",
+          "3 3 3",
+          "4 4 4",
+          "5 5 5"
+        ],
+        "Plan": [
+          "TableReader_7 8664.67 root partition:all data:Selection_6",
+          "└─Selection_6 8664.67 cop[tikv]  or(le(test_partition.t1.a, 5), eq(plus(test_partition.t1.a, test_partition.t1.b), 3))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 8664.67 root partition:all index:Selection_9",
+          "└─Selection_9 8664.67 cop[tikv]  or(le(test_partition_1.t1.a, 5), eq(plus(test_partition_1.t1.a, test_partition_1.t1.b), 3))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id <= 1 or id<=2",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "TableReader_7 3323.33 root partition:all data:Selection_6",
+          "└─Selection_6 3323.33 cop[tikv]  or(le(test_partition.t1.id, 1), le(test_partition.t1.id, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 3323.33 root partition:all index:Selection_9",
+          "└─Selection_9 3323.33 cop[tikv]  or(le(test_partition_1.t1.id, 1), le(test_partition_1.t1.id, 2))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id <= 1 and a<=1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 1104.45 root partition:p0 data:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition.t1.a, 1), le(test_partition.t1.id, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_7 1104.45 root partition:p0 index:Selection_6",
+          "└─Selection_6 1104.45 cop[tikv]  le(test_partition_1.t1.id, 1)",
+          "  └─IndexRangeScan_5 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 partition(p1) where a <= 1 or b <= 2",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 5542.21 root partition:dual data:Selection_6",
+          "└─Selection_6 5542.21 cop[tikv]  or(le(test_partition.t1.a, 1), le(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "IndexReader_10 5542.21 root partition:dual index:Selection_9",
+          "└─Selection_9 5542.21 cop[tikv]  or(le(test_partition_1.t1.a, 1), le(test_partition_1.t1.b, 2))",
+          "  └─IndexFullScan_8 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and (t2.a <= 6 and t2.b <= 6)",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3"
+        ],
+        "Plan": [
+          "Projection_9 1379.19 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
+          "└─HashJoin_11 1379.19 root  inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id)]",
+          "  ├─TableReader_14(Build) 1103.35 root partition:p0,p1 data:Selection_13",
+          "  │ └─Selection_13 1103.35 cop[tikv]  le(test_partition.t2.a, 6), le(test_partition.t2.b, 6), not(isnull(test_partition.t2.id))",
+          "  │   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3320.01 root partition:p0 data:Selection_16",
+          "    └─Selection_16 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Projection_9 1379.19 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b, test_partition_1.t2.id, test_partition_1.t2.a, test_partition_1.t2.b",
+          "└─HashJoin_11 1379.19 root  inner join, equal:[eq(test_partition_1.t2.id, test_partition_1.t1.id)]",
+          "  ├─IndexReader_14(Build) 1103.35 root partition:p0,p1 index:Selection_13",
+          "  │ └─Selection_13 1103.35 cop[tikv]  le(test_partition_1.t2.b, 6), not(isnull(test_partition_1.t2.id))",
+          "  │   └─IndexRangeScan_12 3323.33 cop[tikv] table:t2, index:a(a, b, id) range:[-inf,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_17(Probe) 3320.01 root partition:p0 index:Selection_16",
+          "    └─Selection_16 3320.01 cop[tikv]  not(isnull(test_partition_1.t1.id))",
+          "      └─IndexRangeScan_15 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t1 as t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and (t2.a <= 6 and t2.b <= 6)",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3"
+        ],
+        "Plan": [
+          "Projection_9 1379.19 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t1.id, test_partition.t1.a, test_partition.t1.b",
+          "└─HashJoin_11 1379.19 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t1.id)]",
+          "  ├─TableReader_14(Build) 1103.35 root partition:p0,p1 data:Selection_13",
+          "  │ └─Selection_13 1103.35 cop[tikv]  le(test_partition.t1.a, 6), le(test_partition.t1.b, 6), not(isnull(test_partition.t1.id))",
+          "  │   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_17(Probe) 3320.01 root partition:p0 data:Selection_16",
+          "    └─Selection_16 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Projection_9 1379.19 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b, test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b",
+          "└─HashJoin_11 1379.19 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t1.id)]",
+          "  ├─IndexReader_14(Build) 1103.35 root partition:p0,p1 index:Selection_13",
+          "  │ └─Selection_13 1103.35 cop[tikv]  le(test_partition_1.t1.b, 6), not(isnull(test_partition_1.t1.id))",
+          "  │   └─IndexRangeScan_12 3323.33 cop[tikv] table:t2, index:a(a, b, id) range:[-inf,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_17(Probe) 3320.01 root partition:p0 index:Selection_16",
+          "    └─Selection_16 3320.01 cop[tikv]  not(isnull(test_partition_1.t1.id))",
+          "      └─IndexRangeScan_15 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a in (select b from t2 where a BETWEEN 1 AND 2) order by a",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "Sort_12 249.75 root  test_partition.t1.a",
+          "└─HashJoin_17 249.75 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.a)]",
+          "  ├─HashAgg_23(Build) 199.80 root  group by:test_partition.t2.b, funcs:firstrow(test_partition.t2.b)->test_partition.t2.b",
+          "  │ └─TableReader_24 199.80 root partition:p0 data:HashAgg_18",
+          "  │   └─HashAgg_18 199.80 cop[tikv]  group by:test_partition.t2.b, ",
+          "  │     └─Selection_22 249.75 cop[tikv]  ge(test_partition.t2.a, 1), le(test_partition.t2.a, 2), not(isnull(test_partition.t2.b))",
+          "  │       └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_30(Probe) 9990.00 root partition:p0,p1 data:Selection_29",
+          "    └─Selection_29 9990.00 cop[tikv]  not(isnull(test_partition.t1.a))",
+          "      └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Sort_12 249.75 root  test_partition_1.t1.a",
+          "└─IndexJoin_19 249.75 root  inner join, inner:IndexReader_18, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.a)",
+          "  ├─HashAgg_29(Build) 199.80 root  group by:test_partition_1.t2.b, funcs:firstrow(test_partition_1.t2.b)->test_partition_1.t2.b",
+          "  │ └─IndexReader_30 199.80 root partition:p0 index:HashAgg_24",
+          "  │   └─HashAgg_24 199.80 cop[tikv]  group by:test_partition_1.t2.b, ",
+          "  │     └─Selection_28 249.75 cop[tikv]  not(isnull(test_partition_1.t2.b))",
+          "  │       └─IndexRangeScan_27 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[1,2], keep order:false, stats:pseudo",
+          "  └─IndexReader_18(Probe) 1.25 root partition:p0,p1 index:Selection_17",
+          "    └─Selection_17 1.25 cop[tikv]  not(isnull(test_partition_1.t1.a))",
+          "      └─IndexRangeScan_16 1.25 cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.a, test_partition_1.t2.b)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.a in (select b from t1 where a BETWEEN 1 AND 2) order by a",
+        "Result": [
+          "1 1 1",
+          "2 2 2"
+        ],
+        "Plan": [
+          "Sort_12 249.75 root  test_partition.t1.a",
+          "└─HashJoin_17 249.75 root  inner join, equal:[eq(test_partition.t1.b, test_partition.t1.a)]",
+          "  ├─HashAgg_23(Build) 199.80 root  group by:test_partition.t1.b, funcs:firstrow(test_partition.t1.b)->test_partition.t1.b",
+          "  │ └─TableReader_24 199.80 root partition:p0 data:HashAgg_18",
+          "  │   └─HashAgg_18 199.80 cop[tikv]  group by:test_partition.t1.b, ",
+          "  │     └─Selection_22 249.75 cop[tikv]  ge(test_partition.t1.a, 1), le(test_partition.t1.a, 2), not(isnull(test_partition.t1.b))",
+          "  │       └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader_30(Probe) 9990.00 root partition:p0,p1 data:Selection_29",
+          "    └─Selection_29 9990.00 cop[tikv]  not(isnull(test_partition.t1.a))",
+          "      └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "Sort_12 249.75 root  test_partition_1.t1.a",
+          "└─IndexJoin_19 249.75 root  inner join, inner:IndexReader_18, outer key:test_partition_1.t1.b, inner key:test_partition_1.t1.a, equal cond:eq(test_partition_1.t1.b, test_partition_1.t1.a)",
+          "  ├─HashAgg_29(Build) 199.80 root  group by:test_partition_1.t1.b, funcs:firstrow(test_partition_1.t1.b)->test_partition_1.t1.b",
+          "  │ └─IndexReader_30 199.80 root partition:p0 index:HashAgg_24",
+          "  │   └─HashAgg_24 199.80 cop[tikv]  group by:test_partition_1.t1.b, ",
+          "  │     └─Selection_28 249.75 cop[tikv]  not(isnull(test_partition_1.t1.b))",
+          "  │       └─IndexRangeScan_27 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,2], keep order:false, stats:pseudo",
+          "  └─IndexReader_18(Probe) 1.25 root partition:p0,p1 index:Selection_17",
+          "    └─Selection_17 1.25 cop[tikv]  not(isnull(test_partition_1.t1.a))",
+          "      └─IndexRangeScan_16 1.25 cop[tikv] table:t1, index:a(a, b, id) range: decided by [eq(test_partition_1.t1.a, test_partition_1.t1.b)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 left join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and t2.a BETWEEN 6 AND 8",
+        "Result": null,
+        "Plan": [
+          "HashJoin_7 312.19 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
+          "├─TableReader_14(Build) 249.75 root partition:p1 data:Selection_13",
+          "│ └─Selection_13 249.75 cop[tikv]  ge(test_partition.t2.a, 6), le(test_partition.t2.a, 8), not(isnull(test_partition.t2.id))",
+          "│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3320.01 root partition:p0 data:Selection_10",
+          "  └─Selection_10 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "HashJoin_7 312.19 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
+          "├─IndexReader_14(Build) 249.75 root partition:p1 index:Selection_13",
+          "│ └─Selection_13 249.75 cop[tikv]  not(isnull(test_partition_1.t2.id))",
+          "│   └─IndexRangeScan_12 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo",
+          "└─IndexReader_11(Probe) 3320.01 root partition:p0 index:Selection_10",
+          "  └─Selection_10 3320.01 cop[tikv]  not(isnull(test_partition_1.t1.id))",
+          "    └─IndexRangeScan_9 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 right join t2 on t1.id = t2.id where (t1.a<=1 or t1.a <= 3) and t2.a BETWEEN 1 AND 3",
+        "Result": [
+          "1 1 1 1 1 1",
+          "2 2 2 2 2 2",
+          "3 3 3 3 3 3"
+        ],
+        "Plan": [
+          "HashJoin_7 312.19 root  inner join, equal:[eq(test_partition.t1.id, test_partition.t2.id)]",
+          "├─TableReader_14(Build) 249.75 root partition:p0 data:Selection_13",
+          "│ └─Selection_13 249.75 cop[tikv]  ge(test_partition.t2.a, 1), le(test_partition.t2.a, 3), not(isnull(test_partition.t2.id))",
+          "│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 3320.01 root partition:p0 data:Selection_10",
+          "  └─Selection_10 3320.01 cop[tikv]  not(isnull(test_partition.t1.id)), or(le(test_partition.t1.a, 1), le(test_partition.t1.a, 3))",
+          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "HashJoin_7 312.19 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
+          "├─IndexReader_14(Build) 249.75 root partition:p0 index:Selection_13",
+          "│ └─Selection_13 249.75 cop[tikv]  not(isnull(test_partition_1.t2.id))",
+          "│   └─IndexRangeScan_12 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[1,3], keep order:false, stats:pseudo",
+          "└─IndexReader_11(Probe) 3320.01 root partition:p0 index:Selection_10",
+          "  └─Selection_10 3320.01 cop[tikv]  not(isnull(test_partition_1.t1.id))",
+          "    └─IndexRangeScan_9 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 join t2 on true where t1.a=5 and t2.a BETWEEN 6 AND 8 and t2.b >= 6",
+        "Result": [
+          "5 5 5 6 6 6",
+          "5 5 5 7 7 7",
+          "5 5 5 8 8 8"
+        ],
+        "Plan": [
+          "HashJoin_9 2000.00 root  CARTESIAN inner join",
+          "├─TableReader_12(Build) 10.00 root partition:p0 data:Selection_11",
+          "│ └─Selection_11 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
+          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 200.00 root partition:p1 data:Selection_14",
+          "  └─Selection_14 200.00 cop[tikv]  1, ge(test_partition.t2.a, 6), ge(test_partition.t2.b, 6), le(test_partition.t2.a, 8)",
+          "    └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "HashJoin_9 20000.00 root  CARTESIAN inner join",
+          "├─IndexReader_11(Build) 100.00 root partition:p0 index:IndexRangeScan_10",
+          "│ └─IndexRangeScan_10 100.00 cop[tikv] table:t1, index:a(a, b, id) range:[5 NULL,5 +inf], keep order:false, stats:pseudo",
+          "└─IndexReader_14(Probe) 200.00 root partition:p1 index:Selection_13",
+          "  └─Selection_13 200.00 cop[tikv]  ge(test_partition_1.t2.b, 6)",
+          "    └─IndexRangeScan_12 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(*) from t1 join t2 on t1.b = t2.b where t1.a BETWEEN 1 AND 2 and t2.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6",
+        "Result": [
+          "2"
+        ],
+        "Plan": [
+          "StreamAgg_10 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_19 7.81 root  inner join, equal:[eq(test_partition.t1.b, test_partition.t2.b)]",
+          "  ├─TableReader_18(Build) 6.25 root partition:p0,p1 data:Selection_17",
+          "  │ └─Selection_17 6.25 cop[tikv]  ge(test_partition.t2.a, 1), ge(test_partition.t2.b, 1), le(test_partition.t2.a, 6), le(test_partition.t2.b, 6), not(isnull(test_partition.t2.b))",
+          "  │   └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_15(Probe) 6.25 root partition:p0 data:Selection_14",
+          "    └─Selection_14 6.25 cop[tikv]  ge(test_partition.t1.a, 1), ge(test_partition.t1.b, 1), le(test_partition.t1.a, 2), le(test_partition.t1.b, 6), not(isnull(test_partition.t1.b))",
+          "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "StreamAgg_10 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_19 7.81 root  inner join, equal:[eq(test_partition_1.t1.b, test_partition_1.t2.b)]",
+          "  ├─IndexReader_18(Build) 6.25 root partition:p0,p1 index:Selection_17",
+          "  │ └─Selection_17 6.25 cop[tikv]  ge(test_partition_1.t2.b, 1), le(test_partition_1.t2.b, 6), not(isnull(test_partition_1.t2.b))",
+          "  │   └─IndexRangeScan_16 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[1,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_15(Probe) 6.25 root partition:p0 index:Selection_14",
+          "    └─Selection_14 6.25 cop[tikv]  ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 6), not(isnull(test_partition_1.t1.b))",
+          "      └─IndexRangeScan_13 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t2,t1) */      count(*) from t2 join t1 on t2.b = t1.b where t2.a BETWEEN 1 AND 2 and t1.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6",
+        "Result": [
+          "2"
+        ],
+        "Plan": [
+          "StreamAgg_9 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_18 7.81 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
+          "  ├─TableReader_17(Build) 6.25 root partition:p0,p1 data:Selection_16",
+          "  │ └─Selection_16 6.25 cop[tikv]  ge(test_partition.t1.a, 1), ge(test_partition.t1.b, 1), le(test_partition.t1.a, 6), le(test_partition.t1.b, 6), not(isnull(test_partition.t1.b))",
+          "  │   └─TableFullScan_15 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader_14(Probe) 6.25 root partition:p0 data:Selection_13",
+          "    └─Selection_13 6.25 cop[tikv]  ge(test_partition.t2.a, 1), ge(test_partition.t2.b, 1), le(test_partition.t2.a, 2), le(test_partition.t2.b, 6), not(isnull(test_partition.t2.b))",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "IndexPlan": [
+          "StreamAgg_9 1.00 root  funcs:count(1)->Column#9",
+          "└─HashJoin_18 7.81 root  inner join, equal:[eq(test_partition_1.t2.b, test_partition_1.t1.b)]",
+          "  ├─IndexReader_17(Build) 6.25 root partition:p0,p1 index:Selection_16",
+          "  │ └─Selection_16 6.25 cop[tikv]  ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 6), not(isnull(test_partition_1.t1.b))",
+          "  │   └─IndexRangeScan_15 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,6], keep order:false, stats:pseudo",
+          "  └─IndexReader_14(Probe) 6.25 root partition:p0 index:Selection_13",
+          "    └─Selection_13 6.25 cop[tikv]  ge(test_partition_1.t2.b, 1), le(test_partition_1.t2.b, 6), not(isnull(test_partition_1.t2.b))",
+          "      └─IndexRangeScan_12 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[1,2], keep order:false, stats:pseudo"
         ]
       }
     ]

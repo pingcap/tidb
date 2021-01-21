@@ -376,7 +376,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			if r.HighVal[0].Kind() == types.KindMaxValue {
 				r.HighVal[0] = types.GetMaxValue(colPrune.ExprCol.GetType())
 			}
-			locations, err := colPrune.LocateRanges(sc, r.LowVal[0], r.HighVal[0])
+			locations, err := colPrune.LocateRanges(sc, r)
 			if err != nil {
 				return nil, false, nil
 			}
@@ -481,11 +481,11 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			if err != nil {
 				return nil, err
 			}
-			if !r.LowExclude {
+			if r.LowExclude {
 				lvalue++
 			}
 			if !r.HighExclude {
-				rvalue--
+				rvalue++
 			}
 			partitionIdxes := l.listPrune.LocateRange(lvalue, isLNull, rvalue, isRNull)
 			for _, partitionIdx := range partitionIdxes {
