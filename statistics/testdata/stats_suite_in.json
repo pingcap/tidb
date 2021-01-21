@@ -9,6 +9,7 @@
     "name": "TestStatsVer2",
     "cases": [
       "show stats_topn",
+      "show stats_buckets",
       "explain select * from tint where a=1",
       "explain select * from tint where a=4",
       "explain select * from tint where a=8",

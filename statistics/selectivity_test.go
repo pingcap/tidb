@@ -579,34 +579,34 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	testKit.MustExec("drop table if exists tint")
 	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
 	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tint")
+	testKit.MustExec("analyze table tint with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists tdouble")
 	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
 	testKit.MustExec("insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdouble")
+	testKit.MustExec("analyze table tdouble with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists tdecimal")
 	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
 	testKit.MustExec("insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdecimal")
+	testKit.MustExec("analyze table tdecimal with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists tstring")
 	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
 	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
-	testKit.MustExec("analyze table tstring")
+	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
 
 	// test with clustered index
 	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
 	testKit.MustExec("drop table if exists ct1")
 	testKit.MustExec("create table ct1 (a int, pk varchar(10))")
 	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
-	testKit.MustExec("analyze table ct1")
+	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
 
 	testKit.MustExec("drop table if exists ct2")
 	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b))")
 	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table ct2")
+	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
 
 	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
 	for _, r := range rows {

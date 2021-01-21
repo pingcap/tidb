@@ -141,14 +141,14 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		return nil
 	}
 	colNameToType := make(map[string]byte, len(statsTbl.Columns))
-	for _, col := range statsTbl.Columns {
+	for _, col := range stableColsStats(statsTbl.Columns) {
 		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
 	}
-	for _, idx := range statsTbl.Indices {
+	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
 		for i := 0; i < len(idx.Info.Columns); i++ {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
