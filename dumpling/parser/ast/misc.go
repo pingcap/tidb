@@ -648,6 +648,7 @@ const (
 	FlushTiDBPlugin
 	FlushHosts
 	FlushLogs
+	FlushClientErrorsSummary
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -729,6 +730,8 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 			logType = "SLOW LOGS"
 		}
 		ctx.WriteKeyWord(logType)
+	case FlushClientErrorsSummary:
+		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
