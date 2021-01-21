@@ -173,7 +173,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)
 }
 
