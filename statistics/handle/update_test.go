@@ -44,6 +44,26 @@ import (
 )
 
 var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testSerialStatsSuite{})
+
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
 type testStatsSuite struct {
 	store kv.Storage
@@ -513,7 +533,7 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	})
 }
 
-func (s *testStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -582,6 +602,7 @@ func (s *testStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
 	for _, col := range statsTbl2.Columns {
 		c.Assert(col.StatsVer, Equals, int64(2))
 	}
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
