@@ -158,7 +158,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	ctx := context.Background()
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
-	r :=tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
+	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 
 	// 1.1 minusFUU, uint64(a) >= uint64(b)
@@ -186,7 +186,6 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	// 1.3 minusFUU, normal case
 	tk.MustQuery("SELECT CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned);").Check(testkit.Rows("-9223372036854775808"))
 
-
 	// 2.1 minusSS, a < 0 && -b > math.MinInt64 - a
 	rs, err = tk.Exec("SELECT -9223372036854775808 - (1);")
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
@@ -202,7 +201,6 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - -9223372036854775808)'")
 	c.Assert(rs.Close(), IsNil)
-
 
 	// 2.3 minusSS, a > 0 && -b > math.MaxInt64 - a
 	rs, err = tk.Exec("SELECT 1 - (-9223372036854775807);")
@@ -284,7 +282,6 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 + 9223372036854775808)'")
 	c.Assert(rs.Close(), IsNil)
-
 
 	tk.MustQuery("SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
 
