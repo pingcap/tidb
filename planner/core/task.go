@@ -1109,7 +1109,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			return false
 		}
-		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc, false)
+		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
 			return false
 		}
@@ -1137,7 +1137,7 @@ type AggInfo struct {
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
@@ -1231,15 +1231,11 @@ func BuildFinalModeAggregation(
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
 			if aggregation.NeedCount(finalAggFunc.Name) {
-				if sctx.GetSessionVars().AllowMPPExecution && finalAggFunc.Name == ast.AggFuncCount && partialIsCop {
-					// TODO: only work when the count() can be pushed down in MPP.
-					// Note: MPP mode does not run avg() directly, so here should not process it.
-					partial.Schema.Append(&expression.Column{
-						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-						RetType:  original.Schema.Columns[i].GetType(),
-					})
-					args = append(args, partial.Schema.Columns[partialCursor])
-					partialCursor++
+				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
+					// For MPP Task, the final count() is changed to sum().
+					// Note: MPP mode does not run avg() directly, instead, avg() -> if(count()==0, null, sum(count()/sum()),
+					// so we do not process it here.
+					finalAggFunc.Name = ast.AggFuncSum
 				} else {
 					ft := types.NewFieldType(mysql.TypeLonglong)
 					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
@@ -1304,7 +1300,7 @@ func BuildFinalModeAggregation(
 // 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
 // 2.replace avg() with if(count(arg)=0, null, sum(arg)/count(arg)) and reuse the original schema of the final aggregation.
 // If there is no avg, nothing is changed and return nil.
-func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *PhysicalProjection {
+func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
 	newSchema.Keys = p.schema.Keys
 	newSchema.UniqueKeys = p.schema.UniqueKeys
@@ -1368,7 +1364,7 @@ func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *Phy
 		Exprs:                exprs,
 		CalculateNoDelay:     false,
 		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), prop)
+	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
 	proj.SetSchema(p.schema)
 
 	p.AggFuncs = newAggFuncs
@@ -1377,7 +1373,7 @@ func (p *basePhysicalAgg) convertAvgForMPP(prop *property.PhysicalProperty) *Phy
 	return proj
 }
 
-func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
@@ -1386,7 +1382,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
-	}, true)
+	}, true, isMPPTask)
 	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
 		return nil, p.self
 	}
@@ -1517,7 +1513,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		} else {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -1584,8 +1580,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	case Mpp1Phase:
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: mpp.hashCols}
-		proj := p.convertAvgForMPP(prop)
+		proj := p.convertAvgForMPP()
 		attachPlan2Task(p.self, mpp)
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
@@ -1602,8 +1597,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if !mpp.needEnforce(prop) {
 			return invalidTask
 		}
-		proj := p.convertAvgForMPP(prop)
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
 			return invalidTask
 		}
@@ -1617,7 +1612,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		newMpp.addCost(p.GetCost(inputRows/2, false))
 		return newMpp
 	case MppTiDB:
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
@@ -1638,7 +1633,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()

@@ -25,7 +25,7 @@ import (
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc, isMppFinal bool) *tipb.Expr {
+func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
 	// if aggFunc.HasDistinct {
 	// do nothing and ignore aggFunc.HasDistinct
 	// }
@@ -36,11 +36,7 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	var tp tipb.ExprType
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		if isMppFinal {
-			tp = tipb.ExprType_Sum
-		} else {
-			tp = tipb.ExprType_Count
-		}
+		tp = tipb.ExprType_Count
 	case ast.AggFuncApproxCountDistinct:
 		tp = tipb.ExprType_ApproxCountDistinct
 	case ast.AggFuncFirstRow:
