@@ -130,6 +130,9 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 	case *rootTask:
 		p.SetChildren(v.p)
 		v.p = p
+	case *mppTask:
+		p.SetChildren(v.p)
+		v.p = p
 	}
 	return t
 }
@@ -1085,6 +1088,12 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	sessVars := sel.ctx.GetSessionVars()
+	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
+		sc := sel.ctx.GetSessionVars().StmtCtx
+		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
+			return attachPlan2Task(sel, mppTask.copy())
+		}
+	}
 	t := tasks[0].convertToRootTask(sel.ctx)
 	t.addCost(t.count() * sessVars.CPUFactor)
 	return attachPlan2Task(sel, t)

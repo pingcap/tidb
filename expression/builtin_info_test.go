@@ -194,6 +194,7 @@ func (s *testEvaluatorSuite) TestCollation(c *C) {
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, NotNil)
 	c.Assert(err, IsNil)
+	c.Assert(f.getRetTp().Flen, Equals, 64)
 }
 
 func (s *testEvaluatorSuite) TestRowCount(c *C) {
