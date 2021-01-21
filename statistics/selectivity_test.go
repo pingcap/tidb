@@ -749,4 +749,17 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
+
+	// Test issue 22486
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int, key b(b))")
+	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4), (5,5)")
+	// This line of select will mark column b stats as needed, and an invalid(empty) stats for column b
+	// will be loaded at the next analyze line, this will trigger the bug.
+	tk.MustQuery("select * from t2 where b=2")
+	tk.MustExec("analyze table t2 index b")
+	tk.MustQuery("explain select * from t2 where b=2").Check(testkit.Rows(
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t2.b, 2)",
+		"  └─TableFullScan_5 5.00 cop[tikv] table:t2 keep order:false"))
 }
