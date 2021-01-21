@@ -197,6 +197,23 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
+func (t *Table) getColumnStatsInfo(colID int64) (*Histogram, *CMSketch, *TopN) {
+	colStatsInfo := t.Columns[colID]
+	return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy()
+}
+
+func (t *Table) getIndexStatsInfo(idxID int64) (*Histogram, *CMSketch, *TopN) {
+	idxStatsInfo := t.Indices[idxID]
+	return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
+}
+
+func (t *Table) GetPartitionStatsInfo(ID int64, isIndex int) (*Histogram, *CMSketch, *TopN) {
+	if isIndex == 0 {
+		return t.getColumnStatsInfo(ID)
+	}
+	return t.getIndexStatsInfo(ID)
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64

@@ -96,6 +96,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
+
+	// used to record whether we should merge the partition-level stats to global-level stats.
+	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
+	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
+	type additionGlobalStatsInfo struct {
+		tableID      int64
+		isIndex      int
+		idxId        int64
+		statsVersion int
+	}
+	globalStatsMap := make(map[string]additionGlobalStatsInfo)
+
 	for panicCnt < concurrency {
 		result, ok := <-resultCh
 		if !ok {
@@ -112,6 +124,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
+			if result.TableID.PersistID != result.TableID.CollectIDs[0] && needGlobalStats {
+				idxID := int64(0)
+				if result.IsIndex != 0 {
+					idxID = hg.ID
+				}
+				globalStatsKey := fmt.Sprintf("%d_%d", result.TableID.CollectIDs[0], idxID)
+				if _, ok := globalStatsMap[globalStatsKey]; !ok {
+					globalStatsMap[globalStatsKey] = additionGlobalStatsInfo{result.TableID.CollectIDs[0], result.IsIndex, hg.ID, result.StatsVer}
+				}
+			}
 			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
 			if err1 != nil {
 				err = err1
@@ -133,6 +155,25 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		return err
+	}
+	if needGlobalStats {
+		// TODO: We need to report warning when we build the global-level statistics failed.
+		for _, info := range globalStatsMap {
+			globalStats, succ := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), info.tableID, info.isIndex, info.idxId)
+			if !succ {
+				// Merge partition-level stats to global-level stats failed.
+
+			}
+			globalStatsLength := globalStats.GetLength()
+			globalStatsCount := globalStats.GetCount()
+			for i := 0; i < globalStatsLength; i++ {
+				err = statsHandle.SaveStatsToStorage(info.tableID, globalStatsCount, info.isIndex, globalStats.GetHistogram(i), globalStats.GetCMSketch(i), globalStats.GetTopN(i), info.statsVersion, 1)
+				if err != nil {
+					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+
+				}
+			}
+		}
 	}
 	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }

@@ -221,6 +221,120 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
+type GlobalStats struct {
+	length int
+	count  int64
+	hg     []*statistics.Histogram
+	cms    []*statistics.CMSketch
+	topN   []*statistics.TopN
+}
+
+func (gs *GlobalStats) GetLength() int {
+	return gs.length
+}
+
+func (gs *GlobalStats) GetCount() int64 {
+	return gs.count
+}
+
+func (gs *GlobalStats) GetHistogram(idx int) *statistics.Histogram {
+	if idx >= gs.length {
+
+	}
+	return gs.hg[idx]
+}
+
+func (gs *GlobalStats) GetCMSketch(idx int) *statistics.CMSketch {
+	if idx >= gs.length {
+
+	}
+	return gs.cms[idx]
+}
+
+func (gs *GlobalStats) GetTopN(idx int) *statistics.TopN {
+	if idx >= gs.length {
+
+	}
+	return gs.topN[idx]
+}
+
+// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
+func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats GlobalStats, succ bool) {
+	// get the partition table IDs
+	h.mu.Lock()
+	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
+	h.mu.Unlock()
+	if !ok {
+		logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+		return
+	}
+	globalTableInfo := globalTable.Meta()
+	partitionNum := globalTableInfo.Partition.Num
+	partitionIDs := make([]int64, 0, partitionNum)
+	for i := uint64(0); i < partitionNum; i++ {
+		partitionIDs = append(partitionIDs, globalTableInfo.Partition.Definitions[i].ID)
+	}
+
+	// initialized the globalStats
+	if isIndex == 0 {
+		globalStats.length = len(globalTableInfo.Columns)
+	} else {
+		globalStats.length = 1
+	}
+
+	globalStats.count = 0
+	globalStats.hg = make([]*statistics.Histogram, globalStats.length)
+	globalStats.cms = make([]*statistics.CMSketch, globalStats.length)
+	globalStats.topN = make([]*statistics.TopN, globalStats.length)
+
+	for idx, partitionID := range partitionIDs {
+		h.mu.Lock()
+		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
+		h.mu.Unlock()
+		if !ok {
+			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", partitionID))
+			return
+		}
+		tableInfo := partitionTable.Meta()
+		partitionStats, err := h.tableStatsFromStorage(tableInfo, partitionID, false, nil)
+		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+		if err != nil {
+			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			return
+		}
+		if partitionStats == nil {
+			return
+		}
+		globalStats.count += partitionStats.Count
+		for i := 0; i < globalStats.length; i++ {
+			ID := tableInfo.Columns[i].ID
+			if isIndex != 0 {
+				ID = idxID
+			}
+			hg, cms, topN := partitionStats.GetPartitionStatsInfo(ID, isIndex)
+			if idx == 0 {
+				globalStats.hg[i] = hg
+				globalStats.cms[i] = cms
+				globalStats.topN[i] = topN
+			} else {
+				// merge histogram
+
+				err = globalStats.cms[i].MergeCMSketch(cms)
+				if err != nil {
+					logutil.BgLogger().Debug("merge CMSketch failed", zap.Int64("ID", partitionID))
+					return
+				}
+				// merge topN
+
+				// TODO: deal with NDV
+			}
+		}
+	}
+	// Build the global-level stats success.
+	succ = true
+	return
+}
+
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
 	if is.SchemaMetaVersion() != h.mu.schemaVersion {
 		h.mu.schemaVersion = is.SchemaMetaVersion()
