@@ -317,6 +317,15 @@ func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
+const (
+	// OffInt is used by TiDBMultiStatementMode
+	OffInt = 0
+	// OnInt is used TiDBMultiStatementMode
+	OnInt = 1
+	// WarnInt is used by TiDBMultiStatementMode
+	WarnInt = 2
+)
+
 // TiDBOptMultiStmt converts multi-stmt options to int.
 func TiDBOptMultiStmt(opt string) int {
 	switch opt {

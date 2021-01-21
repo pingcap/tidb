@@ -80,12 +80,6 @@ const (
 	Nightly = "NIGHTLY"
 	// Warn means return warnings
 	Warn = "WARN"
-	// OffInt is used by TiDBMultiStatementMode
-	OffInt = 0
-	// OnInt is used TiDBMultiStatementMode
-	OnInt = 1
-	// WarnInt is used by TiDBMultiStatementMode
-	WarnInt = 2
 )
 
 // SysVar is for system variable.
