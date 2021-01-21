@@ -170,7 +170,47 @@
         "test tstring  multi 1 (5, 5) 1",
         "test tstring  multi 1 (6, 6) 1",
         "test tstring  multi 1 (7, 7) 1",
-        "test tstring  multi 1 (8, 8) 1"
+        "test tstring  multi 1 (8, 8) 1",
+        "test ct1  a 0 1 1",
+        "test ct1  a 0 2 1",
+        "test ct1  a 0 3 1",
+        "test ct1  a 0 4 1",
+        "test ct1  a 0 5 1",
+        "test ct1  a 0 6 1",
+        "test ct1  a 0 7 1",
+        "test ct1  a 0 8 1",
+        "test ct1  pk 0 1 1",
+        "test ct1  pk 0 2 1",
+        "test ct1  pk 0 3 1",
+        "test ct1  pk 0 4 1",
+        "test ct1  pk 0 5 1",
+        "test ct1  pk 0 6 1",
+        "test ct1  pk 0 7 1",
+        "test ct1  pk 0 8 1",
+        "test ct2  a 0 1 1",
+        "test ct2  a 0 2 1",
+        "test ct2  a 0 3 1",
+        "test ct2  a 0 4 1",
+        "test ct2  a 0 5 1",
+        "test ct2  a 0 6 1",
+        "test ct2  a 0 7 1",
+        "test ct2  a 0 8 1",
+        "test ct2  b 0 1 1",
+        "test ct2  b 0 2 1",
+        "test ct2  b 0 3 1",
+        "test ct2  b 0 4 1",
+        "test ct2  b 0 5 1",
+        "test ct2  b 0 6 1",
+        "test ct2  b 0 7 1",
+        "test ct2  b 0 8 1",
+        "test ct2  c 0 1 1",
+        "test ct2  c 0 2 1",
+        "test ct2  c 0 3 1",
+        "test ct2  c 0 4 1",
+        "test ct2  c 0 5 1",
+        "test ct2  c 0 6 1",
+        "test ct2  c 0 7 1",
+        "test ct2  c 0 8 1"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -351,6 +391,33 @@
         "TableReader_7 1.00 root  data:Selection_6",
         "└─Selection_6 1.00 cop[tikv]  eq(test.tstring.b, \"8\")",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"1\")",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"4\")",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"8\")",
+        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+      ],
+      [
+        "TableReader_6 1.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 1.00 cop[tikv] table:ct2 range:[1 1,1 8], keep order:false"
+      ],
+      [
+        "TableReader_6 1.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 1.00 cop[tikv] table:ct2 range:[4 1,4 8], keep order:false"
+      ],
+      [
+        "TableReader_6 1.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 1.00 cop[tikv] table:ct2 range:[8 1,8 8], keep order:false"
       ]
     ]
   },

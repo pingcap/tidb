@@ -44,7 +44,13 @@
       "explain select * from tdecimal where b=8",
       "explain select * from tstring where b='1'",
       "explain select * from tstring where b='4'",
-      "explain select * from tstring where b='8'"
+      "explain select * from tstring where b='8'",
+      "explain select * from ct1 where pk='1'",
+      "explain select * from ct1 where pk='4'",
+      "explain select * from ct1 where pk='8'",
+      "explain select * from ct2 where a=1 and b>=1 and b<=8",
+      "explain select * from ct2 where a=4 and b>=1 and b<=8",
+      "explain select * from ct2 where a=8 and b>=1 and b<=8"
     ]
   },
   {
