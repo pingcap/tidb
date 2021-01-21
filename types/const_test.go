@@ -16,7 +16,6 @@ package types_test
 import (
 	"context"
 	"flag"
-	"github.com/pingcap/errors"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -301,7 +300,6 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
