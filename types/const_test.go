@@ -153,6 +153,78 @@ func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
 	r.Check(testkit.Rows("helloworld"))
 }
 
+func (s *testMySQLConstSuite) TestIssue22387(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	ctx := context.Background()
+	tk.MustExec("set sql_mode=''")
+	rs, _ := tk.Exec("select 12 - cast(15 as unsigned);")
+	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(12 - 15)'")
+	c.Assert(rs.Close(), IsNil)
+}
+
+func (s *testMySQLConstSuite) TestIssue22389(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	ctx := context.Background()
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustExec("create table tb5(a bigint, b bigint);")
+	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
+	rs, _ := tk.Exec("select a - b from tb5;")
+	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	c.Assert(rs.Close(), IsNil)
+}
+
+func (s *testMySQLConstSuite) TestIssue22390(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	ctx := context.Background()
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("create table tb5(a bigint, b bigint);")
+	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
+	rs, _ := tk.Exec("select a - b from tb5;")
+	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
+	c.Assert(rows, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
+	c.Assert(rs.Close(), IsNil)
+}
+
+func (s *testMySQLConstSuite) TestIssue22442(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='';")
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-1 as unsigned);  ").Check(testkit.Rows("0"))
+}
+
+func (s *testMySQLConstSuite) TestIssue22444(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
+	tk.MustQuery("select cast(-1 as unsigned) - cast(-10000 as unsigned); ").Check(testkit.Rows("9999"))
+}
+
+func (s *testMySQLConstSuite) TestIssue22445(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
+	tk.MustQuery("select cast(-12 as unsigned) - cast(-1 as unsigned); ").Check(testkit.Rows("-11"))
+}
+
+func (s *testMySQLConstSuite) TestIssue22446(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
+	tk.MustQuery("select cast(-1 as unsigned) - 9223372036854775808").Check(testkit.Rows("9223372036854775807"))
+}
+
+func (s *testMySQLConstSuite) TestIssue22447(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'; ")
+	tk.MustQuery("select 9223372036854775808 - cast(-1 as unsigned)").Check(testkit.Rows("-9223372036854775807"))
+}
+
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	ctx := context.Background()
@@ -299,7 +371,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 + 9223372036854775808)'")
 	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
+	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
