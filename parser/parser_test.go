@@ -1207,6 +1207,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush error logs", true, "FLUSH ERROR LOGS"},
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
+		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
 
 		// for change statement
 		{"change pump to node_state ='paused' for node_id '127.0.0.1:8250'", true, "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:8250'"},
