@@ -750,7 +750,7 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 
-	// Test issue 22486
+	// Test issue 22466
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, key b(b))")
 	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4), (5,5)")
