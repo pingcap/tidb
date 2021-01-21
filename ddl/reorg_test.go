@@ -116,7 +116,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartKey, DeepEquals, kv.Key(handle.Encoded()))
 			c.Assert(info.currElement, DeepEquals, e)
-			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndKey()
+			_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
 			c.Assert(doneHandle, IsNil)
 			break
 		}
@@ -140,7 +140,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		EndKey:          s.NewHandle().Int(0).Common(101, "string").Encoded(),
 		PhysicalTableID: 456,
 	}
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
@@ -152,7 +152,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	job.SnapshotVer = uint64(1)
 	err = info.UpdateReorgMeta(info.StartKey)
 	c.Assert(err, IsNil)
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
@@ -230,7 +230,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	testDropSchema(c, ctx, d1, dbInfo)
 
-	err = kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), d1.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		db, err1 := t.GetDatabase(dbInfo.ID)
 		c.Assert(err1, IsNil)

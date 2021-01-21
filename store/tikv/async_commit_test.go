@@ -208,7 +208,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	c.Assert(err, IsNil)
 	currentTS, err := s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	status, err = s.store.lockResolver.getTxnStatus(s.bo, lock.TxnID, []byte("z"), currentTS, currentTS, true)
+	status, err = s.store.lockResolver.getTxnStatus(s.bo, lock.TxnID, []byte("z"), currentTS, currentTS, true, false, nil)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Equals, ts)
@@ -234,7 +234,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 					atomic.StoreInt64(&gotCheckA, 1)
 
 					resp = kvrpcpb.CheckSecondaryLocksResponse{
-						Locks:    []*kvrpcpb.LockInfo{{Key: []byte("a"), PrimaryLock: []byte("z"), LockVersion: ts}},
+						Locks:    []*kvrpcpb.LockInfo{{Key: []byte("a"), PrimaryLock: []byte("z"), LockVersion: ts, UseAsyncCommit: true}},
 						CommitTs: commitTs,
 					}
 				} else if bytes.Equal(k, []byte("i")) {
@@ -384,6 +384,31 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	commitTS1 := t1.committer.commitTS
 	commitTS2 := t2.committer.commitTS
 	c.Assert(commitTS2, Less, commitTS1)
+}
+
+// TestAsyncCommitWithMultiDC tests that async commit can only be enabled in global transactions
+func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
+	// It requires setting placement rules to run with TiKV
+	if *WithTiKV {
+		return
+	}
+
+	localTxn := s.beginAsyncCommit(c)
+	err := localTxn.Set([]byte("a"), []byte("a1"))
+	localTxn.SetOption(kv.TxnScope, "bj")
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = localTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
+
+	globalTxn := s.beginAsyncCommit(c)
+	err = globalTxn.Set([]byte("b"), []byte("b1"))
+	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	err = globalTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(globalTxn.committer.isAsyncCommit(), IsTrue)
 }
 
 type mockResolveClient struct {

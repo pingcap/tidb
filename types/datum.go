@@ -902,8 +902,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
 		return 0, overflow(f, target.Tp)
+	}
+	if target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
+		if f > 0 {
+			return math.MaxFloat32, overflow(f, target.Tp)
+		}
+		return -math.MaxFloat32, overflow(f, target.Tp)
 	}
 	return f, nil
 }
@@ -1281,11 +1287,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 		dec.FromUint(val)
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1429,13 +1435,38 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 	return ret, err
 }
 
+func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
+	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
+	if err != nil {
+		// It cannot be converted to bit type, so we need to convert it to int type.
+		return BinaryLiteral(d.b).ToInt(sc)
+	}
+	return bitStr.ToInt(sc)
+}
+
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
 	var err error
 	switch d.k {
-	case KindString, KindBytes:
+	case KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindString:
+		// For single bit value, we take string like "true", "1" as 1, and "false", "0" as 0,
+		// this behavior is not documented in MySQL, but it behaves so, for more information, see issue #18681
+		s := BinaryLiteral(d.b).ToString()
+		if target.Flen == 1 {
+			switch strings.ToLower(s) {
+			case "true", "1":
+				uintValue = 1
+			case "false", "0":
+				uintValue = 0
+			default:
+				uintValue, err = d.convertStringToMysqlBit(sc)
+			}
+		} else {
+			uintValue, err = d.convertStringToMysqlBit(sc)
+		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
@@ -1621,11 +1652,11 @@ func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, e
 		dec.FromUint(val)
 		err = err1
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
 	}
@@ -2011,17 +2042,6 @@ func (ds *datumsSorter) Less(i, j int) bool {
 
 func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-func handleTruncateError(sc *stmtctx.StatementContext, err error) error {
-	if sc.IgnoreTruncate {
-		return nil
-	}
-	if !sc.TruncateAsWarning {
-		return err
-	}
-	sc.AppendWarning(err)
-	return nil
 }
 
 // DatumsToString converts several datums to formatted string.

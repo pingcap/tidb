@@ -496,7 +496,7 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	h := dom.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	for i := 2; i < 4; i++ {
 		s.testData.OnRecord(func() {
@@ -552,7 +552,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear4Test()
+	dom.StatsHandle().Clear()
 	dom.StatsHandle().Update(dom.InfoSchema())
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
@@ -772,7 +772,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 		)
 	`)
 	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
-	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {

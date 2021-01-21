@@ -281,6 +281,14 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	_, err = Convert(bj2, ft)
 	c.Assert(err, NotNil)
+	bj3, err := json.ParseBinaryFromString("{\"key\": 99}")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj3, ft)
+	c.Assert(err, NotNil)
+	bj4, err := json.ParseBinaryFromString("[99, 0, 1]")
+	c.Assert(err, IsNil)
+	_, err = Convert(bj4, ft)
+	c.Assert(err, NotNil)
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
@@ -979,7 +987,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`[]`, 0},
 		{`3`, 3},
 		{`-3`, -3},
-		{`4.5`, 5},
+		{`4.5`, 4},
 		{`true`, 1},
 		{`false`, 0},
 		{`null`, 0},
@@ -1028,8 +1036,6 @@ func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
 		In  string
 		Out *MyDecimal
 	}{
-		{`{}`, NewDecFromStringForTest("0")},
-		{`[]`, NewDecFromStringForTest("0")},
 		{`3`, NewDecFromStringForTest("3")},
 		{`-3`, NewDecFromStringForTest("-3")},
 		{`4.5`, NewDecFromStringForTest("4.5")},
