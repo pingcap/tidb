@@ -46,7 +46,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20201215060142-f3dafca4c7fd
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20210108074737-814a888e05e2
+	github.com/pingcap/parser v0.0.0-20210121043122-1c9989974a2b
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20201229060814-148bc717ce4c
@@ -70,20 +70,18 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a // indirect
-	golang.org/x/net v0.0.0-20200904194848-62affa334b73
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
-	golang.org/x/text v0.3.4
-	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
+	golang.org/x/sys v0.0.0-20210119212857-b64e53b001e4
+	golang.org/x/text v0.3.5
+	golang.org/x/tools v0.1.0
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.3.0 // indirect
-	honnef.co/go/tools v0.1.0 // indirect
+	honnef.co/go/tools v0.1.1 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/morgo/parser v0.0.0-20210113194243-aa72bd5cf999
