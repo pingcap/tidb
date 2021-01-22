@@ -130,6 +130,9 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 	case *rootTask:
 		p.SetChildren(v.p)
 		v.p = p
+	case *mppTask:
+		p.SetChildren(v.p)
+		v.p = p
 	}
 	return t
 }
@@ -1042,8 +1045,23 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 }
 
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
-	// TODO: support projection push down.
-	var t task = tasks[0].convertToRootTask(p.ctx)
+	t := tasks[0].copy()
+	if cop, ok := t.(*copTask); ok {
+		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+			copTask := attachPlan2Task(p, cop)
+			copTask.addCost(p.GetCost(t.count()))
+			return copTask
+		}
+	} else if mpp, ok := t.(*mppTask); ok {
+		if expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), kv.TiFlash) {
+			p.SetChildren(mpp.p)
+			mpp.p = p
+			mpp.addCost(p.GetCost(t.count()))
+			return mpp
+		}
+	}
+	// TODO: support projection push down for TiKV.
+	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
 	return t
@@ -1070,6 +1088,12 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	sessVars := sel.ctx.GetSessionVars()
+	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
+		sc := sel.ctx.GetSessionVars().StmtCtx
+		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
+			return attachPlan2Task(sel, mppTask.copy())
+		}
+	}
 	t := tasks[0].convertToRootTask(sel.ctx)
 	t.addCost(t.count() * sessVars.CPUFactor)
 	return attachPlan2Task(sel, t)
@@ -1113,7 +1137,7 @@ type AggInfo struct {
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggInfo, partialIsCop bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
@@ -1207,14 +1231,21 @@ func BuildFinalModeAggregation(
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
 			if aggregation.NeedCount(finalAggFunc.Name) {
-				ft := types.NewFieldType(mysql.TypeLonglong)
-				ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  ft,
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
+				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
+					// For MPP Task, the final count() is changed to sum().
+					// Note: MPP mode does not run avg() directly, instead, avg() -> if(count()==0, null, sum(count()/sum()),
+					// so we do not process it here.
+					finalAggFunc.Name = ast.AggFuncSum
+				} else {
+					ft := types.NewFieldType(mysql.TypeLonglong)
+					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
+					partial.Schema.Append(&expression.Column{
+						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+						RetType:  ft,
+					})
+					args = append(args, partial.Schema.Columns[partialCursor])
+					partialCursor++
+				}
 			}
 			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
 				ft := types.NewFieldType(mysql.TypeString)
@@ -1265,7 +1296,84 @@ func BuildFinalModeAggregation(
 	return
 }
 
-func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+// convertAvgForMPP converts avg() to if(count(arg)=0, null, sum(arg)/count(arg)), in detail:
+// 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
+// 2.replace avg() with if(count(arg)=0, null, sum(arg)/count(arg)) and reuse the original schema of the final aggregation.
+// If there is no avg, nothing is changed and return nil.
+func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
+	newSchema := expression.NewSchema()
+	newSchema.Keys = p.schema.Keys
+	newSchema.UniqueKeys = p.schema.UniqueKeys
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
+	nullTp := types.NewFieldType(mysql.TypeNull)
+	nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+	// TODO: TiFlash dose not accept precision of 0
+	if nullTp.Flen < 1 {
+		nullTp.Flen = 1
+	}
+	paramNull := &expression.Constant{
+		Value:   types.NewDatum(nil),
+		RetType: nullTp,
+	}
+	paramZero := &expression.Constant{
+		Value:   types.NewDatum(0),
+		RetType: ft,
+	}
+	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
+	// add agg functions schema
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncAvg {
+			// inset a count(column)
+			avgCount := *aggFunc
+			avgCount.Name = ast.AggFuncCount
+			newAggFuncs = append(newAggFuncs, &avgCount)
+			avgCount.RetTp = ft
+			avgCountCol := &expression.Column{
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  ft,
+			}
+			newSchema.Append(avgCountCol)
+			// insert a sum(column)
+			avgSum := *aggFunc
+			avgSum.Name = ast.AggFuncSum
+			newAggFuncs = append(newAggFuncs, &avgSum)
+			newSchema.Append(p.schema.Columns[i])
+			avgSumCol := p.schema.Columns[i]
+			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol)
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, paramZero)
+			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, avgCountCol)
+			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, paramNull, divide)
+			exprs = append(exprs, funcIf)
+		} else {
+			newAggFuncs = append(newAggFuncs, aggFunc)
+			newSchema.Append(p.schema.Columns[i])
+			exprs = append(exprs, p.schema.Columns[i])
+		}
+	}
+	// no avgs
+	if len(p.schema.Columns) == len(newSchema.Columns) {
+		return nil
+	}
+	// add remaining columns to exprs
+	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
+		exprs = append(exprs, p.schema.Columns[i])
+	}
+	proj := PhysicalProjection{
+		Exprs:                exprs,
+		CalculateNoDelay:     false,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
+	proj.SetSchema(p.schema)
+
+	p.AggFuncs = newAggFuncs
+	p.schema = newSchema
+
+	return proj
+}
+
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final PhysicalPlan) {
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
@@ -1274,7 +1382,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
-	}, true)
+	}, true, isMPPTask)
 	if p.tp == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
 		return nil, p.self
 	}
@@ -1302,6 +1410,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 		finalAgg := basePhysicalAgg{
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
+			MppRunMode:   p.MppRunMode,
 		}.initForStream(p.ctx, p.stats, p.blockOffset, prop)
 		finalAgg.schema = finalPref.Schema
 		return partialAgg, finalAgg
@@ -1310,6 +1419,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial
 	finalAgg := basePhysicalAgg{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
+		MppRunMode:   p.MppRunMode,
 	}.initForHash(p.ctx, p.stats, p.blockOffset, prop)
 	finalAgg.schema = finalPref.Schema
 	return partialAgg, finalAgg
@@ -1403,7 +1513,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(p, t)
 		} else {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -1459,13 +1569,71 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
+	t := tasks[0].copy()
+	mpp, ok := t.(*mppTask)
+	if !ok {
+		return invalidTask
+	}
+	inputRows := mpp.count()
+	switch p.MppRunMode {
+	case Mpp1Phase:
+		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+		// only push down the original agg
+		proj := p.convertAvgForMPP()
+		attachPlan2Task(p.self, mpp)
+		if proj != nil {
+			attachPlan2Task(proj, mpp)
+		}
+		mpp.addCost(p.GetCost(inputRows, false))
+		return mpp
+	case Mpp2Phase:
+		// 2-phase agg: partial + final agg for hash partition
+		if len(p.MppPartitionCols) == 0 {
+			return invalidTask
+		}
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: p.MppPartitionCols}
+		// if mpp does not need to enforce exchange, i.e., the child is properly partitioned, then this 2-phase agg is invalid
+		if !mpp.needEnforce(prop) {
+			return invalidTask
+		}
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		if partialAgg == nil {
+			return invalidTask
+		}
+		attachPlan2Task(partialAgg, mpp)
+		newMpp := mpp.enforceExchangerImpl(prop)
+		attachPlan2Task(finalAgg, newMpp)
+		if proj != nil {
+			attachPlan2Task(proj, newMpp)
+		}
+		// TODO: how to set 2-phase cost?
+		newMpp.addCost(p.GetCost(inputRows/2, false))
+		return newMpp
+	case MppTiDB:
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
+		if partialAgg != nil {
+			attachPlan2Task(partialAgg, mpp)
+		}
+		mpp.addCost(p.GetCost(inputRows, false))
+		t = mpp.convertToRootTask(p.ctx)
+		inputRows = t.count()
+		attachPlan2Task(finalAgg, t)
+		t.addCost(p.GetCost(inputRows, true))
+		return t
+	default:
+		return invalidTask
+	}
+}
+
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType)
+			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -1491,15 +1659,8 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 			inputRows = t.count()
 			attachPlan2Task(p, t)
 		}
-	} else if mpp, ok := t.(*mppTask); ok {
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash)
-		if partialAgg != nil {
-			partialAgg.SetChildren(mpp.p)
-			mpp.p = partialAgg
-		}
-		t = mpp.convertToRootTask(p.ctx)
-		inputRows = t.count()
-		attachPlan2Task(finalAgg, t)
+	} else if _, ok := t.(*mppTask); ok {
+		return p.attach2TaskForMpp(tasks...)
 	} else {
 		attachPlan2Task(p, t)
 	}

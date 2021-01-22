@@ -164,6 +164,10 @@ const (
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 
+	// TiDBMultiStatementMode enables multi statement at the risk of SQL injection
+	// provides backwards compatibility
+	TiDBMultiStatementMode = "tidb_multi_statement_mode"
+
 	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
 	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
 
@@ -516,6 +520,21 @@ const (
 
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+)
+
+// TiDB vars that have only global scope
+
+const (
+	// TiDBGCEnable turns garbage collection on or OFF
+	TiDBGCEnable = "tidb_gc_enable"
+	// TiDBGCRunInterval sets the interval that GC runs
+	TiDBGCRunInterval = "tidb_gc_run_interval"
+	// TiDBGCLifetime sets the retention window of older versions
+	TiDBGCLifetime = "tidb_gc_life_time"
+	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
+	TiDBGCConcurrency = "tidb_gc_concurrency"
+	// TiDBGCScanLockMode enables the green GC feature (default)
+	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 )
 
 // Default TiDB system variable values.
