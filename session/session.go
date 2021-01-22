@@ -126,7 +126,15 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error)         // Execute a sql statement.
 	ExecuteInternal(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a internal sql statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
+	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+	// ParseWithParams is the parameterized version of Parse: it will escape arguments for safety.
+	// It will try to prevent injection by parameterized arguments under utf8 charactersets.
+	//
+	// Attention: it does not prevent you from doing parse("select '?", ";SQL injection!;") => "select '';SQL injection!;'".
+	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
+	// This function only saves you from processing potentially unsafe parameters.
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
@@ -1315,6 +1323,54 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	s.GetSessionVars().DurationParse = durParse
 	isInternal := s.isInternal()
 	if isInternal {
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+	} else {
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+	}
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	return stmts, nil
+}
+
+// ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error) {
+	sql, err := EscapeSQL(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	internal := s.isInternal()
+
+	var stmts []ast.StmtNode
+	var warns []error
+	var parseStartTime time.Time
+	if internal {
+		// Do no respect the settings from clients, if it is for internal usage.
+		// Charsets from clients may give chance injections.
+		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
+		parseStartTime = time.Now()
+		stmts, warns, err = s.ParseSQL(ctx, sql, "utf8", "utf8_bin")
+	} else {
+		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+		parseStartTime = time.Now()
+		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+	}
+	if err != nil {
+		s.rollbackOnError(ctx)
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
+		}
+		return nil, util.SyntaxError(err)
+	}
+	durParse := time.Since(parseStartTime)
+	if s.isInternal() {
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
