@@ -122,26 +122,25 @@ func EscapeStringBackslash(buf []byte, v string) []byte {
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.
-// But it does not prevent you from doing EscapeSQL("select '?", ";SQL injection!;") => "select '';SQL injection!;'".
+// But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
-	holders := strings.Count(sql, "?")
+	holders := strings.Count(sql, "%?")
 	if holders == 0 {
 		return sql, nil
 	} else if holders > len(args) {
-		return "", errors.New("missing arguments")
+		return "", errors.Errorf("missing arguments, have %d specifiers, and %d arguments", holders, len(args))
 	}
 	buf := make([]byte, 0, len(sql))
 	argPos := 0
-	for i := 0; i < len(sql); i++ {
-		q := strings.IndexByte(sql[i:], '?')
+	for i := 0; i < len(sql); i += 2 {
+		q := strings.Index(sql[i:], "%?")
 		if q == -1 {
 			buf = append(buf, sql[i:]...)
 			break
 		}
 		buf = append(buf, sql[i:i+q]...)
 		i += q
-
 		arg := args[argPos]
 		argPos++
 
