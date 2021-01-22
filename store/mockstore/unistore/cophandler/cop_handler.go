@@ -60,10 +60,8 @@ func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore
 func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
 	switch req.Tp {
 	case kv.ReqTypeDAG:
-		if mppCtx != nil {
-			if mppCtx.TaskHandler != nil {
-				return handleMPPDAGReq(dbReader, req, mppCtx)
-			}
+		if mppCtx != nil && mppCtx.TaskHandler != nil {
+			return handleMPPDAGReq(dbReader, req, mppCtx)
 		}
 		return handleCopDAGRequest(dbReader, lockStore, req)
 	case kv.ReqTypeAnalyze:
