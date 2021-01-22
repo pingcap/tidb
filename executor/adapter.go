@@ -727,30 +727,30 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		// Do not sync transaction for Execute statement, because the real optimization work is done in
-		// "ExecuteExec.Build".
-		useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-		if err != nil {
-			return nil, err
-		}
-		if useMaxTS {
-			logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else if ctx.GetSessionVars().SnapshotTS != 0 {
-			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
-				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
+				return nil, err
 			}
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
-			switch {
-			case useMaxTS:
-				stmtCtx.Priority = kv.PriorityHigh
-			case a.LowerPriority:
-				stmtCtx.Priority = kv.PriorityLow
+		} else {
+			// Do not sync transaction for Execute statement, because the real optimization work is done in
+			// "ExecuteExec.Build".
+			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+			if err != nil {
+				return nil, err
+			}
+			if useMaxTS {
+				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
+					return nil, err
+				}
+			}
+			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
+				switch {
+				case useMaxTS:
+					stmtCtx.Priority = kv.PriorityHigh
+				case a.LowerPriority:
+					stmtCtx.Priority = kv.PriorityLow
+				}
 			}
 		}
 	}
