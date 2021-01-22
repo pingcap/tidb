@@ -77,12 +77,8 @@ func (ts *testSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func recordKey(t table.Table, h kv.Handle) kv.Key {
-	return tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
-}
-
 func firstKey(t table.Table) kv.Key {
-	return recordKey(t, kv.IntHandle(math.MinInt64))
+	return tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 }
 
 func indexPrefix(t table.PhysicalTable) kv.Key {
