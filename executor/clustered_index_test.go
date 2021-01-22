@@ -262,21 +262,6 @@ func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
 	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 }
-<<<<<<< HEAD
-=======
-
-// https://github.com/pingcap/tidb/issues/22453
-func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
-	tk := s.newTK(c)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b enum('Alice'), c int, primary key (c, b));")
-	tk.MustExec("insert into t values (-1,'Alice',100);")
-	tk.MustExec("insert into t values (-1,'Alice',7000);")
-	tk.MustQuery("split table t between (0,'Alice') and (10000,'Alice') regions 2;").Check(testkit.Rows("1 1"))
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3;")
-	tk.MustExec("alter table t add index idx (c);")
-	tk.MustExec("admin check table t;")
-}
 
 func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 	tk := s.newTK(c)
@@ -284,4 +269,3 @@ func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
 	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
 }
->>>>>>> cd390bdfa... executor: skip null data in common handle during point-get (#22483)
