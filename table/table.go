@@ -137,11 +137,7 @@ func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 	opt.IsUpdate = true
 }
 
-// Table is used to retrieve and modify rows in table.
-type Table interface {
-	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, cols []*Column, fn RecordIterFunc) error
-
+type columnAPI interface {
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
 
@@ -157,6 +153,14 @@ type Table interface {
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
+}
+
+// Table is used to retrieve and modify rows in table.
+type Table interface {
+	// IterRecords iterates records in the table and calls fn.
+	IterRecords(ctx sessionctx.Context, cols []*Column, fn RecordIterFunc) error
+
+	columnAPI
 
 	// Indices returns the indices of the table.
 	Indices() []Index
