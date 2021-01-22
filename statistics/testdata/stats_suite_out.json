@@ -299,13 +299,16 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
-        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
+        "TableReader_6 4.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 4.00 cop[tikv] table:ct1 range:[\"1\",\"4\"], keep order:false"
       ],
       [
-        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
+        "TableReader_6 2.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 2.00 cop[tikv] table:ct1 range:[\"4\",\"6\"], keep order:false"
       ],
       [
-        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
+        "TableReader_6 3.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 3.00 cop[tikv] table:ct1 range:[\"6\",\"8\"], keep order:false"
       ],
       [
         "TableReader_6 0.00 root  data:TableRangeScan_5",
