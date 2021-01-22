@@ -19,6 +19,7 @@ package tables
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -1062,7 +1063,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (t *TableCommon) IterRecords(ctx sessionctx.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	txn, err := ctx.Txn(true)
@@ -1070,6 +1071,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return err
 	}
 
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	it, err := txn.Iter(startKey, prefix.PrefixNext())
 	if err != nil {
 		return err

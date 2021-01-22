@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -2944,9 +2943,8 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
-		startKey := tablecodec.EncodeRecordKey(partition.RecordPrefix(), kv.IntHandle(math.MinInt64))
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
-		err := partition.IterRecords(ctx, startKey, partition.Cols(),
+		err := partition.IterRecords(ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
 				return true, nil

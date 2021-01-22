@@ -15,7 +15,6 @@ package testutil
 
 import (
 	"context"
-	"math"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -75,8 +73,7 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	}
 
 	var allHandles []int64
-	firstKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64))
-	err = tbl.IterRecords(se, firstKey, nil,
+	err = tbl.IterRecords(se, nil,
 		func(h kv.Handle, _ []types.Datum, _ []*table.Column) (more bool, err error) {
 			allHandles = append(allHandles, h.IntValue())
 			return true, nil

@@ -1729,11 +1729,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
 	rows, err := it.getRows(ctx, cols)
 	if err != nil {
 		return err
@@ -1839,11 +1836,8 @@ func (it *infoschemaTable) Type() table.Type {
 type VirtualTable struct{}
 
 // IterRecords implements table.Table IterRecords interface.
-func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
 	_ table.RecordIterFunc) error {
-	if len(startKey) != 0 {
-		return table.ErrUnsupportedOp
-	}
 	return nil
 }
 

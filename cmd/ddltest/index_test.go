@@ -51,7 +51,7 @@ func (s *TestDDLSuite) checkAddIndex(c *C, indexInfo *model.IndexInfo) {
 
 	// read handles form table
 	handles := kv.NewHandleMap()
-	err = tbl.IterRecords(ctx, firstKey(tbl), tbl.Cols(),
+	err = tbl.IterRecords(ctx, tbl.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil

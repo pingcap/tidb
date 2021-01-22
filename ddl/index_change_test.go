@@ -328,7 +328,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	}
 
 	var rows [][]types.Datum
-	publicTbl.IterRecords(ctx, firstKey(publicTbl), publicTbl.Cols(),
+	publicTbl.IterRecords(ctx, publicTbl.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil

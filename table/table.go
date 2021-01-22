@@ -140,7 +140,7 @@ func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
+	IterRecords(ctx sessionctx.Context, cols []*Column, fn RecordIterFunc) error
 
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
