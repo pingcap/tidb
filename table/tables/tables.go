@@ -851,6 +851,97 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	return nil, nil
 }
 
+// RowWithCols implements table.Table RowWithCols interface.
+func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
+	// Get raw row data from kv.
+	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	value, err := txn.Get(context.TODO(), key)
+	if err != nil {
+		return nil, err
+	}
+	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
+	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
+	v := make([]types.Datum, len(cols))
+	colTps := make(map[int64]*types.FieldType, len(cols))
+	for i, col := range cols {
+		if col == nil {
+			continue
+		}
+		if col.IsPKHandleColumn(meta) {
+			if mysql.HasUnsignedFlag(col.Flag) {
+				v[i].SetUint64(uint64(h.IntValue()))
+			} else {
+				v[i].SetInt64(h.IntValue())
+			}
+			continue
+		}
+		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
+			pkIdx := FindPrimaryIndex(meta)
+			var idxOfIdx int
+			for i, idxCol := range pkIdx.Columns {
+				if meta.Columns[idxCol.Offset].ID == col.ID {
+					idxOfIdx = i
+					break
+				}
+			}
+			dtBytes := h.EncodedCol(idxOfIdx)
+			_, dt, err := codec.DecodeOne(dtBytes)
+			if err != nil {
+				return nil, nil, err
+			}
+			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+			if err != nil {
+				return nil, nil, err
+			}
+			v[i] = dt
+			continue
+		}
+		colTps[col.ID] = &col.FieldType
+	}
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
+	if err != nil {
+		return nil, rowMap, err
+	}
+	defaultVals := make([]types.Datum, len(cols))
+	for i, col := range cols {
+		if col == nil {
+			continue
+		}
+		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
+			continue
+		}
+		ri, ok := rowMap[col.ID]
+		if ok {
+			v[i] = ri
+			continue
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
+		if col.ChangeStateInfo != nil {
+			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
+		} else {
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		}
+		if err != nil {
+			return nil, rowMap, err
+		}
+	}
+	return v, rowMap, nil
+}
+
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
 func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
@@ -1060,6 +1151,103 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 		return err
 	}
 	return nil
+}
+
+// IterRecords iterates records in the table and calls fn.
+func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
+	fn table.RecordIterFunc) error {
+	prefix := t.RecordPrefix()
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
+	it, err := txn.Iter(startKey, prefix.PrefixNext())
+	if err != nil {
+		return err
+	}
+	defer it.Close()
+
+	if !it.Valid() {
+		return nil
+	}
+
+	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+
+	colMap := make(map[int64]*types.FieldType, len(cols))
+	for _, col := range cols {
+		colMap[col.ID] = &col.FieldType
+	}
+	defaultVals := make([]types.Datum, len(cols))
+	for it.Valid() && it.Key().HasPrefix(prefix) {
+		// first kv pair is row lock information.
+		// TODO: check valid lock
+		// get row handle
+		handle, err := tablecodec.DecodeRowKey(it.Key())
+		if err != nil {
+			return err
+		}
+		rowMap, err := tablecodec.DecodeRowToDatumMap(it.Value(), colMap, ctx.GetSessionVars().Location())
+		if err != nil {
+			return err
+		}
+		pkIds, decodeLoc := TryGetCommonPkColumnIds(t.Meta()), ctx.GetSessionVars().Location()
+		data := make([]types.Datum, len(cols))
+		for _, col := range cols {
+			if col.IsPKHandleColumn(t.Meta()) {
+				if mysql.HasUnsignedFlag(col.Flag) {
+					data[col.Offset].SetUint64(uint64(handle.IntValue()))
+				} else {
+					data[col.Offset].SetInt64(handle.IntValue())
+				}
+				continue
+			} else if mysql.HasPriKeyFlag(col.Flag) {
+				data[col.Offset], err = tryDecodeColumnFromCommonHandle(col, handle, pkIds, decodeLoc)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			if _, ok := rowMap[col.ID]; ok {
+				data[col.Offset] = rowMap[col.ID]
+				continue
+			}
+			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
+			if err != nil {
+				return err
+			}
+		}
+		more, err := fn(handle, data, cols)
+		if !more || err != nil {
+			return err
+		}
+
+		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds []int64, decodeLoc *time.Location) (types.Datum, error) {
+	for i, hid := range pkIds {
+		if hid != col.ID {
+			continue
+		}
+		_, d, err := codec.DecodeOne(handle.EncodedCol(i))
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		if d, err = tablecodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
+	return types.Datum{}, nil
 }
 
 // GetColDefaultValue gets a column default value.
@@ -1506,101 +1694,4 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 		PrimaryColumnIds: pkColIds,
 	}
 	return tsExec
-}
-
-// IterRecords iterates records in the table and calls fn.
-func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
-	fn table.RecordIterFunc) error {
-	prefix := t.RecordPrefix()
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
-	it, err := txn.Iter(startKey, prefix.PrefixNext())
-	if err != nil {
-		return err
-	}
-	defer it.Close()
-
-	if !it.Valid() {
-		return nil
-	}
-
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
-
-	colMap := make(map[int64]*types.FieldType, len(cols))
-	for _, col := range cols {
-		colMap[col.ID] = &col.FieldType
-	}
-	defaultVals := make([]types.Datum, len(cols))
-	for it.Valid() && it.Key().HasPrefix(prefix) {
-		// first kv pair is row lock information.
-		// TODO: check valid lock
-		// get row handle
-		handle, err := tablecodec.DecodeRowKey(it.Key())
-		if err != nil {
-			return err
-		}
-		rowMap, err := tablecodec.DecodeRowToDatumMap(it.Value(), colMap, ctx.GetSessionVars().Location())
-		if err != nil {
-			return err
-		}
-		pkIds, decodeLoc := TryGetCommonPkColumnIds(t.Meta()), ctx.GetSessionVars().Location()
-		data := make([]types.Datum, len(cols))
-		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
-					data[col.Offset].SetUint64(uint64(handle.IntValue()))
-				} else {
-					data[col.Offset].SetInt64(handle.IntValue())
-				}
-				continue
-			} else if mysql.HasPriKeyFlag(col.Flag) {
-				data[col.Offset], err = tryDecodeColumnFromCommonHandle(col, handle, pkIds, decodeLoc)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-			if _, ok := rowMap[col.ID]; ok {
-				data[col.Offset] = rowMap[col.ID]
-				continue
-			}
-			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
-			if err != nil {
-				return err
-			}
-		}
-		more, err := fn(handle, data, cols)
-		if !more || err != nil {
-			return err
-		}
-
-		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds []int64, decodeLoc *time.Location) (types.Datum, error) {
-	for i, hid := range pkIds {
-		if hid != col.ID {
-			continue
-		}
-		_, d, err := codec.DecodeOne(handle.EncodedCol(i))
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
-		if d, err = tablecodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
-			return types.Datum{}, err
-		}
-		return d, nil
-	}
-	return types.Datum{}, nil
 }

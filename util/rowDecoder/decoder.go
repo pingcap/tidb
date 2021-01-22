@@ -14,11 +14,9 @@
 package decoder
 
 import (
-	"context"
 	"sort"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -29,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -178,120 +175,4 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 // Please make sure calling DecodeAndEvalRowWithMap first.
 func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 	return rd.mutRow.ToRow()
-}
-
-// RowWithCols returns the column datums of the row.
-func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
-	// Get raw row data from kv.
-	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	value, err := txn.Get(context.TODO(), key)
-	if err != nil {
-		return nil, err
-	}
-	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
-	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
-	v := make([]types.Datum, len(cols))
-	colTps := make(map[int64]*types.FieldType, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.IsPKHandleColumn(meta) {
-			if mysql.HasUnsignedFlag(col.Flag) {
-				v[i].SetUint64(uint64(h.IntValue()))
-			} else {
-				v[i].SetInt64(h.IntValue())
-			}
-			continue
-		}
-		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
-			pkIdx := tables.FindPrimaryIndex(meta)
-			var idxOfIdx int
-			for i, idxCol := range pkIdx.Columns {
-				if meta.Columns[idxCol.Offset].ID == col.ID {
-					idxOfIdx = i
-					break
-				}
-			}
-			dtBytes := h.EncodedCol(idxOfIdx)
-			_, dt, err := codec.DecodeOne(dtBytes)
-			if err != nil {
-				return nil, nil, err
-			}
-			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
-			if err != nil {
-				return nil, nil, err
-			}
-			v[i] = dt
-			continue
-		}
-		colTps[col.ID] = &col.FieldType
-	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
-	if err != nil {
-		return nil, rowMap, err
-	}
-	defaultVals := make([]types.Datum, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
-			continue
-		}
-		ri, ok := rowMap[col.ID]
-		if ok {
-			v[i] = ri
-			continue
-		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
-		if col.ChangeStateInfo != nil {
-			v[i], _, err = getChangingColVal(ctx, cols, col, rowMap, defaultVals)
-		} else {
-			v[i], err = tables.GetColDefaultValue(ctx, col, defaultVals)
-		}
-		if err != nil {
-			return nil, rowMap, err
-		}
-	}
-	return v, rowMap, nil
-}
-
-// getChangingColVal gets the changing column value when executing "modify/change column" statement.
-func getChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
-	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
-	idxColumnVal, ok := rowMap[relativeCol.ID]
-	if ok {
-		// It needs cast values here when filling back column or index values in "modify/change column" statement.
-		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
-			return idxColumnVal, false, nil
-		}
-		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
-		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
-		if err != nil {
-			return idxColumnVal, false, errors.Trace(err)
-		}
-		return idxColumnVal, false, nil
-	}
-
-	idxColumnVal, err = tables.GetColDefaultValue(ctx, col, defaultVals)
-	if err != nil {
-		return idxColumnVal, false, errors.Trace(err)
-	}
-
-	return idxColumnVal, true, nil
 }

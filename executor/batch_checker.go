@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -230,7 +229,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := decoder.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

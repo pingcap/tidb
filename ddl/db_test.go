@@ -58,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -4354,7 +4353,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	ctx := context.Background()
 	err = tk.Se.NewTxn(ctx)
 	c.Assert(err, IsNil)
-	oldRow, err := decoder.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
+	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
 	c.Assert(len(oldRow), Equals, 3)
 	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)

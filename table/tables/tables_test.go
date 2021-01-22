@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -149,7 +148,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid.IntValue(), Greater, int64(0))
-	row, err := decoder.RowWithCols(tb, ctx, rid, tb.Cols())
+	row, err := tables.RowWithCols(tb, ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
@@ -172,12 +171,12 @@ func (ts *testSuite) TestBasic(c *C) {
 	}
 
 	// RowWithCols test
-	vals, err := decoder.RowWithCols(tb, ctx, kv.IntHandle(1), tb.Cols())
+	vals, err := tables.RowWithCols(tb, ctx, kv.IntHandle(1), tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
 	cols := []*table.Column{tb.Cols()[1]}
-	vals, err = decoder.RowWithCols(tb, ctx, kv.IntHandle(1), cols)
+	vals, err = tables.RowWithCols(tb, ctx, kv.IntHandle(1), cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
@@ -357,7 +356,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	pt := tb.(table.PhysicalTable)
-	row, err := decoder.RowWithCols(pt, ts.se, rid, tb.Cols())
+	row, err := tables.RowWithCols(pt, ts.se, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
@@ -639,7 +638,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	for _, r := range records {
 		rid, err := tb.AddRecord(ts.se, r)
 		c.Assert(err, IsNil)
-		row, err := decoder.RowWithCols(tb.(table.PhysicalTable), ts.se, rid, tb.Cols())
+		row, err := tables.RowWithCols(tb.(table.PhysicalTable), ts.se, rid, tb.Cols())
 		c.Assert(err, IsNil)
 		c.Assert(len(row), Equals, len(r))
 		c.Assert(row[0].Kind(), Equals, types.KindUint64)

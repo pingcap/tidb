@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -342,7 +341,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Trace(err)
 	}
 	// This test is for RowWithCols when column state is StateWriteOnly.
-	row, err := decoder.RowWithCols(writeOnlyTable, ctx, h, writeOnlyTable.WritableCols())
+	row, err := tables.RowWithCols(writeOnlyTable, ctx, h, writeOnlyTable.WritableCols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -412,7 +411,7 @@ func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	// writeOnlyTable update t set c1 = 3 where c1 = 4
-	oldRow, err := decoder.RowWithCols(writeOnlyTable, sctx, h, writeOnlyTable.WritableCols())
+	oldRow, err := tables.RowWithCols(writeOnlyTable, sctx, h, writeOnlyTable.WritableCols())
 	if err != nil {
 		return errors.Trace(err)
 	}
