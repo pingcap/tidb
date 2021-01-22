@@ -703,7 +703,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					}
 
 					record := types.MakeDatums(
-<<<<<<< HEAD
 						infoschema.CatalogVal,         // TABLE_CATALOG
 						schema.Name.O,                 // TABLE_SCHEMA
 						table.Name.O,                  // TABLE_NAME
@@ -729,34 +728,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						pi.Comment,                    // PARTITION_COMMENT
 						nil,                           // NODEGROUP
 						nil,                           // TABLESPACE_NAME
-=======
-						infoschema.CatalogVal, // TABLE_CATALOG
-						schema.Name.O,         // TABLE_SCHEMA
-						table.Name.O,          // TABLE_NAME
-						pi.Name.O,             // PARTITION_NAME
-						nil,                   // SUBPARTITION_NAME
-						i+1,                   // PARTITION_ORDINAL_POSITION
-						nil,                   // SUBPARTITION_ORDINAL_POSITION
-						partitionMethod,       // PARTITION_METHOD
-						nil,                   // SUBPARTITION_METHOD
-						partitionExpr,         // PARTITION_EXPRESSION
-						nil,                   // SUBPARTITION_EXPRESSION
-						partitionDesc,         // PARTITION_DESCRIPTION
-						rowCount,              // TABLE_ROWS
-						avgRowLength,          // AVG_ROW_LENGTH
-						dataLength,            // DATA_LENGTH
-						uint64(0),             // MAX_DATA_LENGTH
-						indexLength,           // INDEX_LENGTH
-						uint64(0),             // DATA_FREE
-						createTime,            // CREATE_TIME
-						nil,                   // UPDATE_TIME
-						nil,                   // CHECK_TIME
-						nil,                   // CHECKSUM
-						pi.Comment,            // PARTITION_COMMENT
-						nil,                   // NODEGROUP
-						nil,                   // TABLESPACE_NAME
-						pi.ID,                 // TIDB_PARTITION_ID
->>>>>>> b24095d90... infoschema: support query partition_id from infoschema.partitions (#22240)
+						pi.ID,                         // TIDB_PARTITION_ID
 					)
 					rows = append(rows, record)
 				}
