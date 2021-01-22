@@ -4058,8 +4058,17 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 
+	// test compatibility with ExcuteInternal
+	origin := se.GetSessionVars().InRestrictedSQL
+	se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		se.GetSessionVars().InRestrictedSQL = origin
+	}()
+	_, err := se.ParseWithParams(context.Background(), "SELECT 4")
+	c.Assert(err, IsNil)
+
 	// test charset attack
-	stmts, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = ? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmts, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 1)
 
@@ -4075,15 +4084,6 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = se.ParseWithParams(context.Background(), "SELECT ?")
-	c.Assert(err, ErrorMatches, "missing arguments")
-
-	// test compatibility with ExcuteInternal
-	origin := se.GetSessionVars().InRestrictedSQL
-	se.GetSessionVars().InRestrictedSQL = true
-	defer func() {
-		se.GetSessionVars().InRestrictedSQL = origin
-	}()
-	_, err = se.ParseWithParams(context.Background(), "SELECT 4")
-	c.Assert(err, IsNil)
+	_, err = se.ParseWithParams(context.Background(), "SELECT %?")
+	c.Assert(err, ErrorMatches, "missing arguments.*")
 }
