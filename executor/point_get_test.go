@@ -603,7 +603,7 @@ func (s *testSerialSuite) mustExecDDL(tk *testkit.TestKit, c *C, sql string) {
 	c.Assert(s.domain.Reload(), IsNil)
 }
 
-func (s *testSerialSuite) TestPointGetReadLock(c *C) {
+func (s *testSerialSuite) TestMemCacheReadLock(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
@@ -614,50 +614,116 @@ func (s *testSerialSuite) TestPointGetReadLock(c *C) {
 	tk.Se.GetSessionVars().EnablePointGetCache = true
 	defer func() {
 		tk.Se.GetSessionVars().EnablePointGetCache = false
+		tk.MustExec("drop table if exists point")
 	}()
 
+	tk.MustExec("drop table if exists point")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
+
+	// Simply check the cached results.
 	s.mustExecDDL(tk, c, "lock tables point read")
-
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
-
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	ok := strings.Contains(explain, "num_rpc")
-	c.Assert(ok, IsFalse)
+	tk.MustQuery("select id from point where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from point where id = 1").Check(testkit.Rows("1"))
 	s.mustExecDDL(tk, c, "unlock tables")
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+	cases := []struct {
+		sql string
+		r1  bool
+		r2  bool
+	}{
+		{"explain analyze select * from point where id = 1", false, false},
+		{"explain analyze select * from point where id in (1, 2)", false, false},
+
+		// Cases for not exist keys.
+		{"explain analyze select * from point where id = 3", true, true},
+		{"explain analyze select * from point where id in (1, 3)", true, true},
+		{"explain analyze select * from point where id in (3, 4)", true, true},
+	}
+
+	for _, ca := range cases {
+		s.mustExecDDL(tk, c, "lock tables point read")
+
+		rows := tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1, Commentf("%v", ca.sql))
+		explain := fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
+
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		ok := strings.Contains(explain, "num_rpc")
+		c.Assert(ok, Equals, ca.r1, Commentf("%v", ca.sql))
+		s.mustExecDDL(tk, c, "unlock tables")
+
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
+
+		// Test cache release after unlocking tables.
+		s.mustExecDDL(tk, c, "lock tables point read")
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
+
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		ok = strings.Contains(explain, "num_rpc")
+		c.Assert(ok, Equals, ca.r2, Commentf("%v", ca.sql))
+
+		s.mustExecDDL(tk, c, "unlock tables")
+		s.mustExecDDL(tk, c, "lock tables point read")
+
+		rows = tk.MustQuery(ca.sql).Rows()
+		c.Assert(len(rows), Equals, 1)
+		explain = fmt.Sprintf("%v", rows[0])
+		c.Assert(explain, Matches, ".*num_rpc.*")
+
+		s.mustExecDDL(tk, c, "unlock tables")
+	}
+}
+
+func (s *testSerialSuite) TestPartitionMemCacheReadLock(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.GetSessionVars().EnablePointGetCache = true
+	defer func() {
+		tk.Se.GetSessionVars().EnablePointGetCache = false
+		tk.MustExec("drop table if exists point")
+	}()
+
+	tk.MustExec("drop table if exists point")
+	tk.MustExec("create table point (id int unique key, c int, d varchar(10)) partition by hash (id) partitions 4")
+	tk.MustExec("insert point values (1, 1, 'a')")
+	tk.MustExec("insert point values (2, 2, 'b')")
+
+	// Confirm _tidb_rowid will not be duplicated.
+	tk.MustQuery("select distinct(_tidb_rowid) from point order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+
+	s.mustExecDDL(tk, c, "lock tables point read")
+
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows("1"))
+	s.mustExecDDL(tk, c, "unlock tables")
+
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows("1"))
+	tk.MustExec("update point set id = -id")
 
 	// Test cache release after unlocking tables.
 	s.mustExecDDL(tk, c, "lock tables point read")
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+	tk.MustQuery("select _tidb_rowid from point where id = 1").Check(testkit.Rows())
 
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	ok = strings.Contains(explain, "num_rpc")
-	c.Assert(ok, IsFalse)
-
-	s.mustExecDDL(tk, c, "unlock tables")
-	s.mustExecDDL(tk, c, "lock tables point read")
-
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	c.Assert(len(rows), Equals, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*num_rpc.*")
+	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
+	tk.MustQuery("select _tidb_rowid from point where id = -1").Check(testkit.Rows("1"))
+	tk.MustQuery("select _tidb_rowid from point where id = -2").Check(testkit.Rows("2"))
 
 	s.mustExecDDL(tk, c, "unlock tables")
 }
@@ -817,4 +883,37 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 	for err := range errCh {
 		c.Assert(err, IsNil)
 	}
+}
+
+func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
+	// Fix issue https://github.com/pingcap/tidb/issues/22436
+	// Point get should not use math.MaxUint64 when variable @@tidb_snapshot is set.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists xx")
+	tk.MustExec(`create table xx (id int key)`)
+	tk.MustExec(`insert into xx values (1), (7)`)
+
+	// Unrelated code, to make this test pass in the unit test.
+	// The `tikv_gc_safe_point` global variable must be there, otherwise the 'set @@tidb_snapshot' operation fails.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	// Record the current tso.
+	tk.MustExec("begin")
+	tso := tk.Se.GetSessionVars().TxnCtx.StartTS
+	tk.MustExec("rollback")
+	c.Assert(tso > 0, IsTrue)
+
+	// Insert data.
+	tk.MustExec("insert into xx values (8)")
+
+	// Change the snapshot before the tso, the inserted data should not be seen.
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
+
+	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
 }

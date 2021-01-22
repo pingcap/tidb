@@ -64,12 +64,6 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 }
 
-// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
-type ExtendedStatsKey struct {
-	StatsName string
-	DB        string
-}
-
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
 type ExtendedStatsItem struct {
 	ColIDs     []int64
@@ -80,13 +74,13 @@ type ExtendedStatsItem struct {
 
 // ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
 type ExtendedStatsColl struct {
-	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	Stats             map[string]*ExtendedStatsItem
 	LastUpdateVersion uint64
 }
 
 // NewExtendedStatsColl allocate an ExtendedStatsColl struct.
 func NewExtendedStatsColl() *ExtendedStatsColl {
-	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
+	return &ExtendedStatsColl{Stats: make(map[string]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -148,11 +142,11 @@ func (t *Table) Copy() *Table {
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
-			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		for key, item := range t.ExtendedStats.Stats {
-			newExtStatsColl.Stats[key] = item
+		for name, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[name] = item
 		}
 		nt.ExtendedStats = newExtStatsColl
 	}
@@ -332,7 +326,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer != Version0 {
+	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)

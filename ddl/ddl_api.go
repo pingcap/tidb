@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -1337,7 +1337,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return errors.Trace(err)
 			}
 
-			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
+			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits > autoid.MaxAutoRandomBits {
@@ -2495,6 +2495,10 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
 			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
+		case ast.AlterTableAddStatistics:
+			err = d.AlterTableAddStatistics(ctx, ident, spec.Statistics, spec.IfNotExists)
+		case ast.AlterTableDropStatistics:
+			err = d.AlterTableDropStatistics(ctx, ident, spec.Statistics, spec.IfExists)
 		default:
 			// Nothing to do now.
 		}
@@ -2526,7 +2530,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 				break
 			}
 		}
-		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
 		if layout.IncrementalMask()&newBase != newBase {
 			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
@@ -4249,6 +4253,61 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	return nil
 }
 
+// AlterTableAddStatistics registers extended statistics for a table.
+func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
+	if !ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
+	// Not support Cardinality and Dependency statistics type for now.
+	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
+		return errors.New("Cardinality and Dependency statistics types are not supported now")
+	}
+	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+	tblInfo := tbl.Meta()
+	colIDs := make([]int64, 0, 2)
+	// Check whether columns exist.
+	for _, colName := range stats.Columns {
+		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
+		if col == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
+		}
+		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
+			return nil
+		}
+		colIDs = append(colIDs, col.ID)
+	}
+	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {
+		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
+	}
+	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
+		return errors.New("Only support Cardinality statistics type on at least 2 columns")
+	}
+	// TODO: check whether covering index exists for cardinality / dependency types.
+
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return d.ddlCtx.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+}
+
+// AlterTableDropStatistics logically deletes extended statistics for a table.
+func (d *ddl) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
+	if !ctx.GetSessionVars().EnableExtendedStats {
+		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
+	}
+	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return err
+	}
+	tblInfo := tbl.Meta()
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return d.ddlCtx.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+}
+
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := d.infoHandle.Get()
@@ -4801,8 +4860,8 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
-			colInfo.Dependences[colName.Name.O] = struct{}{}
-			checkDependencies[colName.Name.O] = struct{}{}
+			colInfo.Dependences[colName.Name.L] = struct{}{}
+			checkDependencies[colName.Name.L] = struct{}{}
 		}
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
@@ -5653,23 +5712,19 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 }
 
 func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
-	var err error
-	cnstr = strings.TrimSpace(cnstr)
-	rules := make([]*placement.Rule, 0, 1)
-	if len(cnstr) > 0 && cnstr[0] == '[' {
+	rules := []*placement.Rule{}
+
+	cnstbytes := []byte(cnstr)
+
+	constraints1 := []string{}
+	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	if err1 == nil {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
-		constraints := []string{}
-
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
-
-		labelConstraints, err := placement.CheckLabelConstraints(constraints)
+		labelConstraints, err := placement.CheckLabelConstraints(constraints1)
 		if err != nil {
 			return rules, err
 		}
@@ -5678,15 +5733,16 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			Count:            int(replicas),
 			LabelConstraints: labelConstraints,
 		})
-	} else if len(cnstr) > 0 && cnstr[0] == '{' {
-		constraints := map[string]int{}
-		err = json.Unmarshal([]byte(cnstr), &constraints)
-		if err != nil {
-			return rules, err
-		}
 
+		return rules, nil
+	}
+
+	constraints2 := map[string]int{}
+	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
+	if err2 == nil {
 		ruleCnt := int(replicas)
-		for labels, cnt := range constraints {
+
+		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
 				return rules, errors.Errorf("count should be positive, but got %d", cnt)
 			}
@@ -5702,20 +5758,23 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 			if err != nil {
 				return rules, err
 			}
+
 			rules = append(rules, &placement.Rule{
 				Count:            cnt,
 				LabelConstraints: labelConstraints,
 			})
 		}
+
 		if ruleCnt > 0 {
 			rules = append(rules, &placement.Rule{
 				Count: ruleCnt,
 			})
 		}
-	} else {
-		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+
+		return rules, nil
 	}
-	return rules, err
+
+	return nil, errors.Errorf("constraint is neither an array of string, nor a string-to-number map, due to:\n%s\n%s", err1, err2)
 }
 
 func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
@@ -5742,7 +5801,7 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleVoter:
 			role = placement.Voter
 		default:
-			err = errors.Errorf("unknown role: %d", spec.Role)
+			err = errors.Errorf("ROLE is not specified")
 		}
 		if err != nil {
 			break
@@ -5822,8 +5881,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	extraCnt := map[placement.PeerRoleType]int{}
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID+1)))
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
@@ -5831,6 +5890,14 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			extraCnt[rule.Role] += rule.Count
 			continue
 		}
+		// refer to tidb#22065.
+		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
+		// placement rules in SQL is not compatible with `set tiflash replica` yet
+		rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+			Op:     placement.NotIn,
+			Key:    placement.EngineLabelKey,
+			Values: []string{placement.EngineLabelTiFlash},
+		})
 		rule.GroupID = bundle.ID
 		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
@@ -5841,6 +5908,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		if cnt <= 0 {
 			continue
 		}
+		// refer to tidb#22065.
 		newRules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          string(role),
@@ -5848,6 +5916,11 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
+			LabelConstraints: []placement.LabelConstraint{{
+				Op:     placement.NotIn,
+				Key:    placement.EngineLabelKey,
+				Values: []string{placement.EngineLabelTiFlash},
+			}},
 		})
 	}
 	bundle.Rules = newRules

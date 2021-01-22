@@ -320,6 +320,16 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	return nil
 }
 
+// GCIndexUsage will delete the usage information of those indexes that do not exist.
+func (h *Handle) GCIndexUsage() error {
+	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
+	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
+	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	return err
+}
+
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
@@ -496,8 +506,17 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
 				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
-				if ok {
+				if !ok {
+					continue
+				}
+				idx, ok := t.Indices[fb.Hist.ID]
+				if !ok {
+					continue
+				}
+				if idx.StatsVer == statistics.Version1 {
 					err = h.DumpFeedbackForIndex(fb, t)
+				} else {
+					err = h.DumpFeedbackToKV(fb)
 				}
 			}
 			if err != nil {
@@ -562,7 +581,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
-				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
+				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
 				newTblStats.Indices[fb.Hist.ID] = &newIdx
@@ -576,7 +595,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				_, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
 				newFB := &statistics.QueryFeedback{Feedback: ranFB}
 				newFB = newFB.DecodeIntValues()
-				newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB)
+				newCol.Histogram = *statistics.UpdateHistogram(&col.Histogram, newFB, statistics.Version1)
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
@@ -710,6 +729,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
 		if ok && idx.Histogram.Len() > 0 {
+			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.Copy()
@@ -753,7 +773,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
-	hist = statistics.UpdateHistogram(hist, q)
+	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)

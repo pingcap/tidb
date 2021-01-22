@@ -270,7 +270,7 @@ func checkTiFlashPeerStoreAtLeastOne(stores []*metapb.Store, peers []*metapb.Pee
 
 func storeHasEngineTiFlashLabel(store *metapb.Store) bool {
 	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
+		if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
 			return true
 		}
 	}
@@ -1069,7 +1069,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			def := &pi.Definitions[i]
 			if def.ID == oldID {
 				pid, err1 := t.GenGlobalID()
-				if err != nil {
+				if err1 != nil {
 					return ver, errors.Trace(err1)
 				}
 				def.ID = pid
