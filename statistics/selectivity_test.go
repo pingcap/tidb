@@ -599,7 +599,7 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	// test with clustered index
 	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
 	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10))")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk))")
 	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
 	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
 

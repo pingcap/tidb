@@ -107,6 +107,8 @@
         "test ct1  a 0 1 6 1 6 8 0",
         "test ct1  pk 0 0 3 1 3 5 0",
         "test ct1  pk 0 1 6 1 6 8 0",
+        "test ct1  PRIMARY 1 0 4 1 1 4 4",
+        "test ct1  PRIMARY 1 1 8 1 5 8 4",
         "test ct2  a 0 0 3 1 3 5 0",
         "test ct2  a 0 1 6 1 6 8 0",
         "test ct2  b 0 0 3 1 3 5 0",
@@ -297,19 +299,13 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"1\")",
-        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"4\")",
-        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
       ],
       [
-        "TableReader_7 1.00 root  data:Selection_6",
-        "└─Selection_6 1.00 cop[tikv]  eq(test.ct1.pk, \"8\")",
-        "  └─TableFullScan_5 8.00 cop[tikv] table:ct1 keep order:false"
+        "Point_Get_1 1.00 root table:ct1, clustered index:PRIMARY(pk) "
       ],
       [
         "TableReader_6 0.00 root  data:TableRangeScan_5",
