@@ -301,7 +301,7 @@ func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pu
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.schema,
-	}, false)
+	}, false, false)
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
 	agg.GroupByItems = final.GroupByItems
