@@ -125,7 +125,7 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
+	testKit.MustQuery("explain format = 'brief' select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
 		"HashJoin_8 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
 		"├─TableReader_15(Build) 5.99 root  data:Selection_14",
 		"│ └─Selection_14 5.99 cop[tikv]  not(isnull(test.t2.a))",
@@ -183,11 +183,11 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
-	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
+	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 0`).Check(testkit.Rows(
 		`TableDual_6 0.00 root  rows:0`,
 	))
 
-	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
+	testKit.MustQuery(`explain format = 'brief' select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
 		`TableDual_5 0.00 root  rows:0`,
 	))
 }
@@ -217,7 +217,7 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
-	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
+	testKit.MustQuery("explain format = 'brief' select count(*) from t group by a").Check(testkit.Rows(
 		"HashAgg_9 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
 		"└─TableReader_10 2.00 root  data:HashAgg_5",
 		"  └─HashAgg_5 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
@@ -420,13 +420,13 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
-	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 29.77 root  data:Selection_6",
 		"└─Selection_6 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
-	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
+	testKit.MustQuery("explain format = 'brief' select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableReader_7 8.84 root  data:Selection_6",
 		"└─Selection_6 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -557,7 +557,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	dom.StatsHandle().Update(dom.InfoSchema())
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
-	tk.MustQuery("explain select * from t use index(ab) where a = 5 and c = 5").
+	tk.MustQuery("explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5").
 		Check(testkit.Rows(
 			"IndexLookUp_8 10.00 root  ",
 			"├─IndexRangeScan_5(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",

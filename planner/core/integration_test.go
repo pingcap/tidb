@@ -317,7 +317,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 	// Don't filter mysql.SystemDB by isolation read.
-	tk.MustQuery("explain select * from mysql.stats_meta").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select * from mysql.stats_meta").Check(testkit.Rows(
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
@@ -540,19 +540,19 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	}
 
 	// out table of out join should not be global
-	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
+	_, err := tk.Exec("explain format = 'brief' select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// nullEQ not supported
-	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k <=> d1_t.d1_k")
+	_, err = tk.Exec("explain format = 'brief' select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k <=> d1_t.d1_k")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// not supported if join condition has unsupported expr
-	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and sqrt(fact_t.col1) > 2")
+	_, err = tk.Exec("explain format = 'brief' select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and sqrt(fact_t.col1) > 2")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// cartsian join not supported
-	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t")
+	_, err = tk.Exec("explain format = 'brief' select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
@@ -625,7 +625,7 @@ func (s *testIntegrationSerialSuite) TestIssue15110(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("explain SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 }
 
 func (s *testIntegrationSerialSuite) TestReadFromStorageHint(c *C) {
@@ -933,7 +933,7 @@ func (s *testIntegrationSuite) TestINLJHintSmallTable(c *C) {
 	tk.MustExec("create table t2(a int not null, b int, key(a))")
 	tk.MustExec("insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5)")
 	tk.MustExec("analyze table t1, t2")
-	tk.MustExec("explain select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
+	tk.MustExec("explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
 }
 
 func (s *testIntegrationSuite) TestIndexJoinUniqueCompositeIndex(c *C) {
@@ -1148,7 +1148,7 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
 	tk.MustExec("set session tidb_opt_agg_push_down=1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_12 16000.00 root  test.t.b:desc",
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_12 16000.00 root  test.t.b:desc",
 		"└─HashAgg_15 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
 		"  └─PartitionUnion_16 16000.00 root  ",
 		"    ├─HashAgg_17 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
@@ -1398,7 +1398,7 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
-	tk.MustQuery("explain select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
 		"Projection_4 10.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
 		"└─IndexMerge_9 0.01 root  ",
 		"  ├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1,1], keep order:false, stats:pseudo",
@@ -1456,7 +1456,7 @@ func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b char(100),key(a),key(b(10)))")
-	tk.MustQuery("explain select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
 		"Projection_4 19.99 root  test.t.a, test.t.b",
 		"└─IndexMerge_9 0.02 root  ",
 		"  ├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
@@ -1991,7 +1991,7 @@ func (s *testIntegrationSuite) TestIssue20139(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7))")
 	tk.MustExec("insert into t values(3, 3), (5, 5)")
-	plan := tk.MustQuery("explain select * from t where c = 1 and id = c")
+	plan := tk.MustQuery("explain format = 'brief' select * from t where c = 1 and id = c")
 	plan.Check(testkit.Rows(
 		"TableReader_7 0.01 root partition:p0 data:Selection_6",
 		"└─Selection_6 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
@@ -2006,7 +2006,7 @@ func (s *testIntegrationSuite) TestIssue14481(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
-	plan := tk.MustQuery("explain select * from t where a = 1 and a = 2")
+	plan := tk.MustQuery("explain format = 'brief' select * from t where a = 1 and a = 2")
 	plan.Check(testkit.Rows("TableDual_5 8000.00 root  rows:0"))
 	tk.MustExec("drop table t")
 }

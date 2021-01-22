@@ -96,7 +96,7 @@ ascending order of RETURNFLAG and LINESTATUS. A count of the number of lineitems
 included.
 Planner enhancement: none.
 */
-explain
+explain format = 'brief'
 select
 l_returnflag,
 l_linestatus,
@@ -136,7 +136,7 @@ the query lists the supplier's account balance, name and nation; the part's numb
 address, phone number and comment information.
 Planner enhancement: join reorder.
 */
-explain
+explain format = 'brief'
 select
 s_acctbal,
 s_name,
@@ -225,7 +225,7 @@ of a given date. Orders are listed in decreasing order of revenue. If more than 
 orders with the largest revenue are listed.
 planner enhancement: if group-by item have primary key, non-priamry key is useless.
 */
-explain
+explain format = 'brief'
 select
 l_orderkey,
 sum(l_extendedprice * (1 - l_discount)) as revenue,
@@ -272,7 +272,7 @@ The Order Priority Checking Query counts the number of orders ordered in a given
 at least one lineitem was received by the customer later than its committed date. The query lists the count of such
 orders for each order priority sorted in ascending priority order.
 */
-explain
+explain format = 'brief'
 select
 o_orderpriority,
 count(*) as order_count
@@ -317,7 +317,7 @@ revenue. Revenue volume for all qualifying lineitems in a particular nation is d
 l_discount)).
 Planner enhancement: join reorder.
 */
-explain
+explain format = 'brief'
 select
 n_name,
 sum(l_extendedprice * (1 - l_discount)) as revenue
@@ -378,7 +378,7 @@ increased if these discounts had been eliminated for lineitems with l_quantity l
 potential revenue increase is equal to the sum of [l_extendedprice * l_discount] for all lineitems with discounts and
 quantities in the qualifying range.
 */
-explain
+explain format = 'brief'
 select
 sum(l_extendedprice * l_discount) as revenue
 from
@@ -404,7 +404,7 @@ The query lists the supplier nation, the customer nation, the year, and the reve
 that year. The query orders the answer by Supplier nation, Customer nation, and year (all ascending).
 Planner enahancement: join reorder.
 */
-explain
+explain format = 'brief'
 select
 supp_nation,
 cust_nation,
@@ -479,7 +479,7 @@ The market share for a given nation within a given region is defined as the frac
 from the given nation. The query determines this for the years 1995 and 1996 presented in this order.
 Planner enhancement: join reorder.
 */
-explain
+explain format = 'brief'
 select
 o_year,
 sum(case
@@ -561,7 +561,7 @@ parts in the specified line. The query lists the nations in ascending alphabetic
 and profit in descending order by year (most recent first).
 Planner enhancement: join reorder.
 */
-explain
+explain format = 'brief'
 select
 nation,
 o_year,
@@ -628,7 +628,7 @@ lost. The customers are listed in descending order of lost revenue. Revenue lost
 sum(l_extendedprice*(1-l_discount)) for all qualifying lineitems.
 Planner enhancement: join reorder, if group-by item have primary key, non-priamry key is useless.
 */
-explain
+explain format = 'brief'
 select
 c_custkey,
 c_name,
@@ -688,7 +688,7 @@ The Important Stock Identification Query finds, from scanning the available stoc
 the parts that represent a significant percentage of the total value of all available parts. The query displays the part
 number and the value of those parts in descending order of value.
 */
-explain
+explain format = 'brief'
 select
 ps_partkey,
 sum(ps_supplycost * ps_availqty) as value
@@ -741,7 +741,7 @@ two different specified ship modes. Only lineitems that were actually shipped be
 The late lineitems are partitioned into two groups, those with priority URGENT or HIGH, and those with a
 priority other than URGENT or HIGH.
 */
-explain
+explain format = 'brief'
 select
 l_shipmode,
 sum(case
@@ -790,7 +790,7 @@ who have no record of orders, past or present. It counts and reports how many cu
 have 1, 2, 3, etc. A check is made to ensure that the orders counted do not fall into one of several special categories
 of orders. Special categories are identified in the order comment column by looking for a particular pattern.
 */
-explain
+explain format = 'brief'
 select
 c_count,
 count(*) as custdist
@@ -829,7 +829,7 @@ The Promotion Effect Query determines what percentage of the revenue in a given 
 promotional parts. The query considers only parts actually shipped in that month and gives the percentage. Revenue
 is defined as (l_extendedprice * (1-l_discount)).
 */
-explain
+explain format = 'brief'
 select
 100.00 * sum(case
 when p_type like 'PROMO%'
@@ -901,7 +901,7 @@ customer's requirements. The customer is interested in parts of eight different 
 type, not of a given brand, and not from a supplier who has had complaints registered at the Better Business Bureau.
 Results must be presented in descending count and ascending brand, type, and size.
 */
-explain
+explain format = 'brief'
 select
 p_brand,
 p_type,
@@ -957,7 +957,7 @@ What would be the average yearly gross (undiscounted) loss in revenue if orders 
 of less than 20% of this average were no longer taken?
 Planner enahancement: aggregation pull up through join.
 */
-explain
+explain format = 'brief'
 select
 sum(l_extendedprice) / 7.0 as avg_yearly
 from
@@ -997,7 +997,7 @@ The Large Volume Customer Query finds a list of the top 100 customers who have e
 The query lists the customer name, customer key, the order key, date and total price and the quantity for the order.
 Planner enhancement: cost estimation is not so good, join reorder. The inner subquery's result is only 300+ rows.
 */
-explain
+explain format = 'brief'
 select
 c_name,
 c_custkey,
@@ -1058,7 +1058,7 @@ The Discounted Revenue query finds the gross discounted revenue for all orders f
 that were shipped by air and delivered in person. Parts are selected based on the combination of specific brands, a
 list of containers, and a range of sizes.
 */
-explain
+explain format = 'brief'
 select
 sum(l_extendedprice* (1 - l_discount)) as revenue
 from
@@ -1112,7 +1112,7 @@ The Potential Part Promotion query identifies suppliers who have an excess of a 
 defined to be more than 50% of the parts like the given part that the supplier shipped in a given year for a given
 nation. Only parts whose names share a certain naming convention are considered.
 */
-explain
+explain format = 'brief'
 select
 s_name,
 s_address
@@ -1181,7 +1181,7 @@ The Suppliers Who Kept Orders Waiting query identifies suppliers, for a given na
 multi-supplier order (with current status of 'F') where they were the only supplier who failed to meet the committed
 delivery date.
 */
-explain
+explain format = 'brief'
 select
 s_name,
 count(*) as numwait
@@ -1257,7 +1257,7 @@ This query counts how many customers within a specific range of country codes ha
 but who have a greater than average “positive” account balance. It also reflects the magnitude of that balance.
 Country code is defined as the first two characters of c_phone.
 */
-explain
+explain format = 'brief'
 select
 cntrycode,
 count(*) as numcust,
