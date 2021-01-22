@@ -1173,10 +1173,6 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-			err = statsHandle.UpdateSessionVar()
-			if err != nil {
-				logutil.BgLogger().Debug("update session vars for statistics handle failed", zap.Error(err))
-			}
 		case <-do.exit:
 			return
 		}

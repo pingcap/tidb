@@ -868,6 +868,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+	err := h.UpdateSessionVar()
+	if err != nil {
+		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
+		return
+	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])

@@ -87,6 +87,30 @@ func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
 	for _, idx := range statsTblT.Indices {
 		c.Assert(idx.StatsVer, Equals, int64(2))
 	}
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	c.Assert(h.Update(is), IsNil)
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(2))
+	}
+	tk.MustExec("analyze table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	c.Assert(h.Update(is), IsNil)
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(2))
+	}
+	tk.MustExec("analyze table t ")
+	c.Assert(h.Update(is), IsNil)
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTblT.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
 }
 
 func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
