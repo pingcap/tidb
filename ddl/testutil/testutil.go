@@ -15,6 +15,7 @@ package testutil
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -23,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/rowDecoder"
 )
 
 // SessionExecInGoroutine export for testing.
@@ -68,16 +69,14 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	if err != nil {
 		return nil, err
 	}
-	if tbl.Meta().GetPartitionInfo() != nil {
-		return nil, errors.New("this function does not work on partitioned table")
-	}
-	pt := tbl.(table.PhysicalTable)
 	err = se.NewTxn(context.Background())
 	if err != nil {
 		return nil, err
 	}
+
 	var allHandles []int64
-	err = pt.IterRecords(se, decoder.FirstKey(pt), nil,
+	firstKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64))
+	err = tbl.IterRecords(se, firstKey, nil,
 		func(h kv.Handle, _ []types.Datum, _ []*table.Column) (more bool, err error) {
 			allHandles = append(allHandles, h.IntValue())
 			return true, nil

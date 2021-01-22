@@ -44,7 +44,7 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.PhysicalTable
+	t       table.Table
 	ignored bool
 }
 
@@ -102,9 +102,8 @@ func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Tabl
 
 func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
-	var pt table.PhysicalTable
 	if p, ok := t.(table.PartitionedTable); ok {
-		pt, err = p.GetPartitionByRow(ctx, row)
+		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -113,8 +112,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			}
 			return nil, err
 		}
-	} else {
-		pt = t.(table.PhysicalTable)
 	}
 
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
@@ -153,7 +150,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return str
 		}
 		handleKey = &keyValueWithDupInfo{
-			newKey: tablecodec.EncodeRecordKey(decoder.RecordPrefix(pt), handle),
+			newKey: tablecodec.EncodeRecordKey(t.RecordPrefix(), handle),
 			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
@@ -206,7 +203,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		row:        row,
 		handleKey:  handleKey,
 		uniqueKeys: uniqueKeys,
-		t:          pt,
+		t:          t,
 	})
 	return result, nil
 }
@@ -225,9 +222,9 @@ func formatDataForDupError(data []types.Datum) (string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.PhysicalTable, handle kv.Handle,
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(decoder.RecordPrefix(t), handle))
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
 		return nil, err
 	}

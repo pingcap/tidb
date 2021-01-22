@@ -1790,21 +1790,6 @@ func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
-// IndexPrefix implements table.Table IndexPrefix interface.
-func (it *infoschemaTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// FirstKey implements table.Table FirstKey interface.
-func (it *infoschemaTable) FirstKey() kv.Key {
-	return nil
-}
-
-// RecordKey implements table.Table RecordKey interface.
-func (it *infoschemaTable) RecordKey(h kv.Handle) kv.Key {
-	return nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
@@ -1902,21 +1887,6 @@ func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
 }
 
-// IndexPrefix implements table.Table IndexPrefix interface.
-func (vt *VirtualTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// FirstKey implements table.Table FirstKey interface.
-func (vt *VirtualTable) FirstKey() kv.Key {
-	return nil
-}
-
-// RecordKey implements table.Table RecordKey interface.
-func (vt *VirtualTable) RecordKey(h kv.Handle) kv.Key {
-	return nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
@@ -1950,11 +1920,6 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (vt *VirtualTable) GetPhysicalID() int64 {
 	return 0
-}
-
-// Seek implements table.Table Seek interface.
-func (vt *VirtualTable) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	return nil, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.

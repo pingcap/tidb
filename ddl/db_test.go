@@ -235,14 +235,14 @@ func (s *testDBSuite1) TestRenameIndex(c *C) {
 	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
 }
 
-func testGetTableByName(c *C, ctx sessionctx.Context, db, tb string) table.PhysicalTable {
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tb))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	c.Assert(err, IsNil)
-	return tbl.(table.PhysicalTable)
+	return tbl
 }
 
 func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo {
@@ -255,7 +255,7 @@ func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo 
 	return dbInfo
 }
 
-func (s *testDBSuite) testGetTable(c *C, name string) table.PhysicalTable {
+func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	return testGetTableByName(c, ctx, s.schemaName, name)
 }
@@ -1260,7 +1260,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	startKey := tablecodec.EncodeRecordKey(decoder.RecordPrefix(t), kv.IntHandle(math.MinInt64))
+	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
@@ -2129,7 +2129,8 @@ LOOP:
 			txn.Rollback()
 		}
 	}()
-	err = t.IterRecords(ctx, decoder.FirstKey(t), t.Cols(),
+	firstKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
+	err = t.IterRecords(ctx, firstKey, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
@@ -4334,12 +4335,10 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
-	var writeOnlyTable table.PhysicalTable
+	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
-			tmp, ok := s.dom.InfoSchema().TableByID(job.TableID)
-			c.Assert(ok, IsTrue)
-			writeOnlyTable = tmp.(table.PhysicalTable)
+			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -5134,12 +5133,12 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 
 	// Test for FindTableByPartitionID.
 	is := domain.GetDomain(tk.Se).InfoSchema()
-	t1, dbInfo, _ := is.FindTableByPartitionID(partition.Definitions[0].ID)
-	c.Assert(t1, NotNil)
+	t, dbInfo, _ := is.FindTableByPartitionID(partition.Definitions[0].ID)
+	c.Assert(t, NotNil)
 	c.Assert(dbInfo, NotNil)
-	c.Assert(t1.Meta().Name.L, Equals, "t_flash")
-	t1, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
-	c.Assert(t1, IsNil)
+	c.Assert(t.Meta().Name.L, Equals, "t_flash")
+	t, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
+	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
 	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 

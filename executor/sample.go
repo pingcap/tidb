@@ -196,8 +196,7 @@ func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
 		}
 		return ranges, nil
 	}
-	recordPrefix := tablecodec.GenTableRecordPrefix(s.table.Meta().ID)
-	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
+	startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
 	return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
 }
 

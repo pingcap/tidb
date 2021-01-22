@@ -315,13 +315,13 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 	c.Assert(err, IsNil)
 }
 
-func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.PhysicalTable {
+func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
 	tbl, err := testGetTableWithError(d, schemaID, tableID)
 	c.Assert(err, IsNil)
 	return tbl
 }
 
-func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.PhysicalTable, error) {
+func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -343,11 +343,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.PhysicalTable
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pt, ok := tbl.(table.PhysicalTable)
-	if !ok {
-		return nil, errors.New("assert fail")
-	}
-	return pt, nil
+	return tbl, nil
 }
 
 func (s *testTableSuite) SetUpSuite(c *C) {

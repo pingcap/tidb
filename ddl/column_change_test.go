@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowDecoder"
@@ -90,9 +91,9 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// set up hook
 	prevState := model.StateNone
 	var (
-		deleteOnlyTable table.PhysicalTable
-		writeOnlyTable  table.PhysicalTable
-		publicTable     table.PhysicalTable
+		deleteOnlyTable table.Table
+		writeOnlyTable  table.Table
+		publicTable     table.Table
 	)
 	var checkErr error
 	tc.onJobUpdated = func(job *model.Job) {
@@ -298,7 +299,29 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.PhysicalTable, h kv.Handle) error {
+func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, false, err
+	}
+	recordPrefix := t.RecordPrefix()
+	seekKey := tablecodec.EncodeRowKeyWithHandle(t.GetPhysicalID(), h)
+	iter, err := txn.Iter(seekKey, recordPrefix.PrefixNext())
+	if err != nil {
+		return nil, false, err
+	}
+	if !iter.Valid() || !iter.Key().HasPrefix(recordPrefix) {
+		// No more records in the table, skip to the end.
+		return nil, false, nil
+	}
+	handle, err := tablecodec.DecodeRowKey(iter.Key())
+	if err != nil {
+		return nil, false, err
+	}
+	return handle, true, nil
+}
+
+func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -333,7 +356,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: update t set c1 = 2 where c1 = 1
-	h, _, err = writeOnlyTable.Seek(ctx, kv.IntHandle(0))
+	h, _, err = seek(writeOnlyTable.(table.PhysicalTable), ctx, kv.IntHandle(0))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -372,7 +395,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.PhysicalTable) error {
+func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
 	err := sctx.NewTxn(ctx)
@@ -412,7 +435,7 @@ func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, 
 	return nil
 }
 
-func getCurrentTable(d *ddl, schemaID, tableID int64) (table.PhysicalTable, error) {
+func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -431,16 +454,12 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.PhysicalTable, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	pt, ok := tbl.(table.PhysicalTable)
-	if !ok {
-		return nil, errors.New("assert fail")
-	}
-	return pt, err
+	return tbl, err
 }
 
-func checkResult(ctx sessionctx.Context, t table.PhysicalTable, cols []*table.Column, rows [][]interface{}) error {
+func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
-	err := t.IterRecords(ctx, decoder.FirstKey(t), cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, firstKey(t), cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
 	})

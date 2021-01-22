@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -158,7 +157,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 				if err != nil {
 					return err
 				}
-				batchKeys = append(batchKeys, tablecodec.EncodeRecordKey(decoder.RecordPrefix(r.t), handle))
+				batchKeys = append(batchKeys, tablecodec.EncodeRecordKey(r.t.RecordPrefix(), handle))
 			}
 		}
 	}

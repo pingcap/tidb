@@ -19,7 +19,6 @@ package tables
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -318,19 +317,9 @@ func (t *TableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
-// IndexPrefix implements table.Table interface.
-func (t *TableCommon) IndexPrefix() kv.Key {
-	return t.indexPrefix
-}
-
-// recordKey implements table.Table interface.
-func recordKey(t *TableCommon, h kv.Handle) kv.Key {
+// RecordKey implements table.Table interface.
+func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
-}
-
-// FirstKey implements table.Table interface.
-func (t *TableCommon) FirstKey() kv.Key {
-	return recordKey(t, kv.IntHandle(math.MinInt64))
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -418,7 +407,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	key := recordKey(t, h)
+	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
@@ -725,7 +714,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
-	key := recordKey(t, recordID)
+	key := t.RecordKey(recordID)
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
@@ -1015,7 +1004,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 		return err
 	}
 
-	key := recordKey(t, h)
+	key := t.RecordKey(h)
 	return txn.Delete(key)
 }
 
@@ -1141,7 +1130,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 			return err
 		}
 
-		rk := recordKey(t, handle)
+		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return err

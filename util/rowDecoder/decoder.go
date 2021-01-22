@@ -15,7 +15,6 @@ package decoder
 
 import (
 	"context"
-	"math"
 	"sort"
 	"time"
 
@@ -181,11 +180,10 @@ func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 	return rd.mutRow.ToRow()
 }
 
-// RowWithCols implements table.Table RowWithCols interface.
-func RowWithCols(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
+// RowWithCols returns the column datums of the row.
+func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
-	recordPrefix := tablecodec.GenTableRecordPrefix(t.GetPhysicalID())
-	key := tablecodec.EncodeRecordKey(recordPrefix, h)
+	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, err
@@ -296,26 +294,4 @@ func getChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 	}
 
 	return idxColumnVal, true, nil
-}
-
-// RecordKey returns the key in KV storage for the row.
-func RecordPrefix(t table.PhysicalTable) kv.Key {
-	if f, ok := t.(interface{ RecordPrefix() kv.Key }); ok {
-		return f.RecordPrefix()
-	}
-	return tablecodec.GenTableRecordPrefix(t.GetPhysicalID())
-}
-
-// IndexPrefix returns the index key prefix.
-func IndexPrefix(t table.PhysicalTable) kv.Key {
-	if f, ok := t.(interface{ IndexPrefix() kv.Key }); ok {
-		return f.IndexPrefix()
-	}
-	return tablecodec.GenTableIndexPrefix(t.GetPhysicalID())
-}
-
-// FirstKey implements table.Table interface.
-func FirstKey(t table.PhysicalTable) kv.Key {
-	recordPrefix := tablecodec.GenTableRecordPrefix(t.GetPhysicalID())
-	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(math.MinInt64))
 }
