@@ -1830,12 +1830,6 @@ func (it *infoschemaTable) Type() table.Type {
 // VirtualTable is a dummy table.Table implementation.
 type VirtualTable struct{}
 
-// IterRecords implements table.Table IterRecords interface.
-func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, cols []*table.Column,
-	_ table.RecordIterFunc) error {
-	return nil
-}
-
 // Cols implements table.Table Cols interface.
 func (vt *VirtualTable) Cols() []*table.Column {
 	return nil

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -328,7 +329,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	}
 
 	var rows [][]types.Datum
-	publicTbl.IterRecords(ctx, publicTbl.Cols(),
+	tables.IterRecords(publicTbl, ctx, publicTbl.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil

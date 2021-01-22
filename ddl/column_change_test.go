@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -459,7 +460,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
-	err := t.IterRecords(ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
 	})

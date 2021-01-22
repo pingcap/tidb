@@ -1260,7 +1260,7 @@ LOOP:
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
 	handles := kv.NewHandleMap()
-	err := t.IterRecords(ctx, t.Cols(),
+	err := tables.IterRecords(t, ctx, t.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles.Set(h, struct{}{})
 			return true, nil
@@ -2128,7 +2128,7 @@ LOOP:
 			txn.Rollback()
 		}
 	}()
-	err = t.IterRecords(ctx, t.Cols(),
+	err = tables.IterRecords(t, ctx, t.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0

@@ -157,9 +157,6 @@ type columnAPI interface {
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
-	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, cols []*Column, fn RecordIterFunc) error
-
 	columnAPI
 
 	// Indices returns the indices of the table.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -73,7 +74,7 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	}
 
 	var allHandles []int64
-	err = tbl.IterRecords(se, nil,
+	err = tables.IterRecords(tbl, se, nil,
 		func(h kv.Handle, _ []types.Datum, _ []*table.Column) (more bool, err error) {
 			allHandles = append(allHandles, h.IntValue())
 			return true, nil
