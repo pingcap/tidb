@@ -710,6 +710,13 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if ds.table.Meta().GetPartitionInfo() != nil && ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			canConvertPointGet = false
 		}
+		for _, col := range ds.Columns {
+			// PointGet only handle non-generated & public columns.
+			if col.IsGenerated() || col.State != model.StatePublic {
+				canConvertPointGet = false
+				break
+			}
+		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
