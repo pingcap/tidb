@@ -17,10 +17,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -44,6 +46,12 @@ import (
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
+var testGroupKeyMemory *memory.Tracker
+var testMapMemory *memory.Tracker
+var testMapMemoryB *memory.Tracker
+var testMapOverflow *memory.Tracker
+var testAllocMemory *memory.Tracker
+
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
 	ctx          sessionctx.Context
@@ -57,8 +65,8 @@ type baseHashAggWorker struct {
 }
 
 const (
-	// defBucketMemoryUsage = len * (unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
-	defBucketMemoryUsage = 8*(16+24) + 8 + 8
+	// defBucketMemoryUsage = len * (1 + unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
+	defBucketMemoryUsage = 8*(1+16+24) + 8 + 8
 	// Maximum average load of a bucket that triggers growth is 6.5.
 	// Represent as loadFactorNum/loadFactorDen, to allow integer math.
 	loadFactorNum = 13
@@ -224,6 +232,13 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
+	runtime.GC()
+	runtime.GC()
+	logutil.BgLogger().Info("alloc", zap.Int64("alloc", testAllocMemory.BytesConsumed()))
+	logutil.BgLogger().Info("map", zap.Int64("map", testMapMemory.BytesConsumed()))
+	logutil.BgLogger().Info("groupKey", zap.Int64("groupKey", testGroupKeyMemory.BytesConsumed()))
+	logutil.BgLogger().Info("b", zap.Int64("B", testMapMemoryB.BytesConsumed()))
+	logutil.BgLogger().Info("overflow", zap.Int64("overflow", testMapOverflow.BytesConsumed()))
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
@@ -260,6 +275,11 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
+	testAllocMemory = memory.NewTracker(-1, -1)
+	testGroupKeyMemory = memory.NewTracker(-1, -1)
+	testMapMemory = memory.NewTracker(-1, -1)
+	testMapMemoryB = memory.NewTracker(-1, -1)
+	testMapOverflow = memory.NewTracker(-1, -1)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -435,6 +455,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
+	testGroupKeyMemory.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err
 	}
@@ -475,6 +496,15 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 			groupKeys:        groupKeysSlice[i],
 			partialResultMap: w.partialResultsMap,
 		}
+	}
+	testMapMemoryB.Consume(1 << getB(w.partialResultsMap))
+	testMapOverflow.Consume(int64(getNoverflow(w.partialResultsMap)))
+	logutil.BgLogger().Info("growing", zap.Bool("growing", getIsgrowing(w.partialResultsMap)))
+	logutil.BgLogger().Info("B", zap.Int("B", getB(w.partialResultsMap)))
+
+	if getIsgrowing(w.partialResultsMap) {
+		testMapMemory.Consume(-defBucketMemoryUsage * (1 << *w.BInMap))
+		w.partialResultsMap = nil
 	}
 }
 
@@ -528,12 +558,15 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
 			w.memTracker.Consume(memDelta)
+			testAllocMemory.Consume(memDelta)
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
+		str := string(groupKey[i])
+		mapper[str] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
 		// map will expand in high probability when count > bucketNum * loadFactor.
 		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+			testMapMemory.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 			*w.BInMap++
 		}
 	}
@@ -604,6 +637,11 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 }
 
 func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
+	testMapMemoryB.Consume(1 << getB(w.partialResultMap))
+	testMapOverflow.Consume(int64(getNoverflow(w.partialResultMap)))
+	logutil.BgLogger().Info("growing", zap.Bool("growing", getIsgrowing(w.partialResultMap)))
+	logutil.BgLogger().Info("B", zap.Int("B", getB(w.partialResultMap)))
+
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	if w.stats != nil {
@@ -613,10 +651,13 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		return
 	}
 	execStart := time.Now()
+	memSize := getGroupKeyMemUsage(w.groupKeys)
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
+	testGroupKeyMemory.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet); i++ {
 		for j, af := range w.aggFuncs {
@@ -1664,4 +1705,71 @@ func (e *vecGroupChecker) reset() {
 	if e.lastRowDatums != nil {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
+}
+
+// A header for a Go map.
+type hmap struct {
+	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
+	// Make sure this stays in sync with the compiler's definition.
+	count     int // # live cells == size of map.  Must be first (used by len() builtin)
+	flags     uint8
+	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details
+	hash0     uint32 // hash seed
+
+	buckets    unsafe.Pointer // array of 2^B Buckets. may be nil if count==0.
+	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing
+	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
+
+	extra *mapextra // optional fields
+}
+
+// mapextra holds fields that are not present on all maps.
+type mapextra struct {
+	// If both key and elem do not contain pointers and are inline, then we mark bucket
+	// type as containing no pointers. This avoids scanning such maps.
+	// However, bmap.overflow is a pointer. In order to keep overflow buckets
+	// alive, we store pointers to all overflow buckets in hmap.extra.overflow and hmap.extra.oldoverflow.
+	// overflow and oldoverflow are only used if key and elem do not contain pointers.
+	// overflow contains overflow buckets for hmap.buckets.
+	// oldoverflow contains overflow buckets for hmap.oldbuckets.
+	// The indirection allows to store a pointer to the slice in hiter.
+	overflow    *[]*bmap
+	oldoverflow *[]*bmap
+
+	// nextOverflow holds a pointer to a free overflow bucket.
+	nextOverflow *bmap
+}
+
+const bucketCnt = 8
+
+// A bucket for a Go map.
+type bmap struct {
+	// tophash generally contains the top byte of the hash value
+	// for each key in this bucket. If tophash[0] < minTopHash,
+	// tophash[0] is a bucket evacuation state instead.
+	tophash [bucketCnt]uint8
+	// Followed by bucketCnt keys and then bucketCnt elems.
+	// NOTE: packing all the keys together and then all the elems together makes the
+	// code a bit more complicated than alternating key/elem/key/elem/... but it allows
+	// us to eliminate padding which would be needed for, e.g., map[int64]int8.
+	// Followed by an overflow pointer.
+}
+
+func getB(m aggPartialResultMapper) int {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return int(value.B)
+}
+
+func getNoverflow(m aggPartialResultMapper) int {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return int(value.noverflow)
+}
+
+func getIsgrowing(m aggPartialResultMapper) bool {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return value.oldbuckets != nil
 }
