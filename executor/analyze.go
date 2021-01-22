@@ -164,10 +164,17 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				// Merge partition-level stats to global-level stats failed.
 
 			}
-			globalStatsLength := globalStats.GetLength()
+			globalStatsNum := globalStats.GetNum()
 			globalStatsCount := globalStats.GetCount()
-			for i := 0; i < globalStatsLength; i++ {
-				err = statsHandle.SaveStatsToStorage(info.tableID, globalStatsCount, info.isIndex, globalStats.GetHistogram(i), globalStats.GetCMSketch(i), globalStats.GetTopN(i), info.statsVersion, 1)
+			for i := 0; i < globalStatsNum; i++ {
+				hg := globalStats.GetHistogram(i)
+				cms := globalStats.GetCMSketch(i)
+				topN := globalStats.GetTopN(i)
+				if hg == nil || cms == nil || topN == nil {
+					// Merge partition-level stats to global-level stats failed.
+
+				}
+				err = statsHandle.SaveStatsToStorage(info.tableID, globalStatsCount, info.isIndex, hg, cms, topN, info.statsVersion, 1)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 
