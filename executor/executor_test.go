@@ -525,7 +525,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	c.Assert(err, IsNil)
 
-	err = kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		job, err := t.GetHistoryDDLJob(int64(jobID))
 		c.Assert(err, IsNil)
@@ -7607,6 +7607,29 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.IsStaleness)
 		tk.MustExec("commit")
 	}
+}
+
+func (s *testSuite) TestStalenessAndHistoryRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	// set @@tidb_snapshot before staleness txn
+	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
+	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
+	tk.MustExec("commit")
+	// set @@tidb_snapshot during staleness txn
+	tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+	tk.MustExec(`set @@tidb_snapshot="2016-10-08 16:45:26";`)
+	c.Assert(oracle.ExtractPhysical(tk.Se.GetSessionVars().TxnCtx.StartTS), Equals, int64(1599321600000))
+	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestIssue22231(c *C) {

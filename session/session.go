@@ -2321,7 +2321,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 
 	var ver int64
 	// check in kv store
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
@@ -2344,7 +2344,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
 		return err
@@ -2474,6 +2474,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
+	variable.TiDBMultiStatementMode,
 }
 
 var (
@@ -2567,6 +2568,11 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context) {
+	if s.sessionVars.SnapshotTS != 0 {
+		// Do nothing when @@tidb_snapshot is set.
+		// In case the latest tso is misused.
+		return
+	}
 	if !s.txn.validOrPending() {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
