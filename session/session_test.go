@@ -4077,7 +4077,7 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	err = stmts[0].Restore(ctx)
 	c.Assert(err, IsNil)
 	// FIXME: well... so the restore function is vulnerable...
-	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8\xbf' OR 1=1 /* LIMIT 1")
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
 
 	// test invalid sql
 	_, err = se.ParseWithParams(context.Background(), "SELECT")
