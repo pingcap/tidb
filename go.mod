@@ -83,3 +83,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/jackysp/parser v0.0.0-20210124143932-d42a703e7595
