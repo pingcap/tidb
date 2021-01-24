@@ -533,7 +533,7 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		str := string(groupKey[i])
 		mapper[str] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
-		// map will expand in high probability when count > bucketNum * loadFactor.
+		// map will expand when count > bucketNum * loadFactor.
 		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 			*w.BInMap++
@@ -1669,4 +1669,3 @@ func (e *vecGroupChecker) reset() {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
 }
-
