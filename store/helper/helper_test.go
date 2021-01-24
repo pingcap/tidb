@@ -88,12 +88,12 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 		2: {
 			FlowBytes:    100,
 			MaxHotDegree: 1,
-			Count:        0,
+			Count:        1,
 		},
 		4: {
 			FlowBytes:    200,
 			MaxHotDegree: 2,
-			Count:        0,
+			Count:        1,
 		},
 	}
 	c.Assert(regionMetric, DeepEquals, expected)
