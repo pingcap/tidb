@@ -326,7 +326,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer != Version0 {
+	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
@@ -472,6 +472,9 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 			break
 		}
 		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sc, coll.Pseudo) {
+				continue
+			}
 			lowExclude := idxPointRange.LowExclude
 			highExclude := idxPointRange.HighExclude
 			// Consider this case:

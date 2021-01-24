@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
@@ -161,7 +162,7 @@ type rpcHandler struct {
 
 func isTiFlashStore(store *metapb.Store) bool {
 	for _, l := range store.GetLabels() {
-		if l.GetKey() == "engine" && l.GetValue() == "tiflash" {
+		if l.GetKey() == placement.EngineLabelKey && l.GetValue() == placement.EngineLabelTiFlash {
 			return true
 		}
 	}

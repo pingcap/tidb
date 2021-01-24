@@ -1403,12 +1403,10 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	c.Assert(err, IsNil)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 
-	bundles := make(map[string]*placement.Bundle)
-	is.MockBundles(bundles)
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	bundleID := "pd"
-	bundle := &placement.Bundle{
+	is.SetBundle(&placement.Bundle{
 		ID: bundleID,
 		Rules: []*placement.Rule{
 			{
@@ -1418,12 +1416,11 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 				Count:   3,
 			},
 		},
-	}
-	bundles[bundleID] = bundle
+	})
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle = &placement.Bundle{
+	bundle := &placement.Bundle{
 		ID:       bundleID,
 		Index:    3,
 		Override: true,
@@ -1443,7 +1440,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 			},
 		},
 	}
-	bundles[bundleID] = bundle
+	is.SetBundle(bundle)
 	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
 	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
 		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
@@ -1459,7 +1456,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	bundle1.ID = bundleID
 	bundle1.Rules[0].GroupID = bundleID
 	bundle1.Rules[1].GroupID = bundleID
-	bundles[bundleID] = bundle1
+	is.SetBundle(bundle1)
 	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
 		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
 }
