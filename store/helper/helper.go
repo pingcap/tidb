@@ -79,14 +79,14 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
-// StoreHotRegionInfos records all hog region stores.
+// StoreHotRegionInfos records all hot region stores.
 // it's the response of PD.
 type StoreHotRegionInfos struct {
 	AsPeer   map[uint64]*HotRegionsStat `json:"as_peer"`
 	AsLeader map[uint64]*HotRegionsStat `json:"as_leader"`
 }
 
-// HotRegionsStat records echo store's hot region.
+// HotRegionsStat records each store's hot region.
 // it's the response of PD.
 type HotRegionsStat struct {
 	RegionsStat []RegionStat `json:"statistics"`
@@ -149,13 +149,26 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 		return nil, errors.Trace(err)
 	}
 	metricCnt := 0
+	regionCnt := make(map[uint64]int)
 	for _, hotRegions := range regionResp.AsLeader {
 		metricCnt += len(hotRegions.RegionsStat)
+		for _, region := range hotRegions.RegionsStat {
+			regionCnt[region.RegionID]++
+		}
+	}
+	for _, hotRegions := range regionResp.AsPeer {
+		for _, region := range hotRegions.RegionsStat {
+			regionCnt[region.RegionID]++
+		}
 	}
 	metric := make(map[uint64]RegionMetric, metricCnt)
 	for _, hotRegions := range regionResp.AsLeader {
 		for _, region := range hotRegions.RegionsStat {
-			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
+			metric[region.RegionID] = RegionMetric{
+				FlowBytes:    uint64(region.FlowBytes),
+				MaxHotDegree: region.HotDegree,
+				Count:        regionCnt[region.RegionID],
+			}
 		}
 	}
 	return metric, nil
