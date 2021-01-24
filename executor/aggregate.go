@@ -47,8 +47,9 @@ import (
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 var testGroupKeyMemory *memory.Tracker
-var testMapMemory *memory.Tracker
-var testMapMemoryB *memory.Tracker
+var testNoGrowingMemory *memory.Tracker
+var testAllMapMemory *memory.Tracker
+var testB *memory.Tracker
 var testMapOverflow *memory.Tracker
 var testAllocMemory *memory.Tracker
 
@@ -65,8 +66,9 @@ type baseHashAggWorker struct {
 }
 
 const (
-	// defBucketMemoryUsage = len * (1 + unsafe.Sizeof(string) + unsafe.Sizeof(slice) + pointer to key/value) + topHash + pointer to next bucket
-	defBucketMemoryUsage = 8*(1+16+24) + 8 + 8
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
+	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
+	defBucketMemoryUsage = 8*(1+16+24) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
 	// Represent as loadFactorNum/loadFactorDen, to allow integer math.
 	loadFactorNum = 13
@@ -235,9 +237,10 @@ func (e *HashAggExec) Close() error {
 	runtime.GC()
 	runtime.GC()
 	logutil.BgLogger().Info("alloc", zap.Int64("alloc", testAllocMemory.BytesConsumed()))
-	logutil.BgLogger().Info("map", zap.Int64("map", testMapMemory.BytesConsumed()))
+	logutil.BgLogger().Info("map", zap.Int64("map", testAllMapMemory.BytesConsumed()))
+	logutil.BgLogger().Info("no growing map", zap.Int64("no growing map", testNoGrowingMemory.BytesConsumed()))
 	logutil.BgLogger().Info("groupKey", zap.Int64("groupKey", testGroupKeyMemory.BytesConsumed()))
-	logutil.BgLogger().Info("b", zap.Int64("B", testMapMemoryB.BytesConsumed()))
+	logutil.BgLogger().Info("b", zap.Int64("B", testB.BytesConsumed()))
 	logutil.BgLogger().Info("overflow", zap.Int64("overflow", testMapOverflow.BytesConsumed()))
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
@@ -277,8 +280,9 @@ func (e *HashAggExec) Close() error {
 func (e *HashAggExec) Open(ctx context.Context) error {
 	testAllocMemory = memory.NewTracker(-1, -1)
 	testGroupKeyMemory = memory.NewTracker(-1, -1)
-	testMapMemory = memory.NewTracker(-1, -1)
-	testMapMemoryB = memory.NewTracker(-1, -1)
+	testAllMapMemory = memory.NewTracker(-1, -1)
+	testNoGrowingMemory = memory.NewTracker(-1, -1)
+	testB = memory.NewTracker(-1, -1)
 	testMapOverflow = memory.NewTracker(-1, -1)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
@@ -497,13 +501,13 @@ func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, f
 			partialResultMap: w.partialResultsMap,
 		}
 	}
-	testMapMemoryB.Consume(1 << getB(w.partialResultsMap))
+	testB.Consume(1 << getB(w.partialResultsMap))
 	testMapOverflow.Consume(int64(getNoverflow(w.partialResultsMap)))
 	logutil.BgLogger().Info("growing", zap.Bool("growing", getIsgrowing(w.partialResultsMap)))
 	logutil.BgLogger().Info("B", zap.Int("B", getB(w.partialResultsMap)))
 
 	if getIsgrowing(w.partialResultsMap) {
-		testMapMemory.Consume(-defBucketMemoryUsage * (1 << *w.BInMap))
+		testNoGrowingMemory.Consume(-defBucketMemoryUsage * (1 << *w.BInMap))
 		w.partialResultsMap = nil
 	}
 }
@@ -566,7 +570,8 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		// map will expand in high probability when count > bucketNum * loadFactor.
 		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
-			testMapMemory.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+			testAllMapMemory.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+			testNoGrowingMemory.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 			*w.BInMap++
 		}
 	}
@@ -637,7 +642,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 }
 
 func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
-	testMapMemoryB.Consume(1 << getB(w.partialResultMap))
+	testB.Consume(1 << getB(w.partialResultMap))
 	testMapOverflow.Consume(int64(getNoverflow(w.partialResultMap)))
 	logutil.BgLogger().Info("growing", zap.Bool("growing", getIsgrowing(w.partialResultMap)))
 	logutil.BgLogger().Info("B", zap.Int("B", getB(w.partialResultMap)))
