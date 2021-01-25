@@ -103,7 +103,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	type additionGlobalStatsInfo struct {
 		tableID      int64
 		isIndex      int
-		idxId        int64
+		idxID        int64
 		statsVersion int
 	}
 	globalStatsMap := make(map[string]additionGlobalStatsInfo)
@@ -158,7 +158,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for _, info := range globalStatsMap {
-			globalStats, succ := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), info.tableID, info.isIndex, info.idxId)
+			globalStats, succ := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), info.tableID, info.isIndex, info.idxID)
 			if succ {
 				globalStatsNum := globalStats.GetNum()
 				globalStatsCount := globalStats.GetCount()
@@ -179,7 +179,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			if !succ {
 				if info.isIndex != 0 {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d index %d failed", info.tableID, info.idxId))
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d index %d failed", info.tableID, info.idxID))
 				} else {
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d failed", info.tableID))
 				}
