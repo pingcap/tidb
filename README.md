@@ -46,7 +46,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
     TiDB uses the Raft consensus algorithm to ensure that data is highly available and safely replicated throughout storage in Raft groups. In the event of failure, a Raft group will automatically elect a new leader for the failed member, and self-heal the TiDB cluster without any required manual intervention. Failure and self-healing operations are also transparent to applications.
 
-For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable/overview) and [release notes](https://docs.pingcap.com/tidb/stable/release-notes).
+For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
 ## Quick start
 
