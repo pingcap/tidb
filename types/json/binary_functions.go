@@ -739,9 +739,24 @@ func CompareBinary(left, right BinaryJSON) int {
 			}
 			cmp = leftCount - rightCount
 		case TypeCodeObject:
-			// only equal is defined on two json objects.
-			// larger and smaller are not defined.
-			cmp = bytes.Compare(left.Value, right.Value)
+			// reference:
+			// https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/json_dom.cc#L2561
+			leftCount, rightCount := left.GetElemCount(), right.GetElemCount()
+			cmp := compareInt64(int64(leftCount), int64(rightCount))
+			if cmp != 0 {
+				return cmp
+			}
+			for i := 0; i < leftCount; i++ {
+				leftKey, rightKey := left.objectGetKey(i), right.objectGetKey(i)
+				cmp = bytes.Compare(leftKey, rightKey)
+				if cmp != 0 {
+					return cmp
+				}
+				cmp = CompareBinary(left.objectGetVal(i), right.objectGetVal(i))
+				if cmp != 0 {
+					return cmp
+				}
+			}
 		}
 	} else {
 		cmp = precedence1 - precedence2
