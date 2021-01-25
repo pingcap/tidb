@@ -99,8 +99,8 @@ func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
 	}
 	for _, t := range tests {
 		commentf := Commentf("%s", t.name)
-		c.Assert(EscapeBytesBackslash(nil, t.input), DeepEquals, t.output, commentf)
-		c.Assert(EscapeStringBackslash(nil, string(hack.String(t.input))), DeepEquals, t.output, commentf)
+		c.Assert(escapeBytesBackslash(nil, t.input), DeepEquals, t.output, commentf)
+		c.Assert(escapeStringBackslash(nil, string(hack.String(t.input))), DeepEquals, t.output, commentf)
 	}
 }
 

@@ -33,8 +33,8 @@ func reserveBuffer(buf []byte, appendSize int) []byte {
 	return buf[:newSize]
 }
 
-// EscapeBytesBackslash will escape []byte into the buffer, with backslash.
-func EscapeBytesBackslash(buf []byte, v []byte) []byte {
+// escapeBytesBackslash will escape []byte into the buffer, with backslash.
+func escapeBytesBackslash(buf []byte, v []byte) []byte {
 	pos := len(buf)
 	buf = reserveBuffer(buf, len(v)*2)
 
@@ -77,9 +77,9 @@ func EscapeBytesBackslash(buf []byte, v []byte) []byte {
 	return buf[:pos]
 }
 
-// EscapeStringBackslash will escape string into the buffer, with backslash.
-func EscapeStringBackslash(buf []byte, v string) []byte {
-	return EscapeBytesBackslash(buf, hack.Slice(v))
+// escapeStringBackslash will escape string into the buffer, with backslash.
+func escapeStringBackslash(buf []byte, v string) []byte {
+	return escapeBytesBackslash(buf, hack.Slice(v))
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.
@@ -151,19 +151,19 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 			}
 		case json.RawMessage:
 			buf = append(buf, '\'')
-			buf = EscapeBytesBackslash(buf, v)
+			buf = escapeBytesBackslash(buf, v)
 			buf = append(buf, '\'')
 		case []byte:
 			if v == nil {
 				buf = append(buf, "NULL"...)
 			} else {
 				buf = append(buf, "_binary'"...)
-				buf = EscapeBytesBackslash(buf, v)
+				buf = escapeBytesBackslash(buf, v)
 				buf = append(buf, '\'')
 			}
 		case string:
 			buf = append(buf, '\'')
-			buf = EscapeStringBackslash(buf, v)
+			buf = escapeStringBackslash(buf, v)
 			buf = append(buf, '\'')
 		case []string:
 			buf = append(buf, '(')
@@ -172,7 +172,7 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 					buf = append(buf, ',')
 				}
 				buf = append(buf, '\'')
-				buf = EscapeStringBackslash(buf, k)
+				buf = escapeStringBackslash(buf, k)
 				buf = append(buf, '\'')
 			}
 			buf = append(buf, ')')
