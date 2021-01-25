@@ -1446,19 +1446,20 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
+	var retryable bool
 	for i, stmt := range stmts {
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			if terror.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) {
+			if terror.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
 				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
 				delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-				err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+				_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
 				cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 				if err != nil {
 					break
@@ -1568,7 +1569,9 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	return pointPlans, nil
 }
 
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
+// The first return value indicates whether the call of handleStmt has no side effect and can be retried to correct error.
+// Currently the first return value is used to fallback to TiKV when TiFlash is down.
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
@@ -1579,7 +1582,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	if lastStmt {
@@ -1594,12 +1597,12 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
 		if connStatus == connStatusShutdown {
-			return executor.ErrQueryInterrupted
+			return false, executor.ErrQueryInterrupted
 		}
 
-		err = cc.writeResultset(ctx, rs, false, status, 0)
+		retryable, err := cc.writeResultset(ctx, rs, false, status, 0)
 		if err != nil {
-			return err
+			return retryable, err
 		}
 	} else {
 		handled, err := cc.handleQuerySpecial(ctx, status)
@@ -1610,10 +1613,10 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 			}
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
@@ -1679,7 +1682,10 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
+// retryable indicates whether the call of writeResultset has no side effect and can be retried to correct error. The call
+// has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
+// TiFlash is down.
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
@@ -1700,13 +1706,13 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
 	} else {
-		err = cc.writeChunks(ctx, rs, binary, serverStatus)
+		retryable, err = cc.writeChunks(ctx, rs, binary, serverStatus)
 	}
 	if err != nil {
-		return err
+		return retryable, err
 	}
 
-	return cc.flush(ctx)
+	return false, cc.flush(ctx)
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
@@ -1728,10 +1734,12 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
 // serverStatus, a flag bit represents server information
-func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
+// The first return value indicates whether error occurs at the first call of ResultSet.Next.
+func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
+	firstNext := true
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1742,15 +1750,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
 		if err != nil {
-			return err
+			return firstNext, err
 		}
+		firstNext = false
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
 			err = cc.writeColumnInfo(columns, serverStatus)
 			if err != nil {
-				return err
+				return false, err
 			}
 			gotColumnInfo = true
 		}
@@ -1769,11 +1778,11 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			if err != nil {
 				reg.End()
-				return err
+				return false, err
 			}
 			if err = cc.writePacket(data); err != nil {
 				reg.End()
-				return err
+				return false, err
 			}
 		}
 		reg.End()
@@ -1781,7 +1790,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	return cc.writeEOF(serverStatus)
+	return false, cc.writeEOF(serverStatus)
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -1874,7 +1883,7 @@ func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, 
 		if !lastRs {
 			status |= mysql.ServerMoreResultsExists
 		}
-		if err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
+		if _, err := cc.writeResultset(ctx, rs, binary, status, 0); err != nil {
 			return err
 		}
 	}

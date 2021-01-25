@@ -747,7 +747,11 @@ func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
 		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
 		"    └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
 
-	c.Assert(cc.handleQuery(context.Background(), "select sum(a) from t"), IsNil)
+	ctx := context.Background()
+	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout"), IsNil)
