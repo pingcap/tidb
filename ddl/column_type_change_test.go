@@ -1628,7 +1628,6 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var (
 		once     bool
@@ -1643,6 +1642,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		}
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
 			if !once {
+				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
 				if len(tbl.WritableCols()) != 3 {
 					checkErr = errors.New("assert the writable column number error")
@@ -1679,6 +1679,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "3 3", "3 3"))
 	tk.MustExec("drop table if exists t")
