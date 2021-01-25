@@ -36,7 +36,7 @@ func (s *testOraclesSuite) TestLocalOracle(c *C) {
 		m[ts] = struct{}{}
 	}
 
-	c.Assert(len(m) == 100000, IsTrue, Commentf("should generate same ts"))
+	c.Assert(len(m), Equals, 100000, Commentf("should generate same ts"))
 }
 
 func (s *testOraclesSuite) TestIsExpired(c *C) {
