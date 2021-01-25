@@ -2352,7 +2352,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(v)
 		}
 	case AlterTableAddStatistics:
-		ctx.WriteKeyWord("ADD TIDB_STATS ")
+		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {
 			ctx.WriteKeyWord("IF NOT EXISTS ")
 		}
@@ -2375,7 +2375,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WritePlain(")")
 	case AlterTableDropStatistics:
-		ctx.WriteKeyWord("DROP TIDB_STATS ")
+		ctx.WriteKeyWord("DROP STATS_EXTENDED ")
 		if n.IfExists {
 			ctx.WriteKeyWord("IF EXISTS ")
 		}

@@ -797,8 +797,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
 		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
-		{"admin reload statistics", true, "ADMIN RELOAD TIDB_STATS"},
-		{"admin reload tidb_stats", true, "ADMIN RELOAD TIDB_STATS"},
+		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
+		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},

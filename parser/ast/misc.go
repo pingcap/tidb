@@ -1957,7 +1957,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminResetTelemetryID:
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
-		ctx.WriteKeyWord("RELOAD TIDB_STATS")
+		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
