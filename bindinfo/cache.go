@@ -42,6 +42,8 @@ const (
 	Capture = "capture"
 	// Evolve indicates the binding is evolved by TiDB from old bindings.
 	Evolve = "evolve"
+	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	Builtin = "builtin"
 )
 
 // Binding stores the basic bind hint info.
@@ -118,15 +120,19 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		if sctx != nil {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
-		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
 		if err != nil {
 			return err
+		}
+		if sctx != nil {
+			paramChecker := &paramMarkerChecker{}
+			stmt.Accept(paramChecker)
+			if !paramChecker.hasParamMarker {
+				_, err = getHintsForSQL(sctx, bind.BindSQL)
+				if err != nil {
+					return err
+				}
+			}
 		}
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {
@@ -210,7 +216,7 @@ func (br *BindRecord) shallowCopy() *BindRecord {
 }
 
 func (br *BindRecord) isSame(other *BindRecord) bool {
-	return br.OriginalSQL == other.OriginalSQL && br.Db == other.Db
+	return br.OriginalSQL == other.OriginalSQL
 }
 
 var statusIndex = map[string]int{
