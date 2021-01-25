@@ -51,6 +51,16 @@
         "test tstring  singular 1 2 1",
         "test tstring  multi 1 (1, 1) 1",
         "test tstring  multi 1 (2, 2) 1",
+        "test tdatetime  a 0 2001-01-01 00:00:00 1",
+        "test tdatetime  a 0 2001-01-02 00:00:00 1",
+        "test tdatetime  b 0 2001-01-01 00:00:00 1",
+        "test tdatetime  b 0 2001-01-02 00:00:00 1",
+        "test tdatetime  c 0 2001-01-01 00:00:00 1",
+        "test tdatetime  c 0 2001-01-02 00:00:00 1",
+        "test tdatetime  singular 1 2001-01-01 00:00:00 1",
+        "test tdatetime  singular 1 2001-01-02 00:00:00 1",
+        "test tdatetime  multi 1 (2001-01-01 00:00:00, 2001-01-01 00:00:00) 1",
+        "test tdatetime  multi 1 (2001-01-02 00:00:00, 2001-01-02 00:00:00) 1",
         "test tprefix  a 0 111 1",
         "test tprefix  a 0 222 1",
         "test tprefix  b 0 111 1",
@@ -109,6 +119,16 @@
         "test tstring  singular 1 1 6 1 5 8 4",
         "test tstring  multi 1 0 2 1 (1, 1) (4, 4) 2",
         "test tstring  multi 1 1 6 1 (5, 5) (8, 8) 4",
+        "test tdatetime  a 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
+        "test tdatetime  a 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
+        "test tdatetime  b 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
+        "test tdatetime  b 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
+        "test tdatetime  c 0 0 1 1 2001-01-03 00:00:00 2001-01-03 00:00:00 0",
+        "test tdatetime  c 0 1 2 1 2001-01-04 00:00:00 2001-01-04 00:00:00 0",
+        "test tdatetime  singular 1 0 0 0 2001-01-01 00:00:00 2001-01-02 00:00:00 0",
+        "test tdatetime  singular 1 1 2 1 2001-01-03 00:00:00 2001-01-04 00:00:00 2",
+        "test tdatetime  multi 1 0 0 0 (2001-01-01 00:00:00, 2001-01-01 00:00:00) (2001-01-02 00:00:00, 2001-01-02 00:00:00) 0",
+        "test tdatetime  multi 1 1 2 1 (2001-01-03 00:00:00, 2001-01-03 00:00:00) (2001-01-04 00:00:00, 2001-01-04 00:00:00) 2",
         "test tprefix  a 0 0 2 1 333 444 0",
         "test tprefix  a 0 1 4 1 555 666 0",
         "test tprefix  b 0 0 2 1 333 444 0",
@@ -193,6 +213,21 @@
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.a, 2001-01-01 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.a, 2001-01-02 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.a, 2001-01-04 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
         "└─Selection_6 1.00 cop[tikv]  eq(test.tprefix.a, \"111\")",
         "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
@@ -268,6 +303,21 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-01 00:00:00.000000), eq(test.tdatetime.c, 2001-01-01 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-02 00:00:00.000000), eq(test.tdatetime.c, 2001-01-02 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-04 00:00:00.000000), eq(test.tdatetime.c, 2001-01-04 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
         "TableReader_7 1.33 root  data:Selection_6",
         "└─Selection_6 1.33 cop[tikv]  eq(test.tint.b, 1)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
@@ -326,6 +376,21 @@
         "TableReader_7 1.00 root  data:Selection_6",
         "└─Selection_6 1.00 cop[tikv]  eq(test.tstring.b, \"8\")",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-01 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-02 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
+      ],
+      [
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tdatetime.b, 2001-01-04 00:00:00.000000)",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:tdatetime keep order:false"
       ],
       [
         "TableReader_6 4.00 root  data:TableRangeScan_5",

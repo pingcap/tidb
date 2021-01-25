@@ -596,6 +596,11 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
 	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
 
+	testKit.MustExec("drop table if exists tdatetime")
+	testKit.MustExec("create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04')")
+	testKit.MustExec("analyze table tdatetime with 2 topn, 3 buckets")
+
 	testKit.MustExec("drop table if exists tprefix")
 	testKit.MustExec("create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)))")
 	testKit.MustExec("insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666')")
