@@ -38,6 +38,7 @@
       "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
       "explain select count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value",
       "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 10",
+      "explain select count(*) from (select case when t1.col1 is null then t2.col1 + 5 else 10 end as col1, t2.d1_k as d1_k from fact_t t1 right join fact_t t2 on t1.d1_k = t2.d1_k) fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > 5",
       "explain select count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col2 > 10 and fact_t.col1 > d1_t.value",
       "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10",
       "explain select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
@@ -163,6 +164,40 @@
       "desc select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc select id from t as A where not exists (select 1 from t where t.id=A.id)"
+    ]
+  },
+  {
+    "name": "TestPushDownAggForMPP",
+    "cases": [
+      "desc select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
+      "desc select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc select count(*) from t",
+      "desc select count(*), id from t group by id",
+      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
+      "desc select avg(value) as b,id from t group by id",
+      "desc select /*+hash_agg()*/ sum(b),id from (select avg(value) as b, id from t group by id)A",
+      "desc select id from t group by id having avg(value)>0",
+      "desc select avg(value),id from t group by id having avg(value)>0",
+      "desc select avg(value) +1,id from t group by id",
+      "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
+      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id",
+      "desc select count(distinct value),id from t group by id",
+      "desc select * from t join ( select count(distinct value), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select count(1/value), id from t group by id) as A on A.id = t.id"
+    ]
+  },
+  {
+    "name": "TestMppAggWithJoin",
+    "cases": [
+      "desc select * from t join ( select count(*), id from t group by id) as A on A.id = t.id",
+      "desc select * from t join ( select count(*)+id as v from t group by id) as A on A.v = t.id",
+      "desc select * from t join ( select count(*) as v, id from t group by value,id having value+v <10) as A on A.id = t.id",
+      "desc select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
+      "desc select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
+      "desc select * from (select id from t group by id) C join (select sum(value),id from t group by id)B on C.id=B.id",
+      "desc select * from (select id from t group by id) C join (select sum(b),id from (select t.id, t1.id as b from t join (select id, count(*) as c from t group by id) t1 on t.id=t1.id)A group by id)B on C.id=b.id"
     ]
   }
 ]
