@@ -151,7 +151,6 @@ func (e *InsertValues) initInsertColumns() error {
 				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 			}
 			e.hasExtraHandle = true
-			break
 		}
 	}
 
@@ -547,6 +546,13 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		}
 		return d, nil
 	}
+	if column.ID == model.ExtraHandleID && hasValue {
+		d, err := e.adjustImplicitRowID(ctx, datum, hasValue, column)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return d, nil
+	}
 	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
 		if e.handleErr(column, &datum, 0, err) != nil {
@@ -565,7 +571,14 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 // https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool) ([]types.Datum, error) {
 	gCols := make([]*table.Column, 0)
-	for i, c := range e.Table.Cols() {
+	tCols := e.Table.Cols()
+	if e.hasExtraHandle {
+		col := &table.Column{}
+		col.ColumnInfo = model.NewExtraHandleColInfo()
+		col.ColumnInfo.Offset = len(tCols)
+		tCols = append(tCols, col)
+	}
+	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
 		if c.IsGenerated() {
@@ -877,7 +890,7 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
 	}
@@ -893,10 +906,64 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	autoRandomID := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+}
+
+func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
+	var err error
+	var recordID int64
+	if !hasValue {
+		d.SetNull()
+	}
+	if !d.IsNull() {
+		recordID = d.GetInt64()
+	}
+	// Use the value if it's not null and not 0.
+	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowWriteRowID {
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
+		err = e.rebaseImplicitRowID(recordID)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		d.SetInt64(recordID)
+		return d, nil
+	}
+	// Change NULL to auto id.
+	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
+	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+		_, err := e.ctx.Txn(true)
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+		intHandle, err := tables.AllocHandle(e.ctx, e.Table)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		recordID = intHandle
+	}
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return d, nil
+}
+
+func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
+	if recordID < 0 {
+		return nil
+	}
+	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
+	tableInfo := e.Table.Meta()
+
+	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
+	newTiDBRowIDBase := layout.IncrementalMask() & recordID
+
+	return alloc.Rebase(tableInfo.ID, newTiDBRowIDBase, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {
@@ -1042,14 +1109,17 @@ func (e *InsertRuntimeStat) String() string {
 	if e.CheckInsertTime == 0 {
 		// For replace statement.
 		if e.Prefetch > 0 && e.SnapshotRuntimeStats != nil {
-			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.Prefetch, e.SnapshotRuntimeStats.String())
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", execdetails.FormatDuration(e.Prefetch), e.SnapshotRuntimeStats.String())
 		}
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	buf.WriteString(fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime))
+	buf.WriteString(fmt.Sprintf("prepare:%v, ", execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime)))
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.CheckInsertTime, e.CheckInsertTime-e.Prefetch, e.Prefetch))
+		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
+			execdetails.FormatDuration(e.CheckInsertTime),
+			execdetails.FormatDuration(e.CheckInsertTime-e.Prefetch),
+			execdetails.FormatDuration(e.Prefetch)))
 		if e.SnapshotRuntimeStats != nil {
 			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
 				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
@@ -1057,7 +1127,7 @@ func (e *InsertRuntimeStat) String() string {
 		}
 		buf.WriteString("}")
 	} else {
-		buf.WriteString(fmt.Sprintf("insert:%v", e.CheckInsertTime))
+		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
 	}
 	return buf.String()
 }
