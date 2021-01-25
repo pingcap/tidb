@@ -1473,7 +1473,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
+	case KindString, KindBytes, KindBinaryLiteral:
 		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
@@ -1500,7 +1500,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
+	case KindString, KindBytes, KindBinaryLiteral:
 		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		s, err = ParseSetName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
