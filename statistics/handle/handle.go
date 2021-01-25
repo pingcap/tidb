@@ -289,6 +289,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 	}
 
 	// initialized the globalStats
+	globalStats = new(GlobalStats)
 	if isIndex == 0 {
 		globalStats.num = len(globalTableInfo.Columns)
 	} else {
