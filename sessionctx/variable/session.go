@@ -158,6 +158,9 @@ type TransactionContext struct {
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
+
+	// TableDeltaMap lock to prevent potential data race
+	tdmLock sync.Mutex
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -179,6 +182,8 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 
 // UpdateDeltaForTable updates the delta info for some table.
 func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
@@ -217,13 +222,17 @@ func (tc *TransactionContext) Cleanup() {
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 }
 
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.tdmLock.Unlock()
 }
 
 // GetForUpdateTS returns the ts for update.
@@ -1371,6 +1380,15 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBEnableRateLimitAction:
 		s.EnabledRateLimitAction = TiDBOptOn(val)
+	case TiDBMemoryUsageAlarmRatio:
+		floatVal, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return ErrWrongTypeForVar.GenWithStackByArgs(TiDBMemoryUsageAlarmRatio)
+		}
+		if floatVal < 0 || floatVal > 1 {
+			return ErrWrongValueForVar.GenWithStackByArgs(TiDBMemoryUsageAlarmRatio, val)
+		}
+		MemoryUsageAlarmRatio.Store(floatVal)
 	}
 	s.systems[name] = val
 	return nil

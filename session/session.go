@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -358,6 +360,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
+	pm := privilege.GetPrivilegeManager(s)
+	if pm != nil && s.sessionVars.User != nil {
+		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
+			user := s.sessionVars.User
+			u := user.Username
+			h := user.Hostname
+			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+				u = user.AuthUsername
+				h = user.AuthHostname
+			}
+			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+		}
+	}
 	table, err := is.TableByName(dbName, tName)
 	if err != nil {
 		return nil, err
@@ -641,9 +656,19 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
-		err = s.NewTxn(ctx)
-		if err != nil {
-			return err
+		if len(nh.history) > 1 {
+			err = s.NewTxn(ctx)
+			if err != nil {
+				return err
+			}
+			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+			if pessTxnConf.Enable {
+				if s.sessionVars.TxnMode == ast.Pessimistic {
+					s.sessionVars.TxnCtx.IsPessimistic = true
+				}
+			}
+		} else {
+			s.PrepareTxnCtx(ctx)
 		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
@@ -667,7 +692,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sql))
+					zap.String("sql", sql),
+					zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -689,7 +715,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
-			zap.Uint64("original txnStartTS", orgStartTS))
+			zap.Uint64("original txnStartTS", orgStartTS),
+			zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 		failpoint.Inject("preCommitHook", func() {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
@@ -1051,6 +1078,17 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
+		RedactSQL:        s.sessionVars.EnableRedactLog,
+	}
+	if p == nil {
+		// Store the last valid plan when the current plan is nil.
+		// This is for `explain for connection` statement has the ability to query the last valid plan.
+		oldPi := s.ShowProcess()
+		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+			pi.Plan = oldPi.Plan
+			pi.PlanExplainRows = oldPi.PlanExplainRows
+			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+		}
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	s.currentPlan = nil
@@ -1146,7 +1184,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 		}
 		return nil, util.SyntaxError(err)
 	}
@@ -1656,6 +1698,30 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
+// loadDefMemQuotaQuery loads the default value of mem-quota-query.
+// We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
+// An empty result will be returned if it's a newly deployed cluster whose
+// version is v4.0.9.
+// See the comment upon the function `upgradeToVer49` for details.
+func loadDefMemQuotaQuery(se *session) (int64, error) {
+	defMemQuotaQuery, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return 1 << 30, nil
+		}
+		return 1 << 30, err
+	}
+	if quota, err := strconv.Atoi(defMemQuotaQuery); err != nil || quota != 32<<30 {
+		logutil.BgLogger().Warn("Unexpected value of 'default_memory_quota_query' in 'mysql.tidb', use '34359738368' instead",
+			zap.String("value", defMemQuotaQuery))
+	}
+	return 32 << 30, nil
+}
+
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+)
+
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
 	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
@@ -1672,6 +1738,9 @@ func loadParameter(se *session, name string) (string, error) {
 	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
+	}
+	if req.NumRows() == 0 {
+		return "", errResultIsEmpty
 	}
 	return req.GetRow(0).GetString(0), nil
 }
@@ -1719,6 +1788,19 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
+	}
+
+	if !config.IsMemoryQuotaQuerySetByUser {
+		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
+		if err != nil {
+			return nil, err
+		}
+		if newMemoryQuotaQuery != cfg.MemQuotaQuery {
+			newCfg := *(config.GetGlobalConfig())
+			newCfg.MemQuotaQuery = newMemoryQuotaQuery
+			config.StoreGlobalConfig(&newCfg)
+			variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(newCfg.MemQuotaQuery, 10)
+		}
 	}
 
 	dom := domain.GetDomain(se)
@@ -1873,7 +1955,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version48
+	currentBootstrapVersion = version51
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2014,6 +2096,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBMemoryUsageAlarmRatio,
 }
 
 var (

@@ -849,7 +849,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && len(copReq.Ranges) < 10 {
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(&copReq)
 		if err == nil {
 			cacheKey = cKey
@@ -1062,7 +1062,11 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *RP
 				return nil, nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
+			boRPCType := boTiKVRPC
+			if task.storeType == kv.TiFlash {
+				boRPCType = boTiFlashRPC
+			}
+			if err1 := bo.Backoff(boRPCType, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
 				return nil, errors.Trace(err)
 			}
 
@@ -1169,7 +1173,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.ProcessTime) {
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 
@@ -1200,6 +1204,10 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	errMsg := err.Error()
 	if terror.ErrorEqual(err, ErrTiKVServerTimeout) {
 		errCode = errno.ErrTiKVServerTimeout
+		errMsg = "TiDB server timeout, address is " + task.storeAddr
+	}
+	if terror.ErrorEqual(err, ErrTiFlashServerTimeout) {
+		errCode = errno.ErrTiFlashServerTimeout
 		errMsg = "TiDB server timeout, address is " + task.storeAddr
 	}
 	selResp := tipb.SelectResponse{
@@ -1300,9 +1308,9 @@ func (it copErrorResponse) Close() error {
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
+	memory.BaseOOMAction
 	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
-	enabled        uint32
-	fallbackAction memory.ActionOnExceed
+	enabled uint32
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
@@ -1338,8 +1346,8 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
 	if !e.isEnabled() {
-		if e.fallbackAction != nil {
-			e.fallbackAction.Action(t)
+		if fallback := e.GetFallback(); fallback != nil {
+			fallback.Action(t)
 		}
 		return
 	}
@@ -1350,8 +1358,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 			logutil.BgLogger().Info("memory exceeds quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
-			if e.fallbackAction != nil {
-				e.fallbackAction.Action(t)
+			if fallback := e.GetFallback(); fallback != nil {
+				fallback.Action(t)
 			}
 			return
 		}
@@ -1377,9 +1385,9 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 
 }
 
-// SetFallback implements ActionOnExceed.SetFallback
-func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
-	e.fallbackAction = a
+// GetPriority get the priority of the Action.
+func (e *rateLimitAction) GetPriority() int64 {
+	return memory.DefRateLimitPriority
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.

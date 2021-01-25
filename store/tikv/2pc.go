@@ -385,7 +385,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 		mutations.Push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
-		if entrySize > kv.TxnEntrySizeLimit {
+		if uint64(entrySize) > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
@@ -652,6 +652,16 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
+			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if s, ok := v.(string); !ok {
+					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+					time.Sleep(2 * time.Second)
+				} else if s == "skip" {
+					failpoint.Return()
+				}
+			})
+
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.BgLogger().Debug("2PC async doActionOnBatches",
@@ -1218,8 +1228,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 			logutil.Logger(bo.ctx).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
+				zap.Stringer("primaryKey", kv.Key(c.primaryKey)),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("commitTS", c.commitTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS),
 				zap.Strings("keys", hexBatchKeys(batch.mutations.keys)))
 			return errors.Trace(err)
 		}
@@ -1406,6 +1418,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			// If schema check failed between commitTS and newCommitTs, report schema change error.
 			_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
 			if err != nil {
+				logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
+					zap.Uint64("startTS", c.startTS),
+					zap.Uint64("amendTS", c.commitTS),
+					zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
+					zap.Uint64("newCommitTS", newCommitTS))
 				return errors.Trace(err)
 			}
 			commitTS = newCommitTS
@@ -1518,17 +1535,44 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 		c.doingAmend = true
 		defer func() { c.doingAmend = false }()
 		if keysNeedToLock.len() > 0 {
-			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 			lCtx := &kv.LockCtx{
-				ForUpdateTS:  c.forUpdateTS,
-				LockWaitTime: kv.LockNoWait,
+				Killed:        c.lockCtx.Killed,
+				ForUpdateTS:   c.forUpdateTS,
+				LockWaitTime:  c.lockCtx.LockWaitTime,
+				WaitStartTime: time.Now(),
 			}
-			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+			tryTimes := uint(0)
+			retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+			for tryTimes < retryLimit {
+				pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+				err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+				if err != nil {
+					// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+					if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+						newForUpdateTSVer, err := c.store.CurrentVersion()
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+						c.forUpdateTS = newForUpdateTSVer.Ver
+						logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+							zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+							zap.Uint64("newForUpdateTS", c.forUpdateTS))
+						tryTimes++
+						continue
+					}
+					logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+					return false, err
+				}
+				logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+					zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.len()))
+				break
+			}
 			if err != nil {
-				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+					zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
 				return false, err
 			}
-			logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
 		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)

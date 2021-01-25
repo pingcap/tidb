@@ -86,5 +86,58 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPrefixIndexMultiColDNF",
+    "Cases": [
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "IndexLookUp_11 10.00 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:t(t) range:[\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 10.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "IndexLookUp_11 16.00 root  ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:t(t) range:[\"a\",\"a\"], [\"aaa\",\"aaa\"], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 16.00 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa';",
+        "Plan": [
+          "TableReader_7 1.00 root  data:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where t='aaaa' or t = 'a';",
+        "Plan": [
+          "TableReader_7 1.60 root  data:Selection_6",
+          "└─Selection_6 1.60 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+        ],
+        "Result": [
+          "1 aaaa",
+          "2 a"
+        ]
+      }
+    ]
   }
 ]

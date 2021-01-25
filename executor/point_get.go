@@ -276,6 +276,15 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		if err != nil {
 			return err
 		}
+		// Key need lock get table ID
+		var tblID int64
+		if e.partInfo != nil {
+			tblID = e.partInfo.ID
+		} else {
+			tblID = e.tblInfo.ID
+		}
+		e.updateDeltaForTableID(tblID)
+
 		lockCtx.ValuesLock.Lock()
 		defer lockCtx.ValuesLock.Unlock()
 		for key, val := range lockCtx.Values {
@@ -304,10 +313,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return nil, err
 		}
 		// key does not exist in mem buffer, check the lock cache
-		var ok bool
-		val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
-		if ok {
-			return val, nil
+		if e.lock {
+			var ok bool
+			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
+			if ok {
+				return val, nil
+			}
 		}
 		// fallthrough to snapshot get.
 	}

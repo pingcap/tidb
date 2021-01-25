@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/uber-go/atomic"
 )
 
@@ -421,6 +422,9 @@ const (
 
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
+
+	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
+	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 )
 
 // Default TiDB system variable values.
@@ -545,4 +549,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
