@@ -164,6 +164,10 @@ const (
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 
+	// TiDBMultiStatementMode enables multi statement at the risk of SQL injection
+	// provides backwards compatibility
+	TiDBMultiStatementMode = "tidb_multi_statement_mode"
+
 	// TiDBEvolvePlanTaskMaxTime controls the max time of a single evolution task.
 	TiDBEvolvePlanTaskMaxTime = "tidb_evolve_plan_task_max_time"
 
