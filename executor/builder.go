@@ -3871,6 +3871,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 		} else {
 			for _, value := range plan.IndexValues {
+				if datumsContainNull(value) {
+					continue
+				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
 					b.err = err

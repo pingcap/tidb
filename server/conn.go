@@ -1448,7 +1448,19 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
-			return errMultiStatementDisabled
+			// The client does not have multi-statement enabled. We now need to determine
+			// how to handle an unsafe sitution based on the multiStmt sysvar.
+			switch cc.ctx.GetSessionVars().MultiStatementMode {
+			case variable.OffInt:
+				err = errMultiStatementDisabled
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+				return err
+			case variable.OnInt:
+				// multi statement is fully permitted, do nothing
+			default:
+				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: errMultiStatementDisabled}
+				parserWarns = append(parserWarns, warn)
+			}
 		}
 
 		// Only pre-build point plans for multi-statement query

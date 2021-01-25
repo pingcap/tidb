@@ -120,8 +120,8 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	keys := make([]int, 0)
-	ids := make(map[int]int)
+	keys := make([]int, 0, len(rd.colMap))
+	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {
 		keys = append(keys, col.Col.Offset)
 		ids[col.Col.Offset] = int(k)
