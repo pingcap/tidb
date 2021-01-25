@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 var _ = Suite(&testUtilsSuite{})
@@ -94,7 +95,7 @@ func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
 	for _, t := range tests {
 		commentf := Commentf("%s", t.name)
 		c.Assert(EscapeBytesBackslash(nil, t.input), DeepEquals, t.output, commentf)
-		c.Assert(EscapeStringBackslash(nil, string(t.input)), DeepEquals, t.output, commentf)
+		c.Assert(EscapeStringBackslash(nil, string(hack.String(t.input))), DeepEquals, t.output, commentf)
 	}
 }
 
