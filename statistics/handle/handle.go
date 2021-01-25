@@ -336,7 +336,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN := partitionStats.GetPartitionStatsInfo(ID, isIndex)
+			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex)
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
@@ -351,7 +351,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		for j := uint64(1); j < partitionNum; j++ {
 			err := globalStats.cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
-				// TODO: should we record the error?
+				logutil.BgLogger().Debug("failed to merge the CMSketch when we merge the partition-level stats to global-level stats")
 				return
 			}
 		}

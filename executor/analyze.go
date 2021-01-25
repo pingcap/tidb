@@ -97,7 +97,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
-	// used to record whether we should merge the partition-level stats to global-level stats.
+	// used to record whether we should merge the partition-level stats to global-level stats
 	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
 	type additionGlobalStatsInfo struct {
@@ -157,27 +157,31 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if needGlobalStats {
-		// TODO: We need to report warning when we build the global-level statistics failed.
 		for _, info := range globalStatsMap {
 			globalStats, succ := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), info.tableID, info.isIndex, info.idxId)
-			if !succ {
-				// Merge partition-level stats to global-level stats failed.
-
-			}
-			globalStatsNum := globalStats.GetNum()
-			globalStatsCount := globalStats.GetCount()
-			for i := 0; i < globalStatsNum; i++ {
-				hg := globalStats.GetHistogram(i)
-				cms := globalStats.GetCMSketch(i)
-				topN := globalStats.GetTopN(i)
-				if hg == nil || cms == nil || topN == nil {
-					// Merge partition-level stats to global-level stats failed.
-
+			if succ {
+				globalStatsNum := globalStats.GetNum()
+				globalStatsCount := globalStats.GetCount()
+				for i := 0; i < globalStatsNum; i++ {
+					hg := globalStats.GetHistogram(i)
+					cms := globalStats.GetCMSketch(i)
+					topN := globalStats.GetTopN(i)
+					if hg == nil || cms == nil || topN == nil {
+						succ = false
+						break
+					}
+					err = statsHandle.SaveStatsToStorage(info.tableID, globalStatsCount, info.isIndex, hg, cms, topN, info.statsVersion, 1)
+					if err != nil {
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+						succ = false
+					}
 				}
-				err = statsHandle.SaveStatsToStorage(info.tableID, globalStatsCount, info.isIndex, hg, cms, topN, info.statsVersion, 1)
-				if err != nil {
-					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
-
+			}
+			if !succ {
+				if info.isIndex != 0 {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d index %d failed", info.tableID, info.idxId))
+				} else {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d failed", info.tableID))
 				}
 			}
 		}

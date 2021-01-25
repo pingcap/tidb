@@ -207,7 +207,8 @@ func (t *Table) getIndexStatsInfo(idxID int64) (*Histogram, *CMSketch, *TopN) {
 	return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
 }
 
-func (t *Table) GetPartitionStatsInfo(ID int64, isIndex int) (*Histogram, *CMSketch, *TopN) {
+// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch and TopN.
+func (t *Table) GetStatsInfo(ID int64, isIndex int) (*Histogram, *CMSketch, *TopN) {
 	if isIndex == 0 {
 		return t.getColumnStatsInfo(ID)
 	}
