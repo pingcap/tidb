@@ -6484,6 +6484,12 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
 }
 
+func (s *testSuite) Test13004(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
+	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
+}
+
 func (s *testSuite) TestTxnRetry(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
@@ -6510,4 +6516,12 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("set @var=7")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
+}
+
+func (s *testSuite) TestIssue22201(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("SELECT HEX(WEIGHT_STRING('ab' AS char(1000000000000000000)));").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1301 Result of weight_string() was larger than max_allowed_packet (67108864) - truncated"))
 }
