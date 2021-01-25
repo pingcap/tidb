@@ -75,7 +75,7 @@ View the current list of in-production TiDB adopters [here](https://docs.pingcap
 
 Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
-## Getting Help
+## Getting help
 
 - [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
 - [**User Group (Chinese)**](https://asktug.com)
