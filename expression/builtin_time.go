@@ -4930,6 +4930,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if tm.Year() == 0 {
+		// MySQL won't evaluate add for date with zero year.
+		// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
+		return types.ZeroTime, true, nil
+	}
 	arg1, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
