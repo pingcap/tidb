@@ -2656,6 +2656,12 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			result.SetNull(i, true)
 			continue
 		}
+		if tm.Year() == 0 {
+			// MySQL won't evaluate add for date with zero year.
+			// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
+			result.SetNull(i, true)
+			continue
+		}
 
 		if !isDuration(arg1) {
 			result.SetNull(i, true)
