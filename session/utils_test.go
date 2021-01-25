@@ -91,6 +91,11 @@ func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
 			input:  []byte("he\x00lo\""),
 			output: []byte("he\\0lo\\\""),
 		},
+		{
+			name:   "chinese",
+			input:  []byte("中文?"),
+			output: []byte("中文?"),
+		},
 	}
 	for _, t := range tests {
 		commentf := Commentf("%s", t.name)
