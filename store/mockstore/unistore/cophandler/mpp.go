@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
@@ -76,8 +77,8 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 	return ts, err
 }
 
-func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender, ch *tipb.Executor) (*exchSenderExec, error) {
-	child, err := b.buildMPPExecutor(ch)
+func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchSenderExec, error) {
+	child, err := b.buildMPPExecutor(pb.Child)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +180,40 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	return e, nil
 }
 
+func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
+	e := &aggExec{
+		groups:     make(map[string]struct{}),
+		aggCtxsMap: make(map[string][]*aggregation.AggEvaluateContext),
+		processed:  false,
+	}
+
+	chExec, err := b.buildMPPExecutor(agg.Child)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.children = []mppExec{chExec}
+	for _, aggFunc := range agg.AggFunc {
+		ft := expression.PbTypeToFieldType(aggFunc.FieldType)
+		e.fieldTypes = append(e.fieldTypes, ft)
+		aggExpr, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.aggExprs = append(e.aggExprs, aggExpr)
+	}
+
+	for _, gby := range agg.GroupBy {
+		ft := expression.PbTypeToFieldType(gby.FieldType)
+		e.fieldTypes = append(e.fieldTypes, ft)
+		gbyExpr, err := expression.PBToExpr(gby, chExec.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.groupByExprs = append(e.groupByExprs, gbyExpr)
+	}
+	return e, nil
+}
+
 func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) {
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
@@ -189,11 +224,13 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildMPPExchangeReceiver(rec)
 	case tipb.ExecType_TypeExchangeSender:
 		send := exec.ExchangeSender
-		ch := send.Child
-		return b.buildMPPExchangeSender(send, ch)
+		return b.buildMPPExchangeSender(send)
 	case tipb.ExecType_TypeJoin:
 		join := exec.Join
 		return b.buildMPPJoin(join, join.Children)
+	case tipb.ExecType_TypeAggregation:
+		agg := exec.Aggregation
+		return b.buildMPPAgg(agg)
 	default:
 		return nil, errors.Errorf("Do not support executor %s", exec.Tp.String())
 	}

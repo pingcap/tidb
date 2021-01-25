@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -333,8 +334,7 @@ func (e *joinExec) fetchRows() (bool, error) {
 	e.idx = 0
 	e.reservedRows = make([]chunk.Row, 0)
 	chkSize := chk.NumRows()
-	i := 0
-	for i < chkSize {
+	for i := 0; i < chkSize; i++ {
 		row := chk.GetRow(i)
 		i++
 		keyCol := row.GetDatum(e.probeKey.Index, e.probeChild.getFieldTypes()[e.probeKey.Index])
@@ -387,4 +387,186 @@ func (e *joinExec) next() (*chunk.Chunk, error) {
 			return nil, nil
 		}
 	}
+}
+
+type aggExec struct {
+	baseMPPExec
+
+	aggExprs     []aggregation.Aggregation
+	groupByExprs []expression.Expression
+	groups       map[string]struct{}
+	groupKeys    [][]byte
+	aggCtxsMap   map[string][]*aggregation.AggEvaluateContext
+
+	processed bool
+}
+
+func (e *aggExec) open() error {
+	return e.children[0].open()
+}
+
+func (e *aggExec) getGroupKey(row chunk.Row) ([]byte, error) {
+	length := len(e.groupByExprs)
+	if length == 0 {
+		return nil, nil
+	}
+	key := make([]byte, 0, 32)
+	for _, item := range e.groupByExprs {
+		v, err := item.Eval(row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		b, err := codec.EncodeValue(e.sc, nil, v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		key = append(key, b...)
+	}
+	return key, nil
+}
+
+func (e *aggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext {
+	aggCtxs, ok := e.aggCtxsMap[string(groupKey)]
+	if !ok {
+		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
+		for _, agg := range e.aggExprs {
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.sc))
+		}
+		e.aggCtxsMap[string(groupKey)] = aggCtxs
+	}
+	return aggCtxs
+}
+
+func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
+	for {
+		chk, err := e.children[0].next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if chk == nil {
+			break
+		}
+		rows := chk.NumRows()
+		i := 0
+		for i < rows {
+			row := chk.GetRow(i)
+			i++
+			gk, err := e.getGroupKey(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if _, ok := e.groups[string(gk)]; !ok {
+				e.groups[string(gk)] = struct{}{}
+				e.groupKeys = append(e.groupKeys, gk)
+			}
+
+			aggCtxs := e.getContexts(gk)
+			for i, agg := range e.aggExprs {
+				err = agg.Update(aggCtxs[i], e.sc, row)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+	}
+
+	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
+
+	for _, gk := range e.groupKeys {
+		newRow := chunk.MutRowFromTypes(e.fieldTypes)
+		aggCtxs := e.getContexts(gk)
+		for i, agg := range e.aggExprs {
+			partialResults := agg.GetPartialResult(aggCtxs[i])
+			newRow.SetDatum(i, partialResults[0])
+		}
+		chk.AppendRow(newRow.ToRow())
+	}
+	return chk, nil
+}
+
+func (e *aggExec) next() (*chunk.Chunk, error) {
+	if !e.processed {
+		e.processed = true
+		return e.processAllRows()
+	}
+	return nil, nil
+}
+
+type selExec struct {
+	baseMPPExec
+
+	conditions []expression.Expression
+}
+
+func (e *selExec) open() error {
+	return e.children[0].open()
+}
+
+func (e *selExec) next() (*chunk.Chunk, error) {
+	chk, err := e.children[0].next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if chk == nil {
+		return nil, nil
+	}
+	for rows := chk.NumRows() - 1; rows >= 0; rows-- {
+		row := chk.GetRow(rows)
+		for _, cond := range e.conditions {
+			d, err := cond.Eval(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			var passCheck bool
+			if d.IsNull() {
+				passCheck = false
+			} else {
+				isBool, err := d.ToBool(e.sc)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				isBool, err = expression.HandleOverflowOnSelection(e.sc, isBool, err)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				passCheck = isBool != 0
+			}
+			if !passCheck {
+				chk.TruncateTo(rows)
+				break
+			}
+		}
+	}
+	return chk, nil
+}
+
+type projExec struct {
+	baseMPPExec
+	exprs []expression.Expression
+}
+
+func (e *projExec) open() error {
+	return e.children[0].open()
+}
+
+func (e *projExec) next() (*chunk.Chunk, error) {
+	chk, err := e.children[0].next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	newChunk := chunk.NewChunkWithCapacity(e.fieldTypes, 10)
+	for i := 0; i < chk.NumRows(); i++ {
+		row := chk.GetRow(i)
+		newRow := chunk.MutRowFromTypes(e.fieldTypes)
+		for i, expr := range e.exprs {
+			d, err := expr.Eval(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			newRow.SetDatum(i, d)
+		}
+		newChunk.AppendRow(newRow.ToRow())
+	}
+	return newChunk, nil
 }
