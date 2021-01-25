@@ -447,10 +447,8 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			break
 		}
 		rows := chk.NumRows()
-		i := 0
-		for i < rows {
+		for i := 0; i < rows; i++ {
 			row := chk.GetRow(i)
-			i++
 			gk, err := e.getGroupKey(row)
 			if err != nil {
 				return nil, errors.Trace(err)
