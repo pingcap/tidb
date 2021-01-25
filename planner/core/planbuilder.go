@@ -873,6 +873,17 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 	return nil
 }
 
+func isGlobalIndex(idxName model.CIStr, tblInfo *model.TableInfo) bool {
+	global := false
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == idxName.L && index.Global {
+			global = true
+			break
+		}
+	}
+	return global
+}
+
 func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
@@ -1026,6 +1037,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 					return nil, err
 				}
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
+			}
+			if isGlobalIndex(idxName, tblInfo) {
+				ignored = append(ignored, path)
 				continue
 			}
 			if hint.HintType == ast.HintIgnore {
