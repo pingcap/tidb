@@ -1602,3 +1602,84 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
 }
+
+// Close issue #22395
+// Background:
+// Since the changing column is implemented as adding a new column and substitute the old one when it finished.
+// The added column with NOT-NULL option will be fetched with error when it's origin default value is not set.
+// It's good because the insert / update logic will cast the related column to changing column rather than use
+// origin default value directly.
+func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(2, 2)")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	var (
+		once     bool
+		checkErr error
+	)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+			if !once {
+				tbl := testGetTableByName(c, tk1.Se, "test", "t")
+				if len(tbl.WritableCols()) != 3 {
+					checkErr = errors.New("assert the writable column number error")
+					return
+				}
+				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+					checkErr = errors.New("assert the write only column origin default value error")
+					return
+				}
+			}
+			// For writable column:
+			// Insert/ Update should set the column with the casted-related column value.
+			_, err := tk1.Exec("insert into t values(3, 3)")
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.SchemaState == model.StateWriteOnly {
+				// The casted value will be inserted into changing column too.
+				_, err := tk1.Exec("update t set b = -1 where a = 1")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			} else {
+				// The casted value will be inserted into changing column too.
+				_, err := tk1.Exec("update t set b = -2 where a = 2")
+				if err != nil {
+					checkErr = err
+					return
+				}
+			}
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("alter table t modify column b tinyint NOT NULL")
+	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "3 3", "3 3"))
+	tk.MustExec("drop table if exists t")
+}
