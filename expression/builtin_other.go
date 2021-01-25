@@ -903,7 +903,18 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		return v.GetString(), false, nil
+		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
+		// stores the data in datum.x.
+		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
+		// > User variables can be assigned a value from a limited set of data types: integer, decimal,
+		// > floating-point, binary or nonbinary string, or NULL value.
+		// However, MySQL actually does support query like `set @p = now()`, so we should not assume the datum stored
+		// must be of one of the following types: string, decimal, int, float.
+		res, err := v.ToString()
+		if err != nil {
+			return "", false, err
+		}
+		return res, false, nil
 	}
 	return "", true, nil
 }
