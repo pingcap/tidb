@@ -242,13 +242,13 @@ import (
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
+	statsExtended     "STATS_EXTENDED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	stored            "STORED"
 	terminated        "TERMINATED"
 	then              "THEN"
-	tidbStats         "TIDB_STATS"
 	tinyblobType      "TINYBLOB"
 	tinyIntType       "TINYINT"
 	tinytextType      "TINYTEXT"
@@ -1701,7 +1701,7 @@ AlterTableSpec:
 			Num:             getUint64FromNUM($6),
 		}
 	}
-|	"ADD" "TIDB_STATS" IfNotExists Identifier StatsType '(' ColumnNameList ')'
+|	"ADD" "STATS_EXTENDED" IfNotExists Identifier StatsType '(' ColumnNameList ')'
 	{
 		statsSpec := &ast.StatisticsSpec{
 			StatsName: $4,
@@ -1769,7 +1769,7 @@ AlterTableSpec:
 			PartitionNames: $4.([]model.CIStr),
 		}
 	}
-|	"DROP" "TIDB_STATS" IfExists Identifier
+|	"DROP" "STATS_EXTENDED" IfExists Identifier
 	{
 		statsSpec := &ast.StatisticsSpec{
 			StatsName: $4,
@@ -9531,7 +9531,7 @@ AdminStmt:
 			Tp: ast.AdminReloadBindings,
 		}
 	}
-|	"ADMIN" "RELOAD" "TIDB_STATS"
+|	"ADMIN" "RELOAD" "STATS_EXTENDED"
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminReloadStatistics,
