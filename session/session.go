@@ -1273,7 +1273,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.Execute", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("session.ExecuteInternal", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 		logutil.Eventf(ctx, "execute: %s", sql)
