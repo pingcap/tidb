@@ -3061,7 +3061,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
