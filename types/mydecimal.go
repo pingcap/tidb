@@ -409,10 +409,10 @@ func (d *MyDecimal) FromString(str []byte) error {
 	var commaCnt int
 	var strIdx int
 	for strIdx < len(str) && (isDigit(str[strIdx]) || str[strIdx] == ',') {
-		strIdx++
 		if str[strIdx] == ',' {
 			commaCnt++
 		}
+		strIdx++
 	}
 	digitsInt := strIdx - commaCnt
 	var digitsFrac int
