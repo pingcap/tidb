@@ -346,6 +346,18 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
+// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
+// with a cast as decimal function. See issue #19426
+func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
+	if a.Name == ast.AggFuncGroupConcat {
+		for i := 0; i < len(a.Args)-1; i++ {
+			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			}
+		}
+	}
+}
+
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
 func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	if len(a.Args) == 0 {

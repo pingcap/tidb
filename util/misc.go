@@ -164,7 +164,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.BgLogger().Error("syntax error", zap.Error(err))
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {

@@ -472,12 +472,12 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 // builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseInSig
-	hashSet map[types.Time]struct{}
+	hashSet map[types.CoreTime]struct{}
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) error {
 	b.nonConstArgs = []Expression{b.args[0]}
-	b.hashSet = make(map[types.Time]struct{}, len(b.args)-1)
+	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstItem(b.ctx.GetSessionVars().StmtCtx) {
 			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
@@ -488,7 +488,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx sessionctx.Context) erro
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = struct{}{}
+			b.hashSet[val.CoreTime()] = struct{}{}
 		} else {
 			b.nonConstArgs = append(b.nonConstArgs, b.args[i])
 		}
@@ -517,7 +517,7 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	args := b.args
 	if len(b.hashSet) != 0 {
 		args = b.nonConstArgs
-		if _, ok := b.hashSet[arg0]; ok {
+		if _, ok := b.hashSet[arg0.CoreTime()]; ok {
 			return 1, false, nil
 		}
 	}
@@ -903,7 +903,18 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	if v, ok := sessionVars.Users[varName]; ok {
-		return v.GetString(), false, nil
+		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
+		// stores the data in datum.x.
+		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
+		// > User variables can be assigned a value from a limited set of data types: integer, decimal,
+		// > floating-point, binary or nonbinary string, or NULL value.
+		// However, MySQL actually does support query like `set @p = now()`, so we should not assume the datum stored
+		// must be of one of the following types: string, decimal, int, float.
+		res, err := v.ToString()
+		if err != nil {
+			return "", false, err
+		}
+		return res, false, nil
 	}
 	return "", true, nil
 }

@@ -317,6 +317,10 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 		}
 	}
 
+	// Take prefix index into consideration.
+	if hasPrefix(lengths) {
+		fixPrefixColRange(totalRanges, lengths, newTpSlice)
+	}
 	totalRanges, err := UnionRanges(sc, totalRanges)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)

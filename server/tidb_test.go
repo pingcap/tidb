@@ -148,6 +148,10 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadDataForSlowLog(c, ts.server)
 }
 
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
+}
+
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
 	ts.runTestStmtCount(c)
 }
@@ -926,6 +930,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	cols := rs[0].Columns()
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 

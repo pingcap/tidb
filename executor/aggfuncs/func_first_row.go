@@ -444,6 +444,10 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
+	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
 }

@@ -264,6 +264,9 @@ distinct-agg-push-down = false
 # If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
+# The limitation of the size in byte for each entry in one transaction.
+txn-entry-size-limit = 6291456
+
 # The max number of running concurrency two phase committer request for an SQL.
 committer-concurrency = 16
 
@@ -386,6 +389,8 @@ enable = false
 # The capacity in MB of the cache.
 capacity-mb = 1000.0
 
+# Only cache small requests. Zero means no limits for requests.
+admission-max-ranges = 500
 # Only cache requests whose result set is small.
 admission-max-result-mb = 10.0
 # Only cache requests takes notable time to process.
