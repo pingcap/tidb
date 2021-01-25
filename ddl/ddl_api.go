@@ -1425,7 +1425,7 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			pkTp, alterPKConf := model.PrimaryKeyTypeDefault, config.GetGlobalConfig().AlterPrimaryKey
+			pkTp := model.PrimaryKeyTypeDefault
 			if constr.Option != nil {
 				pkTp = constr.Option.PrimaryKeyTp
 			}
@@ -1439,11 +1439,11 @@ func buildTableInfo(
 					tbInfo.IsCommonHandle = true
 				}
 			case model.PrimaryKeyTypeDefault:
-				clustered := !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
+				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
 				if isSingleIntPK(constr, lastCol) {
-					tbInfo.PKIsHandle = clustered
+					tbInfo.PKIsHandle = !alterPKConf
 				} else {
-					tbInfo.IsCommonHandle = clustered
+					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
