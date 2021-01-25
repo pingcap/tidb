@@ -360,6 +360,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
+	pm := privilege.GetPrivilegeManager(s)
+	if pm != nil && s.sessionVars.User != nil {
+		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
+			user := s.sessionVars.User
+			u := user.Username
+			h := user.Hostname
+			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+				u = user.AuthUsername
+				h = user.AuthHostname
+			}
+			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+		}
+	}
 	table, err := is.TableByName(dbName, tName)
 	if err != nil {
 		return nil, err
@@ -643,9 +656,19 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
-		err = s.NewTxn(ctx)
-		if err != nil {
-			return err
+		if len(nh.history) > 1 {
+			err = s.NewTxn(ctx)
+			if err != nil {
+				return err
+			}
+			pessTxnConf := config.GetGlobalConfig().PessimisticTxn
+			if pessTxnConf.Enable {
+				if s.sessionVars.TxnMode == ast.Pessimistic {
+					s.sessionVars.TxnCtx.IsPessimistic = true
+				}
+			}
+		} else {
+			s.PrepareTxnCtx(ctx)
 		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
@@ -669,7 +692,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sql))
+					zap.String("sql", sql),
+					zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -691,7 +715,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
-			zap.Uint64("original txnStartTS", orgStartTS))
+			zap.Uint64("original txnStartTS", orgStartTS),
+			zap.Bool("isPessimistic", s.GetSessionVars().TxnCtx.IsPessimistic))
 		failpoint.Inject("preCommitHook", func() {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
@@ -1930,7 +1955,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version49
+	currentBootstrapVersion = version51
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
