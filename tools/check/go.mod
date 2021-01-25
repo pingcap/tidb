@@ -12,14 +12,14 @@ require (
 	github.com/mgechev/revive v0.0.0-20181210140514-b4cc152955fb
 	github.com/nicksnyder/go-i18n v1.10.0 // indirect
 	github.com/pelletier/go-toml v1.2.0 // indirect
+	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3 // indirect
 	github.com/securego/gosec v0.0.0-20181211171558-12400f9a1ca7
-	golang.org/x/tools v0.0.0-20190925020647-22afafe3322a // indirect
 	gopkg.in/alecthomas/gometalinter.v2 v2.0.12 // indirect
 	gopkg.in/alecthomas/gometalinter.v3 v3.0.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e // indirect
 	gopkg.in/yaml.v2 v2.2.2 // indirect
-	honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3
+	honnef.co/go/tools v0.0.1-2019.2.3
 )
 
 go 1.13
