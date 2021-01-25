@@ -64,7 +64,7 @@ for details on submitting patches and the contribution workflow. For more contri
 
 ## Adopters
 
-View the current list of in-production TiDB adopters [here](https://pingcap.com/docs/adopters/).
+View the current list of in-production TiDB adopters [here](https://docs.pingcap.com/tidb/stable/adopters).
 
 ## Case studies
 
