@@ -1115,7 +1115,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return errors.Trace(err)
 			}
 
-			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
+			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits > autoid.MaxAutoRandomBits {
@@ -2230,7 +2230,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 				break
 			}
 		}
-		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
 		if layout.IncrementalMask()&newBase != newBase {
 			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
