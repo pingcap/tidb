@@ -651,9 +651,9 @@ func (h *BindHandle) CaptureBaselines() {
 			Source:    Capture,
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
+		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
