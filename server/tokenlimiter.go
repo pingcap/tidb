@@ -13,29 +13,43 @@
 
 package server
 
+import "sync/atomic"
+
 // Token is used as a permission to keep on running.
 type Token struct {
 }
 
 // TokenLimiter is used to limit the number of concurrent tasks.
 type TokenLimiter struct {
-	count uint
-	ch    chan *Token
+	capacity  uint32
+	allocated uint32
+	ch        chan *Token
 }
 
 // Put releases the token.
 func (tl *TokenLimiter) Put(tk *Token) {
 	tl.ch <- tk
+	atomic.AddUint32(&tl.allocated, ^uint32(0))
 }
 
 // Get obtains a token.
 func (tl *TokenLimiter) Get() *Token {
-	return <-tl.ch
+	token := <-tl.ch
+	atomic.AddUint32(&tl.allocated, 1)
+	return token
 }
 
-// NewTokenLimiter creates a TokenLimiter with count tokens.
+func (tl *TokenLimiter) Allocated() uint32 {
+	return atomic.LoadUint32(&tl.allocated)
+}
+
+func (tl *TokenLimiter) Capacity() uint32 {
+	return tl.capacity
+}
+
+// NewTokenLimiter creates a TokenLimiter with capacity tokens.
 func NewTokenLimiter(count uint) *TokenLimiter {
-	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
+	tl := &TokenLimiter{capacity: uint32(count), ch: make(chan *Token, count)}
 	for i := uint(0); i < count; i++ {
 		tl.ch <- &Token{}
 	}

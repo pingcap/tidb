@@ -195,6 +195,15 @@ var (
 			Help:      "Bucketed histogram of connection idle time (s).",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblInTxn})
+
+	TokenUsageGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tokens",
+			Help:      "The number of current running sessions",
+		},
+	)
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
