@@ -262,6 +262,13 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			err:    "",
 		},
 		{
+			name:   "time 3",
+			input:  "select %?",
+			params: []interface{}{time.Unix(0, 888888888)},
+			output: "select '1970-01-01 08:00:00.888888'",
+			err:    "",
+		},
+		{
 			name:   "empty byte slice1",
 			input:  "select %?",
 			params: []interface{}{[]byte(nil)},

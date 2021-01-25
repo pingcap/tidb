@@ -15,7 +15,6 @@ package session
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -106,7 +105,7 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 		switch ch {
 		case '?':
 			if argPos >= len(args) {
-				return "", fmt.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
+				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
 			}
 			arg := args[argPos]
 			argPos++
@@ -150,7 +149,7 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 						buf = append(buf, "'0000-00-00'"...)
 					} else {
 						buf = append(buf, '\'')
-						buf = v.AppendFormat(buf, "2006-01-02 15:04:05")
+						buf = v.AppendFormat(buf, "2006-01-02 15:04:05.999999")
 						buf = append(buf, '\'')
 					}
 				case json.RawMessage:
