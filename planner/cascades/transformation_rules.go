@@ -443,7 +443,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
 			Schema:       aggSchema,
-		}, true)
+		}, true, false)
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
 		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
