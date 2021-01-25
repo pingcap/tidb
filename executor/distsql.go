@@ -886,13 +886,13 @@ func (e *IndexLookUpRunTimeStats) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:%s", time.Duration(indexScan)))
+		buf.WriteString(fmt.Sprintf("index_task: %s", execdetails.FormatDuration(time.Duration(indexScan))))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, time.Duration(tableScan)))
+		buf.WriteString(fmt.Sprintf(" table_task: {num: %d, concurrency: %d, time: %s}", tableTaskNum, concurrency, execdetails.FormatDuration(time.Duration(tableScan))))
 	}
 	return buf.String()
 }
