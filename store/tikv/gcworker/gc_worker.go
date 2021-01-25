@@ -324,7 +324,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calculateNewSafePoint(ctx, now)
+	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -339,12 +339,10 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	return true, newSafePointValue, nil
 }
 
-// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.Time) time.Time {
+func (w *GCWorker) calcGlobalMinStartTS(ctx context.Context) (uint64, error) {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
-		return safePoint
+		return 0, err
 	}
 
 	var globalMinStartTS uint64 = math.MaxUint64
@@ -358,14 +356,23 @@ func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.
 			globalMinStartTS = minStartTS
 		}
 	}
+	return globalMinStartTS, nil
+}
 
-	safePointTS := variable.GoTimeToTS(safePoint)
-	if globalMinStartTS < safePointTS {
-		safePoint = time.Unix(0, oracle.ExtractPhysical(globalMinStartTS)*1e6)
+// calcNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
+func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint64) uint64 {
+	globalMinStartTS, err := w.calcGlobalMinStartTS(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
+		return safePoint
+	}
+
+	if globalMinStartTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
-			zap.Time("safePoint", safePoint))
+			zap.Uint64("safePoint", safePoint))
+		safePoint = globalMinStartTS
 	}
 	return safePoint
 }
@@ -375,9 +382,7 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(currentVer.Ver)
-	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	return time.Unix(sec, nsec), nil
+	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
@@ -481,7 +486,7 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -491,21 +496,24 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 		return nil, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
+
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	safePoint := w.calSafePointByMinStartTS(ctx, now.Add(-*lifeTime))
 
-	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
+	safePointValue := w.calcSafePointByMinStartTS(ctx, variable.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
-	safePoint = oracle.GetTimeFromTS(safePointValue)
-
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+
+	// safepoint is recorded in time.Time format which strips the logical part of the timestamp.
+	// To prevent the GC worker from keeping working due to the loss of logical part when the
+	// safe point isn't changed, we should compare them in time.Time format.
+	safePoint := oracle.GetTimeFromTS(safePointValue)
 	// We should never decrease safePoint.
-	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
+	if lastSafePoint != nil && !safePoint.After(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
