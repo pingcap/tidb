@@ -37,8 +37,10 @@ func (bi *BaseInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 
 // Callback is used for DDL.
 type Callback interface {
-	// OnChanged is called after schema is changed.
+	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
+	// OnSchemaStateChange is called after a schema state is changed.
+	OnSchemaStateChanged()
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
 	// OnJobUpdated is called after the running job is updated.
@@ -54,6 +56,11 @@ type BaseCallback struct {
 // OnChanged implements Callback interface.
 func (c *BaseCallback) OnChanged(err error) error {
 	return err
+}
+
+// OnSchemaStateChanged implements Callback interface.
+func (c *BaseCallback) OnSchemaStateChanged() {
+	// Nothing to do.
 }
 
 // OnJobRunBefore implements Callback.OnJobRunBefore interface.
