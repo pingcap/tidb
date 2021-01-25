@@ -21,7 +21,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -4823,6 +4823,30 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
+func (s *testSuite) TestSummaryFailedUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int as(-a))")
+	tk.MustExec("insert into t(a) values(1), (3), (7)")
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set @@tidb_mem_quota_query=1")
+	err := tk.ExecToErr("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
+	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update t set t . a = t . a - ? where t . a in ( select a from t where a < ? )'").Check(testkit.Rows("Update"))
+}
+
 func (s *testSuite) TestOOMPanicAction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6049,18 +6073,22 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
 
-func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
+func (s *testClusterTableSuite) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.Log.SlowQueryFile = path.Join(os.TempDir(), "tidb-slow.log")
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
 		os.Remove(newCfg.Log.SlowQueryFile)
 	}()
-	err := logutil.InitLogger(newCfg.Log.ToLogConfig())
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
 	c.Assert(err, IsNil)
 
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -6194,7 +6222,7 @@ func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 3)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {num.*concurrency.*time.*}.*")
 	indexExplain := fmt.Sprintf("%v", rows[1])
 	tableExplain := fmt.Sprintf("%v", rows[2])
 	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
@@ -6240,12 +6268,12 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values (9,9)")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values (10,10) on duplicate key update a=a+1")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
@@ -6255,7 +6283,7 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values(11,11) on duplicate key update `a`=`a`+1")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
@@ -6454,6 +6482,12 @@ func (s *testSuite) Test17780(c *C) {
 	tk.MustExec("update t0 set c0=0 where t0.c0 like 0")
 	// the update should not affect c0
 	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
+}
+
+func (s *testSuite) Test13004(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// see https://dev.mysql.com/doc/refman/5.6/en/date-and-time-literals.html, timestamp here actually produces a datetime
+	tk.MustQuery("SELECT TIMESTAMP '9999-01-01 00:00:00'").Check(testkit.Rows("9999-01-01 00:00:00"))
 }
 
 func (s *testSuite) TestTxnRetry(c *C) {

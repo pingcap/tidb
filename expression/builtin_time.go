@@ -4930,6 +4930,11 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if tm.Year() == 0 {
+		// MySQL won't evaluate add for date with zero year.
+		// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
+		return types.ZeroTime, true, nil
+	}
 	arg1, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
@@ -4971,7 +4976,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeTimestamp, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
