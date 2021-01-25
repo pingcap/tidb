@@ -174,7 +174,7 @@ func (r *RegionStore) kvPeer(seed uint32) AccessIndex {
 	if len(candidates) == 0 {
 		return r.workTiKVIdx
 	}
-	return candidates[int32(seed)%int32(len(candidates))]
+	return candidates[seed%uint32(len(candidates))]
 }
 
 // init initializes region after constructed.
