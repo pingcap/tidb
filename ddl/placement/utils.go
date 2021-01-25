@@ -177,20 +177,12 @@ func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
 }
 
 func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
-	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 2 {
+	if rule.Role == Leader && rule.Count == 1 {
 		for _, con := range rule.LabelConstraints {
-			switch con.Op {
-			case In:
-				if con.Key != dcLabelKey || len(con.Values) != 1 {
-					return false
-				}
-			case NotIn:
-				if con.Key != EngineLabelKey || len(con.Values) != 1 || con.Values[0] != EngineLabelTiFlash {
-					return false
-				}
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
 			}
 		}
-		return true
 	}
 	return false
 }
