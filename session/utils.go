@@ -15,6 +15,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -83,101 +84,112 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.
+// It works like printf() in c, but there is only one format specifier: %?.
 // But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
-	holders := strings.Count(sql, "%?")
-	if holders == 0 {
-		return sql, nil
-	} else if holders > len(args) {
-		return "", errors.Errorf("missing arguments, have %d specifiers, and %d arguments", holders, len(args))
-	}
 	buf := make([]byte, 0, len(sql))
 	argPos := 0
-	for i := 0; i < len(sql); i += 2 {
-		q := strings.Index(sql[i:], "%?")
+	for i := 0; i < len(sql); i++ {
+		q := strings.IndexByte(sql[i:], '%')
 		if q == -1 {
 			buf = append(buf, sql[i:]...)
 			break
 		}
 		buf = append(buf, sql[i:i+q]...)
 		i += q
-		arg := args[argPos]
-		argPos++
 
-		if arg == nil {
-			buf = append(buf, "NULL"...)
-			continue
+		ch := byte(0)
+		if i+1 < len(sql) {
+			ch = sql[i+1] // get the specifier
 		}
+		switch ch {
+		case '?':
+			if argPos >= len(args) {
+				return "", fmt.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
+			}
+			arg := args[argPos]
+			argPos++
 
-		switch v := arg.(type) {
-		case int:
-			buf = strconv.AppendInt(buf, int64(v), 10)
-		case int8:
-			buf = strconv.AppendInt(buf, int64(v), 10)
-		case int16:
-			buf = strconv.AppendInt(buf, int64(v), 10)
-		case int32:
-			buf = strconv.AppendInt(buf, int64(v), 10)
-		case int64:
-			buf = strconv.AppendInt(buf, v, 10)
-		case uint:
-			buf = strconv.AppendUint(buf, uint64(v), 10)
-		case uint8:
-			buf = strconv.AppendUint(buf, uint64(v), 10)
-		case uint16:
-			buf = strconv.AppendUint(buf, uint64(v), 10)
-		case uint32:
-			buf = strconv.AppendUint(buf, uint64(v), 10)
-		case uint64:
-			buf = strconv.AppendUint(buf, v, 10)
-		case float32:
-			buf = strconv.AppendFloat(buf, float64(v), 'g', -1, 32)
-		case float64:
-			buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
-		case bool:
-			if v {
-				buf = append(buf, '1')
-			} else {
-				buf = append(buf, '0')
-			}
-		case time.Time:
-			if v.IsZero() {
-				buf = append(buf, "'0000-00-00'"...)
-			} else {
-				buf = append(buf, '\'')
-				buf = v.AppendFormat(buf, "2006-01-02 15:04:05")
-				buf = append(buf, '\'')
-			}
-		case json.RawMessage:
-			buf = append(buf, '\'')
-			buf = escapeBytesBackslash(buf, v)
-			buf = append(buf, '\'')
-		case []byte:
-			if v == nil {
+			if arg == nil {
 				buf = append(buf, "NULL"...)
 			} else {
-				buf = append(buf, "_binary'"...)
-				buf = escapeBytesBackslash(buf, v)
-				buf = append(buf, '\'')
-			}
-		case string:
-			buf = append(buf, '\'')
-			buf = escapeStringBackslash(buf, v)
-			buf = append(buf, '\'')
-		case []string:
-			buf = append(buf, '(')
-			for i, k := range v {
-				if i > 0 {
-					buf = append(buf, ',')
+				switch v := arg.(type) {
+				case int:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int8:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int16:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int32:
+					buf = strconv.AppendInt(buf, int64(v), 10)
+				case int64:
+					buf = strconv.AppendInt(buf, v, 10)
+				case uint:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint8:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint16:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint32:
+					buf = strconv.AppendUint(buf, uint64(v), 10)
+				case uint64:
+					buf = strconv.AppendUint(buf, v, 10)
+				case float32:
+					buf = strconv.AppendFloat(buf, float64(v), 'g', -1, 32)
+				case float64:
+					buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
+				case bool:
+					if v {
+						buf = append(buf, '1')
+					} else {
+						buf = append(buf, '0')
+					}
+				case time.Time:
+					if v.IsZero() {
+						buf = append(buf, "'0000-00-00'"...)
+					} else {
+						buf = append(buf, '\'')
+						buf = v.AppendFormat(buf, "2006-01-02 15:04:05")
+						buf = append(buf, '\'')
+					}
+				case json.RawMessage:
+					buf = append(buf, '\'')
+					buf = escapeBytesBackslash(buf, v)
+					buf = append(buf, '\'')
+				case []byte:
+					if v == nil {
+						buf = append(buf, "NULL"...)
+					} else {
+						buf = append(buf, "_binary'"...)
+						buf = escapeBytesBackslash(buf, v)
+						buf = append(buf, '\'')
+					}
+				case string:
+					buf = append(buf, '\'')
+					buf = escapeStringBackslash(buf, v)
+					buf = append(buf, '\'')
+				case []string:
+					buf = append(buf, '(')
+					for i, k := range v {
+						if i > 0 {
+							buf = append(buf, ',')
+						}
+						buf = append(buf, '\'')
+						buf = escapeStringBackslash(buf, k)
+						buf = append(buf, '\'')
+					}
+					buf = append(buf, ')')
+				default:
+					return "", errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 				}
-				buf = append(buf, '\'')
-				buf = escapeStringBackslash(buf, k)
-				buf = append(buf, '\'')
 			}
-			buf = append(buf, ')')
+			i++ // skip specifier
+		case '%':
+			buf = append(buf, '%')
+			i++ // skip specifier
 		default:
-			return "", errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
+			buf = append(buf, '%')
 		}
 	}
 	return string(buf), nil
