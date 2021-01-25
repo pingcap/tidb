@@ -289,6 +289,13 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
+func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
+}
+
 func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
