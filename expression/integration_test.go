@@ -2355,6 +2355,21 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1 0 0 0 0 1 0 1"))
 	result = tk.MustQuery(`select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false, 0.0000001 is false;`)
 	result.Check(testkit.Rows("0 1 0 1 1 0 1 0"))
+	// Issue https://github.com/pingcap/tidb/issues/19986
+	result = tk.MustQuery("select 1 from dual where sec_to_time(2/10) is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where sec_to_time(2/10) is false")
+	result.Check(nil)
+	// Issue https://github.com/pingcap/tidb/issues/19999
+	result = tk.MustQuery("select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is false")
+	result.Check(nil)
+	// Issue https://github.com/pingcap/tidb/issues/20001
+	result = tk.MustQuery("select 1 from dual where time(0.0001) is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where time(0.0001) is false")
+	result.Check(nil)
 
 	// for in
 	result = tk.MustQuery("select * from t where b in (a)")
