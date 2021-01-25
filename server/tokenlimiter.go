@@ -13,7 +13,7 @@
 
 package server
 
-import "sync/atomic"
+import "github.com/uber-go/atomic"
 
 // Token is used as a permission to keep on running.
 type Token struct {
@@ -22,27 +22,29 @@ type Token struct {
 // TokenLimiter is used to limit the number of concurrent tasks.
 type TokenLimiter struct {
 	capacity  uint32
-	allocated uint32
+	allocated atomic.Uint32
 	ch        chan *Token
 }
 
 // Put releases the token.
 func (tl *TokenLimiter) Put(tk *Token) {
 	tl.ch <- tk
-	atomic.AddUint32(&tl.allocated, ^uint32(0))
+	tl.allocated.Dec()
 }
 
 // Get obtains a token.
 func (tl *TokenLimiter) Get() *Token {
 	token := <-tl.ch
-	atomic.AddUint32(&tl.allocated, 1)
+	tl.allocated.Inc()
 	return token
 }
 
+// Allocated returns the number of tokens that a TokenLimiter allocated.
 func (tl *TokenLimiter) Allocated() uint32 {
-	return atomic.LoadUint32(&tl.allocated)
+	return tl.allocated.Load()
 }
 
+// Capacity returns the capacity of a TokenLimiter.
 func (tl *TokenLimiter) Capacity() uint32 {
 	return tl.capacity
 }
