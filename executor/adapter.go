@@ -56,6 +56,16 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// metrics option
+var (
+	totalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
+	totalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
+	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
+)
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -915,9 +925,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
 		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
-		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
-		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
-		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
+		if sessVars.InRestrictedSQL {
+			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
+			totalCopProcHistogramInternal.Observe(execDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramInternal.Observe(execDetail.WaitTime.Seconds())
+		} else {
+			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
+			totalCopProcHistogramGeneral.Observe(execDetail.ProcessTime.Seconds())
+			totalCopWaitHistogramGeneral.Observe(execDetail.WaitTime.Seconds())
+		}
 		var userString string
 		if sessVars.User != nil {
 			userString = sessVars.User.String()
@@ -966,13 +982,16 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
 func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
+	var hintSet bool
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
-	hintStr = sctx.GetSessionVars().StmtCtx.GetPlanHint()
-	if len(encodedPlan) > 0 {
+	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
+	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
-	encodedPlan = plannercore.EncodePlan(p)
-	sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	if len(encodedPlan) == 0 {
+		encodedPlan = plannercore.EncodePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
 		if n != nil {
