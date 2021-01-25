@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -396,9 +397,7 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -645,4 +644,15 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }
