@@ -183,6 +183,8 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
 		cause := errors.Cause(err)

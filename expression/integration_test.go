@@ -8690,3 +8690,27 @@ func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
 	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
 	tk.MustExec("drop table if exists t")
 }
+
+func (s *testIntegrationSerialSuite) TestParserOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec(`
+	create table t (
+		col_int int,
+		col_float float,
+		col_double double,
+		col_decimal decimal
+	)`)
+	tk.MustGetErrCode("insert into t(col_int) values(888888888888888888888888888888888888888888888888888888888888888888888888888888888888)", errno.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("insert into t(col_float) values(888888888888888888888888888888888888888888888888888888888888888888888888888888888888)", errno.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("insert into t(col_float) values(1e100000)", errno.ErrIllegalValueForType)
+	_, err := tk.Exec("insert into t(col_double) values(888888888888888888888888888888888888888888888888888888888888888888888888888888888888)")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select col_double from t").Check(testkit.Rows("1e65"))
+	tk.MustGetErrCode("insert into t(col_decimal) values(888888888888888888888888888888888888888888888888888888888888888888888888888888888888)", errno.ErrWarnDataOutOfRange)
+	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
+	tk.MustExec("drop table if exists t")
+}
