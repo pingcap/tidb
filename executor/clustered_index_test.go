@@ -287,3 +287,10 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
 	tk.MustExec("alter table t add index idx (c);")
 	tk.MustExec("admin check table t;")
 }
+
+func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
+}
