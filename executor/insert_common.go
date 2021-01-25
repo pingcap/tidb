@@ -940,11 +940,11 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		intHandle, err := tables.AllocHandle(ctx, e.ctx, e.Table)
+		intHandle, err := tables.AllocHandle(e.ctx, e.Table)
 		if err != nil {
 			return types.Datum{}, err
 		}
-		recordID = intHandle.IntValue()
+		recordID = intHandle
 	}
 	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
 	if err != nil {
