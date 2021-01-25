@@ -348,7 +348,11 @@ func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.Users[varName]; ok {
-			result.AppendString(v.GetString())
+			res, err := v.ToString()
+			if err != nil {
+				return err
+			}
+			result.AppendString(res)
 			continue
 		}
 		result.AppendNull()
