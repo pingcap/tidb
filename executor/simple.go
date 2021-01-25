@@ -1327,7 +1327,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD TIDB_STATS")
+		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
 	}
 	if !e.ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
