@@ -64,8 +64,10 @@ func (s *mockStore) TLSConfig() *tls.Config {
 func (s *HelperTestSuite) SetUpSuite(c *C) {
 	url := s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("x"))
 	mvccStore := mocktikv.MustNewMVCCStore()
-	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	mockTikvStore, err := mockstore.NewMockTikvStore(mockstore.WithCluster(cluster), mockstore.WithMVCCStore(mvccStore))
 	s.store = &mockStore{
 		mockTikvStore.(tikv.Storage),
 		[]string{url[len("http://"):]},
@@ -80,18 +82,25 @@ func (s *HelperTestSuite) TestHotRegion(c *C) {
 	}
 	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
-	expected := make(map[uint64]helper.RegionMetric)
-	expected[1] = helper.RegionMetric{
-		FlowBytes:    100,
-		MaxHotDegree: 1,
-		Count:        0,
+	expected := map[uint64]helper.RegionMetric{
+		3: {
+			FlowBytes:    100,
+			MaxHotDegree: 1,
+			Count:        0,
+		},
+		4: {
+			FlowBytes:    200,
+			MaxHotDegree: 2,
+			Count:        0,
+		},
 	}
 	c.Assert(regionMetric, DeepEquals, expected)
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
 	c.Assert(err, IsNil)
-	_, err = h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	c.Assert(res[0].RegionMetric, Not(Equals), res[1].RegionMetric)
 	c.Assert(err, IsNil, Commentf("err: %+v", err))
 }
 
@@ -143,8 +152,13 @@ func (s *HelperTestSuite) mockHotRegionResponse(w http.ResponseWriter, req *http
 		RegionsStat: []helper.RegionStat{
 			{
 				FlowBytes: 100,
-				RegionID:  1,
+				RegionID:  3,
 				HotDegree: 1,
+			},
+			{
+				FlowBytes: 200,
+				RegionID:  4,
+				HotDegree: 2,
 			},
 		},
 	}
