@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -154,9 +155,22 @@ func (ts *TiDBStatement) Reset() {
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
-	err := ts.ctx.session.DropPreparedStmt(ts.id)
-	if err != nil {
-		return err
+	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
+		err := ts.ctx.session.DropPreparedStmt(ts.id)
+		if err != nil {
+			return err
+		}
+	} else {
+		if core.PreparedPlanCacheEnabled() {
+			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			if !ok {
+				return errors.Errorf("invalid CachedPrepareStmt type")
+			}
+			ts.ctx.session.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+		}
+		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 

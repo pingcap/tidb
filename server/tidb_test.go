@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -931,6 +933,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
@@ -988,4 +1010,24 @@ func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	rs, err := qctx.Execute(ctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
 	c.Assert(err, IsNil)
 	c.Assert(rs, IsNil) // should be no delay
+}
+
+func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "drop table if exists t1")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt+1)
+	c.Assert(err, IsNil)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }
