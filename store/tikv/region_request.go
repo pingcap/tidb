@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/storeutil"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -428,14 +428,26 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 
 	injectFailOnSend := false
-	if connID > 0 {
-		failpoint.Inject("rpcFailOnSend", func() {
+	failpoint.Inject("rpcFailOnSend", func(val failpoint.Value) {
+		inject := true
+		// Optional filters
+		if s, ok := val.(string); ok {
+			if s == "greengc" && !req.IsGreenGCRequest() {
+				inject = false
+			} else if s == "write" && !req.IsTxnWriteRequest() {
+				inject = false
+			}
+		} else if connID == 0 {
+			inject = false
+		}
+
+		if inject {
 			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
 				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
 			injectFailOnSend = true
 			err = errors.New("injected RPC error on send")
-		})
-	}
+		}
+	})
 
 	if !injectFailOnSend {
 		start := time.Now()
@@ -453,14 +465,26 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			})
 		}
 
-		if connID > 0 {
-			failpoint.Inject("rpcFailOnRecv", func() {
+		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {
+			inject := true
+			// Optional filters
+			if s, ok := val.(string); ok {
+				if s == "greengc" && !req.IsGreenGCRequest() {
+					inject = false
+				} else if s == "write" && !req.IsTxnWriteRequest() {
+					inject = false
+				}
+			} else if connID == 0 {
+				inject = false
+			}
+
+			if inject {
 				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
 					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
 				err = errors.New("injected RPC error on recv")
 				resp = nil
-			})
-		}
+			}
+		})
 
 		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
 			if val.(bool) {
