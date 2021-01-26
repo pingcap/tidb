@@ -885,6 +885,7 @@ const (
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
+	ErrAggregateOrderNonAggQuery                                    = 3029
 	ErrIncorrectType                                                = 3064
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
@@ -1044,6 +1045,7 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+	ErrJSONObjectKeyTooLong                = 8129
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200
@@ -1078,7 +1080,7 @@ const (
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
 
-	// TiKV/PD errors.
+	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout        = 9001
 	ErrTiKVServerTimeout      = 9002
 	ErrTiKVServerBusy         = 9003
@@ -1089,4 +1091,7 @@ const (
 	ErrTiKVStoreLimit         = 9008
 	ErrPrometheusAddrIsNotSet = 9009
 	ErrTiKVStaleCommand       = 9010
+
+	ErrTiFlashServerTimeout = 9012
+	ErrTiFlashServerBusy    = 9013
 )
