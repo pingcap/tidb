@@ -534,6 +534,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
+					// Add NotNullFlag early so that processColumnFlags() can see it.
+					col.Flag |= mysql.NotNullFlag
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
@@ -1113,7 +1115,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return errors.Trace(err)
 			}
 
-			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
+			layout := autoid.NewShardIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
 			} else if autoRandBits > autoid.MaxAutoRandomBits {
@@ -2228,7 +2230,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 				break
 			}
 		}
-		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		layout := autoid.NewShardIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
 		if layout.IncrementalMask()&newBase != newBase {
 			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
@@ -3059,7 +3061,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
