@@ -200,8 +200,8 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "tokens",
-			Help:      "The number of current running sessions",
+			Name:      "token_usage",
+			Help:      "The usage of current running sessions' tokens",
 		},
 	)
 )
