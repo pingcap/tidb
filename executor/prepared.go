@@ -147,7 +147,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPrepareDDL
 	}
 
-	if _, ok := stmt.(*ast.LoadDataStmt); ok {
+	switch stmt.(type) {
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
 		return ErrUnsupportedPs
 	}
 
