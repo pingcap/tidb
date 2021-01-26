@@ -674,6 +674,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 
 	b.optFlag = b.optFlag | flagPredicatePushDown
+	// Add join reorder flag regardless of inner join or outer join.
+	b.optFlag = b.optFlag | flagJoinReOrder
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left)
 	if err != nil {
@@ -709,7 +711,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		joinPlan.JoinType = RightOuterJoin
 		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
-		b.optFlag = b.optFlag | flagJoinReOrder
 		joinPlan.JoinType = InnerJoin
 	}
 
@@ -1769,9 +1770,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					if index != -1 {
 						// For SQLs like:
 						//   select a+1 from t having t.a;
-						newV := v
-						newV.Name = &ast.ColumnName{Name: v.Name.Name}
-						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+						field := a.selectFields[index]
+						if field.Auxiliary { //having can't use auxiliary field
+							index = -1
+						}
 					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)

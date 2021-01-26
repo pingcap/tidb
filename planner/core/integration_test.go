@@ -1705,6 +1705,17 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 		Check(testkit.Rows("6 6 6 6"))
 }
 
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
+}
+
 func (s *testIntegrationSuite) TestIssue22105(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1726,6 +1737,30 @@ func (s *testIntegrationSuite) TestIssue22105(c *C) {
   KEY i5 (key5),
   KEY i6 (key6)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (pk char(32) primary key, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3))")
+	tk.MustExec("create table t2 (pk char(32) primary key, col1 varchar(100))")
+	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
 
 	var input []string
 	var output []struct {
