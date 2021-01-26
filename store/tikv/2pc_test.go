@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 type testCommitterSuite struct {
@@ -629,7 +630,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 
 	lr := newLockResolver(s.store)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
-	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true)
+	status, err := lr.getTxnStatus(bo, txn.startTS, key2, 0, txn.startTS, true, nil)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, GreaterEqual, lockInfo.LockTtl)
 
@@ -982,6 +983,29 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 		}
 	}
 	return res
+}
+
+func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
+	untouchedIndexKey := kv.Key("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	noValueIndexKey := kv.Key("t00000001_i000000002")
+	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
+	txn := s.begin(c)
+	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
+	c.Assert(err, IsNil)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	err = txn.LockKeys(context.Background(), lockCtx, untouchedIndexKey, noValueIndexKey)
+	c.Assert(err, IsNil)
+	commit, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	mutation := commit.mutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
+	c.Assert(mutation.len(), Equals, 2)
+	c.Assert(mutation.GetOps()[0], Equals, kvrpcpb.Op_Lock)
+	c.Assert(mutation.GetKeys()[0], BytesEquals, []byte(untouchedIndexKey))
+	c.Assert(mutation.GetValues()[0], BytesEquals, untouchedIndexValue)
+	c.Assert(mutation.GetOps()[1], Equals, kvrpcpb.Op_Lock)
+	c.Assert(mutation.GetKeys()[1], BytesEquals, []byte(noValueIndexKey))
+	c.Assert(mutation.GetValues()[1], BytesEquals, []byte{})
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
