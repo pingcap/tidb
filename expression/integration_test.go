@@ -6678,7 +6678,7 @@ func (s *testIntegrationSuite) TestIssue20121(c *C) {
 	tk.MustQuery("select * from ttt where ttt.a < ttt.b").Check(testkit.Rows("2019-11-11 11:11:11 2022"))
 }
 
-func (s *testIntegrationSuite) TestIssue16779(c *C) {
+func (s *testIntegrationSuite) TestIssue17098(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
