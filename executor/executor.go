@@ -192,6 +192,11 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *baseExecutor) updateDeltaForTableID(id int64) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
+}
+
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
@@ -866,6 +871,7 @@ type SelectLockExec struct {
 
 	// tblID2Table is cached to reduce cost.
 	tblID2Table map[int64]table.PartitionedTable
+	inited      bool
 }
 
 // Open implements the Executor Open interface.
@@ -926,7 +932,29 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	}
 
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	err = doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	if !e.inited && err == nil && len(e.keys) > 0 {
+		// Just update table delta when there really has keys locked.
+		if len(e.tblID2Handle) > 0 {
+			for id := range e.tblID2Handle {
+				e.updateDeltaForTableID(id)
+			}
+		}
+		if len(e.partitionedTable) > 0 {
+			for _, p := range e.partitionedTable {
+				pid := p.Meta().ID
+				e.updateDeltaForTableID(pid)
+			}
+		}
+		e.inited = true
+	}
+	return err
+}
+
+// Close implements the Executor interface.
+func (e *SelectLockExec) Close() error {
+	e.inited = false
+	return e.baseExecutor.Close()
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
@@ -1663,6 +1691,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// but should not make DupKeyAsWarning or BadNullAsWarning,
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = stmt.IgnoreErr
+		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
