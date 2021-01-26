@@ -136,8 +136,8 @@ github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5P
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=
 github.com/clark1013/parser v0.0.0-20210119121904-5e283d71e81e h1:7PtuIUCX933ExKkWCt4XjsmLLm6Jk89EXzeshV9Mau8=
 github.com/clark1013/parser v0.0.0-20210119121904-5e283d71e81e/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
-github.com/clark1013/tipb v0.0.0-20210124062039-0fef81f6f237 h1:kAskJOr+joiioiHsTc8tOpRzzOqzWmfKeUGUD3KO1q8=
-github.com/clark1013/tipb v0.0.0-20210124062039-0fef81f6f237/go.mod h1:DdnvkI3EKBtbsd9fWD/kSCaMGfrLTJZhaLZ/BVUlb9w=
+github.com/clark1013/tipb v0.0.0-20210126163942-f39300d2eeb5 h1:GO6+OCYg+ol4lxbj4jDK13CATngNyMYBoc5RT7vZ8R4=
+github.com/clark1013/tipb v0.0.0-20210126163942-f39300d2eeb5/go.mod h1:DdnvkI3EKBtbsd9fWD/kSCaMGfrLTJZhaLZ/BVUlb9w=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/cloudflare/golz4 v0.0.0-20150217214814-ef862a3cdc58/go.mod h1:EOBUe0h4xcZ5GoxqC5SDxFQ8gwyZPKQoEzownBlhI80=
 github.com/cockroachdb/apd v1.1.0/go.mod h1:8Sl8LxpKi29FqWXR16WEFZRNSz3SoPzUzeMeY4+DwBQ=

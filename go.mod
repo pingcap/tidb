@@ -88,4 +88,4 @@ go 1.13
 
 replace github.com/pingcap/parser => github.com/clark1013/parser v0.0.0-20210119121904-5e283d71e81e
 
-replace github.com/pingcap/tipb => github.com/clark1013/tipb v0.0.0-20210124062039-0fef81f6f237
+replace github.com/pingcap/tipb => github.com/clark1013/tipb v0.0.0-20210126163942-f39300d2eeb5
