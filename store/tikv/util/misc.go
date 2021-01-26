@@ -63,3 +63,6 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	}()
 	exec()
 }
+
+// SkipRaceTests indicates if race tests should be skipped.
+var SkipRaceTests bool

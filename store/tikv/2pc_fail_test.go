@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -120,7 +120,7 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 
 // TestFailPrewriteRegionError tests data race does not happen on retries
 func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
-	if israce.RaceEnabled {
+	if util.SkipRaceTests {
 		c.Skip("skip race test")
 	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
