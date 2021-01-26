@@ -1625,6 +1625,17 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
 
+func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1,1);")
+	tk.MustQuery("select (select count(n.a + a) from t) from t n;").Check(testkit.Rows(
+		"1",
+	))
+}
+
 func (s *testIntegrationSuite) TestIssue22105(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
