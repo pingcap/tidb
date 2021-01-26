@@ -1080,15 +1080,19 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
+	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		oldPi := s.ShowProcess()
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
+	}
+	// We set process info before building plan, so we extended execution time.
+	if oldPi != nil && oldPi.Info == pi.Info {
+		pi.Time = oldPi.Time
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	s.currentPlan = nil
@@ -1212,6 +1216,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, err
 		}
+
+		// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
+		cmd32 := atomic.LoadUint32(&s.GetSessionVars().CommandValue)
+		s.SetProcessInfo(stmtNode.Text(), time.Now(), byte(cmd32), 0)
+
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
@@ -1955,7 +1964,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version50
+	currentBootstrapVersion = version51
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2031,6 +2040,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.DefaultWeekFormat,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check,
