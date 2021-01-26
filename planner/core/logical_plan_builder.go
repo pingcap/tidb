@@ -628,6 +628,8 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	}
 
 	b.optFlag = b.optFlag | flagPredicatePushDown
+	// Add join reorder flag regardless of inner join or outer join.
+	b.optFlag = b.optFlag | flagJoinReOrder
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left)
 	if err != nil {
@@ -663,7 +665,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		joinPlan.JoinType = RightOuterJoin
 		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
-		b.optFlag = b.optFlag | flagJoinReOrder
 		joinPlan.JoinType = InnerJoin
 	}
 
@@ -1723,9 +1724,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					if index != -1 {
 						// For SQLs like:
 						//   select a+1 from t having t.a;
-						newV := v
-						newV.Name = &ast.ColumnName{Name: v.Name.Name}
-						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+						field := a.selectFields[index]
+						if field.Auxiliary { //having can't use auxiliary field
+							index = -1
+						}
 					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
@@ -2193,7 +2195,7 @@ func (b *PlanBuilder) checkOnlyFullGroupBy(p LogicalPlan, sel *ast.SelectStmt) (
 	if sel.GroupBy != nil {
 		err = b.checkOnlyFullGroupByWithGroupClause(p, sel)
 	} else {
-		err = b.checkOnlyFullGroupByWithOutGroupClause(p, sel.Fields.Fields)
+		err = b.checkOnlyFullGroupByWithOutGroupClause(p, sel)
 	}
 	return err
 }
@@ -2267,14 +2269,35 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 	return nil
 }
 
-func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fields []*ast.SelectField) error {
+func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel *ast.SelectStmt) error {
 	resolver := colResolverForOnlyFullGroupBy{}
-	for idx, field := range fields {
+	resolver.curClause = fieldList
+	for idx, field := range sel.Fields.Fields {
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
 		err := resolver.Check()
 		if err != nil {
 			return err
+		}
+	}
+	if resolver.firstNonAggCol != nil {
+		if sel.Having != nil {
+			sel.Having.Expr.Accept(&resolver)
+			err := resolver.Check()
+			if err != nil {
+				return err
+			}
+		}
+		if sel.OrderBy != nil {
+			resolver.curClause = orderByClause
+			for idx, byItem := range sel.OrderBy.Items {
+				resolver.exprIdx = idx
+				byItem.Expr.Accept(&resolver)
+				err := resolver.Check()
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -2283,16 +2306,21 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 // colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
 // If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
-	firstNonAggCol       *ast.ColumnName
-	exprIdx              int
-	firstNonAggColIdx    int
-	hasAggFuncOrAnyValue bool
+	firstNonAggCol        *ast.ColumnName
+	exprIdx               int
+	firstNonAggColIdx     int
+	hasAggFuncOrAnyValue  bool
+	firstOrderByAggColIdx int
+	curClause             clauseCode
 }
 
 func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 	switch t := node.(type) {
 	case *ast.AggregateFuncExpr:
 		c.hasAggFuncOrAnyValue = true
+		if c.curClause == orderByClause {
+			c.firstOrderByAggColIdx = c.exprIdx
+		}
 		return node, true
 	case *ast.FuncCallExpr:
 		// enable function `any_value` in aggregation even `ONLY_FULL_GROUP_BY` is set
@@ -2317,7 +2345,11 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
 	if c.hasAggFuncOrAnyValue && c.firstNonAggCol != nil {
-		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+		if c.curClause == fieldList {
+			return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+		} else if c.curClause == orderByClause {
+			return ErrAggregateOrderNonAggQuery.GenWithStackByArgs(c.firstOrderByAggColIdx + 1)
+		}
 	}
 	return nil
 }
