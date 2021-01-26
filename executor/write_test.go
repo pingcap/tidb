@@ -569,6 +569,10 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
 	testSQL = `select * from badnull`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
+
+	tk.MustExec("create table tp (id int) partition by range (id) (partition p0 values less than (1), partition p1 values less than(2))")
+	tk.MustExec("insert ignore into tp values (1), (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
 func (s *testSuite8) TestInsertOnDup(c *C) {
@@ -2191,6 +2195,14 @@ func (s *testSuite4) TestLoadData(c *C) {
 		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x"), trivialMsg},
 		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
 			[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
+	// test line terminator in field quoter
+	ld.LinesInfo.Terminated = "\n"
+	ld.FieldsInfo.Enclosed = '"'
+	tests = []testCase{
+		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), nil, []string{"1|1|2\n|3", "4|4|5\n5|6"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
