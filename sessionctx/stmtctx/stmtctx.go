@@ -60,25 +60,27 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	IgnoreTruncate         bool
-	IgnoreZeroInDate       bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	TruncateAsWarning      bool
-	OverflowAsWarning      bool
-	InShowWarning          bool
-	UseCache               bool
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	AllowInvalidDate       bool
+	IsDDLJobInQueue           bool
+	InInsertStmt              bool
+	InUpdateStmt              bool
+	InDeleteStmt              bool
+	InSelectStmt              bool
+	InLoadDataStmt            bool
+	InExplainStmt             bool
+	IgnoreTruncate            bool
+	IgnoreZeroInDate          bool
+	DupKeyAsWarning           bool
+	BadNullAsWarning          bool
+	DividedByZeroAsWarning    bool
+	TruncateAsWarning         bool
+	OverflowAsWarning         bool
+	InShowWarning             bool
+	UseCache                  bool
+	BatchCheck                bool
+	InNullRejectCheck         bool
+	AllowInvalidDate          bool
+	OptimDependOnMutableConst bool
+	IgnoreNoPartition         bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -146,6 +148,8 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            string
 	encodedPlan           string
+	planHint              string
+	planHintSet           bool
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -225,6 +229,17 @@ func (sc *StatementContext) GetEncodedPlan() string {
 // SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
 func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 	sc.encodedPlan = encodedPlan
+}
+
+// GetPlanHint gets the hint string generated from the plan.
+func (sc *StatementContext) GetPlanHint() (string, bool) {
+	return sc.planHint, sc.planHintSet
+}
+
+// SetPlanHint sets the hint for the plan.
+func (sc *StatementContext) SetPlanHint(hint string) {
+	sc.planHintSet = true
+	sc.planHint = hint
 }
 
 // TableEntry presents table in db.
