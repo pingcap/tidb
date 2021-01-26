@@ -261,3 +261,30 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 		Args:       []interface{}{newBaseID},
 	}
 }
+
+func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
+	policy := []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+	}
+	var (
+		val     time.Duration
+		changed bool
+	)
+
+	val, changed = getIntervalFromPolicy(policy, 0)
+	c.Assert(val, Equals, 1*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 1)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 2)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
+
+	val, changed = getIntervalFromPolicy(policy, 3)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
+}

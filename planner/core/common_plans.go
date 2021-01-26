@@ -375,7 +375,7 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache {
+	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
@@ -418,15 +418,17 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 			return err
 		}
 	case *Update:
-		ok, err = IsPointUpdateByAutoCommit(sctx, p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			// make constant expression store paramMarker
-			sctx.GetSessionVars().StmtCtx.PointExec = true
-			p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
-		}
+		// Temporarily turn off the cache for UPDATE to solve #21884.
+
+		//ok, err = IsPointUpdateByAutoCommit(sctx, p)
+		//if err != nil {
+		//	return err
+		//}
+		//if ok {
+		//	// make constant expression store paramMarker
+		//	sctx.GetSessionVars().StmtCtx.PointExec = true
+		//	p, names, err = OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
+		//}
 	}
 	if ok {
 		// just cache point plan now
@@ -1051,33 +1053,32 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
+	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 	if runtimeStatsColl.ExistsRootStats(explainID) {
-		rootstats := runtimeStatsColl.GetRootStats(explainID)
-		analyzeInfo = rootstats.String()
-		actRows = fmt.Sprint(rootstats.GetActRows())
+		rootStats := runtimeStatsColl.GetRootStats(explainID)
+		analyzeInfo = rootStats.String()
+		actRows = fmt.Sprint(rootStats.GetActRows())
 	} else {
-		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
 	if runtimeStatsColl.ExistsCopStats(explainID) {
-		copstats := runtimeStatsColl.GetCopStats(explainID)
 		if len(analyzeInfo) > 0 {
 			analyzeInfo += ", "
 		}
-		analyzeInfo += copstats.String()
-		actRows = fmt.Sprint(copstats.GetActRows())
+		copStats := runtimeStatsColl.GetCopStats(explainID)
+		analyzeInfo += copStats.String()
+		actRows = fmt.Sprint(copStats.GetActRows())
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
-		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
+		memoryInfo = memTracker.FormatBytes(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
 	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
-		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
+		diskInfo = diskTracker.FormatBytes(diskTracker.MaxConsumed())
 	}
 	return
 }

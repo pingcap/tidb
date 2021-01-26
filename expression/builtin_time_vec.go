@@ -1668,7 +1668,9 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 		tm1, err := arg.GoTime(time.Local)
 		if err != nil {
-			return err
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
 		}
 		var tb time.Time
 		fsp := types.DefaultFsp
@@ -2669,6 +2671,12 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
+			result.SetNull(i, true)
+			continue
+		}
+		if tm.Year() == 0 {
+			// MySQL won't evaluate add for date with zero year.
+			// See https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc.cc#L2805
 			result.SetNull(i, true)
 			continue
 		}
