@@ -3300,6 +3300,11 @@ PARTITION BY RANGE (c) (
 							Op:     placement.In,
 							Values: []string{dc},
 						},
+						{
+							Key:    placement.EngineLabelKey,
+							Op:     placement.NotIn,
+							Values: []string{placement.EngineLabelTiFlash},
+						},
 					},
 				},
 			},
