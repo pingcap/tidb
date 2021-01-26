@@ -377,6 +377,9 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 // AddIdxVals adds the given values from the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
+	sort.Slice(idxValCntPairs, func(i, j int) bool {
+		return bytes.Compare(idxValCntPairs[i].Encoded, idxValCntPairs[j].Encoded) < 0
+	})
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
 			// If the current val smaller than current bucket's lower bound, skip it.

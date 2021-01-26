@@ -236,6 +236,9 @@ func (h *Handle) UpdateSessionVar() error {
 	}()
 
 	verInString, err := reader.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	if err != nil {
+		return err
+	}
 	ver, err := strconv.ParseInt(verInString, 10, 64)
 	reader.ctx.GetSessionVars().AnalyzeVersion = int(ver)
 	return err
