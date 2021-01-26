@@ -83,7 +83,7 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.
-// It works like printf() in c, but there are following format specifiers:
+// It works like printf() in c, there are following format specifiers:
 // 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
 // 2. %%: output %
 // 3. %i: for identifiers, for example ("use %i", db)
