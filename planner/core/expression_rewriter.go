@@ -520,6 +520,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
 				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
 				if er.err != nil {
 					return v, true
@@ -528,6 +529,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		} else if v.Op == opcode.NE {
 			if v.All {
 				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.asScalar = true
 				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
 				if er.err != nil {
 					return v, true

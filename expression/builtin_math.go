@@ -635,9 +635,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	retTp, argTp = types.ETInt, fieldTp.EvalType()
 	switch argTp {
 	case types.ETInt:
-		if fieldTp.Tp == mysql.TypeLonglong {
-			retTp = types.ETDecimal
-		}
+		retTp = types.ETInt
 	case types.ETDecimal:
 		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal
@@ -651,7 +649,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
 func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
-	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
 	// TODO: when argument type is timestamp, add not null flag.
