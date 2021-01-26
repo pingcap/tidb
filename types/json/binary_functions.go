@@ -669,6 +669,16 @@ func compareInt64(x int64, y int64) int {
 	return 1
 }
 
+func compareFloat64(x float64, y float64) int {
+	if x < y {
+		return -1
+	} else if x == y {
+		return 0
+	}
+
+	return 1
+}
+
 func compareUint64(x uint64, y uint64) int {
 	if x < y {
 		return -1
@@ -734,7 +744,7 @@ func CompareBinary(left, right BinaryJSON) int {
 			case TypeCodeUint64:
 				cmp = compareFloat64Uint64(left.GetFloat64(), right.GetUint64())
 			case TypeCodeFloat64:
-				cmp = compareFloat64PrecisionLoss(left.GetFloat64(), right.GetFloat64())
+				cmp = compareFloat64(left.GetFloat64(), right.GetFloat64())
 			}
 		case TypeCodeString:
 			cmp = bytes.Compare(left.GetString(), right.GetString())
@@ -751,9 +761,24 @@ func CompareBinary(left, right BinaryJSON) int {
 			}
 			cmp = leftCount - rightCount
 		case TypeCodeObject:
-			// only equal is defined on two json objects.
-			// larger and smaller are not defined.
-			cmp = bytes.Compare(left.Value, right.Value)
+			// reference:
+			// https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/json_dom.cc#L2561
+			leftCount, rightCount := left.GetElemCount(), right.GetElemCount()
+			cmp := compareInt64(int64(leftCount), int64(rightCount))
+			if cmp != 0 {
+				return cmp
+			}
+			for i := 0; i < leftCount; i++ {
+				leftKey, rightKey := left.objectGetKey(i), right.objectGetKey(i)
+				cmp = bytes.Compare(leftKey, rightKey)
+				if cmp != 0 {
+					return cmp
+				}
+				cmp = CompareBinary(left.objectGetVal(i), right.objectGetVal(i))
+				if cmp != 0 {
+					return cmp
+				}
+			}
 		}
 	} else {
 		cmp = precedence1 - precedence2
