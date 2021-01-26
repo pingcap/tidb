@@ -182,7 +182,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		if err != nil {
 			return err
 		}
-		
+
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
 		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
@@ -242,6 +242,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		fsp1 := int8(b.args[1].GetType().Decimal)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 			{{ if eq $.FuncName "AddTime" }}
 			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
@@ -258,17 +259,23 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 		} else {
 			{{ if eq $.FuncName "AddTime" }}
-			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
 			{{ else }}
-			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				{{ template "SetNull" . }}
+				continue
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
 		var output string
+		var isNull bool
 		if isDuration(arg0) {
 			{{ if eq $.FuncName "AddTime" }}
 			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
@@ -285,12 +292,17 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 		} else {
 			{{ if eq $.FuncName "AddTime" }}
-			output, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
 			{{ else }}
-			output, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				return err
+			}
+			if isNull {
+				sc.AppendWarning(err)
+				{{ template "SetNull" . }}
+				continue
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
