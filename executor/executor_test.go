@@ -6150,6 +6150,31 @@ select * from t;
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
 }
 
+func (s *testClusterTableSuite) TestLogSlowLogIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+	err = logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int,index idx(a));")
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
+	tk.MustExec("set tidb_slow_log_threshold=300;")
+	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
+		"where query like 'select%union%' limit 1").
+		Check(testkit.Rows(
+			"[t:idx]",
+		))
+}
+
 func (s *testSplitTable) TestKillTableReader(c *C) {
 	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
 	defer func() {
