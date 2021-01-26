@@ -203,10 +203,6 @@ const (
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
 		lower_bound BLOB ,
-<<<<<<< HEAD
-=======
-		ndv         BIGINT NOT NULL DEFAULT 0,
->>>>>>> e1e4ad14e... session: fix the bug that may cause upgrading from v4.0.10 fail (#22448)
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
