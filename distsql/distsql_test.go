@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -159,7 +160,12 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+func (s *testSerialSuite) TestSelectResultRuntimeStats(c *C) {
+	originCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(originCfg)
+	cfg := config.NewConfig()
+	cfg.TiKVClient.CoprCache.Enable = true
+	config.StoreGlobalConfig(cfg)
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
