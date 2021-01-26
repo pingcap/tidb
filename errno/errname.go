@@ -1082,6 +1082,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
+	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:      mysql.Message("TiKV server timeout", nil),
