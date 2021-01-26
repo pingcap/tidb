@@ -480,3 +480,18 @@ Projection_7	10000.00	root		minus(Column#5, test.t.x)->Column#7
   └─Sort_11	10000.00	root		test.t.i:asc
     └─TableReader_10	10000.00	root		data:TableRangeScan_9
       └─TableRangeScan_9	10000.00	cop[tikv]	table:t	range:[0,+inf], keep order:false, stats:pseudo
+create table precise_types (
+a BIGINT UNSIGNED NOT NULL,
+b BIGINT NOT NULL,
+c DECIMAL(21,1) NOT NULL,
+d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+18446744073709551614,
+-9223372036854775806,
+99999999999999999999,
+18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;
+a	b	c	d
+18446744073709551614	-9223372036854775806	99999999999999999999.0	1.8446744073709552e19
