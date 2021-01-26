@@ -291,18 +291,6 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	return nil
 }
 
-// Check whether newColumnDef refers to any auto-increment columns.
-func checkGeneratedWithAutoInc(tableInfo *model.TableInfo, newColumnDef *ast.ColumnDef) error {
-	_, dependColNames := findDependedColumnNames(newColumnDef)
-	if err := checkAutoIncrementRef(newColumnDef.Name.Name.L, dependColNames, tableInfo); err != nil {
-		return errors.Trace(err)
-	}
-	if c.otherErr != nil {
-		return c.otherErr
-	}
-	return nil
-}
-
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
 		return nil
