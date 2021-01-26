@@ -2355,6 +2355,21 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1 0 0 0 0 1 0 1"))
 	result = tk.MustQuery(`select 1 is false, 0 is false, null is false, "aaa" is false, "" is false, -12.00 is false, 0.0 is false, 0.0000001 is false;`)
 	result.Check(testkit.Rows("0 1 0 1 1 0 1 0"))
+	// Issue https://github.com/pingcap/tidb/issues/19986
+	result = tk.MustQuery("select 1 from dual where sec_to_time(2/10) is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where sec_to_time(2/10) is false")
+	result.Check(nil)
+	// Issue https://github.com/pingcap/tidb/issues/19999
+	result = tk.MustQuery("select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where timediff((7/'2014-07-07 02:30:02'),'2012-01-16') is false")
+	result.Check(nil)
+	// Issue https://github.com/pingcap/tidb/issues/20001
+	result = tk.MustQuery("select 1 from dual where time(0.0001) is true")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select 1 from dual where time(0.0001) is false")
+	result.Check(nil)
 
 	// for in
 	result = tk.MustQuery("select * from t where b in (a)")
@@ -7279,6 +7294,19 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
 
+func (s *testIntegrationSuite) TestIssue14349(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists papers;")
+	tk.MustExec("create table papers(title text, content longtext)")
+	tk.MustExec("insert into papers values('title', 'content')")
+	tk.MustQuery(`select to_base64(title), to_base64(content) from papers;`).Check(testkit.Rows("dGl0bGU= Y29udGVudA=="))
+	tk.MustExec("set tidb_enable_vectorized_expression = 0;")
+	tk.MustQuery(`select to_base64(title), to_base64(content) from papers;`).Check(testkit.Rows("dGl0bGU= Y29udGVudA=="))
+	tk.MustExec("set tidb_enable_vectorized_expression = 1;")
+}
+
 func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7325,6 +7353,19 @@ func (s *testIntegrationSuite) TestIssue20860(c *C) {
 	tk.MustExec("create table t(id int primary key, c int, d timestamp null default null)")
 	tk.MustExec("insert into t values(1, 2, '2038-01-18 20:20:30')")
 	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
+}
+
+func (s *testIntegrationSerialSuite) TestJsonObjectCompare(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select json_object('k', -1) > json_object('k', 2)").Check(testkit.Rows("0"))
+	tk.MustQuery("select json_object('k', -1) < json_object('k', 2)").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("create table tx(a double, b int)")
+	tk.MustExec("insert into tx values (3.0, 3)")
+	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
