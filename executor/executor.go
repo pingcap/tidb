@@ -1667,7 +1667,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		ResetUpdateStmtCtx(sc, stmt, vars)
+		sc.InUpdateStmt = true
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.Priority = stmt.Priority
+		sc.IgnoreNoPartition = stmt.IgnoreErr
 	case *ast.DeleteStmt:
 		sc.InDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1765,19 +1773,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
 	return
-}
-
-// ResetUpdateStmtCtx resets statement context for UpdateStmt.
-func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
-	sc.InUpdateStmt = true
-	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-	sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
-	sc.Priority = stmt.Priority
-	sc.IgnoreNoPartition = stmt.IgnoreErr
 }
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
