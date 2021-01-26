@@ -346,14 +346,20 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		)
 		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
-				return nil
+				if _, ok := c.txn.lockedMap[string(k)]; !ok {
+					return nil
+				}
+				op = pb.Op_Lock
+				value = v
+				lockCnt++
+			} else {
+				op = pb.Op_Put
+				if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+					op = pb.Op_Insert
+				}
+				value = v
+				putCnt++
 			}
-			op = pb.Op_Put
-			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
-				op = pb.Op_Insert
-			}
-			value = v
-			putCnt++
 		} else {
 			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
@@ -385,7 +391,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 		mutations.Push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
-		if entrySize > kv.TxnEntrySizeLimit {
+		if uint64(entrySize) > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
