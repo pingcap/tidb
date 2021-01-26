@@ -648,11 +648,11 @@ func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
-	err := tk.ExecToErr("alter table t add tidb_stats s1 correlation(b,c)")
+	err := tk.ExecToErr("alter table t add stats_extended s1 correlation(b,c)")
 	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	err = tk.ExecToErr("alter table t drop tidb_stats s1")
+	err = tk.ExecToErr("alter table t drop stats_extended s1")
 	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	err = tk.ExecToErr("admin reload tidb_stats")
+	err = tk.ExecToErr("admin reload stats_extended")
 	c.Assert(err.Error(), Equals, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 }
 
@@ -664,22 +664,22 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
 	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
 	tk.MustExec("analyze table t")
-	err := tk.ExecToErr("alter table not_exist_db.t add tidb_stats s1 correlation(b,c)")
+	err := tk.ExecToErr("alter table not_exist_db.t add stats_extended s1 correlation(b,c)")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'not_exist_db.t' doesn't exist")
-	err = tk.ExecToErr("alter table not_exist_tbl add tidb_stats s1 correlation(b,c)")
+	err = tk.ExecToErr("alter table not_exist_tbl add stats_extended s1 correlation(b,c)")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.not_exist_tbl' doesn't exist")
-	err = tk.ExecToErr("alter table t add tidb_stats s1 correlation(b,e)")
+	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(b,e)")
 	c.Assert(err.Error(), Equals, "[schema:1054]Unknown column 'e' in 't'")
-	tk.MustExec("alter table t add tidb_stats s1 correlation(a,b)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 No need to create correlation statistics on the integer primary key column",
 	))
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	err = tk.ExecToErr("alter table t add tidb_stats s1 correlation(b,c,d)")
+	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(b,c,d)")
 	c.Assert(err.Error(), Equals, "Only support Correlation and Dependency statistics types on 2 columns")
 
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows())
-	tk.MustExec("alter table t add tidb_stats s1 correlation(b,c)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"2 [2,3] <nil> 0",
 	))
@@ -702,7 +702,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
 
-	tk.MustExec("alter table t drop tidb_stats s1")
+	tk.MustExec("alter table t drop stats_extended s1")
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"2 [2,3] <nil> 2",
 	))
@@ -720,7 +720,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
 	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
 	tk.MustExec("analyze table t")
-	tk.MustExec("alter table t add tidb_stats s1 correlation(b,c)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"2 [2,3] <nil> 0",
 	))
@@ -749,7 +749,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
 
-	tk.MustExec("admin reload tidb_stats")
+	tk.MustExec("admin reload stats_extended")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
@@ -764,8 +764,8 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Check(testkit.Rows())
-	tk.MustExec("alter table t add tidb_stats s1 correlation(a,b)")
-	tk.MustExec("alter table t add tidb_stats s2 correlation(a,c)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
 	tk.MustQuery("select type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"2 [1,2] <nil> 0",
 		"2 [1,3] <nil> 0",
@@ -821,7 +821,7 @@ func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
 	tk.MustQuery("select a from t_idx where a=1")
-	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected
 					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
 					where tables.table_schema = idx.table_schema
 						AND tables.table_name = idx.table_name
@@ -862,7 +862,7 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
-	querySQL := `select count(distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected) 
+	querySQL := `select count(distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected)
 					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
 					where tables.table_schema = idx.table_schema
 						AND tables.table_name = idx.table_name
