@@ -2578,7 +2578,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		fmt.Println("temporary table is not nil!!")
 		is = &infoschema.TemporarySchema{
 			InfoSchema: is,
-			Temp: s.sessionVars.TemporaryTable.InfoSchema.(map[string]table.Table),
+			Temp: s.sessionVars.TemporaryTable.Tables.(map[string]table.Table),
 		}
 	}
 	

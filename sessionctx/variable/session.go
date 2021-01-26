@@ -807,9 +807,10 @@ type SessionVars struct {
 }
 
 type TemporaryTable struct {
-	InfoSchema interface{}
+	// Tables type is map[string]table.Table
+	Tables interface{}
 	kv.Storage
-
+	DirPath string
 	Txn kv.Transaction
 }
 
