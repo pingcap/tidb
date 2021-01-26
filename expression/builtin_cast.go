@@ -1186,10 +1186,6 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
-		return 0, false, nil
-	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val, true)
 	if err != nil {
@@ -1871,6 +1867,10 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
+	}
+	// because we can't control the length of cast(float as char) for now, we can't determine the argLen
+	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
+		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()

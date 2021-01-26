@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
@@ -396,9 +397,7 @@ func (d *ddl) close() {
 
 // GetLease implements DDL.GetLease interface.
 func (d *ddl) GetLease() time.Duration {
-	d.m.RLock()
 	lease := d.lease
-	d.m.RUnlock()
 	return lease
 }
 
@@ -458,6 +457,43 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 	return 1 * time.Second
 }
 
+var (
+	fastDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+	}
+	normalDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+	}
+	slowDDLIntervalPolicy = []time.Duration{
+		500 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		1 * time.Second,
+		3 * time.Second,
+	}
+)
+
+func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) {
+	plen := len(policy)
+	if i < plen {
+		return policy[i], true
+	}
+	return policy[plen-1], false
+}
+
+func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
+	case model.ActionCreateTable, model.ActionCreateSchema:
+		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
+	default:
+		return getIntervalFromPolicy(normalDDLIntervalPolicy, i)
+	}
+}
+
 func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	// If the workers don't run, we needn't to notify workers.
 	if !RunWorker {
@@ -471,6 +507,20 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	}
 }
 
+func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
+	interval, changed := getJobCheckInterval(job, i)
+	if !changed {
+		return ticker
+	}
+	// For now we should stop old ticker and create a new ticker
+	ticker.Stop()
+	return time.NewTicker(chooseLeaseTime(lease, interval))
+}
+
+// doDDLJob will return
+// - nil: found in history DDL job and no job error
+// - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
+// - other: found in history DDL job and return that job error
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
@@ -491,7 +541,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
+	initInterval, _ := getJobCheckInterval(job, 0)
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, initInterval))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -499,10 +550,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+	i := 0
 	for {
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+			i++
+			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
@@ -590,4 +644,15 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+var (
+	// RunInGoTest is used to identify whether ddl in running in the test.
+	RunInGoTest bool
+)
+
+func init() {
+	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+		RunInGoTest = true
+	}
 }
