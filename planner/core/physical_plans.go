@@ -941,6 +941,7 @@ type basePhysicalAgg struct {
 func (p *basePhysicalAgg) isFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
 		}
 	}
 	return false
