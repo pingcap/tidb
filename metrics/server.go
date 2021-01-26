@@ -196,12 +196,21 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblInTxn})
 
-	TokenUsageGauge = prometheus.NewGauge(
+	TokenGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
-			Name:      "token_usage",
-			Help:      "The usage of current running sessions' tokens",
+			Name:      "tokens",
+			Help:      "The number of concurrent executing session",
+		},
+	)
+
+	TokenLimitGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "token_limit",
+			Help:      "The maximum number of concurrent executing session",
 		},
 	)
 )

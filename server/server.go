@@ -141,7 +141,8 @@ func (s *Server) ConnectionCount() int {
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
-	metrics.TokenUsageGauge.Set(float64(s.concurrentLimiter.Allocated()) / float64(s.concurrentLimiter.Capacity()))
+	metrics.TokenGauge.Set(float64(s.concurrentLimiter.Allocated()))
+	metrics.TokenLimitGauge.Set(float64(s.concurrentLimiter.Capacity()))
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
@@ -149,7 +150,8 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
-	metrics.TokenUsageGauge.Set(float64(s.concurrentLimiter.Allocated()) / float64(s.concurrentLimiter.Capacity()))
+	metrics.TokenGauge.Set(float64(s.concurrentLimiter.Allocated()))
+	metrics.TokenLimitGauge.Set(float64(s.concurrentLimiter.Capacity()))
 }
 
 // SetDomain use to set the server domain.
@@ -303,7 +305,6 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
 }
 
 // Run runs the server.
