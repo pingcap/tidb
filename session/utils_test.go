@@ -116,10 +116,17 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 	c.Assert(err, IsNil)
 	tests := []TestCase{
 		{
-			name:   "normal",
+			name:   "normal 1",
 			input:  "select * from 1",
 			params: []interface{}{},
 			output: "select * from 1",
+			err:    "",
+		},
+		{
+			name:   "normal 2",
+			input:  "WHERE source != 'builtin'",
+			params: []interface{}{},
+			output: "WHERE source != 'builtin'",
 			err:    "",
 		},
 		{
@@ -346,9 +353,9 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 		},
 		{
 			name:   "% escape",
-			input:  "%%?",
+			input:  "select * from t where val = '%%?'",
 			params: []interface{}{},
-			output: "%?",
+			output: "select * from t where val = '%?'",
 			err:    "",
 		},
 		{
