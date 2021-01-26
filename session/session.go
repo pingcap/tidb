@@ -127,8 +127,11 @@ type Session interface {
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ParseWithParams is the parameterized version of Parse: it will escape arguments for safety.
-	// It will try to prevent injection by parameterized arguments under utf8 charactersets. It works like printf() in c, but there is only one format specifier: %?.
+	// ParseWithParams is the parameterized version of Parse: it will try to prevent injection under utf8mb4.
+	// It works like printf() in c, but there are following format specifiers:
+	// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
+	// 2. %%: output %
+	// 3. %i: for identifiers, for example ("use %i", db)
 	//
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
