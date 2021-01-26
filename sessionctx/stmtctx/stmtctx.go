@@ -80,6 +80,7 @@ type StatementContext struct {
 	InNullRejectCheck         bool
 	AllowInvalidDate          bool
 	OptimDependOnMutableConst bool
+	IgnoreNoPartition         bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
