@@ -86,7 +86,7 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 // It works like printf() in c, there are following format specifiers:
 // 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
 // 2. %%: output %
-// 3. %i: for identifiers, for example ("use %i", db)
+// 3. %n: for identifiers, for example ("use %n", db)
 // But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
@@ -106,7 +106,7 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 			ch = sql[i+1] // get the specifier
 		}
 		switch ch {
-		case 'i':
+		case 'n':
 			if argPos >= len(args) {
 				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
 			}
