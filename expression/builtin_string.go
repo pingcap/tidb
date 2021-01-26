@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -86,6 +87,7 @@ var (
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
 	_ functionClass = &weightStringFunctionClass{}
+	_ functionClass = &soundexFunctionClass{}
 )
 
 var (
@@ -154,6 +156,7 @@ var (
 	_ builtinFunc = &builtinFieldIntSig{}
 	_ builtinFunc = &builtinFieldStringSig{}
 	_ builtinFunc = &builtinWeightStringSig{}
+	_ builtinFunc = &builtinSoundexSig{}
 )
 
 func reverseBytes(origin []byte) []byte {
@@ -3975,4 +3978,112 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}
 	return string(ctor.Key(str)), false, nil
+}
+
+type soundexFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *soundexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	SetBinFlagOrBinStr(argTp, bf.tp)
+	sig := &builtinSoundexSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Soundex)
+	return sig, nil
+}
+
+type builtinSoundexSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSoundexSig) Clone() builtinFunc {
+	newSig := &builtinSoundexSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals SOUNDEX(str)
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_soundex
+func (b *builtinSoundexSig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", false, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+	return soundex(str), false, nil
+}
+
+var soundexMappings = map[string][]string{
+	"1": {"B", "F", "P", "V"},
+	"2": {"C", "G", "J", "K", "Q", "S", "X", "Z"},
+	"3": {"D", "T"},
+	"4": {"L"},
+	"5": {"M", "N"},
+	"6": {"R"},
+}
+
+func transpose(sm map[string][]string) (soundexTable map[string]string) {
+	soundexTable = make(map[string]string)
+	for val, list := range soundexMappings {
+		for _, char := range list {
+			soundexTable[char] = val
+		}
+	}
+	return
+}
+
+var soundexTable = transpose(soundexMappings)
+
+// soundex implements Soundex algorithm.
+// This implementation is the original Soundex algorithm, not the more popular enhanced version(See: https://en.wikipedia.org/wiki/Soundex)
+// The difference is that original version discards vowels first and duplicates second, whereas the enhanced version discards duplicates first and vowels second.
+func soundex(str string) string {
+	// Remove numbers and spaces, trasfer str to upper form.
+	re := regexp.MustCompile("[0-9]")
+	str = re.ReplaceAllString(str, "")
+	str = strings.Replace(str, " ", "", -1)
+	if str == "" {
+		return ""
+	}
+	str = strings.ToUpper(str)
+
+	// STEP1: Retain the first letter of the name and drop all other occurrences of a, e, i, o, u, y, h, w
+	var encoded bytes.Buffer
+	encoded.WriteRune([]rune(str)[0])
+	// STEP2: Replace consonants with digits as listed in soundexTable
+	codes := make([]string, 0)
+	for i, s := range str {
+		c, ok := soundexTable[string(s)]
+		if ok {
+			codes = append(codes, c)
+		} else if i == 0 {
+			codes = append(codes, string(s))
+		}
+	}
+	// STEP3: If two or more letters with the same number are adjacent in the original name (before step 1), only retain the first letter
+	tmp := ""
+	len := 1
+	for i, code := range codes {
+		if code != tmp && i > 0 {
+			encoded.WriteString(code)
+			len += 1
+		}
+		tmp = code
+	}
+	// STEP4: If you have too few letters in your word that you can't assign three numbers, append with zeros until there are three numbers.
+	for i := 0; i < 4-len; i++ {
+		encoded.WriteString("0")
+	}
+
+	return encoded.String()
 }

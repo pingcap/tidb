@@ -2447,3 +2447,50 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }
+
+func (s *testEvaluatorSuite) TestSoundex(c *C) {
+	cases := []struct {
+		args   []interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{[]interface{}{nil}, true, false, ""},
+		{[]interface{}{1}, false, false, ""},
+		{[]interface{}{"a"}, false, false, "A000"},
+		{[]interface{}{"aA"}, false, false, "A000"},
+		{[]interface{}{"Knuth"}, false, false, "K530"},
+		{[]interface{}{"Kant"}, false, false, "K530"},
+		{[]interface{}{"Jarovski"}, false, false, "J612"},
+		{[]interface{}{"Resnik"}, false, false, "R252"},
+		{[]interface{}{"Reznick"}, false, false, "R252"},
+		{[]interface{}{"Euler"}, false, false, "E460"},
+		{[]interface{}{"Peterson"}, false, false, "P3625"},
+		{[]interface{}{"Jefferson"}, false, false, "J1625"},
+		{[]interface{}{"Tynczak"}, false, false, "T520"},
+		{[]interface{}{"Pfister"}, false, false, "P236"},
+		{[]interface{}{"Honeyman"}, false, false, "H500"},
+		{[]interface{}{"Hello the World"}, false, false, "H43643"},
+		{[]interface{}{"测试"}, false, false, "测000"},
+		{[]interface{}{"abc测试def"}, false, false, "A1231"},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Soundex, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		v, err := f.Eval(chunk.Row{})
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(v.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(v.GetString(), Equals, strings.ToUpper(t.res))
+			}
+		}
+	}
+
+	_, err := funcs[ast.Soundex].getFunction(s.ctx, []Expression{varcharCon})
+	c.Assert(err, IsNil)
+}
