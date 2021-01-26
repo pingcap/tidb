@@ -1287,11 +1287,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 		err = err1
 		dec.FromUint(val)
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		return invalidConv(d, target.Tp)
 	}
@@ -1651,11 +1651,11 @@ func ConvertDatumToDecimal(sc *stmtctx.StatementContext, d Datum) (*MyDecimal, e
 		dec.FromUint(val)
 		err = err1
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToFloat(sc, d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(sc, d.GetMysqlJSON())
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		err = dec.FromFloat64(f)
+		dec = f
 	default:
 		err = fmt.Errorf("can't convert %v to decimal", d.GetValue())
 	}
