@@ -344,6 +344,20 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			params: []interface{}{},
 			err:    "missing arguments.*",
 		},
+		{
+			name:   "% escape",
+			input:  "%%?",
+			params: []interface{}{},
+			output: "%?",
+			err:    "",
+		},
+		{
+			name:   "unknown specifier",
+			input:  "%v",
+			params: []interface{}{},
+			output: "%v",
+			err:    "",
+		},
 	}
 	for _, t := range tests {
 		comment := Commentf("%s", t.name)
