@@ -1459,3 +1459,70 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	topN.Sort()
 	return nil
 }
+
+type bucket4Merging struct {
+	lower *types.Datum
+	upper *types.Datum
+	repeat int64
+	ndv int64
+	count int64
+}
+
+func newBucket4Meging() *bucket4Merging {
+	return &bucket4Merging{
+		lower: new(types.Datum),
+		upper: new(types.Datum),
+		repeat: 0,
+		ndv: 0,
+		count: 0,
+	}
+}
+
+func (hg *Histogram) buildBucket4Merging(buckets []*bucket4Merging) {
+	for i := 0; i < hg.Len(); i++ {
+		if i == 0 {
+			b := newBucket4Meging()
+			hg.GetLower(i).Copy(b.lower)
+			hg.GetLower(i).Copy(b.upper)
+			buckets = append(buckets, b)
+		}
+		b := newBucket4Meging()
+		hg.GetLower(i).Copy(b.lower)
+		hg.GetUpper(i).Copy(b.upper)
+		b.repeat = hg.Buckets[i].Repeat
+		b.ndv = hg.Buckets[i].NDV
+		b.count = hg.Buckets[i].Count
+		buckets = append(buckets, b)
+	}
+}
+
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) *Histogram {
+	var totCount, totNull, bucketNumber int64
+	for _, hist := range hists {
+		totNull += hist.NullCount
+		bucketNumber += int64(hist.Len()) + 1
+		if hist.Len() > 0 {
+			totCount += hist.Buckets[hist.Len()-1].Count
+		}
+	}
+	expSize := totCount/expBucketNumber
+	buckets := make([]*bucket4Merging, 0, bucketNumber)
+	for _, hist := range hists {
+		hist.buildBucket4Merging(buckets)
+	}
+	sort.Slice(buckets, func(i, j int) bool {
+		// TODO: need handle error
+		res, _ := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
+		return res < 0
+	})
+	var sum int64
+	r := len(buckets)
+	bucketCount := 1
+	for i := len(buckets) - 1; i >= 0; i-- {
+		sum += buckets[i].count
+		if sum > expSize * bucketNumber {
+			mergePartitionBuckets()
+			r = i
+		}
+	}
+}
