@@ -7564,3 +7564,38 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
 }
+
+func (s *testIntegrationSuite) TestDatetimeUserVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @p = now()")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+}
+
+func (s *testIntegrationSuite) TestIssue22098(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `ta` (" +
+		"  `k` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `c0` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `c` varchar(18) NOT NULL DEFAULT ' '," +
+		"  `e0` varchar(1) NOT NULL DEFAULT ' '," +
+		"  PRIMARY KEY (`k`,`c0`,`c`)," +
+		"  KEY `idx` (`c`,`e0`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("CREATE TABLE `tb` (" +
+		"  `k` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `e` int(11) NOT NULL DEFAULT '0'," +
+		"  `i` int(11) NOT NULL DEFAULT '0'," +
+		"  `s` varchar(1) NOT NULL DEFAULT ' '," +
+		"  `c` varchar(50) NOT NULL DEFAULT ' '," +
+		"  PRIMARY KEY (`k`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("prepare stmt from \"select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')\"")
+	tk.MustExec("set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';")
+	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f").Check(testkit.Rows())
+>>>>>>> release-4.0
+}
