@@ -80,24 +80,35 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 }
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType utilhint.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	if parentOffset == -1 {
+		return res
+	}
 	for _, child := range children {
 		blockOffset := child.SelectBlockOffset()
 		if blockOffset == -1 {
 			continue
 		}
 		var dbName, tableName *model.CIStr
-		if child.SelectBlockOffset() != parentOffset {
-			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+		if blockOffset != parentOffset {
+			blockAsNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+			if blockOffset >= len(blockAsNames) {
+				continue
+			}
+			hintTable := blockAsNames[blockOffset]
 			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
 			dbName, tableName = extractTableAsName(child)
 		}
-		if tableName == nil {
+		if tableName == nil || tableName.L == "" {
+			continue
+		}
+		qbName, err := utilhint.GenerateQBName(nodeType, blockOffset)
+		if err != nil {
 			continue
 		}
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(joinType),
 			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
 		})
@@ -113,17 +124,21 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
+	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
+	if err != nil {
+		return res
+	}
 	switch pp := p.(type) {
 	case *PhysicalTableReader:
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 		})
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
-				QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+				QBName:   qbName,
 				HintName: model.NewCIStr(HintReadFromStorage),
 				HintData: model.NewCIStr(kv.TiFlash.Name()),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
@@ -132,7 +147,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	case *PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
@@ -140,7 +155,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	case *PhysicalIndexReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
@@ -160,19 +175,19 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 			}
 		}
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintIndexMerge),
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
 			Indexes:  Indexs,
 		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintHashAgg),
 		})
 	case *PhysicalStreamAgg:
 		res = append(res, &ast.TableOptimizerHint{
-			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),
+			QBName:   qbName,
 			HintName: model.NewCIStr(HintStreamAgg),
 		})
 	case *PhysicalMergeJoin:
