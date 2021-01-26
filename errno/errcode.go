@@ -885,6 +885,7 @@ const (
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
 	ErrInvalidArgumentForLogarithm                                  = 3020
+	ErrAggregateOrderNonAggQuery                                    = 3029
 	ErrIncorrectType                                                = 3064
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
@@ -1078,7 +1079,7 @@ const (
 	ErrLockExpire                     = 8229
 	ErrAddColumnWithSequenceAsDefault = 8230
 
-	// TiKV/PD errors.
+	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout        = 9001
 	ErrTiKVServerTimeout      = 9002
 	ErrTiKVServerBusy         = 9003
@@ -1089,4 +1090,7 @@ const (
 	ErrTiKVStoreLimit         = 9008
 	ErrPrometheusAddrIsNotSet = 9009
 	ErrTiKVStaleCommand       = 9010
+
+	ErrTiFlashServerTimeout = 9012
+	ErrTiFlashServerBusy    = 9013
 )
