@@ -1287,7 +1287,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		return nil, err
 	}
 	if len(stmtNodes) != 1 {
-		return nil, errors.New("ExecuteInternal() API doesn't support multiple statements")
+		return nil, errors.New("Executing multiple statements internally is not supported")
 	}
 
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
