@@ -33,9 +33,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
+	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -118,7 +119,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	cfg := config.GetGlobalConfig()
+	cfg := tidbcfg.GetGlobalConfig()
 	var (
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
@@ -255,7 +256,7 @@ func NewTestRPCClient(security config.Security) Client {
 	return newRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -273,13 +274,13 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg 
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		client := config.GetGlobalConfig().TiKVClient
+		client := tidbcfg.GetGlobalConfig().TiKVClient
 		for _, opt := range opts {
 			opt(&client)
 		}
@@ -363,7 +364,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+	if tidbcfg.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
