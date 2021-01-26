@@ -48,7 +48,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
 	retriever := &slowQueryRetriever{}
 	// Ignore the error is ok for test.
-	terror.Log(retriever.initialize(sctx))
+	terror.Log(retriever.initialize(context.Background(), sctx))
 	rows, err := parseLog(retriever, sctx, reader, logNum)
 	return rows, err
 }
@@ -440,7 +440,7 @@ select 7;`
 
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(sctx)
+		err := retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
