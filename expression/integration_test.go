@@ -579,7 +579,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 
 	// for round
 	result = tk.MustQuery("SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);")
-	result.Check(testkit.Rows("3 -3 3")) // TODO: Should be 3 -3 2
+	result.Check(testkit.Rows("3 -3 2"))
 	result = tk.MustQuery("SELECT ROUND(2.5, NULL), ROUND(NULL, 4), ROUND(NULL, NULL), ROUND(NULL);")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("SELECT ROUND('123.4'), ROUND('123e-2');")
@@ -7360,6 +7360,43 @@ func (s *testIntegrationSuite) TestIssue20860(c *C) {
 	tk.MustExec("create table t(id int primary key, c int, d timestamp null default null)")
 	tk.MustExec("insert into t values(1, 2, '2038-01-18 20:20:30')")
 	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
+}
+
+func (s *testIntegrationSuite) TestIssue10462(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select json_array(true)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1=2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(1!=2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1<2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1<=2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1>2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(1>=2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_object(true, null <=> null)").Check(testkit.Rows("{\"1\": true}"))
+	tk.MustQuery("select json_object(false, 1 and 2)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 and 0)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_object(false, 1 or 0)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 xor 0)").Check(testkit.Rows("{\"0\": true}"))
+	tk.MustQuery("select json_object(false, 1 xor 1)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_object(false, not 1)").Check(testkit.Rows("{\"0\": false}"))
+	tk.MustQuery("select json_array(null and 1)").Check(testkit.Rows("[null]"))
+	tk.MustQuery("select json_array(null and 0)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(null or 1)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(null or 0)").Check(testkit.Rows("[null]"))
+	tk.MustQuery("select json_array(1.15 or 0)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array('abc' or 0)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array('1abc' or 0)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(null is true)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(null is null)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 in (1, 2))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(0 in (1, 2))").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array(0 not in (1, 2))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 between 0 and 2)").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(1 not between 0 and 2)").Check(testkit.Rows("[false]"))
+	tk.MustQuery("select json_array('123' like '123')").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array('abcdef' rlike 'a.*c.*')").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(is_ipv4('127.0.0.1'))").Check(testkit.Rows("[true]"))
+	tk.MustQuery("select json_array(is_ipv6('1a6b:8888:ff66:77ee:0000:1234:5678:bcde'))").Check(testkit.Rows("[true]"))
 }
 
 func (s *testIntegrationSerialSuite) TestJsonObjectCompare(c *C) {
