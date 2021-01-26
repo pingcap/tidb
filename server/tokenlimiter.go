@@ -13,45 +13,29 @@
 
 package server
 
-import "github.com/uber-go/atomic"
-
 // Token is used as a permission to keep on running.
 type Token struct {
 }
 
 // TokenLimiter is used to limit the number of concurrent tasks.
 type TokenLimiter struct {
-	capacity  uint32
-	allocated atomic.Uint32
-	ch        chan *Token
+	count uint
+	ch    chan *Token
 }
 
 // Put releases the token.
 func (tl *TokenLimiter) Put(tk *Token) {
 	tl.ch <- tk
-	tl.allocated.Dec()
 }
 
 // Get obtains a token.
 func (tl *TokenLimiter) Get() *Token {
-	token := <-tl.ch
-	tl.allocated.Inc()
-	return token
-}
-
-// Allocated returns the number of tokens that a TokenLimiter allocated.
-func (tl *TokenLimiter) Allocated() uint32 {
-	return tl.allocated.Load()
-}
-
-// Capacity returns the capacity of a TokenLimiter.
-func (tl *TokenLimiter) Capacity() uint32 {
-	return tl.capacity
+	return <-tl.ch
 }
 
 // NewTokenLimiter creates a TokenLimiter with capacity tokens.
 func NewTokenLimiter(count uint) *TokenLimiter {
-	tl := &TokenLimiter{capacity: uint32(count), ch: make(chan *Token, count)}
+	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
 	for i := uint(0); i < count; i++ {
 		tl.ch <- &Token{}
 	}

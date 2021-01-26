@@ -141,7 +141,7 @@ func (s *Server) ConnectionCount() int {
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
-	metrics.TokenGauge.Set(float64(s.concurrentLimiter.Allocated()))
+	metrics.TokenGauge.Inc()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
@@ -149,7 +149,7 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
-	metrics.TokenGauge.Set(float64(s.concurrentLimiter.Allocated()))
+	metrics.TokenGauge.Dec()
 }
 
 // SetDomain use to set the server domain.
