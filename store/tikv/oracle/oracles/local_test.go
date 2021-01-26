@@ -15,31 +15,31 @@ package oracles_test
 
 import (
 	"context"
-	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
 
-func TestLocalOracle(t *testing.T) {
+var _ = Suite(&testOraclesSuite{})
+
+type testOraclesSuite struct{}
+
+func (s *testOraclesSuite) TestLocalOracle(c *C) {
 	l := oracles.NewLocalOracle()
 	defer l.Close()
 	m := map[uint64]struct{}{}
 	for i := 0; i < 100000; i++ {
 		ts, err := l.GetTimestamp(context.Background(), &oracle.Option{})
-		if err != nil {
-			t.Error(err)
-		}
+		c.Assert(err, IsNil)
 		m[ts] = struct{}{}
 	}
 
-	if len(m) != 100000 {
-		t.Error("generated same ts")
-	}
+	c.Assert(len(m), Equals, 100000, Commentf("should generate same ts"))
 }
 
-func TestIsExpired(t *testing.T) {
+func (s *testOraclesSuite) TestIsExpired(c *C) {
 	o := oracles.NewLocalOracle()
 	defer o.Close()
 	start := time.Now()
@@ -47,23 +47,17 @@ func TestIsExpired(t *testing.T) {
 	ts, _ := o.GetTimestamp(context.Background(), &oracle.Option{})
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
 	expire := o.IsExpired(ts, 5, &oracle.Option{})
-	if !expire {
-		t.Error("should expired")
-	}
+	c.Assert(expire, IsTrue, Commentf("should expire"))
 	expire = o.IsExpired(ts, 200, &oracle.Option{})
-	if expire {
-		t.Error("should not expired")
-	}
+	c.Assert(expire, IsFalse, Commentf("should not expire"))
 }
 
-func TestLocalOracle_UntilExpired(t *testing.T) {
+func (s *testOraclesSuite) TestLocalOracle_UntilExpired(c *C) {
 	o := oracles.NewLocalOracle()
 	defer o.Close()
 	start := time.Now()
 	oracles.SetOracleHookCurrentTime(o, start)
 	ts, _ := o.GetTimestamp(context.Background(), &oracle.Option{})
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
-	if o.UntilExpired(ts, 5, &oracle.Option{}) != -5 || o.UntilExpired(ts, 15, &oracle.Option{}) != 5 {
-		t.Error("until expired should be +-5")
-	}
+	c.Assert(o.UntilExpired(ts, 5, &oracle.Option{}) == -5 && o.UntilExpired(ts, 15, &oracle.Option{}) == 5, IsTrue, Commentf("before it is expired, it should be +-5"))
 }
