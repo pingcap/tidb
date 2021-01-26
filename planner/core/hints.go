@@ -89,8 +89,12 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 			continue
 		}
 		var dbName, tableName *model.CIStr
-		if child.SelectBlockOffset() != parentOffset {
-			hintTable := sctx.GetSessionVars().PlannerSelectBlockAsName[child.SelectBlockOffset()]
+		if blockOffset != parentOffset {
+			blockAsNames := sctx.GetSessionVars().PlannerSelectBlockAsName
+			if blockOffset >= len(blockAsNames) {
+				continue
+			}
+			hintTable := blockAsNames[blockOffset]
 			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {

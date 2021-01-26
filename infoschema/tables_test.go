@@ -1246,6 +1246,12 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
 		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
+
+	// Test for issue #21642.
+	tk.MustQuery(`select tidb_version()`)
+	rows := tk.MustQuery(`select plan from information_schema.statements_summary
+		where digest_text like "select tidb_version%"`).Rows()
+	c.Assert(strings.Contains(rows[0][0].(string), "Projection"), IsTrue)
 }
 
 // Test error count and warning count.
