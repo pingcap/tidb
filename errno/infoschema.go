@@ -23,7 +23,8 @@ import (
 // that are generating high error/warning counts, in which case
 // the system probably has other issues already.
 
-type errorSummary struct {
+// ErrorSummary summarizes errors and warnings
+type ErrorSummary struct {
 	sync.Mutex
 	ErrorCount   int
 	WarningCount int
@@ -31,29 +32,32 @@ type errorSummary struct {
 	LastSeen     time.Time
 }
 
-type globalStats struct {
+// GlobalStats summarizes errors and warnings globally
+type GlobalStats struct {
 	sync.Mutex
-	errors map[uint16]*errorSummary
+	Errors map[uint16]*ErrorSummary
 }
 
-type userStats struct {
+// UserStats summarizes errors and warnings per user
+type UserStats struct {
 	sync.Mutex
-	errors map[string]map[uint16]*errorSummary
+	Errors map[string]map[uint16]*ErrorSummary
 }
 
-type hostStats struct {
+// HostStats summarizes errors and warnings per host
+type HostStats struct {
 	sync.Mutex
-	errors map[string]map[uint16]*errorSummary
+	Errors map[string]map[uint16]*ErrorSummary
 }
 
-var global globalStats
-var users userStats
-var hosts hostStats
+var global GlobalStats
+var users UserStats
+var hosts HostStats
 
 func init() {
-	global.errors = make(map[uint16]*errorSummary)
-	users.errors = make(map[string]map[uint16]*errorSummary)
-	hosts.errors = make(map[string]map[uint16]*errorSummary)
+	global.Errors = make(map[uint16]*ErrorSummary)
+	users.Errors = make(map[string]map[uint16]*ErrorSummary)
+	hosts.Errors = make(map[string]map[uint16]*ErrorSummary)
 }
 
 // FlushStats resets errors and warnings across global/users/hosts
@@ -65,92 +69,92 @@ func FlushStats() {
 	hosts.Lock()
 	defer hosts.Unlock()
 
-	global.errors = make(map[uint16]*errorSummary)
-	users.errors = make(map[string]map[uint16]*errorSummary)
-	hosts.errors = make(map[string]map[uint16]*errorSummary)
+	global.Errors = make(map[uint16]*ErrorSummary)
+	users.Errors = make(map[string]map[uint16]*ErrorSummary)
+	hosts.Errors = make(map[string]map[uint16]*ErrorSummary)
 }
 
-// GlobalStats summarizes errors and warnings across all users/hosts
-func GlobalStats() map[uint16]*errorSummary {
-	global.Lock()
-	defer global.Unlock()
-	return global.errors
+// GetGlobalStats summarizes errors and warnings across all users/hosts
+// It should be read while held under a lock.
+func GetGlobalStats() *GlobalStats {
+	return &global
 }
 
-// UserStats summarizes per-user
-func UserStats() map[string]map[uint16]*errorSummary {
-	users.Lock()
-	defer users.Unlock()
-	return users.errors
+// GetUserStats summarizes per-user
+// It should be read while held under a lock.
+func GetUserStats() *UserStats {
+	return &users
 }
 
-// HostStats summarizes per remote-host
-func HostStats() map[string]map[uint16]*errorSummary {
-	hosts.Lock()
-	defer hosts.Unlock()
-	return hosts.errors
+// GetHostStats summarizes per remote-host
+// It should be read while held under a lock.
+func GetHostStats() *HostStats {
+	return &hosts
 }
 
 func initCounters(errCode uint16, user, host string) {
+	seen := time.Now()
 	global.Lock()
-	if _, ok := global.errors[errCode]; !ok {
-		global.errors[errCode] = &errorSummary{FirstSeen: time.Now()}
+	if _, ok := global.Errors[errCode]; !ok {
+		global.Errors[errCode] = &ErrorSummary{FirstSeen: seen}
 	}
 	global.Unlock()
 	users.Lock()
-	if _, ok := users.errors[user]; !ok {
-		users.errors[user] = make(map[uint16]*errorSummary)
+	if _, ok := users.Errors[user]; !ok {
+		users.Errors[user] = make(map[uint16]*ErrorSummary)
 	}
-	if _, ok := users.errors[user][errCode]; !ok {
-		users.errors[user][errCode] = &errorSummary{FirstSeen: time.Now()}
+	if _, ok := users.Errors[user][errCode]; !ok {
+		users.Errors[user][errCode] = &ErrorSummary{FirstSeen: seen}
 	}
 	users.Unlock()
 	hosts.Lock()
-	if _, ok := hosts.errors[host]; !ok {
-		hosts.errors[host] = make(map[uint16]*errorSummary)
+	if _, ok := hosts.Errors[host]; !ok {
+		hosts.Errors[host] = make(map[uint16]*ErrorSummary)
 	}
-	if _, ok := hosts.errors[host][errCode]; !ok {
-		hosts.errors[host][errCode] = &errorSummary{FirstSeen: time.Now()}
+	if _, ok := hosts.Errors[host][errCode]; !ok {
+		hosts.Errors[host][errCode] = &ErrorSummary{FirstSeen: seen}
 	}
 	hosts.Unlock()
 }
 
 // IncrementError increments the global/user/host statistics for an errCode
 func IncrementError(errCode uint16, user, host string) {
+	seen := time.Now()
 	initCounters(errCode, user, host)
 	// Increment counter + update last seen
-	global.errors[errCode].Lock()
-	global.errors[errCode].ErrorCount++
-	global.errors[errCode].LastSeen = time.Now()
-	global.errors[errCode].Unlock()
+	global.Errors[errCode].Lock()
+	global.Errors[errCode].ErrorCount++
+	global.Errors[errCode].LastSeen = seen
+	global.Errors[errCode].Unlock()
 	// Increment counter + update last seen
-	users.errors[user][errCode].Lock()
-	users.errors[user][errCode].ErrorCount++
-	users.errors[user][errCode].LastSeen = time.Now()
-	users.errors[user][errCode].Unlock()
+	users.Errors[user][errCode].Lock()
+	users.Errors[user][errCode].ErrorCount++
+	users.Errors[user][errCode].LastSeen = seen
+	users.Errors[user][errCode].Unlock()
 	// Increment counter + update last seen
-	hosts.errors[host][errCode].Lock()
-	hosts.errors[host][errCode].ErrorCount++
-	hosts.errors[host][errCode].LastSeen = time.Now()
-	hosts.errors[host][errCode].Unlock()
+	hosts.Errors[host][errCode].Lock()
+	hosts.Errors[host][errCode].ErrorCount++
+	hosts.Errors[host][errCode].LastSeen = seen
+	hosts.Errors[host][errCode].Unlock()
 }
 
 // IncrementWarning increments the global/user/host statistics for an errCode
 func IncrementWarning(errCode uint16, user, host string) {
+	seen := time.Now()
 	initCounters(errCode, user, host)
 	// Increment counter + update last seen
-	global.errors[errCode].Lock()
-	global.errors[errCode].WarningCount++
-	global.errors[errCode].LastSeen = time.Now()
-	global.errors[errCode].Unlock()
+	global.Errors[errCode].Lock()
+	global.Errors[errCode].WarningCount++
+	global.Errors[errCode].LastSeen = seen
+	global.Errors[errCode].Unlock()
 	// Increment counter + update last seen
-	users.errors[user][errCode].Lock()
-	users.errors[user][errCode].WarningCount++
-	users.errors[user][errCode].LastSeen = time.Now()
-	users.errors[user][errCode].Unlock()
+	users.Errors[user][errCode].Lock()
+	users.Errors[user][errCode].WarningCount++
+	users.Errors[user][errCode].LastSeen = seen
+	users.Errors[user][errCode].Unlock()
 	// Increment counter + update last seen
-	hosts.errors[host][errCode].Lock()
-	hosts.errors[host][errCode].WarningCount++
-	hosts.errors[host][errCode].LastSeen = time.Now()
-	hosts.errors[host][errCode].Unlock()
+	hosts.Errors[host][errCode].Lock()
+	hosts.Errors[host][errCode].WarningCount++
+	hosts.Errors[host][errCode].LastSeen = seen
+	hosts.Errors[host][errCode].Unlock()
 }

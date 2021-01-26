@@ -1891,7 +1891,9 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 		if !hasProcessPriv {
 			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
-		for code, summary := range errno.GlobalStats() {
+		global := errno.GetGlobalStats()
+		global.Lock()
+		for code, summary := range global.Errors {
 			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
 			row := types.MakeDatums(
@@ -1904,8 +1906,11 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 			)
 			rows = append(rows, row)
 		}
+		global.Unlock()
 	case infoschema.TableClientErrorsSummaryByUser:
-		for user, agg := range errno.UserStats() {
+		users := errno.GetUserStats()
+		users.Lock()
+		for user, agg := range users.Errors {
 			for code, summary := range agg {
 				// Allow anyone to see their own errors.
 				if !hasProcessPriv && loginUser != nil && loginUser.Username != user {
@@ -1925,11 +1930,14 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 				rows = append(rows, row)
 			}
 		}
+		users.Unlock()
 	case infoschema.TableClientErrorsSummaryByHost:
 		if !hasProcessPriv {
 			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
-		for host, agg := range errno.HostStats() {
+		hosts := errno.GetHostStats()
+		hosts.Lock()
+		for host, agg := range hosts.Errors {
 			for code, summary := range agg {
 				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
@@ -1945,6 +1953,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 				rows = append(rows, row)
 			}
 		}
+		hosts.Unlock()
 	}
 	e.rows = rows
 	return nil
