@@ -7301,6 +7301,19 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
 
+func (s *testIntegrationSuite) TestIssue14349(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists papers;")
+	tk.MustExec("create table papers(title text, content longtext)")
+	tk.MustExec("insert into papers values('title', 'content')")
+	tk.MustQuery(`select to_base64(title), to_base64(content) from papers;`).Check(testkit.Rows("dGl0bGU= Y29udGVudA=="))
+	tk.MustExec("set tidb_enable_vectorized_expression = 0;")
+	tk.MustQuery(`select to_base64(title), to_base64(content) from papers;`).Check(testkit.Rows("dGl0bGU= Y29udGVudA=="))
+	tk.MustExec("set tidb_enable_vectorized_expression = 1;")
+}
+
 func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
