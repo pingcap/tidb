@@ -6643,9 +6643,6 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestIssue17098(c *C) {
-=======
 func (s *testIntegrationSuite) TestIssue20121(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6682,7 +6679,6 @@ func (s *testIntegrationSuite) TestIssue20121(c *C) {
 }
 
 func (s *testIntegrationSuite) TestIssue16779(c *C) {
->>>>>>> b232a23e7... expression, types: fix datetime and year comparison error (#20233)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
