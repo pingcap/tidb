@@ -358,6 +358,13 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			output: "%v",
 			err:    "",
 		},
+		{
+			name:   "truncated specifier ",
+			input:  "rv %",
+			params: []interface{}{},
+			output: "rv %",
+			err:    "",
+		},
 	}
 	for _, t := range tests {
 		comment := Commentf("%s", t.name)
