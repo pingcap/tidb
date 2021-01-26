@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1019,4 +1021,24 @@ func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	rs, err := Execute(ctx, qctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
 	c.Assert(err, IsNil)
 	c.Assert(rs, IsNil) // should be no delay
+}
+
+func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "drop table if exists t1")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt+1)
+	c.Assert(err, IsNil)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }
