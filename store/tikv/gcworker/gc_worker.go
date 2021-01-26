@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tidbutil "github.com/pingcap/tidb/util"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -1702,7 +1702,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(tidbutil.GCTimeFormat))
+	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
 	return errors.Trace(err)
 }
 
@@ -1714,7 +1714,7 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 	if str == "" {
 		return nil, nil
 	}
-	t, err := tidbutil.CompatibleParseGCTime(str)
+	t, err := tikvutil.CompatibleParseGCTime(str)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

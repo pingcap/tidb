@@ -27,9 +27,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -155,15 +154,14 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		// so n-1 needs to be scattered to other stores.
 		spResp.Regions = regions[:len(regions)-1]
 	}
+	var newRegionLeft string
+	if len(spResp.Regions) > 0 {
+		newRegionLeft = logutil.Hex(spResp.Regions[0]).String()
+	}
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
 		zap.Stringer("first at", kv.Key(batch.keys[0])),
-		zap.Stringer("first new region left", stringutil.MemoizeStr(func() string {
-			if len(spResp.Regions) == 0 {
-				return ""
-			}
-			return logutil.Hex(spResp.Regions[0]).String()
-		})),
+		zap.String("first new region left", newRegionLeft),
 		zap.Int("new region count", len(spResp.Regions)))
 
 	if !scatter {
