@@ -105,7 +105,7 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 	if err != nil {
 		return point, errors.Trace(err)
 	}
-	npoint := point.CloneNewValue(casted)
+	npoint := point.Clone(casted)
 	if valCmpCasted == 0 {
 		return npoint, nil
 	}

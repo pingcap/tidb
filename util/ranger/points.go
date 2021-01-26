@@ -74,7 +74,7 @@ func (rp *point) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
-func (rp *point) CloneNewValue(value types.Datum) *point {
+func (rp *point) Clone(value types.Datum) *point {
 	return &point{
 		value: value,
 		excl:  rp.excl,
