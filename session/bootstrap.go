@@ -203,6 +203,10 @@ const (
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
 		lower_bound BLOB ,
+<<<<<<< HEAD
+=======
+		ndv         BIGINT NOT NULL DEFAULT 0,
+>>>>>>> e1e4ad14e... session: fix the bug that may cause upgrading from v4.0.10 fail (#22448)
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -432,7 +436,7 @@ const (
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
-	version51 = 51
+	// version51 will be redone in version63 so it's skipped here.
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
@@ -446,12 +450,28 @@ const (
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
-	version58 = 58
+	// version58 will be redone in version64 so it's skipped here.
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+<<<<<<< HEAD
 
 	// please make sure this is the largest version
 	currentBootstrapVersion = version59
+=======
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
+	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
+	version63 = 63
+	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
+	version64 = 64
+
+	// please make sure this is the largest version
+	currentBootstrapVersion = version64
+>>>>>>> e1e4ad14e... session: fix the bug that may cause upgrading from v4.0.10 fail (#22448)
 )
 
 var (
@@ -506,15 +526,23 @@ var (
 		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
 		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
-		upgradeToVer51,
+		// We will redo upgradeToVer51 in upgradeToVer63, it is skipped here.
 		upgradeToVer52,
 		upgradeToVer53,
 		upgradeToVer54,
 		upgradeToVer55,
 		upgradeToVer56,
 		upgradeToVer57,
-		upgradeToVer58,
+		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
+<<<<<<< HEAD
+=======
+		upgradeToVer60,
+		upgradeToVer61,
+		upgradeToVer62,
+		upgradeToVer63,
+		upgradeToVer64,
+>>>>>>> e1e4ad14e... session: fix the bug that may cause upgrading from v4.0.10 fail (#22448)
 	}
 )
 
@@ -1143,14 +1171,6 @@ func upgradeToVer50(s Session, ver int64) {
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
 }
 
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
-}
-
 func upgradeToVer52(s Session, ver int64) {
 	if ver >= version52 {
 		return
@@ -1264,15 +1284,6 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
-func upgradeToVer58(s Session, ver int64) {
-	if ver >= version58 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
-}
-
 func upgradeToVer59(s Session, ver int64) {
 	if ver >= version59 {
 		return
@@ -1295,6 +1306,33 @@ func writeMemoryQuotaQuery(s Session) {
 	mustExecute(s, sql)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer63(s Session, ver int64) {
+	if ver >= version63 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer64(s Session, ver int64) {
+	if ver >= version64 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+>>>>>>> e1e4ad14e... session: fix the bug that may cause upgrading from v4.0.10 fail (#22448)
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
