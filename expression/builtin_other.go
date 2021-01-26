@@ -93,6 +93,9 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
+	for i := 1; i < len(args); i++ {
+		DisableParseJSONFlag4Expr(args[i])
+	}
 	bf.tp.Flen = 1
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
