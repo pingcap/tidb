@@ -207,7 +207,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
 		is := tk.Se.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-		builder := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
+		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
@@ -829,4 +829,33 @@ func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
 	tk.MustExec("set @v2=3.0")
 	tk.MustExec(`prepare stmt2 from "select sum(b) from t group by ?, ?"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v2`).Check(testkit.Rows("10"))
+}
+
+// Test for issue https://github.com/pingcap/tidb/issues/22167
+func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta, tb")
+	tk.MustExec("CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ')")
+	tk.MustExec("CREATE TABLE tb (k varchar(32) NOT NULL DEFAULT ' ', s varchar(1) NOT NULL DEFAULT ' ')")
+	tk.MustExec("insert into ta values ('a')")
+	tk.MustExec("set @a=2, @b=1")
+	tk.MustExec(`prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null"`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
 }
