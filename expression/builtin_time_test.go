@@ -2166,7 +2166,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 
 		{[]interface{}{0, 58.4, 0}, "00:58:00"},
 		{[]interface{}{0, "58.4", 0}, "00:58:00"},
-		{[]interface{}{0, 58.5, 1}, "00:59:01"},
+		{[]interface{}{0, 58.5, 1}, "00:58:01"},
 		{[]interface{}{0, "58.5", 1}, "00:58:01"},
 		{[]interface{}{0, 59.5, 1}, nil},
 		{[]interface{}{0, "59.5", 1}, "00:59:01"},
