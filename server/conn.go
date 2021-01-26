@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1036,7 +1037,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
+	if err != nil {
+		return err
+	}
+	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	if err != nil {
 		return err
 	}
@@ -1251,7 +1256,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
 	}
-
+	if loadDataInfo.Table.Meta().IsView() || loadDataInfo.Table.Meta().IsSequence() {
+		return errors.New("can only load data into base tables")
+	}
 	err := cc.writeReq(ctx, loadDataInfo.Path)
 	if err != nil {
 		return err
@@ -1371,33 +1378,19 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	defer trace.StartRegion(ctx, "handleQuery").End()
-	rss, err := cc.ctx.Execute(ctx, sql)
+	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
-<<<<<<< HEAD
-	status := atomic.LoadInt32(&cc.status)
-	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
-		for _, rs := range rss {
-			terror.Call(rs.Close)
-=======
 
-	if len(stmts) == 0 {
-		return cc.writeOK(ctx)
-	}
+	var appendMultiStmtWarning bool
 
-	warns := sc.GetWarnings()
-	parserWarns := warns[len(prevWarns):]
-
-	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
-
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
 		// by early terminating the first statement, and then running an entirely
 		// new statement.
-
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
 			// The client does not have multi-statement enabled. We now need to determine
@@ -1410,54 +1403,74 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
 			default:
-				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: errMultiStatementDisabled}
-				parserWarns = append(parserWarns, warn)
+				appendMultiStmtWarning = true
 			}
 		}
+	}
 
-		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
+	for i, stmt := range stmts {
+		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1, appendMultiStmtWarning); err != nil {
+			break
+		}
+	}
+	if err != nil {
+		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+	}
+	return err
+}
+
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool, appendMultiStmtWarning bool) error {
+	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return err
+	}
+
+	if lastStmt && appendMultiStmtWarning {
+		cc.ctx.GetSessionVars().StmtCtx.AppendWarning(errMultiStatementDisabled)
+	}
+
+	status := cc.ctx.Status()
+	if !lastStmt {
+		status |= mysql.ServerMoreResultsExists
+	}
+
+	if rs != nil {
+		connStatus := atomic.LoadInt32(&cc.status)
+		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
+			return executor.ErrQueryInterrupted
+		}
+
+		err = cc.writeResultset(ctx, rs, false, status, 0)
 		if err != nil {
 			return err
->>>>>>> 57eef1333... server, sessionctx: add multi statement workaround (#22351)
-		}
-		return executor.ErrQueryInterrupted
-	}
-	if rss != nil {
-		if len(rss) == 1 {
-			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
-		} else {
-			// The client gets to choose if it allows multi-statements, and
-			// probably defaults OFF. This helps prevent against SQL injection attacks
-			// by early terminating the first statement, and then running an entirely
-			// new statement.
-
-			capabilities := cc.ctx.GetSessionVars().ClientCapability
-			if capabilities&mysql.ClientMultiStatements < 1 {
-				return errMultiStatementDisabled
-			}
-
-			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
 		var handled bool
-		handled, err = cc.handleQuerySpecial(ctx)
+		handled, err = cc.handleQuerySpecial(ctx, status)
 		if handled {
 			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
 			if execStmt != nil {
 				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
 			}
+
+		}
+		if err != nil {
+			return err
 		}
 	}
-	return err
+	return nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context) (handled bool, err error) {
+func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-		if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 			return handled, err
 		}
 	}
@@ -1466,7 +1479,7 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context) (handled bool, err
 	if loadStats != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-		if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 			return handled, err
 		}
 	}
@@ -1475,13 +1488,11 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context) (handled bool, err
 	if indexAdvise != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-		err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
-		if err != nil {
+		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
 			return handled, err
 		}
 	}
-
-	return handled, cc.writeOK(ctx)
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
 // handleFieldList returns the field list for a table.
@@ -1516,13 +1527,9 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 // If binary is true, the data would be encoded in BINARY format.
 // serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-// resultsets, it's used to support the MULTI_RESULTS capability in mysql protocol.
 func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
-		if !mysql.HasCursorExistsFlag(serverStatus) {
-			terror.Call(rs.Close)
-		}
 		r := recover()
 		if r == nil {
 			return

@@ -533,6 +533,17 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	}, "LoadData", func(dbt *DBTest) {
 		dbt.mustExec("set @@tidb_dml_batch_size = 3")
 		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.mustExec("create view v1 as select 1")
+		dbt.mustExec("create sequence s1")
+
+		// can't insert into views (in TiDB) or sequences. issue #20880
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
+		dbt.Assert(err, NotNil)
+		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+
 		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
 		dbt.Assert(err1, IsNil)
 		lastID, err1 := rs.LastInsertId()
@@ -1180,7 +1191,14 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
 		c.Assert(count, Equals, int64(1))
 		rows := dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		c.Assert(rows.Next(), IsTrue)
+		var level, code, message string
+		err = rows.Scan(&level, &code, &message)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(level, Equals, "Warning")
+		c.Assert(code, Equals, "8130")
+		c.Assert(message, Equals, "client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 		var out int
 		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
