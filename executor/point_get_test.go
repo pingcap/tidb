@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 

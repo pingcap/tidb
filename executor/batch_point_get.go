@@ -320,9 +320,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
-			// there is no clustered index table in release-4.0
-			// indexKeys will always have the same length with keys
-			existKeys = append(existKeys, indexKeys[i])
+			if len(indexKeys) > 0 {
+				existKeys = append(existKeys, indexKeys[i])
+			}
 		}
 	}
 	// Lock exists keys only for Read Committed Isolation.
