@@ -94,7 +94,7 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 			sleep = expo(base, cap, attempts)
 		case FullJitter:
 			v := expo(base, cap, attempts)
-			sleep = rand.Intn(int(v))
+			sleep = rand.Intn(v)
 		case EqualJitter:
 			v := expo(base, cap, attempts)
 			sleep = v/2 + rand.Intn(v/2)
