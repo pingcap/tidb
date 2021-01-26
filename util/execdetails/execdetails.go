@@ -16,6 +16,7 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -401,14 +402,17 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		return fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
+	} else {
+		n := len(procTimes)
+		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+	return buf.String()
 }
 
 const (
@@ -551,7 +555,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
 
 // GetTime get the int64 total time
@@ -786,24 +790,24 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("commit_txn: {")
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
-			buf.WriteString(e.Commit.PrewriteTime.String())
+			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
 		}
 		if e.Commit.WaitPrewriteBinlogTime > 0 {
 			buf.WriteString(", wait_prewrite_binlog:")
-			buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+			buf.WriteString(FormatDuration(e.Commit.WaitPrewriteBinlogTime))
 		}
 		if e.Commit.GetCommitTsTime > 0 {
 			buf.WriteString(", get_commit_ts:")
-			buf.WriteString(e.Commit.GetCommitTsTime.String())
+			buf.WriteString(FormatDuration(e.Commit.GetCommitTsTime))
 		}
 		if e.Commit.CommitTime > 0 {
 			buf.WriteString(", commit:")
-			buf.WriteString(e.Commit.CommitTime.String())
+			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
 		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(commitBackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -814,7 +818,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -843,7 +847,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("lock_keys: {")
 		if e.LockKeys.TotalTime > 0 {
 			buf.WriteString("time:")
-			buf.WriteString(e.LockKeys.TotalTime.String())
+			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
 		}
 		if e.LockKeys.RegionNum > 0 {
 			buf.WriteString(", region:")
@@ -855,11 +859,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.LockKeys.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(time.Duration(e.LockKeys.ResolveLockTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(time.Duration(e.LockKeys.BackoffTime).String())
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -902,4 +906,42 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) stri
 	}
 	sort.Strings(tpArray)
 	return fmt.Sprintf("%v", tpArray)
+}
+
+// FormatDuration uses to format duration, this function will prune precision before format duration.
+// Pruning precision is for human readability. The prune rule is:
+// 1. if the duration was less than 1us, return the original string.
+// 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
+//    9.412345ms  -> 9.41ms
+//    10.412345ms -> 10.4ms
+//    5.999s      -> 6s
+//    100.45µs    -> 100.5µs
+func FormatDuration(d time.Duration) string {
+	if d <= time.Microsecond {
+		return d.String()
+	}
+	unit := getUnit(d)
+	if unit == time.Nanosecond {
+		return d.String()
+	}
+	integer := (d / unit) * unit
+	decimal := float64(d%unit) / float64(unit)
+	if d < 10*unit {
+		decimal = math.Round(decimal*100) / 100
+	} else {
+		decimal = math.Round(decimal*10) / 10
+	}
+	d = integer + time.Duration(decimal*float64(unit))
+	return d.String()
+}
+
+func getUnit(d time.Duration) time.Duration {
+	if d >= time.Second {
+		return time.Second
+	} else if d >= time.Millisecond {
+		return time.Millisecond
+	} else if d >= time.Microsecond {
+		return time.Microsecond
+	}
+	return time.Nanosecond
 }
