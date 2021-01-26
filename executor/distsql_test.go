@@ -256,34 +256,13 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 
 func (s *testSuite3) TestIndexLookUpStats(c *C) {
 	stats := &executor.IndexLookUpRunTimeStats{
-		FetchHandleTotal: int64(5 * time.Second),
-		FetchHandle:      int64(2 * time.Second),
-		TaskWait:         int64(2 * time.Second),
-		TableRowScan:     int64(2 * time.Second),
-		TableTaskNum:     2,
-		Concurrency:      1,
+		IndexScan:    int64(2 * time.Second),
+		TableRowScan: int64(2 * time.Second),
+		TableTaskNum: 2,
+		Concurrency:  1,
 	}
-<<<<<<< HEAD
 	c.Assert(stats.String(), Equals, "index_task:2s, table_task:{num:2, concurrency:1, time:2s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
 	c.Assert(stats.String(), Equals, "index_task:4s, table_task:{num:4, concurrency:2, time:4s}")
-=======
-	c.Assert(stats.String(), Equals, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}")
-	c.Assert(stats.String(), Equals, stats.Clone().String())
-	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 2}")
-}
-
-func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, key idx_a(a))")
-	for i := 0; i < 101; i++ {
-		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
-	}
-	tk.MustQuery("select * from tbl use index(idx_a) where a > 99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
-	tk.MustQuery("select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
->>>>>>> 56ef0ab2a... executor: improve the runtime stats of index lookup reader (#21982)
 }
