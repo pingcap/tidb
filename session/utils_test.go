@@ -130,7 +130,7 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			err:    "",
 		},
 		{
-			name:   "missing arguments",
+			name:   "%? missing arguments",
 			input:  "select %? from %?",
 			params: []interface{}{4},
 			err:    "missing arguments.*",
@@ -324,6 +324,25 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			input:  "select %?",
 			params: []interface{}{"0; drop database"},
 			output: "select '0; drop database'",
+		},
+		{
+			name:   "identifier, wrong arg",
+			input:  "use %i",
+			params: []interface{}{3},
+			err:    "expect a string identifier.*",
+		},
+		{
+			name:   "identifier",
+			input:  "use %i",
+			params: []interface{}{"table`"},
+			output: "use `table```",
+			err:    "",
+		},
+		{
+			name:   "%i missing arguments",
+			input:  "use %i",
+			params: []interface{}{},
+			err:    "missing arguments.*",
 		},
 	}
 	for _, t := range tests {

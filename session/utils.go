@@ -103,6 +103,21 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 			ch = sql[i+1] // get the specifier
 		}
 		switch ch {
+		case 'i':
+			if argPos >= len(args) {
+				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
+			}
+			arg := args[argPos]
+			argPos++
+
+			v, ok := arg.(string)
+			if !ok {
+				return "", errors.Errorf("expect a string identifier, got %v", arg)
+			}
+			buf = append(buf, '`')
+			buf = append(buf, strings.Replace(v, "`", "``", -1)...)
+			buf = append(buf, '`')
+			i++ // skip specifier
 		case '?':
 			if argPos >= len(args) {
 				return "", errors.Errorf("missing arguments, need %d-th arg, but only got %d args", argPos+1, len(args))
