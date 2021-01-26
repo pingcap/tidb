@@ -796,6 +796,11 @@ error = '''
 Internal : %s
 '''
 
+["planner:3029"]
+error = '''
+Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
+'''
+
 ["planner:3105"]
 error = '''
 The value specified for generated column '%s' in table '%s' is not allowed.
