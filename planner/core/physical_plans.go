@@ -938,6 +938,15 @@ type basePhysicalAgg struct {
 	MppPartitionCols []*expression.Column
 }
 
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	for _, aggFunc := range p.AggFuncs {
+		if aggFunc.Mode == aggregation.FinalMode || aggFunc.Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {
 	cloned := new(basePhysicalAgg)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
