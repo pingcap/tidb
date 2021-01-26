@@ -999,13 +999,13 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	commit, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
 	mutation := commit.mutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
-	c.Assert(mutation.Len(), Equals, 2)
-	c.Assert(mutation.GetOp(0), Equals, kvrpcpb.Op_Lock)
-	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedIndexKey))
-	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
-	c.Assert(mutation.GetOp(1), Equals, kvrpcpb.Op_Lock)
-	c.Assert(mutation.GetKey(1), BytesEquals, []byte(noValueIndexKey))
-	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
+	c.Assert(mutation.len(), Equals, 2)
+	c.Assert(mutation.GetOps()[0], Equals, kvrpcpb.Op_Lock)
+	c.Assert(mutation.GetKeys()[0], BytesEquals, []byte(untouchedIndexKey))
+	c.Assert(mutation.GetValues()[0], BytesEquals, untouchedIndexValue)
+	c.Assert(mutation.GetOps()[1], Equals, kvrpcpb.Op_Lock)
+	c.Assert(mutation.GetKeys()[1], BytesEquals, []byte(noValueIndexKey))
+	c.Assert(mutation.GetValues()[1], BytesEquals, []byte{})
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
