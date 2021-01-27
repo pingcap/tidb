@@ -1045,7 +1045,8 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
-	ErrJSONObjectKeyTooLong                = 8129
+	ErrJSONObjectKeyTooLong                = 8129 // skip ErrInvalidTableSample (8128) in master only
+	ErrMultiStatementDisabled              = 8130
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation        = 8200

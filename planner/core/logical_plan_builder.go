@@ -261,6 +261,22 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
+	if join, isJoin := p.(*LogicalJoin); isJoin && join.redundantSchema != nil {
+		for i, col := range join.redundantSchema.Columns {
+			if p.Schema().Contains(col) {
+				continue
+			}
+			newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+			if err != nil {
+				return nil, nil, err
+			}
+			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+			newCol, _ := col.Clone().(*expression.Column)
+			newCol.RetType = newFunc.RetTp
+			schema4Agg.Append(newCol)
+			names = append(names, join.redundantNames[i])
+		}
+	}
 	hasGroupBy := len(gbyItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
@@ -1591,6 +1607,17 @@ type havingWindowAndOrderbyExprResolver struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	curClause    clauseCode
+	prevClause   []clauseCode
+}
+
+func (a *havingWindowAndOrderbyExprResolver) pushCurClause(newClause clauseCode) {
+	a.prevClause = append(a.prevClause, a.curClause)
+	a.curClause = newClause
+}
+
+func (a *havingWindowAndOrderbyExprResolver) popCurClause() {
+	a.curClause = a.prevClause[len(a.prevClause)-1]
+	a.prevClause = a.prevClause[:len(a.prevClause)-1]
 }
 
 // Enter implements Visitor interface.
@@ -1607,6 +1634,12 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		// Enter a new context, skip it.
 		// For example: select sum(c) + c + exists(select c from t) from t;
 		return n, true
+	case *ast.PartitionByClause:
+		a.pushCurClause(partitionByClause)
+	case *ast.OrderByClause:
+		if a.inWindowSpec {
+			a.pushCurClause(windowOrderByClause)
+		}
 	default:
 		a.inExpr = true
 	}
@@ -1687,6 +1720,12 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
+	case *ast.PartitionByClause:
+		a.popCurClause()
+	case *ast.OrderByClause:
+		if a.inWindowSpec {
+			a.popCurClause()
+		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
 		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
@@ -1739,7 +1778,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromPlan(v, a.p)
 			_ = err
-			if index == -1 && a.curClause != fieldList {
+			if index == -1 && a.curClause != fieldList &&
+				a.curClause != windowOrderByClause && a.curClause != partitionByClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -2730,7 +2770,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	if hasWindowFuncField {
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -2805,7 +2845,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	var windowMapper map[*ast.WindowFuncExpr]int
-	if hasWindowFuncField {
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
 		// we need to check the func args first before we check the window spec
 		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
@@ -2820,10 +2860,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
-		if err != nil {
-			return nil, err
+		// `hasWindowFuncField == false` means there's only unused named window specs without window functions.
+		// In such case plan `p` is not changed, so we don't have to build another projection.
+		if hasWindowFuncField {
+			// Now we build the window function fields.
+			p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -4420,7 +4464,16 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 		if err != nil {
 			return nil, nil, err
 		}
-		err = b.checkOriginWindowSpecs(funcs, orderBy)
+		if len(funcs) == 0 {
+			// len(funcs) == 0 indicates this an unused named window spec,
+			// so we just check for its validity and don't have to build plan for it.
+			err := b.checkOriginWindowSpec(spec, orderBy)
+			if err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		err = b.checkOriginWindowFuncs(funcs, orderBy)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -4465,9 +4518,9 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 	return p, windowMap, nil
 }
 
-// checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
-// Because of the grouped specification is different from it, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
+// checkOriginWindowFuncs checks the validity for original window specifications for a group of functions.
+// Because the grouped specification is different from them, we should especially check them before build window frame.
+func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -4482,34 +4535,42 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.Spec.Name.L != "" {
 			spec = b.windowSpecs[f.Spec.Name.L]
 		}
-		if spec.Frame == nil {
-			continue
+		if err := b.checkOriginWindowSpec(spec, orderByItems); err != nil {
+			return err
 		}
-		if spec.Frame.Type == ast.Groups {
-			return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
-		}
-		start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
-		if start.Type == ast.Following && start.UnBounded {
-			return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if end.Type == ast.Preceding && end.UnBounded {
-			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
+	}
+	return nil
+}
 
-		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
-		if err != nil {
-			return err
-		}
-		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
-		if err != nil {
-			return err
-		}
+// checkOriginWindowSpec checks the validity for given window specification.
+func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.Item) error {
+	if spec.Frame == nil {
+		return nil
+	}
+	if spec.Frame.Type == ast.Groups {
+		return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
+	}
+	start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
+	if start.Type == ast.Following && start.UnBounded {
+		return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if end.Type == ast.Preceding && end.UnBounded {
+		return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+
+	err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
+	if err != nil {
+		return err
+	}
+	err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -4623,6 +4684,15 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 			}
 			updatedSpec := updatedSpecMap[name]
 			groupedWindow[updatedSpec] = append(groupedWindow[updatedSpec], windowFunc)
+		}
+	}
+	// Unused window specs should also be checked in b.buildWindowFunctions,
+	// so we add them to `groupedWindow` with empty window functions.
+	for _, spec := range b.windowSpecs {
+		if _, ok := groupedWindow[spec]; !ok {
+			if _, ok = updatedSpecMap[spec.Name.L]; !ok {
+				groupedWindow[spec] = nil
+			}
 		}
 	}
 	return groupedWindow, nil
