@@ -178,6 +178,14 @@ var (
 			Help:      "Bucketed histogram of connection idle time (s).",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblInTxn})
+
+	ServerInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "info",
+			Help:      "Indicate the tidb server info, and the value is the start timestamp (s).",
+		}, []string{LblVersion, LblHash})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
