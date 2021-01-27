@@ -29,6 +29,7 @@ type Security struct {
 	ClusterVerifyCN []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
 }
 
+// NewSecurity creates a Security.
 func NewSecurity(sslCA, sslCert, sslKey string, verityCN []string) Security {
 	return Security{
 		ClusterSSLCA:    sslCA,
