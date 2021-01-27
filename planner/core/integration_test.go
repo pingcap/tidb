@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1641,7 +1642,7 @@ func (s *testIntegrationSuite) TestIssue22040(c *C) {
 	{
 		err := tk.ExecToErr("select * from t where (a,b) in ((1,2),1)")
 		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
-  }
+	}
 }
 
 func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
