@@ -166,15 +166,18 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 		} else {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
+		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
+		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue)
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		c.Assert(statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false), IsTrue)
-		if a.Columns[i].CMSketch == nil {
-			c.Assert(b.Columns[i].CMSketch, IsNil)
+		if a.Indices[i].CMSketch == nil {
+			c.Assert(b.Indices[i].CMSketch, IsNil)
 		} else {
-			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+			c.Assert(a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch), IsTrue)
 		}
+		c.Assert(a.Indices[i].TopN.Equal(b.Indices[i].TopN), IsTrue)
 	}
 	c.Assert(isSameExtendedStats(a.ExtendedStats, b.ExtendedStats), IsTrue)
 }
