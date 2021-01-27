@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/kv"
 )
 
