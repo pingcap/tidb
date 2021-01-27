@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/collate"
 	"io"
 	"math"
 	"math/rand"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -2234,27 +2234,6 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	_, err = s.tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
 
-	// test for table option "union" not supported
-	s.tk.MustExec("use test")
-	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
-	s.tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
-	failSQL = "ALTER TABLE x UNION = (y);"
-	s.tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
-	s.tk.MustExec("drop table x;")
-	s.tk.MustExec("drop table y;")
-
-	// test for table option "insert method" not supported
-	s.tk.MustExec("use test")
-	s.tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	s.tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
-	s.tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
-	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
-	s.tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
-	s.tk.MustExec("drop table x;")
-	s.tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
