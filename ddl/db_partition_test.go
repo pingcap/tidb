@@ -2733,7 +2733,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 				return
 			}
 			t := testGetTableByName(c, ctx, "test_db", "t1")
-			for _, index := range tables.Indices(t) {
+			for _, index := range table.Indices(t) {
 				if !tables.IsIndexWritable(index) {
 					continue
 				}
