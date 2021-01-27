@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -42,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -151,7 +152,7 @@ func (tr *QueryTimeRange) Condition() string {
 	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, nodeType hint.NodeType, currentOffset int) []hintTableInfo {
+func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -163,7 +164,7 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 			dbName:       hintTable.DBName,
 			tblName:      hintTable.TableName,
 			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, nodeType, currentOffset),
+			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
 		if tableInfo.dbName.L == "" {
 			tableInfo.dbName = defaultDBName
@@ -371,6 +372,8 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -383,6 +386,8 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -452,6 +457,11 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// isForUpdateRead should be true in either of the following situations
+	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
+	// 2. isolation level is RC
+	isForUpdateRead bool
 }
 
 type handleColHelper struct {
@@ -542,20 +552,23 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// PlannerSelectBlockAsName should be restored after using this builder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
-		hintProcessor: processor,
-	}
+		ctx:             sctx,
+		is:              is,
+		colMapper:       make(map[*ast.ColumnNameExpr]int),
+		handleHelper:    &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor:   processor,
+		isForUpdateRead: sctx.GetSessionVars().IsPessimisticReadConsistency(),
+	}, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
@@ -723,23 +736,52 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedSel != nil {
-		p.BindSQL = v.HintedSel.Text()
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
+func checkHintedSQL(sql, charset, collation, db string) error {
+	p := parser.New()
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedSel.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:      v.HintedSel.Text(),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
@@ -817,20 +859,61 @@ func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPat
 	return tiFlashPath
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+func isForUpdateReadSelectLock(lock ast.SelectLockType) bool {
+	return lock == ast.SelectLockForUpdate || lock == ast.SelectLockForUpdateNoWait
+}
+
+func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
+	dom := domain.GetDomain(ctx)
+	if dom == nil {
+		return nil, false, errors.New("domain not found for ctx")
+	}
+	is := dom.InfoSchema()
+	if is.SchemaMetaVersion() == startVer {
+		return nil, false, nil
+	}
+	latestIndexes := make(map[int64]*model.IndexInfo)
+	latestTbl, exist := is.TableByID(id)
+	if exist {
+		latestTblInfo := latestTbl.Meta()
+		for _, index := range latestTblInfo.Indices {
+			latestIndexes[index.ID] = index
+		}
+	}
+	return latestIndexes, true, nil
+}
+
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, startVer int64) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
 	if tbl.Type().IsClusterTable() {
 		tp = kv.TiDB
 	}
+
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
+
+	check = check && ctx.GetSessionVars().ConnectionID > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			if check && latestIndexes == nil {
+				latestIndexes, check, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if check {
+				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
+			}
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
@@ -1218,12 +1301,39 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
+
+	check := b.isForUpdateRead && b.ctx.GetSessionVars().ConnectionID > 0
+	var latestIndexes map[int64]*model.IndexInfo
+	var err error
+
 	for _, idx := range indices {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
-			logutil.Logger(context.Background()).Info("build physical index lookup reader, the index isn't public",
-				zap.String("index", idxInfo.Name.O), zap.Stringer("state", idxInfo.State), zap.String("table", tblInfo.Name.O))
+			logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public",
+				zap.String("index", idxInfo.Name.O),
+				zap.Stringer("state", idxInfo.State),
+				zap.String("table", tblInfo.Name.O))
 			continue
+		}
+		if check && latestIndexes == nil {
+			latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if check {
+			if latestIndex, ok := latestIndexes[idxInfo.ID]; !ok || latestIndex.State != model.StatePublic {
+				forUpdateState := model.StateNone
+				if ok {
+					forUpdateState = latestIndex.State
+				}
+				logutil.Logger(ctx).Info("build physical index lookup reader, the index isn't public in forUpdateRead",
+					zap.String("index", idxInfo.Name.O),
+					zap.Stringer("state", idxInfo.State),
+					zap.Stringer("forUpdateRead state", forUpdateState),
+					zap.String("table", tblInfo.Name.O))
+				continue
+			}
 		}
 		indexInfos = append(indexInfos, idxInfo)
 		// For partition tables.
@@ -2408,6 +2518,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert) error {
+	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err

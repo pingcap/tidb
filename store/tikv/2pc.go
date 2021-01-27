@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/hex"
 	"math"
+	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -346,14 +348,20 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		)
 		if len(v) > 0 {
 			if tablecodec.IsUntouchedIndexKValue(k, v) {
-				return nil
+				if _, ok := c.txn.lockedMap[string(k)]; !ok {
+					return nil
+				}
+				op = pb.Op_Lock
+				value = v
+				lockCnt++
+			} else {
+				op = pb.Op_Put
+				if c := txn.us.GetKeyExistErrInfo(k); c != nil {
+					op = pb.Op_Insert
+				}
+				value = v
+				putCnt++
 			}
-			op = pb.Op_Put
-			if c := txn.us.GetKeyExistErrInfo(k); c != nil {
-				op = pb.Op_Insert
-			}
-			value = v
-			putCnt++
 		} else {
 			if !txn.IsPessimistic() && txn.us.GetKeyExistErrInfo(k) != nil {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
@@ -385,7 +393,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		}
 		mutations.Push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
-		if entrySize > kv.TxnEntrySizeLimit {
+		if uint64(entrySize) > kv.TxnEntrySizeLimit {
 			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
 		}
 		size += entrySize
@@ -652,15 +660,19 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		// by test suites.
 		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
 		go func() {
-			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
-				if s, ok := v.(string); !ok {
-					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
-						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
-					time.Sleep(2 * time.Second)
-				} else if s == "skip" {
-					failpoint.Return()
-				}
-			})
+			if c.connID > 0 {
+				failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+					if s, ok := v.(string); !ok {
+						logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						time.Sleep(2 * time.Second)
+					} else if s == "skip" {
+						logutil.Logger(bo.ctx).Info("[failpoint] injected skip committing secondaries",
+							zap.Uint64("connID", c.connID), zap.Uint64("txnStartTS", c.startTS), zap.Uint64("txnCommitTS", c.commitTS))
+						failpoint.Return()
+					}
+				})
+			}
 
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
@@ -748,11 +760,25 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 	})
 
+	ttl := c.lockTTL
+
+	if c.connID > 0 {
+		failpoint.Inject("twoPCShortLockTTL", func() {
+			ttl = 1
+			keys := make([]string, 0, len(mutations))
+			for _, m := range mutations {
+				keys = append(keys, hex.EncodeToString(m.Key))
+			}
+			logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on prewrite",
+				zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+		})
+	}
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
-		LockTtl:           c.lockTTL,
+		LockTtl:           ttl,
 		IsPessimisticLock: m.isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
@@ -762,6 +788,16 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 }
 
 func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	if c.connID > 0 {
+		failpoint.Inject("prewritePrimaryFail", func() {
+			if batch.isPrimary {
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting primary batch"))
+			}
+		})
+	}
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -1306,6 +1342,26 @@ func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations CommitterM
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
+	if c.connID > 0 {
+		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
+			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
+			// `return("delay,fail")`. Then they will be executed sequentially at once.
+			if v, ok := val.(string); ok {
+				for _, action := range strings.Split(v, ",") {
+					if action == "delay" {
+						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+						logutil.Logger(bo.ctx).Info("[failpoint] injected delay at pessimistic lock",
+							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+						time.Sleep(duration)
+					} else if action == "fail" {
+						logutil.Logger(bo.ctx).Info("[failpoint] injected failure at pessimistic lock",
+							zap.Uint64("txnStartTS", c.startTS))
+						failpoint.Return(errors.New("injected failure at pessimistic lock"))
+					}
+				}
+			}
+		})
+	}
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 
@@ -1325,6 +1381,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
 			go func() {
+				failpoint.Inject("commitFailedSkipCleanup", func() {
+					logutil.Logger(ctx).Info("[failpoint] injected skip cleanup secondaries on failure",
+						zap.Uint64("txnStartTS", c.startTS))
+					c.cleanWg.Done()
+					failpoint.Return()
+				})
+
 				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
 				err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
 				if err != nil {
@@ -1437,7 +1500,24 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		failpoint.Inject("beforeCommit", func() {})
+		failpoint.Inject("beforeCommit", func(val failpoint.Value) {
+			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
+			// `return("delay,fail")`. Then they will be executed sequentially at once.
+			if v, ok := val.(string); ok {
+				for _, action := range strings.Split(v, ",") {
+					// Async commit transactions cannot return error here, since it's already successful.
+					if action == "fail" {
+						logutil.Logger(ctx).Info("[failpoint] injected failure before commit", zap.Uint64("txnStartTS", c.startTS))
+						failpoint.Return(errors.New("injected failure before commit"))
+					} else if action == "delay" {
+						duration := time.Duration(rand.Int63n(int64(time.Second) * 5))
+						logutil.Logger(ctx).Info("[failpoint] injected delay before commit",
+							zap.Uint64("txnStartTS", c.startTS), zap.Duration("duration", duration))
+						time.Sleep(duration)
+					}
+				}
+			}
+		})
 	}
 
 	start = time.Now()
@@ -1535,17 +1615,44 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 		c.doingAmend = true
 		defer func() { c.doingAmend = false }()
 		if keysNeedToLock.len() > 0 {
-			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 			lCtx := &kv.LockCtx{
-				ForUpdateTS:  c.forUpdateTS,
-				LockWaitTime: kv.LockNoWait,
+				Killed:        c.lockCtx.Killed,
+				ForUpdateTS:   c.forUpdateTS,
+				LockWaitTime:  c.lockCtx.LockWaitTime,
+				WaitStartTime: time.Now(),
 			}
-			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+			tryTimes := uint(0)
+			retryLimit := config.GetGlobalConfig().PessimisticTxn.MaxRetryCount
+			for tryTimes < retryLimit {
+				pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+				err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+				if err != nil {
+					// KeysNeedToLock won't change, so don't async rollback pessimistic locks here for write conflict.
+					if terror.ErrorEqual(kv.ErrWriteConflict, err) {
+						newForUpdateTSVer, err := c.store.CurrentVersion()
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						lCtx.ForUpdateTS = newForUpdateTSVer.Ver
+						c.forUpdateTS = newForUpdateTSVer.Ver
+						logutil.Logger(ctx).Info("amend pessimistic lock pessimistic retry lock",
+							zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS),
+							zap.Uint64("newForUpdateTS", c.forUpdateTS))
+						tryTimes++
+						continue
+					}
+					logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+					return false, err
+				}
+				logutil.Logger(ctx).Info("amend pessimistic lock finished", zap.Uint64("startTS", c.startTS),
+					zap.Uint64("forUpdateTS", c.forUpdateTS), zap.Int("keys", keysNeedToLock.len()))
+				break
+			}
 			if err != nil {
-				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				logutil.Logger(ctx).Warn("amend pessimistic lock failed after retry",
+					zap.Uint("tryTimes", tryTimes), zap.Uint64("startTS", c.startTS))
 				return false, err
 			}
-			logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
 		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)
@@ -1693,6 +1800,10 @@ type batchMutations struct {
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
 func (c *twoPhaseCommitter) appendBatchMutationsBySize(b []batchMutations, region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int, primaryIdx *int) []batchMutations {
+	failpoint.Inject("twoPCRequestBatchSizeLimit", func() {
+		limit = 1
+	})
+
 	var start, end int
 	for start = 0; start < mutations.len(); start = end {
 		var size int
