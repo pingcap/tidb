@@ -2559,6 +2559,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
 	variable.TiDBMultiStatementMode,
+	variable.TiDBEnableTiFlashFallbackTiKV,
 }
 
 var (

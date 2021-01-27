@@ -805,6 +805,9 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// EnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
+	EnableTiFlashFallbackTiKV bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -963,6 +966,7 @@ func NewSessionVars() *SessionVars {
 		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
 		AnalyzeVersion:               DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:         DefTiDBEnableIndexMergeJoin,
+		EnableTiFlashFallbackTiKV:    DefTiDBEnableTiFlashFallbackTiKV,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1691,6 +1695,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	case TiDBMultiStatementMode:
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableTiFlashFallbackTiKV:
+		s.EnableTiFlashFallbackTiKV = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

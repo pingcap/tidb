@@ -723,6 +723,7 @@ func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
 
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values (3, 4), (6, 7), (9, 10)")

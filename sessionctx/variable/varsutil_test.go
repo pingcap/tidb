@@ -105,6 +105,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
+	c.Assert(vars.EnableTiFlashFallbackTiKV, Equals, DefTiDBEnableTiFlashFallbackTiKV)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))

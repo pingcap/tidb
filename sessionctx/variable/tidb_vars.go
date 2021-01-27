@@ -520,6 +520,9 @@ const (
 
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
+	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
 )
 
 // TiDB vars that have only global scope
@@ -659,6 +662,7 @@ const (
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
+	DefTiDBEnableTiFlashFallbackTiKV    = false
 )
 
 // Process global variables.
