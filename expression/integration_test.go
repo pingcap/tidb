@@ -1946,6 +1946,21 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
+	// for dayname implicit cast to boolean and real
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07')`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07') is true`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07') is false`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08')`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08') is true`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08') is false`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select cast(dayname("2016-03-07") as double), cast(dayname("2016-03-08") as double)`)
+	result.Check(testkit.Rows("0 1"))
 
 	// for sec_to_time
 	result = tk.MustQuery("select sec_to_time(NULL)")
@@ -2027,6 +2042,14 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// for extract
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
+	result = tk.MustQuery("select extract(day_microsecond from '2017-01-01 12:12:12'), extract(day_microsecond from '01 12:12:12'), extract(day_microsecond from '12:12:12'), extract(day_microsecond from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212000000 361212000000 121212000000 240000890000"))
+	result = tk.MustQuery("select extract(day_second from '2017-01-01 12:12:12'), extract(day_second from '01 12:12:12'), extract(day_second from '12:12:12'), extract(day_second from '01 00:00:00.89')")
+	result.Check(testkit.Rows("1121212 361212 121212 240000"))
+	result = tk.MustQuery("select extract(day_minute from '2017-01-01 12:12:12'), extract(day_minute from '01 12:12:12'), extract(day_minute from '12:12:12'), extract(day_minute from '01 00:00:00.89')")
+	result.Check(testkit.Rows("11212 3612 1212 2400"))
+	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
+	result.Check(testkit.Rows("112 36 12 24"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
@@ -6698,6 +6721,41 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
 	tk.MustExec("drop table t;")
+}
+
+func (s *testIntegrationSuite) TestIssue20121(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// testcase for Datetime vs Year
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b year)")
+	tk.MustExec("insert into t values('2000-05-03 16:44:44', 2018)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 2000)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 2070)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 1999)")
+
+	tk.MustQuery("select * from t where t.a < t.b").Check(testkit.Rows("2000-05-03 16:44:44 2018", "2020-10-01 11:11:11 2070"))
+	tk.MustQuery("select * from t where t.a > t.b").Check(testkit.Rows("2020-10-01 11:11:11 2000", "2020-10-01 11:11:11 1999"))
+
+	// testcase for Date vs Year
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(a date, b year)")
+	tk.MustExec("insert into tt values('2019-11-11', 2000)")
+	tk.MustExec("insert into tt values('2019-11-11', 2020)")
+	tk.MustExec("insert into tt values('2019-11-11', 2022)")
+
+	tk.MustQuery("select * from tt where tt.a > tt.b").Check(testkit.Rows("2019-11-11 2000"))
+	tk.MustQuery("select * from tt where tt.a < tt.b").Check(testkit.Rows("2019-11-11 2020", "2019-11-11 2022"))
+
+	// testcase for Timestamp vs Year
+	tk.MustExec("drop table if exists ttt")
+	tk.MustExec("create table ttt(a timestamp, b year)")
+	tk.MustExec("insert into ttt values('2019-11-11 11:11:11', 2019)")
+	tk.MustExec("insert into ttt values('2019-11-11 11:11:11', 2000)")
+	tk.MustExec("insert into ttt values('2019-11-11 11:11:11', 2022)")
+
+	tk.MustQuery("select * from ttt where ttt.a > ttt.b").Check(testkit.Rows("2019-11-11 11:11:11 2019", "2019-11-11 11:11:11 2000"))
+	tk.MustQuery("select * from ttt where ttt.a < ttt.b").Check(testkit.Rows("2019-11-11 11:11:11 2022"))
 }
 
 func (s *testIntegrationSuite) TestIssue17098(c *C) {
