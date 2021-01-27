@@ -331,16 +331,13 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	isZero := allocZeroSlice(n)
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
-<<<<<<< HEAD
-		eType := expr.GetType().EvalType()
-		if expr.GetType().Hybrid() {
-			eType = types.ETInt
-=======
 		tp := expr.GetType()
 		eType := tp.EvalType()
+		if expr.GetType().Hybrid() {
+			eType = types.ETInt
+		}
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
->>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
@@ -356,11 +353,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 			return nil, nil, err
 		}
 
-<<<<<<< HEAD
-		err = toBool(ctx.GetSessionVars().StmtCtx, eType, buf, sel, isZero)
-=======
 		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
->>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -400,11 +393,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-<<<<<<< HEAD
-func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
-=======
 func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
->>>>>>> 556ccccde... expression: add implicit eval int and real for function dayname (#21806)
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
