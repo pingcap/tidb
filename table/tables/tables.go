@@ -60,7 +60,6 @@ type TableCommon struct {
 	HiddenColumns                   []*table.Column
 	WritableColumns                 []*table.Column
 	FullHiddenColsAndVisibleColumns []*table.Column
-	writableIndices                 []table.Index
 	indices                         []table.Index
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
@@ -160,7 +159,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.HiddenColumns = t.HiddenCols()
 	t.WritableColumns = t.WritableCols()
 	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
-	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
@@ -180,7 +178,6 @@ func initTableIndices(t *TableCommon) error {
 		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
-	t.writableIndices = t.WritableIndices()
 	return nil
 }
 
@@ -194,25 +191,12 @@ func (t *TableCommon) Indices() []table.Index {
 	return t.indices
 }
 
-// WritableIndices implements table.Table WritableIndices interface.
-func (t *TableCommon) WritableIndices() []table.Index {
-	if len(t.writableIndices) > 0 {
-		return t.writableIndices
-	}
-	writable := make([]table.Index, 0, len(t.indices))
-	for _, index := range t.indices {
-		s := index.Meta().State
-		if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
-			writable = append(writable, index)
-		}
-	}
-	return writable
-}
-
 // GetWritableIndexByName gets the index meta from the table by the index name.
 func GetWritableIndexByName(idxName string, t table.Table) table.Index {
-	indices := t.WritableIndices()
-	for _, idx := range indices {
+	for _, idx := range t.Indices() {
+		if !IsIndexWritable(idx) {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			return idx
 		}
@@ -466,7 +450,10 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			break
 		}
 	}
-	for _, idx := range t.WritableIndices() {
+	for _, idx := range t.Indices() {
+		if !IsIndexWritable(idx) {
+			continue
+		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -822,7 +809,10 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 	writeBufs := sctx.GetSessionVars().GetWriteStmtBufs()
 	indexVals := writeBufs.IndexValsBuf
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !IsIndexWritable(v) {
+			continue
+		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}

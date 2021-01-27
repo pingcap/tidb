@@ -2733,7 +2733,10 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 				return
 			}
 			t := testGetTableByName(c, ctx, "test_db", "t1")
-			for _, index := range t.WritableIndices() {
+			for _, index := range tables.Indices(t) {
+				if !tables.IsIndexWritable(index) {
+					continue
+				}
 				if index.Meta().Name.L == idxName {
 					c3IdxInfo = index.Meta()
 				}

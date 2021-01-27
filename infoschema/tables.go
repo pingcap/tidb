@@ -1777,11 +1777,6 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
-// WritableIndices implements table.Table WritableIndices interface.
-func (it *infoschemaTable) WritableIndices() []table.Index {
-	return nil
-}
-
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -1857,11 +1852,6 @@ func (vt *VirtualTable) FullHiddenColsAndVisibleCols() []*table.Column {
 
 // Indices implements table.Table Indices interface.
 func (vt *VirtualTable) Indices() []table.Index {
-	return nil
-}
-
-// WritableIndices implements table.Table WritableIndices interface.
-func (vt *VirtualTable) WritableIndices() []table.Index {
 	return nil
 }
 

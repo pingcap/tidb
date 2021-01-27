@@ -69,7 +69,10 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 // which need to be checked whether they are duplicate keys.
 func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if v.Meta().Unique {
 			nUnique++
 		}
@@ -157,7 +160,10 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	// addChangingColTimes is used to fetch values while processing "modify/change column" operation.
 	addChangingColTimes := 0
 	// append unique keys and errors
-	for _, v := range t.WritableIndices() {
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
 		if !v.Meta().Unique {
 			continue
 		}

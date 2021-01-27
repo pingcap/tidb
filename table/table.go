@@ -160,10 +160,8 @@ type Table interface {
 	columnAPI
 
 	// Indices returns the indices of the table.
+	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
-
-	// WritableIndices returns write-only and public indices of the table.
-	WritableIndices() []Index
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key

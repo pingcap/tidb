@@ -382,3 +382,12 @@ func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Colu
 	}
 	return nil
 }
+
+// IsIndexWritable check whether the index is writable.
+func IsIndexWritable(idx table.Index) bool {
+	s := idx.Meta().State
+	if s != model.StateDeleteOnly && s != model.StateDeleteReorganization {
+		return true
+	}
+	return false
+}
