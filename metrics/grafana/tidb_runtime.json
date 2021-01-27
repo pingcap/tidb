@@ -1356,7 +1356,7 @@
         "options": [
 
         ],
-        "query": "label_values(pd_cluster_status, cluster)",
+        "query": "label_values(pd_cluster_status, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
