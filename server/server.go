@@ -303,6 +303,7 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
+	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
 }
 
 // Export config-related metrics
