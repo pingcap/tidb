@@ -288,6 +288,9 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	if c.hasWindowFunc {
 		return errWindowInvalidWindowFuncUse
 	}
+	if c.otherErr != nil {
+		return c.otherErr
+	}
 	return nil
 }
 
