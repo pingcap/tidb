@@ -1669,55 +1669,6 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	// previous wrong JoinType is InnerJoin
 	c.Assert(join.JoinType, Equals, RightOuterJoin)
 }
-<<<<<<< HEAD
-=======
-
-func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
-	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select (select count(a)) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
-		},
-		{
-			sql:  "select (select count(n.a) from t) from t n",
-			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Projection->MaxOneRow}->Projection",
-		},
-		{
-			sql:  "select (select sum(count(a))) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#13))->MaxOneRow}->Projection",
-		},
-		{
-			sql:  "select (select sum(count(n.a)) from t) from t n",
-			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#25))->MaxOneRow}->Projection",
-		},
-		{
-			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
-		},
-		{
-			sql:  "select sum(a), sum(a), count(a), (select count(a)) from t",
-			best: "Apply{DataScan(t)->Aggr(sum(test.t.a),count(test.t.a))->Dual->Projection->MaxOneRow}->Projection",
-		},
-	}
-
-	ctx := context.TODO()
-	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
-		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagEliminateProjection|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
-		c.Assert(err, IsNil, comment)
-		c.Assert(ToString(p), Equals, tt.best, comment)
-	}
-}
 
 func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 	// #22040
@@ -1760,4 +1711,3 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 		}
 	}
 }
->>>>>>> 273d6dba9... planner: check if columns count matches for batch point get in TryFastPlan (#22044)
