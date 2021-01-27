@@ -2671,8 +2671,6 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-<<<<<<< HEAD
-=======
 	sc := b.ctx.GetSessionVars().StmtCtx
 	switch strings.ToUpper(unit) {
 	case "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
@@ -2707,7 +2705,6 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 		}
 		return 0, false, nil
 	}
->>>>>>> f0c6fa9c2... expression: fix compatibility of extract day_time unit functions (#21601)
 	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, err != nil, err
 }
