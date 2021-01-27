@@ -237,6 +237,7 @@ type illegalFunctionChecker struct {
 	hasIllegalFunc bool
 	hasAggFunc     bool
 	hasWindowFunc  bool
+	otherErr       error
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -246,6 +247,11 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		_, IsFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
 		if IsFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
 			c.hasIllegalFunc = true
+			return inNode, true
+		}
+		err := expression.VerifyArgsWrapper(node.FnName.L, len(node.Args))
+		if err != nil {
+			c.otherErr = err
 			return inNode, true
 		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
@@ -281,6 +287,9 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	}
 	if c.hasWindowFunc {
 		return errWindowInvalidWindowFuncUse
+	}
+	if c.otherErr != nil {
+		return c.otherErr
 	}
 	return nil
 }
