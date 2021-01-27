@@ -7516,6 +7516,15 @@ func (s *testIntegrationSuite2) TestIssue15847(c *C) {
 	tk.MustExec("drop view if exists t15847")
 }
 
+func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_general_ci;`).Check(testkit.Rows("1"))
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_general_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_general_ci,EXPLICIT) for operation 'like'")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

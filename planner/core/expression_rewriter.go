@@ -1450,7 +1450,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
@@ -1467,7 +1467,11 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
 					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
 					op)
+				_, coll := function.CharsetAndCollation(er.sctx)
 				isPatternExactMatch = true
+				if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
+					isPatternExactMatch = false
+				}
 			}
 		}
 	}
