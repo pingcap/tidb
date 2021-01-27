@@ -139,7 +139,6 @@ const (
 // CompilePattern handles escapes and wild cards convert pattern characters and
 // pattern types.
 func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
 	patChars = make([]byte, len(pattern))
 	patTypes = make([]byte, len(pattern))
 	patLen := 0
@@ -148,7 +147,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		var c = pattern[i]
 		switch c {
 		case escape:
-			lastAny = false
 			tp = PatMatch
 			if i < len(pattern)-1 {
 				i++
@@ -182,7 +180,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 			}
 			tp = PatAny
 		default:
-			lastAny = false
 			tp = PatMatch
 		}
 		patChars[patLen] = c
