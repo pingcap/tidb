@@ -768,7 +768,8 @@ type AnalyzeTableID struct {
 }
 
 // GetID4AnalyzeTask is used to obtain the table ID in the build analyze task.
-// When the 'PartitionID != -1', it means we need to build analyze task for partition table.
+// When the 'PartitionID != -1', it means we need to build analyze task for partition table. So we need PartitionId to build the analyze task.
+// As for the tableID here, it will be used to build the global-level stats of the partition table
 func (h *AnalyzeTableID) GetID4AnalyzeTask() int64 {
 	if h.PartitionID != -1 {
 		return h.PartitionID
