@@ -144,13 +144,8 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
 		{`\a\b`, `\a\b`},
-<<<<<<< HEAD
-		{`%%_`, `.*`},
-		{`%_%_aA`, ".*aA"},
-=======
 		{`%%_`, `..*`},
 		{`%_%_aA`, "...*aA"},
->>>>>>> c84aa7997... *: simplify LIKE patterns with multiple consecutive wildcards (#17490)
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)

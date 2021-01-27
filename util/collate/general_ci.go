@@ -65,17 +65,6 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 				}
 			}
 		case '_':
-<<<<<<< HEAD
-			if lastAny {
-				continue
-			}
-			tp = stringutil.PatOne
-		case '%':
-			if lastAny {
-				continue
-			}
-			lastAny = true
-=======
 			// %_ => _%
 			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
 				tp = stringutil.PatAny
@@ -89,7 +78,6 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
 				continue
 			}
->>>>>>> c84aa7997... *: simplify LIKE patterns with multiple consecutive wildcards (#17490)
 			tp = stringutil.PatAny
 		default:
 			lastAny = false
