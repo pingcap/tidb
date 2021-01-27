@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tidbutil "github.com/pingcap/tidb/util"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
@@ -64,8 +64,8 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte) []*tikv.Lock
-		resolveLocks func(regionID tikv.RegionVerID) (ok bool, err error)
+		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
+		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	}
 }
 
@@ -324,7 +324,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calculateNewSafePoint(ctx, now)
+	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -339,12 +339,10 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	return true, newSafePointValue, nil
 }
 
-// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.Time) time.Time {
+func (w *GCWorker) calcGlobalMinStartTS(ctx context.Context) (uint64, error) {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
-		return safePoint
+		return 0, err
 	}
 
 	var globalMinStartTS uint64 = math.MaxUint64
@@ -358,14 +356,23 @@ func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.
 			globalMinStartTS = minStartTS
 		}
 	}
+	return globalMinStartTS, nil
+}
 
-	safePointTS := variable.GoTimeToTS(safePoint)
-	if globalMinStartTS < safePointTS {
-		safePoint = time.Unix(0, oracle.ExtractPhysical(globalMinStartTS)*1e6)
+// calcNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
+func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint64) uint64 {
+	globalMinStartTS, err := w.calcGlobalMinStartTS(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
+		return safePoint
+	}
+
+	if globalMinStartTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
-			zap.Time("safePoint", safePoint))
+			zap.Uint64("safePoint", safePoint))
+		safePoint = globalMinStartTS
 	}
 	return safePoint
 }
@@ -375,9 +382,7 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(currentVer.Ver)
-	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	return time.Unix(sec, nsec), nil
+	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
@@ -481,7 +486,7 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -491,21 +496,24 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 		return nil, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
+
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	safePoint := w.calSafePointByMinStartTS(ctx, now.Add(-*lifeTime))
 
-	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
+	safePointValue := w.calcSafePointByMinStartTS(ctx, variable.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
-	safePoint = oracle.GetTimeFromTS(safePointValue)
-
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+
+	// safepoint is recorded in time.Time format which strips the logical part of the timestamp.
+	// To prevent the GC worker from keeping working due to the loss of logical part when the
+	// safe point isn't changed, we should compare them in time.Time format.
+	safePoint := oracle.GetTimeFromTS(safePointValue)
 	// We should never decrease safePoint.
-	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
+	if lastSafePoint != nil && !safePoint.After(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
@@ -801,12 +809,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	return nil
 }
 
-const (
-	engineLabelKey     = "engine"
-	engineLabelTiFlash = "tiflash"
-	engineLabelTiKV    = "tikv"
-)
-
 // needsGCOperationForStore checks if the store-level requests related to GC needs to be sent to the store. The store-level
 // requests includes UnsafeDestroyRange, PhysicalScanLock, etc.
 func needsGCOperationForStore(store *metapb.Store) (bool, error) {
@@ -819,23 +821,21 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 
 	engineLabel := ""
 	for _, label := range store.GetLabels() {
-		if label.GetKey() == engineLabelKey {
+		if label.GetKey() == placement.EngineLabelKey {
 			engineLabel = label.GetValue()
 			break
 		}
 	}
 
 	switch engineLabel {
-	case engineLabelTiFlash:
+	case placement.EngineLabelTiFlash:
 		// For a TiFlash node, it uses other approach to delete dropped tables, so it's safe to skip sending
 		// UnsafeDestroyRange requests; it has only learner peers and their data must exist in TiKV, so it's safe to
 		// skip physical resolve locks for it.
 		return false, nil
 
-	case "":
+	case placement.EngineLabelTiKV, "":
 		// If no engine label is set, it should be a TiKV node.
-		fallthrough
-	case engineLabelTiKV:
 		return true, nil
 
 	default:
@@ -1014,6 +1014,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		Limit:      gcScanLockLimit,
 	})
 
+	failpoint.Inject("lowScanLockLimit", func() {
+		req.ScanLock().Limit = 3
+	})
+
 	var stat tikv.RangeTaskStat
 	key := startKey
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
@@ -1064,12 +1068,18 @@ retryScanAndResolve:
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key)...)
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
+		locForResolve := loc
 		for {
-			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+			var (
+				ok   bool
+				err1 error
+			)
 			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
+				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
+			} else {
+				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}
 			if err1 != nil {
 				return stat, errors.Trace(err1)
@@ -1084,7 +1094,7 @@ retryScanAndResolve:
 					return stat, errors.Trace(err)
 				}
 				if stillInSame {
-					loc = refreshedLoc
+					locForResolve = refreshedLoc
 					continue
 				}
 				continue retryScanAndResolve
@@ -1097,7 +1107,7 @@ retryScanAndResolve:
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
 				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
+				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
@@ -1691,7 +1701,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(tidbutil.GCTimeFormat))
+	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
 	return errors.Trace(err)
 }
 
@@ -1703,7 +1713,7 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 	if str == "" {
 		return nil, nil
 	}
-	t, err := tidbutil.CompatibleParseGCTime(str)
+	t, err := tikvutil.CompatibleParseGCTime(str)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1807,7 +1817,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			var err1 error
 			t := meta.NewMeta(txn)
 			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
@@ -2040,12 +2050,16 @@ type scanLockResult struct {
 }
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
-	return &mergeLockScanner{
+	scanner := &mergeLockScanner{
 		safePoint:     safePoint,
 		client:        client,
 		stores:        stores,
 		scanLockLimit: gcScanLockLimit,
 	}
+	failpoint.Inject("lowPhysicalScanLockLimit", func() {
+		scanner.scanLockLimit = 3
+	})
+	return scanner
 }
 
 // Start initializes the scanner and enables retrieving items from the scanner.

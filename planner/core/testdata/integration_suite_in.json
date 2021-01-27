@@ -225,6 +225,13 @@
     ]
   },
   {
+    "name": "TestInvalidHint",
+    "cases": [
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=10 or a=20;",
+      "explain select /*+ use_index_merge(tt) */ * from tt where a=15 or (a < 10 or a > 20);"
+    ]
+  },
+  {
     "name": "TestApproxPercentile",
     "cases": [
       "select approx_percentile(a, 50) from t",
@@ -247,6 +254,14 @@
     "name": "TestIssue22105",
     "cases": [
       "explain SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)"
+    ]
+  },
+  {
+    "name": "TestReorderSimplifiedOuterJoins",
+    "cases": [
+      // Query with INNER JOIN or LEFT JOIN should have the same plan.
+      "EXPLAIN SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
+      "EXPLAIN SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'"
     ]
   }
 ]

@@ -14,12 +14,9 @@
 package config
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"os/user"
@@ -33,6 +30,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -124,6 +122,7 @@ type Config struct {
 	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   PDClient          `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
@@ -368,49 +367,9 @@ func (e *ErrConfigValidationFailed) Error() string {
 
 }
 
-// ToTLSConfig generates tls's config based on security section of the config.
-func (s *Security) ToTLSConfig() (tlsConfig *tls.Config, err error) {
-	if len(s.ClusterSSLCA) != 0 {
-		certPool := x509.NewCertPool()
-		// Create a certificate pool from the certificate authority
-		var ca []byte
-		ca, err = ioutil.ReadFile(s.ClusterSSLCA)
-		if err != nil {
-			err = errors.Errorf("could not read ca certificate: %s", err)
-			return
-		}
-		// Append the certificates from the CA
-		if !certPool.AppendCertsFromPEM(ca) {
-			err = errors.New("failed to append ca certs")
-			return
-		}
-		tlsConfig = &tls.Config{
-			RootCAs:   certPool,
-			ClientCAs: certPool,
-		}
-
-		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
-			getCert := func() (*tls.Certificate, error) {
-				// Load the client certificates from disk
-				cert, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
-				if err != nil {
-					return nil, errors.Errorf("could not load client key pair: %s", err)
-				}
-				return &cert, nil
-			}
-			// pre-test cert's loading.
-			if _, err = getCert(); err != nil {
-				return
-			}
-			tlsConfig.GetClientCertificate = func(info *tls.CertificateRequestInfo) (certificate *tls.Certificate, err error) {
-				return getCert()
-			}
-			tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (certificate *tls.Certificate, err error) {
-				return getCert()
-			}
-		}
-	}
-	return
+// ClusterSecurity returns Security info for cluster
+func (s *Security) ClusterSecurity() tikvcfg.Security {
+	return tikvcfg.NewSecurity(s.ClusterSSLCA, s.ClusterSSLCert, s.ClusterSSLKey, s.ClusterVerifyCN)
 }
 
 // Status is the status section of the config.
@@ -505,6 +464,12 @@ type ProxyProtocol struct {
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
+}
+
+// PDClient is the config for PD client.
+type PDClient struct {
+	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
+	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
 }
 
 // TiKVClient is the config for tikv client.
@@ -733,6 +698,9 @@ var defaultConf = Config{
 			Param: 1.0,
 		},
 		Reporter: OpenTracingReporter{},
+	},
+	PDClient: PDClient{
+		PDServerTimeout: 3,
 	},
 	TiKVClient: TiKVClient{
 		GrpcConnectionCount:  4,

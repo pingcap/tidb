@@ -22,10 +22,15 @@ sig/planner:
 component/statistics:
   - statistics/*
 
-sig/DDL:
+sig/infra:
   - ddl/*
   - domain/*
   - infoschema/*
+  - session/*
+  - server/*
+  - privilege/*
+  - plugin/*
+  - config/*
   - meta/*
   - owner/*
 

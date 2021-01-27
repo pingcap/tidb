@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,6 +51,12 @@ var (
 )
 
 func TestT(t *testing.T) {
+	defaultConfig := config.NewConfig()
+	globalConfig := config.GetGlobalConfig()
+	// Test for issue 22162. the global config shouldn't be changed by other pkg init function.
+	if !reflect.DeepEqual(defaultConfig, globalConfig) {
+		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
+	}
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
@@ -550,13 +558,14 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
 		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -598,13 +607,14 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
 		rows = dbt.mustQuery("select id,name from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value 100")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
 		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -646,13 +656,14 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
 		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
+		rows = dbt.mustQuery("select id,name from t order by id")
+		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
@@ -686,22 +697,27 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.checkRows(c, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
 		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
-		// Test load data meet no partition error.
+		// Test load data meet no partition warning.
 		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
 		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
 		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "Error 1526: Table has no partition for value from column_list")
+		c.Assert(err, IsNil)
+		rows = dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows,
+			"Warning 1526 Table has no partition for value from column_list",
+			"Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		cli.checkRows(c, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
 }
 
@@ -1548,8 +1564,62 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+
+		// Default is now OFF in new installations.
+		// It is still WARN in upgrade installations (for now)
 		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+
+		// Change to WARN (legacy mode)
+		dbt.mustExec("SET tidb_multi_statement_mode='WARN'")
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err := res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		rows := dbt.mustQuery("show warnings")
+		cli.checkRows(c, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		var out int
+		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+
+		// Change to ON = Fully supported, TiDB legacy. No warnings or Errors.
+		dbt.mustExec("SET tidb_multi_statement_mode='ON';")
+		dbt.mustExec("DROP TABLE IF EXISTS test")
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res = dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		res = dbt.mustExec("update test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+
 	})
 }
 

@@ -146,30 +146,30 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 
-	TotalQueryProcHistogram = prometheus.NewHistogram(
+	TotalQueryProcHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "slow_query_process_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		})
-	TotalCopProcHistogram = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	TotalCopProcHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "slow_query_cop_duration_seconds",
 			Help:      "Bucketed histogram of all cop processing time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		})
-	TotalCopWaitHistogram = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	TotalCopWaitHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
-		})
+		}, []string{LblSQLType})
 
 	MaxProcs = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -195,6 +195,14 @@ var (
 			Help:      "Bucketed histogram of connection idle time (s).",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblInTxn})
+
+	ServerInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "info",
+			Help:      "Indicate the tidb server info, and the value is the start timestamp (s).",
+		}, []string{LblVersion, LblHash})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
