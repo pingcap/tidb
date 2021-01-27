@@ -1421,6 +1421,28 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
+	// test issue21965
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int)
+			PARTITION BY RANGE ( a ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert ignore into t values (1);")
+	tk.MustExec("update ignore t set a=100 where a=1;")
+	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int key)
+			PARTITION BY RANGE ( a ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert ignore into t values (1);")
+	tk.MustExec("update ignore t set a=100 where a=1;")
+	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
 	tk.MustExec("insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10')")
@@ -2195,6 +2217,14 @@ func (s *testSuite4) TestLoadData(c *C) {
 		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x"), trivialMsg},
 		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
 			[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
+	// test line terminator in field quoter
+	ld.LinesInfo.Terminated = "\n"
+	ld.FieldsInfo.Enclosed = '"'
+	tests = []testCase{
+		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), nil, []string{"1|1|2\n|3", "4|4|5\n5|6"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
