@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1623,6 +1624,37 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+}
+
+func (s *testIntegrationSuite) TestIssue22040(c *C) {
+	// #22040
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key(a,b))")
+	// valid case
+	tk.MustExec("select * from t where (a,b) in ((1,2),(1,2))")
+	// invalid case, column count doesn't match
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in (1,2)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in ((1,2),1)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+}
+
+func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
+		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
+		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
