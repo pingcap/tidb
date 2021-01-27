@@ -83,6 +83,7 @@ type CoprocessorCache struct {
 	AdmissionMinProcessMs uint64 `toml:"admission-min-process-ms" json:"admission-min-process-ms"`
 }
 
+// DefaultTiKVClient returns default config for TiKVClient.
 func DefaultTiKVClient() TiKVClient {
 	return TiKVClient{
 		GrpcConnectionCount:  4,
@@ -121,8 +122,8 @@ func DefaultTiKVClient() TiKVClient {
 	}
 }
 
+// Valid checks if this config is valid.
 func (config *TiKVClient) Valid() error {
-	// For tikvclient.
 	if config.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
