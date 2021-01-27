@@ -245,10 +245,10 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 	v, err = Convert("1,999.00", ft)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "1999.0000")
+	c.Assert(v.(*MyDecimal).String(), Equals, "0.0000")
 	v, err = Convert("1,999,999.00", ft)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
+	c.Assert(v.(*MyDecimal).String(), Equals, "0.0000")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
