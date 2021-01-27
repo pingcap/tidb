@@ -1463,14 +1463,16 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
-				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op)
-				_, coll := function.CharsetAndCollation(er.sctx)
+				types.DefaultTypeForValue(string(patValue), fieldType, patExpression.RetType.Charset, patExpression.RetType.Collate)
+				constant := &expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType}
+				constant.SetCoercibility(patExpression.Coercibility())
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2], constant, op)
 				isPatternExactMatch = true
-				if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
-					isPatternExactMatch = false
+				if er.err == nil {
+					_, coll := function.CharsetAndCollation(er.sctx)
+					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
+						isPatternExactMatch = false
+					}
 				}
 			}
 		}
