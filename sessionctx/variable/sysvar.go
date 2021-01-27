@@ -35,6 +35,13 @@ const (
 	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
+
+	// Off is the string OFF
+	Off = "OFF"
+	// On is the string ON
+	On = "ON"
+	// Warn is the string WARN
+	Warn = "WARN"
 )
 
 // SysVar is for system variable.
@@ -733,6 +740,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBRedactLog, BoolToIntStr(DefTiDBRedactLog)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
+	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Warn},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

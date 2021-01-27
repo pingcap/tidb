@@ -1384,6 +1384,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
+	var appendMultiStmtWarning bool
+
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
 		// probably defaults OFF. This helps prevent against SQL injection attacks
@@ -1391,12 +1393,23 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// new statement.
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
-			return errMultiStatementDisabled
+			// The client does not have multi-statement enabled. We now need to determine
+			// how to handle an unsafe sitution based on the multiStmt sysvar.
+			switch cc.ctx.GetSessionVars().MultiStatementMode {
+			case variable.OffInt:
+				err = errMultiStatementDisabled
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+				return err
+			case variable.OnInt:
+				// multi statement is fully permitted, do nothing
+			default:
+				appendMultiStmtWarning = true
+			}
 		}
 	}
 
 	for i, stmt := range stmts {
-		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1); err != nil {
+		if err = cc.handleStmt(ctx, stmt, i == len(stmts)-1, appendMultiStmtWarning); err != nil {
 			break
 		}
 	}
@@ -1406,13 +1419,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	return err
 }
 
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool) error {
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool, appendMultiStmtWarning bool) error {
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return err
+	}
+
+	if lastStmt && appendMultiStmtWarning {
+		cc.ctx.GetSessionVars().StmtCtx.AppendWarning(errMultiStatementDisabled)
 	}
 
 	status := cc.ctx.Status()
