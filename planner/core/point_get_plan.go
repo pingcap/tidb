@@ -567,11 +567,19 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
+			// if any item is `ValueExpr` type, `Expr` should contain only one column,
+			// otherwise column count doesn't match and no plan can be built.
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
+			if len(whereColNames) != 1 {
+				return nil
+			}
 			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
