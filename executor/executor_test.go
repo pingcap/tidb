@@ -130,7 +130,7 @@ var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testPrepareSuite{})
-var _ = Suite(&testSuiteWithData{})
+var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
