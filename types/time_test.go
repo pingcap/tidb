@@ -1563,6 +1563,10 @@ func (s *testTimeSuite) TestExtractDurationNum(c *C) {
 		{"HOUR_MICROSECOND", 31536},
 		{"HOUR_SECOND", 0},
 		{"HOUR_MINUTE", 0},
+		{"DAY_MICROSECOND", 31536},
+		{"DAY_SECOND", 0},
+		{"DAY_MINUTE", 0},
+		{"DAY_HOUR", 0},
 	}
 
 	for _, col := range tbl {
