@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -3300,6 +3301,11 @@ PARTITION BY RANGE (c) (
 							Op:     placement.In,
 							Values: []string{dc},
 						},
+						{
+							Key:    placement.EngineLabelKey,
+							Op:     placement.NotIn,
+							Values: []string{placement.EngineLabelTiFlash},
+						},
 					},
 				},
 			},
@@ -3944,12 +3950,54 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			sql:        `DO SLEEP(1);`,
 			isValidate: true,
 		},
+		{
+			name:       "select for update",
+			sql:        "select * from t where id = 1 for update",
+			isValidate: false,
+		},
+		{
+			name:       "select lock in share mode",
+			sql:        "select * from t where id = 1 lock in share mode",
+			isValidate: true,
+		},
+		{
+			name:       "select for update union statement",
+			sql:        "select * from t for update union select * from t;",
+			isValidate: false,
+		},
+		{
+			name:       "replace statement",
+			sql:        "replace into t(id) values (1)",
+			isValidate: false,
+		},
+		{
+			name:       "load data statement",
+			sql:        "LOAD DATA LOCAL INFILE '/mn/asa.csv' INTO TABLE t FIELDS TERMINATED BY x'2c' ENCLOSED BY b'100010' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id);",
+			isValidate: false,
+		},
+		{
+			name:       "update multi tables",
+			sql:        "update t,t1 set t.id = 1,t1.id = 2 where t.1 = 2 and t1.id = 3;",
+			isValidate: false,
+		},
+		{
+			name:       "delete multi tables",
+			sql:        "delete t from t1 where t.id = t1.id",
+			isValidate: false,
+		},
+		{
+			name:       "insert select",
+			sql:        "insert into t select * from t1;",
+			isValidate: false,
+		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
+	tk.MustExec("create table t1 (id int);")
 	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
 	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
+	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
@@ -3962,6 +4010,60 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
 		}
+	}
+}
+
+func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testcases := []struct {
+		name        string
+		sql         string
+		sameSession bool
+	}{
+		{
+			name:        "ddl",
+			sql:         "create table t (id int, b int,INDEX(b));",
+			sameSession: false,
+		},
+		{
+			name:        "set global session",
+			sql:         `SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';`,
+			sameSession: true,
+		},
+		{
+			name:        "analyze table",
+			sql:         "analyze table t",
+			sameSession: true,
+		},
+		{
+			name:        "session binding",
+			sql:         "CREATE SESSION BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "global binding",
+			sql:         "CREATE GLOBAL BINDING FOR  SELECT * FROM t WHERE b = 123 USING SELECT * FROM t IGNORE INDEX (b) WHERE b = 123;",
+			sameSession: true,
+		},
+		{
+			name:        "grant statements",
+			sql:         "GRANT ALL ON test.* TO 'newuser';",
+			sameSession: false,
+		},
+		{
+			name:        "revoke statements",
+			sql:         "REVOKE ALL ON test.* FROM 'newuser';",
+			sameSession: false,
+		},
+	}
+	tk.MustExec("CREATE USER 'newuser' IDENTIFIED BY 'mypassword';")
+	for _, testcase := range testcases {
+		comment := Commentf(testcase.name)
+		tk.MustExec(`START TRANSACTION READ ONLY WITH TIMESTAMP BOUND READ TIMESTAMP '2020-09-06 00:00:00';`)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, true, comment)
+		tk.MustExec(testcase.sql)
+		c.Assert(tk.Se.GetSessionVars().TxnCtx.IsStaleness, Equals, testcase.sameSession, comment)
 	}
 }
 
@@ -4051,4 +4153,38 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
 	c.Assert(pi.Plan, IsNil)
 	wg.Wait()
+}
+
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se
+
+	// test compatibility with ExcuteInternal
+	origin := se.GetSessionVars().InRestrictedSQL
+	se.GetSessionVars().InRestrictedSQL = true
+	defer func() {
+		se.GetSessionVars().InRestrictedSQL = origin
+	}()
+	_, err := se.ParseWithParams(context.Background(), "SELECT 4")
+	c.Assert(err, IsNil)
+
+	// test charset attack
+	stmts, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	c.Assert(err, IsNil)
+	c.Assert(stmts, HasLen, 1)
+
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(0, &sb)
+	err = stmts[0].Restore(ctx)
+	c.Assert(err, IsNil)
+	// FIXME: well... so the restore function is vulnerable...
+	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
+
+	// test invalid sql
+	_, err = se.ParseWithParams(context.Background(), "SELECT")
+	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
+
+	// test invalid arguments to escape
+	_, err = se.ParseWithParams(context.Background(), "SELECT %?")
+	c.Assert(err, ErrorMatches, "missing arguments.*")
 }

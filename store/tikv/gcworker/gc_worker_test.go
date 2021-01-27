@@ -241,30 +241,29 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	spkv := s.store.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
-	now := time.Now()
-	sp := s.gcWorker.calSafePointByMinStartTS(ctx, now)
-	c.Assert(sp.Second(), Equals, now.Second())
+	now := variable.GoTimeToTS(time.Now())
+	sp := s.gcWorker.calcSafePointByMinStartTS(ctx, now)
+	c.Assert(sp, Equals, now)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
-	zeroTime := time.Unix(0, oracle.ExtractPhysical(0)*1e6)
-	c.Assert(sp, Equals, zeroTime)
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
+	c.Assert(sp, Equals, uint64(0))
 
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"), "1")
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now)
-	c.Assert(sp, Equals, zeroTime)
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now)
+	c.Assert(sp, Equals, uint64(0))
 
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"),
-		strconv.FormatUint(variable.GoTimeToTS(now), 10))
+		strconv.FormatUint(now, 10))
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
-		strconv.FormatUint(variable.GoTimeToTS(now.Add(-20*time.Second)), 10))
+		strconv.FormatUint(now-oracle.EncodeTSO(20000), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calSafePointByMinStartTS(ctx, now.Add(-10*time.Second))
-	c.Assert(sp.Second(), Equals, now.Add(-20*time.Second).Second())
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.EncodeTSO(10000))
+	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000))
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
@@ -378,6 +377,19 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	useAutoConcurrency, err = s.gcWorker.checkUseAutoConcurrency()
 	c.Assert(err, IsNil)
 	c.Assert(useAutoConcurrency, IsTrue)
+
+	// Check skipping GC if safe point is not changed.
+	safePointTime, err := s.gcWorker.loadTime(gcSafePointKey)
+	minStartTS := variable.GoTimeToTS(*safePointTime) + 1
+	c.Assert(err, IsNil)
+	spkv := s.store.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(minStartTS, 10))
+	c.Assert(err, IsNil)
+	s.oracle.AddOffset(time.Minute * 40)
+	ok, safepoint, err := s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	c.Assert(safepoint, Equals, uint64(0))
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
