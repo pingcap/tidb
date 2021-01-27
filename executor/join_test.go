@@ -646,19 +646,32 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
 }
 
-func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
+func (s *testSuiteWithData) TestNaturalJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (a int, c int)")
-	tk.MustExec("insert t1 values (1, 2), (10, 20)")
-	tk.MustExec("insert t2 values (1, 3), (100, 200)")
+	tk.MustExec("insert t1 values (1,2), (10,20), (0,0)")
+	tk.MustExec("insert t2 values (1,3), (100,200), (0,0)")
 
-	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1 2 3"))
-	tk.MustQuery("select * from t1 natural left join t2 order by a").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
-	tk.MustQuery("select * from t1 natural right join t2 order by a").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
 }
 
 func (s *testSuiteJoin3) TestMultiJoin(c *C) {
