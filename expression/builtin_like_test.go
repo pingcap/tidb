@@ -56,17 +56,6 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		generalMatch int
 		unicodeMatch int
 	}{
-<<<<<<< HEAD
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "á", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 1},
-		{"áAb", `Aa%`, 1},
-		{"áAb", `%ab%`, 1},
-		{"áAb", `%ab`, 1},
-		{"ÀAb", "aA_", 1},
-=======
 		{"a", "", 0, 0},
 		{"a", "a", 1, 1},
 		{"a", "á", 1, 1},
@@ -93,7 +82,6 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"ss", "%ß%", 1, 0},
 		{"ß", "_", 1, 1},
 		{"ß", "__", 0, 0},
->>>>>>> ba60cf5a6... charset: implement utf8_unicode_ci and utf8mb4_unicode_ci collation (#18776)
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Like]
@@ -102,12 +90,8 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		c.Assert(err, IsNil)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-<<<<<<< HEAD
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
-=======
-		c.Assert(err, IsNil, commentf)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch))
 	}
 
 	for _, tt := range tests {
@@ -120,7 +104,6 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
->>>>>>> ba60cf5a6... charset: implement utf8_unicode_ci and utf8mb4_unicode_ci collation (#18776)
 	}
 }
 
