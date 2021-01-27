@@ -2115,6 +2115,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBMultiStatementMode,
 }
 
 var (
