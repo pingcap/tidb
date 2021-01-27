@@ -257,7 +257,8 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
+// greatest/least function is compatible with MySQL 8.0
+func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -282,7 +283,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{"123a", "b", "c", 12},
-			float64(123), float64(0), false, false,
+			"c", "12", false, false,
 		},
 		{
 			[]interface{}{tm, "123"},
@@ -290,15 +291,15 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{tm, 123},
-			curTimeInt, int64(123), false, false,
+			curTimeString, "123", false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
-			curTimeWithFspString, "invalid_time_1", false, false,
+			curTimeWithFspString, curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
-			curTimeWithFspString, "invalid_time_2", false, false,
+			curTimeWithFspString, curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
@@ -319,6 +320,14 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		{
 			[]interface{}{errors.New("must error"), 123},
 			nil, nil, false, true,
+		},
+		{
+			[]interface{}{794755072.0, 4556, "2000-01-09"},
+			"794755072", "2000-01-09", false, false,
+		},
+		{
+			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
+			"905969664", "1990-06-16 17:22:56.005534", false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
