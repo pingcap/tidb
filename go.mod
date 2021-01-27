@@ -38,7 +38,7 @@ require (
 	github.com/onsi/gomega v1.8.1 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
-	github.com/pingcap/br v4.0.9-0.20201215065036-804aa9087197+incompatible
+	github.com/pingcap/br v4.0.11-0.20210119023619-139df44843ab+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
