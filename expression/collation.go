@@ -91,7 +91,7 @@ const (
 	CoercibilityExplicit Coercibility = 0
 	// CoercibilityNone is derived from the concatenation of two strings with different collations.
 	CoercibilityNone Coercibility = 1
-	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable.
+	// CoercibilityImplicit is derived from a column or a stored routine parameter or local variable or cast() function.
 	CoercibilityImplicit Coercibility = 2
 	// CoercibilitySysconst is derived from a “system constant” (the string returned by functions such as USER() or VERSION()).
 	CoercibilitySysconst Coercibility = 3

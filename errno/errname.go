@@ -1082,7 +1082,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
-	ErrJSONObjectKeyTooLong: mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrJSONObjectKeyTooLong:   mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),

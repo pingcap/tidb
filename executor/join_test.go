@@ -631,10 +631,19 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
 
-	// For issue18992
+	// For issue 18992
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("update t t1 join t t2 using(a,b) set t1.c=t2.d;")
+
+	// For issue 6712
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (t1 int , t0 int)")
+	tk.MustExec("create table t2 (t2 int, t0 int)")
+	tk.MustExec("insert into t1 select 11, 1")
+	tk.MustExec("insert into t2 select 22, 1")
+	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) group by t1.t0").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuiteWithData) TestNaturalJoin(c *C) {

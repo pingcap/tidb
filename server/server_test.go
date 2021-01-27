@@ -1179,8 +1179,68 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 
 func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
-		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+
+		// Default of WARN
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err := res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		rows := dbt.mustQuery("show warnings")
+		c.Assert(rows.Next(), IsTrue)
+		var level, code, message string
+		err = rows.Scan(&level, &code, &message)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		c.Assert(level, Equals, "Warning")
+		c.Assert(code, Equals, "8130")
+		c.Assert(message, Equals, "client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		var out int
+		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+
+		// Change to OFF = Does not work
+		dbt.mustExec("SET tidb_multi_statement_mode='OFF'")
+		_, err = dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+
+		// Change to ON = Fully supported, TiDB legacy. No warnings or Errors.
+		dbt.mustExec("SET tidb_multi_statement_mode='ON';")
+		dbt.mustExec("DROP TABLE IF EXISTS test")
+		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res = dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		res = dbt.mustExec("update test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		count, err = res.RowsAffected()
+		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
+		c.Assert(count, Equals, int64(1))
+		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		if rows.Next() {
+			rows.Scan(&out)
+			c.Assert(out, Equals, 5)
+
+			if rows.Next() {
+				dbt.Error("unexpected data")
+			}
+		} else {
+			dbt.Error("no data")
+		}
+
 	})
 }
 
