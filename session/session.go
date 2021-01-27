@@ -508,7 +508,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
-	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
+	s.txn.SetOption(kv.GuaranteeExternalConsistency, true)
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -2554,7 +2554,6 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
-	variable.TiDBGuaranteeExternalConsistency,
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
