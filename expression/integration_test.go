@@ -3675,8 +3675,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 
 	// for greatest
 	result = tk.MustQuery(`select greatest(1, 2, 3), greatest("a", "b", "c"), greatest(1.1, 1.2, 1.3), greatest("123a", 1, 2)`)
-	result.Check(testkit.Rows("3 c 1.3 123"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: '123a'"))
+	result.Check(testkit.Rows("3 c 1.3 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
 	// todo: MySQL returns "2018-01-01 <nil>"
 	result.Check(testkit.Rows("2018-01-01 00:00:00 <nil>"))
@@ -3684,7 +3684,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
 	result.Check(testkit.Rows("1 a 1.1 1"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect FLOAT value: '123a'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
