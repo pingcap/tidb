@@ -1387,11 +1387,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
-  status := atomic.LoadInt32(&cc.status)
-	if rss != nil && status == connStatusShutdown {
-		for _, rs := range rss {
-			terror.Call(rs.Close)
-      
 	var appendMultiStmtWarning bool
 
 	if len(stmts) > 1 {
@@ -1447,7 +1442,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStm
 
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
-		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
+		if connStatus == connStatusShutdown {
 			return executor.ErrQueryInterrupted
 		}
 
