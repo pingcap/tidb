@@ -117,7 +117,7 @@ func BenchmarkBasic(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -137,7 +137,7 @@ func BenchmarkTableScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], smallCount)
+		readResult(ctx, rs, smallCount)
 	}
 	b.StopTimer()
 }
@@ -157,7 +157,7 @@ func BenchmarkExplainTableScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -177,7 +177,7 @@ func BenchmarkTableLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -197,7 +197,7 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -217,7 +217,7 @@ func BenchmarkStringIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], smallCount)
+		readResult(ctx, rs, smallCount)
 	}
 	b.StopTimer()
 }
@@ -237,7 +237,7 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -257,7 +257,7 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -277,7 +277,7 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], smallCount)
+		readResult(ctx, rs, smallCount)
 	}
 	b.StopTimer()
 }
@@ -297,7 +297,7 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -317,7 +317,7 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], smallCount)
+		readResult(ctx, rs, smallCount)
 	}
 	b.StopTimer()
 }
@@ -337,7 +337,7 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -389,7 +389,7 @@ func BenchmarkSort(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 50)
+		readResult(ctx, rs, 50)
 	}
 	b.StopTimer()
 }
@@ -409,7 +409,7 @@ func BenchmarkJoin(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], smallCount)
+		readResult(ctx, rs, smallCount)
 	}
 	b.StopTimer()
 }
@@ -429,7 +429,7 @@ func BenchmarkJoinLimit(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		readResult(ctx, rs[0], 1)
+		readResult(ctx, rs, 1)
 	}
 	b.StopTimer()
 }
@@ -1476,7 +1476,7 @@ partition p1023 values less than (738538)
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1508,7 +1508,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1532,7 +1532,7 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1556,7 +1556,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1564,7 +1564,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1572,7 +1572,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs)
 		if err != nil {
 			b.Fatal(err)
 		}

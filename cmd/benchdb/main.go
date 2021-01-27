@@ -107,9 +107,9 @@ func newBenchDB() *benchDB {
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(context.Background(), sql)
+	rs, err := ut.session.Execute(context.Background(), sql)
 	defer func() {
-		for _, rs := range rss {
+		if rs != nil {
 			err = rs.Close()
 			if err != nil {
 				log.Fatal(err.Error())
@@ -120,9 +120,8 @@ func (ut *benchDB) mustExec(sql string) {
 		log.Fatal(err.Error())
 		return
 	}
-	if len(rss) > 0 {
+	if rs != nil {
 		ctx := context.Background()
-		rs := rss[0]
 		req := rs.NewChunk()
 		for {
 			err := rs.Next(ctx, req)

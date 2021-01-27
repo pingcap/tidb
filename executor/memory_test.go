@@ -77,9 +77,8 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	// read data
 	runtime.GC()
 	allocatedBegin, inUseBegin := s.readMem()
-	records, err := se.Execute(context.Background(), "select * from t")
+	record, err := se.Execute(context.Background(), "select * from t")
 	c.Assert(err, IsNil)
-	record := records[0]
 	rowCnt := 0
 	chk := record.NewChunk()
 	for {

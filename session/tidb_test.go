@@ -143,8 +143,8 @@ func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
-		if err == nil && len(rs) > 0 {
-			return rs[0], nil
+		if err == nil && rs != nil {
+			return rs, nil
 		}
 		return nil, err
 	}

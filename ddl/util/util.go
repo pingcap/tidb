@@ -63,15 +63,14 @@ func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []De
 
 func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, table, safePoint)
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rss) > 0 {
-		defer terror.Call(rss[0].Close)
+	rs, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rs := rss[0]
 	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {

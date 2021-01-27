@@ -1761,14 +1761,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	defer se.Close()
 	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
 	rs, err := se.Execute(ctx, stmt)
-	if len(rs) > 0 {
-		defer terror.Call(rs[0].Close)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

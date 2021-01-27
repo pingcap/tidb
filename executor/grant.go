@@ -648,11 +648,11 @@ func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, priv mysql.Privile
 
 // recordExists is a helper function to check if the sql returns any row.
 func recordExists(ctx sessionctx.Context, sql string) (bool, error) {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	rs, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return false, err
 	}
-	rows, _, err := getRowsAndFields(ctx, recordSets)
+	rows, _, err := getRowsAndFields(ctx, rs)
 	if err != nil {
 		return false, err
 	}
@@ -691,7 +691,7 @@ func getTablePriv(ctx sessionctx.Context, name string, host string, db string, t
 	if err != nil {
 		return "", "", err
 	}
-	if len(rs) < 1 {
+	if rs == nil {
 		return "", "", errors.Errorf("get table privilege fail for %s %s %s %s", name, host, db, tbl)
 	}
 	var tPriv, cPriv string
@@ -722,7 +722,7 @@ func getColumnPriv(ctx sessionctx.Context, name string, host string, db string, 
 	if err != nil {
 		return "", err
 	}
-	if len(rs) < 1 {
+	if rs == nil {
 		return "", errors.Errorf("get column privilege fail for %s %s %s %s", name, host, db, tbl)
 	}
 	rows, fields, err := getRowsAndFields(ctx, rs)
@@ -757,13 +757,13 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 }
 
 // getRowsAndFields is used to extract rows from record sets.
-func getRowsAndFields(ctx sessionctx.Context, recordSets []sqlexec.RecordSet) ([]chunk.Row, []*ast.ResultField, error) {
+func getRowsAndFields(ctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, []*ast.ResultField, error) {
 	var (
 		rows   []chunk.Row
 		fields []*ast.ResultField
 	)
 
-	for i, rs := range recordSets {
+	if rs != nil {
 		tmp, err := getRowFromRecordSet(context.Background(), ctx, rs)
 		if err != nil {
 			return nil, nil, err
@@ -772,10 +772,8 @@ func getRowsAndFields(ctx sessionctx.Context, recordSets []sqlexec.RecordSet) ([
 			return nil, nil, err
 		}
 
-		if i == 0 {
-			rows = tmp
-			fields = rs.Fields()
-		}
+		rows = tmp
+		fields = rs.Fields()
 	}
 	return rows, fields, nil
 }

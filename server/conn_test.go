@@ -611,10 +611,10 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
 	c.Assert(err, IsNil)
 
-	records, err := se.Execute(context.Background(), "select SLEEP(2);")
+	record, err := se.Execute(context.Background(), "select SLEEP(2);")
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, ts.store)
-	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
+	tk.ResultSetToResult(record, Commentf("%v", record)).Check(testkit.Rows("1"))
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)

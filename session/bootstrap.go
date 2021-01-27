@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -572,13 +571,12 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
-	if len(rs) != 1 {
+	if rs == nil {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	err = r.Next(ctx, req)
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -762,12 +760,11 @@ func upgradeToVer12(s Session, ver int64) {
 		rs, err = s.Execute(ctx, sql)
 	}
 	terror.MustNil(err)
-	r := rs[0]
 	sqls := make([]string, 0, 1)
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
+	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -779,7 +776,7 @@ func upgradeToVer12(s Session, ver int64) {
 			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user SET password = "%s" WHERE user="%s" AND host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.Next(ctx, req)
+		err = rs.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -1221,11 +1218,10 @@ func upgradeToVer55(s Session, ver int64) {
 	ctx := context.Background()
 	rs, err := s.Execute(ctx, selectSQL)
 	terror.MustNil(err)
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
+	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			n := strings.ToLower(row.GetString(0))
@@ -1234,7 +1230,7 @@ func upgradeToVer55(s Session, ver int64) {
 				return
 			}
 		}
-		err = r.Next(ctx, req)
+		err = rs.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -1325,8 +1321,7 @@ func upgradeToVer61(s Session, ver int64) {
 		mustExecute(s, "COMMIT")
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
-	var recordSets []sqlexec.RecordSet
-	recordSets, err = s.ExecuteInternal(context.Background(),
+	rs, err := s.ExecuteInternal(context.Background(),
 		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
 			FROM mysql.bind_info
 			WHERE source != 'builtin'
@@ -1334,15 +1329,15 @@ func upgradeToVer61(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 	}
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
-	req := recordSets[0].NewChunk()
+	req := rs.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 	for {
-		err = recordSets[0].Next(context.TODO(), req)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
 		}

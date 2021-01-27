@@ -138,9 +138,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
-		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
+		rs, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
-		rs := rss[0]
 		req := rs.NewChunk()
 		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
@@ -152,9 +151,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError"), IsNil)
 	}()
-	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
+	rs, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
@@ -747,9 +745,8 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/parallelHashAggError"), IsNil)
 	}()
 	ctx := context.Background()
-	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	rs, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
@@ -768,9 +765,8 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"), IsNil)
 	}()
 	ctx := context.Background()
-	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	rs, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
-	rs := rss[0]
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")

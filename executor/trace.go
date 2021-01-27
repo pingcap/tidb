@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -132,8 +131,8 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 }
 
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
-	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
-	if len(recordSets) == 0 {
+	rs, err := se.Execute(ctx, e.stmtNode.Text())
+	if rs == nil {
 		if err != nil {
 			var errCode uint16
 			if te, ok := err.(*terror.Error); ok {
@@ -143,13 +142,10 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 		} else {
 			logutil.Eventf(ctx, "execute done, modify row: %d", e.ctx.GetSessionVars().StmtCtx.AffectedRows())
 		}
+		return
 	}
-	for _, rs := range recordSets {
-		drainRecordSet(ctx, e.ctx, rs)
-		if err = rs.Close(); err != nil {
-			logutil.Logger(ctx).Error("run trace close result with error", zap.Error(err))
-		}
-	}
+	drainRecordSet(ctx, e.ctx, rs)
+	terror.Call(rs.Close)
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {

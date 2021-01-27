@@ -162,16 +162,16 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	}
 	// If we don't catch profile. We just get a explain result.
 	if pprofTime == 0 {
-		recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, fmt.Sprintf("explain %s", sql))
-		if len(recordSets) > 0 {
-			defer terror.Call(recordSets[0].Close)
+		rs, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, fmt.Sprintf("explain %s", sql))
+		if rs != nil {
+			defer terror.Call(rs.Close)
 		}
 		if err != nil {
 			err = sh.writeErrFile(zw, "explain.err.txt", err)
 			terror.Log(err)
 			return
 		}
-		sRows, err := session.ResultSetToStringSlice(reqCtx, sh.s, recordSets[0])
+		sRows, err := session.ResultSetToStringSlice(reqCtx, sh.s, rs)
 		if err != nil {
 			err = sh.writeErrFile(zw, "explain.err.txt", err)
 			terror.Log(err)
@@ -257,18 +257,18 @@ type explainAnalyzeResult struct {
 }
 
 func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, resultChan chan<- *explainAnalyzeResult) {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
+	rs, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
 	if err != nil {
 		resultChan <- &explainAnalyzeResult{err: err}
 		return
 	}
-	rows, err := session.ResultSetToStringSlice(ctx, sh.s, recordSets[0])
+	rows, err := session.ResultSetToStringSlice(ctx, sh.s, rs)
 	if err != nil {
 		terror.Log(err)
 		return
 	}
-	if len(recordSets) > 0 {
-		terror.Call(recordSets[0].Close)
+	if rs != nil {
+		terror.Call(rs.Close)
 	}
 	resultChan <- &explainAnalyzeResult{rows: rows}
 }
@@ -295,14 +295,14 @@ func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTabl
 }
 
 func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer) error {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
+	rs, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return err
 	}
-	sRows, err := session.ResultSetToStringSlice(context.Background(), sh.s, recordSets[0])
+	sRows, err := session.ResultSetToStringSlice(context.Background(), sh.s, rs)
 	if err != nil {
 		terror.Log(err)
 		return nil

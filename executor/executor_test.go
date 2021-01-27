@@ -2343,7 +2343,7 @@ func (s *testSerialSuite) TestPointGetRepeatableRead(c *C) {
 		})
 		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
 		c.Assert(err, IsNil)
-		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result := tk1.ResultSetToResultWithCtx(ctx, rs, Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
@@ -2377,7 +2377,7 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 		})
 		rs, err := tk1.Se.Execute(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
 		c.Assert(err, IsNil)
-		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
+		result := tk1.ResultSetToResultWithCtx(ctx, rs, Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
@@ -3359,7 +3359,7 @@ func (s *testSuite) TestNotFillCacheFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
+		tk.ResultSetToResult(rs, Commentf("sql: %v", test.sql))
 	}
 	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
@@ -3787,7 +3787,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 		})
 		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
+		tk.ResultSetToResult(rs, Commentf("sql: %v", test.sql))
 	}
 }
 

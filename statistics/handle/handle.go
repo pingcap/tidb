@@ -848,16 +848,16 @@ func (sr *statsReader) read(sql string) (rows []chunk.Row, fields []*ast.ResultF
 	if sr.history != nil {
 		return sr.history.ExecRestrictedSQLWithSnapshot(sql)
 	}
-	rc, err := sr.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
+	rs, err := sr.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	for {
-		req := rc[0].NewChunk()
-		err := rc[0].Next(context.TODO(), req)
+		req := rs.NewChunk()
+		err := rs.Next(context.TODO(), req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -868,7 +868,7 @@ func (sr *statsReader) read(sql string) (rows []chunk.Row, fields []*ast.ResultF
 			rows = append(rows, req.GetRow(i))
 		}
 	}
-	return rows, rc[0].Fields(), nil
+	return rows, rs.Fields(), nil
 }
 
 func (sr *statsReader) isHistory() bool {

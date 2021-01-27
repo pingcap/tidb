@@ -145,16 +145,16 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
 	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
-		var rs []sqlexec.RecordSet
+		var rs sqlexec.RecordSet
 		rs, err = exec.Execute(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", physicalID))
-		if len(rs) > 0 {
-			defer terror.Call(rs[0].Close)
+		if rs != nil {
+			defer terror.Call(rs.Close)
 		}
 		if err != nil {
 			return
 		}
-		req := rs[0].NewChunk()
-		err = rs[0].Next(ctx, req)
+		req := rs.NewChunk()
+		err = rs.Next(ctx, req)
 		if err != nil {
 			return
 		}

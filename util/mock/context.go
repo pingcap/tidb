@@ -66,13 +66,13 @@ func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
-func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+func (c *Context) Execute(ctx context.Context, sql string) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
-func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
 }
 
 type mockDDLOwnerChecker struct{}
