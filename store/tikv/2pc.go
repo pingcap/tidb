@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"math/rand"
 	"strings"
@@ -403,6 +404,12 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 	}
 
 	if handle.IsInt() {
+		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
+			if mysql.HasUnsignedFlag(pkInfo.Flag) {
+				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
+				return c.genKeyExistsError(name, handleStr, nil)
+			}
+		}
 		return c.genKeyExistsError(name, handle.String(), nil)
 	}
 
@@ -1291,7 +1298,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.isAsyncCommit() {
 		// For async commit protocol, the commit is considered success here.
 		c.txn.commitTS = c.commitTS
-		logutil.Logger(ctx).Info("2PC will use async commit protocol to commit this txn",
+		logutil.Logger(ctx).Debug("2PC will use async commit protocol to commit this txn",
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("connID", c.connID))
 		go func() {
