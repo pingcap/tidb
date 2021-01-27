@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
@@ -213,7 +212,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
-		replicaReadSeed: fastrand.Uint32(),
+		replicaReadSeed: rand.Uint32(),
 		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
