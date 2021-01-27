@@ -201,10 +201,12 @@ partition p2 values less than (10))`)
 
 func (s *globalIndexSuite) TestIssue21732(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
-	tk.MustExec("alter table p add unique index idx (a);")
-	tk.MustExec("insert into p (a) values  (1),(2),(3);")
-	tk.MustExec("select * from p ignore index (idx);")
-	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("2 2", "1 1", "3 3"))
+	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+		tk.MustExec("drop table if exists p")
+		tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
+		tk.MustExec("alter table p add unique index idx (a);")
+		tk.MustExec("insert into p (a) values  (1),(2),(3);")
+		tk.MustExec("select * from p ignore index (idx);")
+		tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("2 2", "1 1", "3 3"))
+	})
 }
