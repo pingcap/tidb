@@ -1946,6 +1946,21 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
+	// for dayname implicit cast to boolean and real
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07')`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07') is true`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-07') is false`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08')`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08') is true`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select 1 from dual where dayname('2016-03-08') is false`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`select cast(dayname("2016-03-07") as double), cast(dayname("2016-03-08") as double)`)
+	result.Check(testkit.Rows("0 1"))
 
 	// for sec_to_time
 	result = tk.MustQuery("select sec_to_time(NULL)")
