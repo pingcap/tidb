@@ -402,7 +402,8 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	conf.Security.ClusterSSLCA = certFile
 	conf.Security.ClusterSSLCert = certFile
 	conf.Security.ClusterSSLKey = keyFile
-	tlsConfig, err := conf.Security.ToTLSConfig()
+	clusterSecurity := conf.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	c.Assert(err, IsNil)
 	c.Assert(tlsConfig, NotNil)
 
