@@ -36,6 +36,6 @@ func Logger(ctx context.Context) *zap.Logger {
 
 type ctxLogKeyType struct{}
 
-// CtxLogKey is the key to retrive logger from context.
+// CtxLogKey is the key to retrieve logger from context.
 // It can be assigned to another value.
 var CtxLogKey interface{} = ctxLogKeyType{}
