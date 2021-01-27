@@ -558,7 +558,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	return nil
 }
 
-// tableStatsFromStorage loads table stats info from storage.
+// TableStatsFromStorage loads table stats info from storage.
 func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, historyStatsExec sqlexec.RestrictedSQLExecutor) (_ *statistics.Table, err error) {
 	reader, err := h.getStatsReader(historyStatsExec)
 	if err != nil {
