@@ -130,6 +130,7 @@ var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testPrepareSuite{})
+var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -144,6 +145,11 @@ type baseTestSuite struct {
 	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
+}
+
+type testSuiteWithData struct {
+	*baseTestSuite
+	testData testutil.TestData
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
@@ -172,6 +178,18 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog
 	})
+}
+
+func (s *testSuiteWithData) SetUpSuite(c *C) {
+	s.baseTestSuite.SetUpSuite(c)
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "executor_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuiteWithData) TearDownSuite(c *C) {
+	s.baseTestSuite.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPrepareSuite) SetUpSuite(c *C) {
