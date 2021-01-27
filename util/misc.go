@@ -502,7 +502,8 @@ func InternalHTTPSchema() string {
 }
 
 func initInternalClient() {
-	tlsCfg, err := config.GetGlobalConfig().Security.ToTLSConfig()
+	clusterSecurity := config.GetGlobalConfig().Security.ClusterSecurity()
+	tlsCfg, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
 		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
 	}
