@@ -570,7 +570,7 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionLog,
+	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
