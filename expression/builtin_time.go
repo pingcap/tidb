@@ -1078,7 +1078,8 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+			isNull, err = handleInvalidZeroTime(b.ctx, date)
+			return 0, isNull, err
 		}
 		return 0, false, nil
 	}
@@ -1237,7 +1238,8 @@ func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if arg.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+			isNull, err = handleInvalidZeroTime(b.ctx, arg)
+			return 0, isNull, err
 		}
 		return 0, false, nil
 	}
@@ -1280,7 +1282,8 @@ func (b *builtinDayOfWeekSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+		isNull, err = handleInvalidZeroTime(b.ctx, arg)
+		return 0, isNull, err
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Weekday() + 1), false, nil
@@ -1322,7 +1325,8 @@ func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
+		isNull, err := handleInvalidZeroTime(b.ctx, arg)
+		return 0, isNull, err
 	}
 
 	return int64(arg.YearDay()), false, nil
@@ -1556,7 +1560,8 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+			isNull, err := handleInvalidZeroTime(b.ctx, date)
+			return 0, isNull, err
 		}
 		return 0, false, nil
 	}
@@ -2628,10 +2633,15 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+		decimalArg1 := int(types.MaxFsp)
+		if args[1].GetType().EvalType() != types.ETString {
+			decimalArg1 = 0
+		}
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
+		bf.args[1].GetType().Decimal = decimalArg1
 		sig = &builtinExtractDatetimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 	} else {
@@ -2662,9 +2672,43 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	dt, isNull, err := b.args[1].EvalTime(b.ctx, row)
+	dtStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	switch strings.ToUpper(unit) {
+	case "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+		dur, err := types.ParseDuration(sc, dtStr, types.GetFsp(dtStr))
+		if err != nil {
+			return 0, true, err
+		}
+		res, err := types.ExtractDurationNum(&dur, unit)
+		if err != nil {
+			return 0, true, err
+		}
+		dt, err := types.ParseDatetime(sc, dtStr)
+		if err != nil {
+			return res, false, nil
+		}
+		if dt.Hour() == dur.Hour() && dt.Minute() == dur.Minute() && dt.Second() == dur.Second() && dt.Year() > 0 {
+			res, err = types.ExtractDatetimeNum(&dt, unit)
+		}
+		return res, err != nil, err
+	}
+	dt, err := types.ParseDatetime(sc, dtStr)
+	if err != nil {
+		if !terror.ErrorEqual(err, types.ErrWrongValue) {
+			return 0, true, err
+		}
+	}
+	if dt.IsZero() {
+		dt.SetFsp(int8(b.args[1].GetType().Decimal))
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			isNull, err := handleInvalidZeroTime(b.ctx, dt)
+			return 0, isNull, err
+		}
+		return 0, false, nil
 	}
 	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, err != nil, err
@@ -6020,16 +6064,8 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		// MySQL compatibility, #11203
-		// 0 | 0.0 should be converted to 0 value (not null)
-		n, err := date.ToNumber().ToInt()
-		isOriginalIntOrDecimalZero := err == nil && n == 0
-		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
-		isOriginalStringZero := date.Fsp() > 0
-		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-			return 0, false, nil
-		}
-		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+		isNull, err := handleInvalidZeroTime(b.ctx, date)
+		return 0, isNull, err
 	}
 
 	return int64((date.Month() + 2) / 3), false, nil
@@ -6088,9 +6124,9 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		return types.Duration{}, isNull, err
 	}
 	var (
-		hour          int64
-		minute        int64
-		second        int64
+		hour          uint64
+		minute        uint64
+		second        uint64
 		demical       float64
 		secondDemical float64
 		negative      string
@@ -6100,7 +6136,7 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		negative = "-"
 		secondsFloat = math.Abs(secondsFloat)
 	}
-	seconds := int64(secondsFloat)
+	seconds := uint64(secondsFloat)
 	demical = secondsFloat - float64(seconds)
 
 	hour = seconds / 3600
@@ -6108,6 +6144,11 @@ func (b *builtinSecToTimeSig) evalDuration(row chunk.Row) (types.Duration, bool,
 		hour = 838
 		minute = 59
 		second = 59
+		demical = 0
+		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+		if err != nil {
+			return types.Duration{}, err != nil, err
+		}
 	} else {
 		minute = seconds % 3600 / 60
 		second = seconds % 60
@@ -7020,4 +7061,17 @@ func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, erro
 		return types.ZeroTime, true, err
 	}
 	return result, false, nil
+}
+
+func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
+	// MySQL compatibility, #11203
+	// 0 | 0.0 should be converted to null without warnings
+	n, err := t.ToNumber().ToInt()
+	isOriginalIntOrDecimalZero := err == nil && n == 0
+	// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+	isOriginalStringZero := t.Fsp() > 0
+	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+		return false, nil
+	}
+	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }

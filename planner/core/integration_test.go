@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1703,6 +1704,52 @@ func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	tk.MustQuery("select count(a), (select count(a)) from t").Check(testkit.Rows("6 6"))
 	tk.MustQuery("select sum(distinct b), count(a), (select count(a)), (select cnt from (select sum(distinct b) as cnt) n) from t").
 		Check(testkit.Rows("6 6 6 6"))
+}
+
+func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
+	// #12356
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS temptest")
+	tk.MustExec("create table temptest (val int, val1 int)")
+	tk.MustQuery("SELECT val FROM temptest WINDOW w AS (ORDER BY val RANGE 1 PRECEDING)").Check(testkit.Rows())
+	tk.MustGetErrMsg("SELECT val FROM temptest WINDOW w AS (ORDER BY val, val1 RANGE 1 PRECEDING)",
+		"[planner:3587]Window 'w' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type")
+	tk.MustGetErrMsg("select val1, avg(val1) as a from temptest group by val1 window w as (order by a)",
+		"[planner:1054]Unknown column 'a' in 'window order by'")
+	tk.MustGetErrMsg("select val1, avg(val1) as a from temptest group by val1 window w as (partition by a)",
+		"[planner:1054]Unknown column 'a' in 'window partition by'")
+}
+
+func (s *testIntegrationSuite) TestIssue22040(c *C) {
+	// #22040
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key(a,b))")
+	// valid case
+	tk.MustExec("select * from t where (a,b) in ((1,2),(1,2))")
+	// invalid case, column count doesn't match
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in (1,2)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in ((1,2),1)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+}
+
+func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
+		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
+		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
