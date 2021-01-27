@@ -7436,6 +7436,15 @@ func (s *testIntegrationSerialSuite) TestJsonObjectCompare(c *C) {
 	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite2) TestIssue15847(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop view if exists t15847")
+	tk.MustExec("CREATE VIEW t15847(c0) AS SELECT NULL;")
+	tk.MustQuery("SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));").Check(testkit.Rows())
+	tk.MustExec("drop view if exists t15847")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
