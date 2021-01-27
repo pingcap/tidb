@@ -70,17 +70,10 @@
       {
         "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
         "Plan": [
-<<<<<<< HEAD
-          " TopN            root test.t1.c:asc",
-          " └─TableReader   root ",
-          "   └─TopN        cop  test.t1.c:asc",
-          "     └─TableScan cop  table:t1, range:[?,?], keep order:false"
-=======
-          " TopN                 root test.t1.c",
+          " TopN                 root test.t1.c:asc",
           " └─TableReader        root ",
-          "   └─TopN             cop  test.t1.c",
+          "   └─TopN             cop  test.t1.c:asc",
           "     └─TableRangeScan cop  table:t1, range:[?,?], keep order:false"
->>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
         ]
       },
       {
@@ -242,30 +235,6 @@
     ]
   },
   {
-<<<<<<< HEAD
-=======
-    "Name": "TestPreferRangeScan",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          " TableReader       root ",
-          " └─Selection       cop  eq(test.test.age, ?)",
-          "   └─TableFullScan cop  table:test, range:[?,?], keep order:false"
-        ]
-      },
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          " IndexLookUp      root ",
-          " ├─IndexRangeScan cop  table:test, index:idx_age(age), range:[?,?], keep order:false",
-          " └─TableRowIDScan cop  table:test, keep order:false"
-        ]
-      }
-    ]
-  },
-  {
->>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
     "Name": "TestNormalizedPlanForDiffStore",
     "Cases": [
       {

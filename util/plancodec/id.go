@@ -106,8 +106,6 @@ const (
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
 	TypeLoadData = "LoadData"
-<<<<<<< HEAD
-=======
 	// TypeTableSample is the type of TableSample.
 	TypeTableSample = "TableSample"
 	// TypeTableFullScan is the type of TableFullScan.
@@ -120,54 +118,10 @@ const (
 	TypeIndexFullScan = "IndexFullScan"
 	// TypeIndexRangeScan is the type of IndexRangeScan.
 	TypeIndexRangeScan = "IndexRangeScan"
->>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 )
 
 // plan id.
 const (
-<<<<<<< HEAD
-	typeSelID int = iota + 1
-	typeSetID
-	typeProjID
-	typeAggID
-	typeStreamAggID
-	typeHashAggID
-	typeShowID
-	typeJoinID
-	typeUnionID
-	typeTableScanID
-	typeMemTableScanID
-	typeUnionScanID
-	typeIdxScanID
-	typeSortID
-	typeTopNID
-	typeLimitID
-	typeHashJoinID
-	typeMergeJoinID
-	typeIndexJoinID
-	typeIndexMergeJoinID
-	typeIndexHashJoinID
-	typeApplyID
-	typeMaxOneRowID
-	typeExistsID
-	typeDualID
-	typeLockID
-	typeInsertID
-	typeUpdateID
-	typeDeleteID
-	typeIndexLookUpID
-	typeTableReaderID
-	typeIndexReaderID
-	typeWindowID
-	typeTiKVSingleGatherID
-	typeIndexMergeID
-	typePointGet
-	typeShowDDLJobs
-	typeBatchPointGet
-	typeClusterMemTableReader
-	typeDataSourceID
-	typeLoadDataID
-=======
 	typeSelID                 int = 1
 	typeSetID                 int = 2
 	typeProjID                int = 3
@@ -215,7 +169,6 @@ const (
 	typeTableRowIDScan        int = 45
 	typeIndexFullScan         int = 46
 	typeIndexRangeScan        int = 47
->>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -303,8 +256,6 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDataSourceID
 	case TypeLoadData:
 		return typeLoadDataID
-<<<<<<< HEAD
-=======
 	case TypeTableSample:
 		return typeTableSampleID
 	case TypeTableFullScan:
@@ -317,7 +268,6 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeIndexFullScan
 	case TypeIndexRangeScan:
 		return typeIndexRangeScan
->>>>>>> 5f3bb760d... planner: add plancodec id for all type TableScan/IndexScan. (#21935)
 	}
 	// Should never reach here.
 	return 0
