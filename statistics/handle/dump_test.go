@@ -14,6 +14,7 @@
 package handle_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -220,4 +221,55 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	c.Assert(err, IsNil)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTblInStorage, tbl)
+}
+
+func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10))")
+	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	// mark column stats as needed
+	tk.MustExec("select * from t where a = 3")
+	tk.MustExec("select * from t where b = 'bbb'")
+	tk.MustExec("alter table t add index single(a)")
+	tk.MustExec("alter table t add index multi(a, b)")
+	tk.MustExec("analyze table t with 2 topn")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, nil)
+	c.Assert(err, IsNil)
+
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	c.Assert(err, IsNil)
+
+	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
+	c.Assert(err, IsNil)
+
+	loadJSONTable := &handle.JSONTable{}
+	err = json.Unmarshal(jsonBytes, loadJSONTable)
+	c.Assert(err, IsNil)
+
+	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	c.Assert(err, IsNil)
+
+	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
+	assertTableEqual(c, loadTbl, storageTbl)
+
+	// assert that this statistics.Table is the same as the one in stats cache
+	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
+	assertTableEqual(c, loadTbl, statsCacheTbl)
+
+	err = h.LoadStatsFromJSON(is, loadJSONTable)
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
+	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
+	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
+	assertTableEqual(c, statsCacheTbl, loadTbl)
 }
