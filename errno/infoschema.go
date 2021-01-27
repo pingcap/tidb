@@ -25,7 +25,6 @@ import (
 
 // ErrorSummary summarizes errors and warnings
 type ErrorSummary struct {
-	sync.Mutex
 	ErrorCount   int
 	WarningCount int
 	FirstSeen    time.Time
@@ -118,40 +117,36 @@ func initCounters(errCode uint16, user, host string) {
 func IncrementError(errCode uint16, user, host string) {
 	seen := time.Now()
 	initCounters(errCode, user, host)
+
+	stats.Lock()
+	defer stats.Unlock()
+
 	// Increment counter + update last seen
-	stats.global[errCode].Lock()
 	stats.global[errCode].ErrorCount++
 	stats.global[errCode].LastSeen = seen
-	stats.global[errCode].Unlock()
 	// Increment counter + update last seen
-	stats.users[user][errCode].Lock()
 	stats.users[user][errCode].ErrorCount++
 	stats.users[user][errCode].LastSeen = seen
-	stats.users[user][errCode].Unlock()
 	// Increment counter + update last seen
-	stats.hosts[host][errCode].Lock()
 	stats.hosts[host][errCode].ErrorCount++
 	stats.hosts[host][errCode].LastSeen = seen
-	stats.hosts[host][errCode].Unlock()
 }
 
 // IncrementWarning increments the global/user/host statistics for an errCode
 func IncrementWarning(errCode uint16, user, host string) {
 	seen := time.Now()
 	initCounters(errCode, user, host)
+
+	stats.Lock()
+	defer stats.Unlock()
+
 	// Increment counter + update last seen
-	stats.global[errCode].Lock()
 	stats.global[errCode].WarningCount++
 	stats.global[errCode].LastSeen = seen
-	stats.global[errCode].Unlock()
 	// Increment counter + update last seen
-	stats.users[user][errCode].Lock()
 	stats.users[user][errCode].WarningCount++
 	stats.users[user][errCode].LastSeen = seen
-	stats.users[user][errCode].Unlock()
 	// Increment counter + update last seen
-	stats.hosts[host][errCode].Lock()
 	stats.hosts[host][errCode].WarningCount++
 	stats.hosts[host][errCode].LastSeen = seen
-	stats.hosts[host][errCode].Unlock()
 }
