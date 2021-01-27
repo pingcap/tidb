@@ -1353,7 +1353,8 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 		}
 	}
 	// no avgs
-	if len(p.schema.Columns) == len(newSchema.Columns) {
+	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
+	if len(p.schema.Columns) == len(newSchema.Columns) && !p.isFinalAgg() {
 		return nil
 	}
 	// add remaining columns to exprs
