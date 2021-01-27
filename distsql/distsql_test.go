@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -159,7 +160,12 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+func (s *testSerialSuite) TestSelectResultRuntimeStats(c *C) {
+	originCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(originCfg)
+	cfg := config.NewConfig()
+	cfg.TiKVClient.CoprCache.Enable = true
+	config.StoreGlobalConfig(cfg)
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
@@ -191,6 +197,17 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
+
+	s1 = &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second},
+		procKeys:         []int64{100},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	expect = "cop_task: {num: 1, max: 1s, proc_keys: 100, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 1ms}"
+	c.Assert(s1.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
