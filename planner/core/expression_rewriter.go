@@ -1449,8 +1449,8 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
-	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
