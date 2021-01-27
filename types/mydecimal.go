@@ -406,15 +406,11 @@ func (d *MyDecimal) FromString(str []byte) error {
 	case '+':
 		str = str[1:]
 	}
-	var commaCnt int
 	var strIdx int
-	for strIdx < len(str) && (isDigit(str[strIdx]) || str[strIdx] == ',') {
-		if str[strIdx] == ',' {
-			commaCnt++
-		}
+	for strIdx < len(str) && (isDigit(str[strIdx])) {
 		strIdx++
 	}
-	digitsInt := strIdx - commaCnt
+	digitsInt := strIdx
 	var digitsFrac int
 	var endIdx int
 	if strIdx < len(str) && str[strIdx] == '.' {
@@ -423,6 +419,9 @@ func (d *MyDecimal) FromString(str []byte) error {
 			endIdx++
 		}
 		digitsFrac = endIdx - strIdx - 1
+	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E') {
+		*d = zeroMyDecimal
+		return ErrBadNumber
 	} else {
 		digitsFrac = 0
 		endIdx = strIdx
@@ -447,9 +446,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	var word int32
 	var innerIdx int
 	for digitsInt > 0 {
-		if strIdx--; str[strIdx] == ',' {
-			continue
-		}
+		strIdx--
 		digitsInt--
 		word += int32(str[strIdx]-'0') * powers10[innerIdx]
 		innerIdx++
