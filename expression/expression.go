@@ -333,9 +333,6 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	for _, expr := range exprList {
 		tp := expr.GetType()
 		eType := tp.EvalType()
-		if expr.GetType().Hybrid() {
-			eType = types.ETInt
-		}
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
 		}
