@@ -3466,3 +3466,21 @@ func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
 }
+
+func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
+		wg.Done()
+	}()
+	time.Sleep(2 * time.Second)
+	pi := tk.Se.ShowProcess()
+	c.Assert(pi, NotNil)
+	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
+	c.Assert(pi.Plan, IsNil)
+	wg.Wait()
+}
