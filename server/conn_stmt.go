@@ -194,8 +194,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		// server and fallback to TiKV.
 		prevErr := err
 		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
 		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-		cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
 	}
