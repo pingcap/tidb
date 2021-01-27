@@ -1117,7 +1117,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-<<<<<<< HEAD
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
 // Why we need a struct to wrap a RecordSet and provide another RecordSet?
 // This is because there are so many session state related things that definitely not belongs to the original
@@ -1134,10 +1133,7 @@ func (rs *execStmtResult) Close() error {
 	return finishStmt(context.Background(), se, err, rs.sql)
 }
 
-func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
-=======
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (recordSets []sqlexec.RecordSet, err error) {
->>>>>>> ae0057da7... *: preventing SQL injection (#22499)
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
