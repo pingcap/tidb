@@ -256,7 +256,7 @@ func NewTestRPCClient(security config.Security) Client {
 	return newRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -274,7 +274,7 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg 
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
