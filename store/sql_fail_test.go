@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv_test
+package store
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
-	. "github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -44,14 +44,14 @@ type testSQLSerialSuite struct {
 
 type testSQLSuiteBase struct {
 	OneByOneSuite
-	store Storage
+	store tikv.Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
-	s.store = NewTestStore(c).(Storage)
+	s.store = NewTestStore(c).(tikv.Storage)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
 	if *WithTiKV {
 		session.ResetStoreForWithTiKVTest(s.store)
@@ -99,7 +99,7 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 }
 
 func TestMain(m *testing.M) {
-	ReadTimeoutMedium = 2 * time.Second
+	tikv.ReadTimeoutMedium = 2 * time.Second
 	os.Exit(m.Run())
 }
 
@@ -116,7 +116,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 		enable := true
 		visited := make(chan int, 1)
 		timeouted := false
-		timeout := ReadTimeoutMedium + 100*time.Second
+		timeout := tikv.ReadTimeoutMedium + 100*time.Second
 		ctx := context.WithValue(context.Background(), mock.HookKeyForTest("mockTiKVStreamRecvHook"), func(ctx context.Context) {
 			if !enable {
 				return
