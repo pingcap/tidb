@@ -43,7 +43,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 	// Avoid using async commit logic.
-	s.ctx = context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(0))
+	s.ctx = context.WithValue(context.Background(), util.SessionID, uint64(0))
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {

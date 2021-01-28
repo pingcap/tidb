@@ -239,7 +239,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	// sessionID is used for log.
 	var sessionID uint64
-	val := ctx.Value(util.SessionIDCtxKey)
+	val := ctx.Value(util.SessionID)
 	if val != nil {
 		sessionID = val.(uint64)
 	}
@@ -434,7 +434,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			// sessionID is used for log.
 			var sessionID uint64
 			var err error
-			val := ctx.Value(util.SessionIDCtxKey)
+			val := ctx.Value(util.SessionID)
 			if val != nil {
 				sessionID = val.(uint64)
 			}

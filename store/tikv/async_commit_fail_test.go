@@ -56,7 +56,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	t1 := s.beginAsyncCommit(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = t1.Commit(ctx)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
@@ -98,7 +98,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("z"), []byte("z"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = t1.Commit(ctx)
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("%s", errors.ErrorStack(err)))
@@ -115,7 +115,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 
 	// PointGet cannot ignore async commit transactions' locks.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err := txn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(txn.committer.isAsyncCommit(), IsTrue)
@@ -165,7 +165,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	var sessionID uint64 = 0
 	test := func(keys []string, values []string) {
 		sessionID++
-		ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, sessionID)
+		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 
 		txn := s.beginAsyncCommit(c)
 		for i := range keys {
@@ -226,7 +226,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
 	}()
 
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = txn.Commit(ctx)
 	c.Assert(err, NotNil)
 	c.Assert(txn.committer.mu.undeterminedErr, NotNil)

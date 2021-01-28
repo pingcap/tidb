@@ -67,10 +67,10 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 
 type sessionIDCtxKey struct{}
 
-// SessionIDCtxKey is the context key type to mark a session.
-var SessionIDCtxKey = sessionIDCtxKey{}
+// SessionID is the context key type to mark a session.
+var SessionID = sessionIDCtxKey{}
 
 // SetSessionCtx sets session id into context
 func SetSessionCtx(ctx context.Context, sessionID uint64) context.Context {
-	return context.WithValue(ctx, SessionIDCtxKey, sessionID)
+	return context.WithValue(ctx, SessionID, sessionID)
 }

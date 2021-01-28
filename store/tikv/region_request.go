@@ -423,7 +423,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 
 	var sessionID uint64
-	if v := bo.ctx.Value(util.SessionIDCtxKey); v != nil {
+	if v := bo.ctx.Value(util.SessionID); v != nil {
 		sessionID = v.(uint64)
 	}
 

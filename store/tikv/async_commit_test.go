@@ -334,7 +334,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		s.putKV(c, []byte("k1"), []byte("v1"), true)
 
 		sessionID++
-		ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, sessionID)
+		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 		txn1 := s.beginAsyncCommit(c)
 		txn1.SetOption(kv.Pessimistic, isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
@@ -375,7 +375,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	// t2 commits earlier than t1
 	err = t2.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -397,7 +397,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), util.SessionIDCtxKey, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
