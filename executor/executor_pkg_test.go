@@ -452,7 +452,7 @@ func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
 }
 
 func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
-	if runtime.Version() < `go1.15` {
+	if runtime.Version() < `go1.13` {
 		c.Skip("Unsupported version")
 	}
 	type testCase struct {
