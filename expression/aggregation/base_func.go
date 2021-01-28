@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -180,13 +179,19 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
+		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+21, 0
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+22, mysql.MaxDecimalWidth), a.Args[0].GetType().Decimal
+		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+22, a.Args[0].GetType().Decimal
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
@@ -214,7 +219,10 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = utils.MinInt(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
+		a.RetTp.Flen = a.Args[0].GetType().Flen+types.DivFracIncr
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
