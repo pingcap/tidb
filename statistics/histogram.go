@@ -1466,6 +1466,7 @@ type bucket4Merging struct {
 	repeat int64
 	ndv int64
 	count int64
+	disjointNDV int64
 }
 
 func newBucket4Meging() *bucket4Merging {
@@ -1496,7 +1497,106 @@ func (hg *Histogram) buildBucket4Merging(buckets []*bucket4Merging) {
 	}
 }
 
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) *Histogram {
+func (b *bucket4Merging) Clone() bucket4Merging {
+	return bucket4Merging{
+		lower: b.lower.Clone(),
+		upper: b.upper.Clone(),
+		repeat: b.repeat,
+		ndv: b.ndv,
+		count: b.count,
+	}
+}
+
+func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging) error {
+	if left.ndv == 0 {
+		return nil
+	}
+	if b.ndv == 0 {
+		b.lower = left.lower.Clone()
+		b.upper = left.upper.Clone()
+		b.ndv = left.ndv
+		return nil
+	}
+	upperCompare, err := b.upper.CompareDatum(sc, left.upper)
+	if err != nil {
+		return err
+	}
+	if upperCompare < 0 {
+		return errors.Errorf("illegal bucket order")
+	}
+	if upperCompare == 0 {
+		lowerCompare, err := b.lower.CompareDatum(sc, left.lower)
+		if err != nil {
+			return err
+		}
+		if lowerCompare < 0 {
+			return errors.Errorf("illegal bucket order")
+		}
+		if lowerCompare == 0 {
+			if left.ndv > b.ndv {
+				b.ndv = left.ndv
+			}
+			return nil
+		}
+		ratio := calcFraction4Datums(left.lower, left.upper, b.lower)
+		b.ndv = int64(ratio * float64(left.ndv) + math.Max((1-ratio)*float64(left.ndv), float64(b.ndv)))
+		return nil
+	}
+	lowerCompareUpper, err := b.lower.CompareDatum(sc, left.upper)
+	if err != nil {
+		return err
+	}
+	if lowerCompareUpper >= 0 {
+		b.upper = left.upper.Clone()
+		b.lower = left.lower.Clone()
+		b.disjointNDV += left.ndv
+		b.ndv = 0
+		return nil
+	}
+	upperRatio := calcFraction4Datums(b.lower, b.upper, left.upper)
+	lowerCompare, err := b.lower.CompareDatum(sc, left.lower)
+	if err != nil {
+		return err
+	}
+	if lowerCompare >= 0 {
+		lowerRatio := calcFraction4Datums(left.lower, left.upper, b.lower)
+		b.ndv = int64(lowerRatio * float64(left.ndv) +
+						math.Max((1-lowerRatio)*float64(left.ndv), upperRatio * float64(b.ndv)) +
+						(1-upperRatio) * float64(b.ndv))
+		return nil
+	}
+	lowerRatio := calcFraction4Datums(b.lower, b.upper, left.lower)
+	b.ndv = int64(lowerRatio * float64(b.ndv) +
+					math.Max(float64(left.ndv), (upperRatio - lowerRatio) * float64(b.ndv)) +
+					(1-upperRatio) * float64(b.ndv))
+	return nil
+}
+
+func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging, l int, r int) *bucket4Merging {
+	res := bucket4Merging{}
+	res.upper = buckets[r-1].upper.Clone()
+	tmp := buckets[r-1].Clone()
+	for i := r-1; i >= l; i-- {
+		res.count += buckets[i].count
+		compare, err := buckets[i].upper.CompareDatum(sc, buckets[r-1].upper)
+		if err != nil {
+			return nil
+		}
+		if compare == 0 {
+			res.repeat += buckets[i].repeat
+		}
+		if i != r-1 {
+			err := tmp.mergeBucketNDV(sc, buckets[i])
+			if err != nil {
+				return nil
+			}
+		}
+	}
+	res.ndv = tmp.ndv + tmp.disjointNDV
+	return &res
+}
+
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber int64
 	for _, hist := range hists {
 		totNull += hist.NullCount
@@ -1507,22 +1607,56 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	expSize := totCount/expBucketNumber
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
+	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 	for _, hist := range hists {
 		hist.buildBucket4Merging(buckets)
 	}
 	sort.Slice(buckets, func(i, j int) bool {
 		// TODO: need handle error
 		res, _ := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
+		if res != 0 {
+			return res < 0
+		}
+		// TODO: need handle error
+		res, _ = buckets[i].lower.CompareDatum(sc, buckets[j].lower)
 		return res < 0
 	})
 	var sum int64
 	r := len(buckets)
-	bucketCount := 1
-	for i := len(buckets) - 1; i >= 0; i-- {
+	bucketCount := int64(1)
+	for i := len(buckets) - 1; i >= 1; i-- {
 		sum += buckets[i].count
-		if sum > expSize * bucketNumber {
-			mergePartitionBuckets()
+		if sum > expSize * bucketCount {
+			for ; i > 1; i--{
+				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
+				if err == nil || res != 0 {
+					break
+				}
+			}
+			merged := mergePartitionBuckets(sc, buckets, i, r)
+			if merged == nil {
+				return nil, errors.Errorf("merge partition-level hist failed")
+			}
+			globalBuckets = append(globalBuckets, merged)
 			r = i
+			bucketCount++
+			sum = 0
 		}
 	}
+	if sum > 0 {
+		merged := mergePartitionBuckets(sc, buckets, 1, r)
+		if merged == nil {
+			return nil, errors.Errorf("merge partition-level hist failed")
+		}
+		globalBuckets = append(globalBuckets, merged)
+	}
+	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
+		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
+	}
+	globalBuckets[0].lower = buckets[0].upper.Clone()
+	for i := 1; i < len(globalBuckets); i++ {
+		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+	}
+	// TODO: need to convert to *Histogram
+	//return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, hists[0].), nil
 }
