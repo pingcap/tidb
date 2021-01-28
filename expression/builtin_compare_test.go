@@ -310,6 +310,10 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 			"12:59:59", "123", false, false,
 		},
 		{
+			[]interface{}{duration, duration},
+			"12:59:59", "12:59:59", false, false,
+		},
+		{
 			[]interface{}{"123", nil, "123"},
 			nil, nil, true, false,
 		},
