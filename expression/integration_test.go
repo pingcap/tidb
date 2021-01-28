@@ -7610,7 +7610,6 @@ func (s *testIntegrationSuite) TestDatetimeUserVariable(c *C) {
 
 func (s *testIntegrationSuite) TestIssue22098(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-<<<<<<< HEAD
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `ta` (" +
 		"  `k` varchar(32) NOT NULL DEFAULT ' '," +
@@ -7668,7 +7667,13 @@ func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	tk.MustQuery(`select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000000"))
 	tk.MustQuery(`select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
-=======
+}
+
+func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
@@ -7679,15 +7684,4 @@ func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
->>>>>>> 5153a4155... expression: fix incorrect collation when cast non-string type arg to string type (#19186)
-}
-
-func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
-	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 }
