@@ -978,6 +978,10 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 		// If the partition expression is col, use constExpr.
 		constExpr = con
 	}
+	// If the partition expression is related with more than one columns such as 'a + b' or 'a * b' or something else,
+	// the constExpr may not a really constant when coming here.
+	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
+	// the constExpr is '2 + b' after the replacement which we can't evaluate.
 	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
 		return ret, false
 	}
