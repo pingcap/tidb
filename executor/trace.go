@@ -131,7 +131,7 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 }
 
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
-	rs, err := se.Execute(ctx, e.stmtNode.Text())
+	rs, err := se.ExecuteInternal(ctx, e.stmtNode.Text())
 	if rs == nil {
 		if err != nil {
 			var errCode uint16

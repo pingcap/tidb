@@ -403,7 +403,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
-	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	_, err := gs.se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	return err
 }
 

@@ -106,7 +106,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() {
 		if !isCommit {
-			_, err := internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback")
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "rollback")
 			if err != nil {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
@@ -114,7 +114,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.releaseSysSession(internalSession)
 	}()
 
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "begin")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			user := fmt.Sprintf(`('%s', '%s', '%s')`, user.User.Hostname, user.User.Username, pwd)
 			sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, authentication_string) VALUES %s;`, mysql.SystemDB, mysql.UserTable, user)
-			_, err := internalSession.(sqlexec.SQLExecutor).Execute(ctx, sql)
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 			if err != nil {
 				return err
 			}
@@ -193,7 +193,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "commit")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
 	if err != nil {
 		return err
 	}
@@ -275,28 +275,28 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 // initGlobalPrivEntry inserts a new row into mysql.DB with empty privilege.
 func initGlobalPrivEntry(ctx sessionctx.Context, user string, host string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, PRIV) VALUES ('%s', '%s', '%s')`, mysql.SystemDB, mysql.GlobalPrivTable, host, user, "{}")
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
 // initDBPrivEntry inserts a new row into mysql.DB with empty privilege.
 func initDBPrivEntry(ctx sessionctx.Context, user string, host string, db string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB) VALUES ('%s', '%s', '%s')`, mysql.SystemDB, mysql.DBTable, host, user, db)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
 // initTablePrivEntry inserts a new row into mysql.Tables_priv with empty privilege.
 func initTablePrivEntry(ctx sessionctx.Context, user string, host string, db string, tbl string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB, Table_name, Table_priv, Column_priv) VALUES ('%s', '%s', '%s', '%s', '', '')`, mysql.SystemDB, mysql.TablePrivTable, host, user, db, tbl)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
 // initColumnPrivEntry inserts a new row into mysql.Columns_priv with empty privilege.
 func initColumnPrivEntry(ctx sessionctx.Context, user string, host string, db string, tbl string, col string) error {
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, DB, Table_name, Column_name, Column_priv) VALUES ('%s', '%s', '%s', '%s', '%s', '')`, mysql.SystemDB, mysql.ColumnPrivTable, host, user, db, tbl, col)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -310,7 +310,7 @@ func (e *GrantExec) grantGlobalPriv(ctx sessionctx.Context, user *ast.UserSpec) 
 		return errors.Trace(err)
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET PRIV = '%s' WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.GlobalPrivTable, priv, user.User.Username, user.User.Hostname)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -420,7 +420,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.UserTable, asgns, user.User.Username, user.User.Hostname)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -435,7 +435,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s';`, mysql.SystemDB, mysql.DBTable, asgns, user.User.Username, user.User.Hostname, dbName)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -451,7 +451,7 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, asgns, user.User.Username, user.User.Hostname, dbName, tblName)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -472,7 +472,7 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 			return err
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user.User.Username, user.User.Hostname, dbName, tbl.Meta().Name.O, col.Name.O)
-		_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 		if err != nil {
 			return err
 		}
@@ -648,7 +648,7 @@ func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, priv mysql.Privile
 
 // recordExists is a helper function to check if the sql returns any row.
 func recordExists(ctx sessionctx.Context, sql string) (bool, error) {
-	rs, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return false, err
 	}
@@ -687,7 +687,7 @@ func columnPrivEntryExists(ctx sessionctx.Context, name string, host string, db 
 // Return Table_priv and Column_priv.
 func getTablePriv(ctx sessionctx.Context, name string, host string, db string, tbl string) (string, string, error) {
 	sql := fmt.Sprintf(`SELECT Table_priv, Column_priv FROM %s.%s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
-	rs, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return "", "", err
 	}
@@ -718,7 +718,7 @@ func getTablePriv(ctx sessionctx.Context, name string, host string, db string, t
 // Return Column_priv.
 func getColumnPriv(ctx sessionctx.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	sql := fmt.Sprintf(`SELECT Column_priv FROM %s.%s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
-	rs, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return "", err
 	}

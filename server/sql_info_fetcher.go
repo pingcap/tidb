@@ -167,7 +167,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	}
 	// If we don't catch profile. We just get a explain result.
 	if pprofTime == 0 {
-		rs, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, fmt.Sprintf("explain %s", sql))
+		rs, err := sh.s.(sqlexec.SQLExecutor).ExecuteInternal(reqCtx, fmt.Sprintf("explain %s", sql))
 		if rs != nil {
 			defer terror.Call(rs.Close)
 		}
@@ -262,7 +262,7 @@ type explainAnalyzeResult struct {
 }
 
 func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, resultChan chan<- *explainAnalyzeResult) {
-	rs, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
+	rs, err := sh.s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("explain analyze %s", sql))
 	if err != nil {
 		resultChan <- &explainAnalyzeResult{err: err}
 		return
@@ -300,7 +300,7 @@ func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTabl
 }
 
 func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer) error {
-	rs, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	rs, err := sh.s.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), `show create table %n.%n`, pair.DBName, pair.TableName)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}

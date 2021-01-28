@@ -94,7 +94,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(context.Background(), "begin")
+	_, err = exec.ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -124,7 +124,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	defer h.mu.Unlock()
 
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(context.Background(), "begin")
+	_, err = exec.ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,7 +137,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	}
 	startTS := txn.StartTS()
 	// First of all, we update the version.
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
+	_, err = exec.ExecuteInternal(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
 	if err != nil {
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs sqlexec.RecordSet
-		rs, err = exec.Execute(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", physicalID))
+		rs, err = exec.ExecuteInternal(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", physicalID))
 		if rs != nil {
 			defer terror.Call(rs.Close)
 		}
@@ -188,9 +188,9 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
 	if err == nil {
-		_, err = exec.Execute(ctx, "commit")
+		_, err = exec.ExecuteInternal(ctx, "commit")
 	} else {
-		_, err1 := exec.Execute(ctx, "rollback")
+		_, err1 := exec.ExecuteInternal(ctx, "rollback")
 		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
@@ -198,7 +198,7 @@ func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error)
 
 func execSQLs(ctx context.Context, exec sqlexec.SQLExecutor, sqls []string) error {
 	for _, sql := range sqls {
-		_, err := exec.Execute(ctx, sql)
+		_, err := exec.ExecuteInternal(ctx, sql)
 		if err != nil {
 			return err
 		}

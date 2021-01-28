@@ -139,7 +139,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer h.mu.Unlock()
 
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(context.Background(), "begin")
+	_, err = exec.ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -168,7 +168,7 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(context.Background(), "begin")
+	_, err = exec.ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -196,7 +196,7 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	ctx := context.Background()
-	_, err = exec.Execute(ctx, "begin pessimistic")
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -204,6 +204,6 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 		err = finishTransaction(ctx, exec, err)
 	}()
 	sql := fmt.Sprintf("delete from mysql.stats_extended where status = %d and version < %d", StatsStatusDeleted, version)
-	_, err = exec.Execute(ctx, sql)
+	_, err = exec.ExecuteInternal(ctx, sql)
 	return
 }

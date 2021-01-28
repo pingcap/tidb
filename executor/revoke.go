@@ -73,7 +73,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer func() {
 		if !isCommit {
-			_, err := internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback")
+			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "rollback")
 			if err != nil {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
@@ -81,7 +81,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.releaseSysSession(internalSession)
 	}()
 
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "begin")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "begin")
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), "commit")
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "commit")
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -185,7 +185,7 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s';`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, dbName)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -199,7 +199,7 @@ func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *a
 		return err
 	}
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, dbName, tbl.Meta().Name.O)
-	_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	return err
 }
 
@@ -218,7 +218,7 @@ func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *
 			return err
 		}
 		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
-		_, err = internalSession.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 		if err != nil {
 			return err
 		}
