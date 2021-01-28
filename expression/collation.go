@@ -114,11 +114,6 @@ var (
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
 	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
-<<<<<<< HEAD
-		charset.CollationASCII:   0,
-		charset.CollationLatin1:  1,
-		"utf8_general_ci":        2,
-=======
 		charset.CollationASCII:   1,
 		charset.CollationLatin1:  2,
 		"utf8_general_ci":        3,
@@ -136,11 +131,9 @@ var (
 		"utf8mb4_general_ci":     1,
 		charset.CollationASCII:   3,
 		charset.CollationLatin1:  3,
->>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 		charset.CollationUTF8:    3,
-		"utf8mb4_general_ci":     4,
-		charset.CollationUTF8MB4: 5,
-		charset.CollationBin:     6,
+		charset.CollationUTF8MB4: 3,
+		charset.CollationBin:     4,
 	}
 
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
@@ -163,14 +156,6 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
-<<<<<<< HEAD
-	coer := CoercibilityIgnorable
-	for _, arg := range sf.GetArgs() {
-		if arg.Coercibility() < coer {
-			coer = arg.Coercibility()
-		}
-	}
-=======
 
 	_, _, coer, _ := inferCollation(sf.GetArgs()...)
 
@@ -179,7 +164,6 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		return CoercibilityCoercible
 	}
 
->>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 	return coer
 }
 
@@ -201,41 +185,6 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-<<<<<<< HEAD
-	curCoer := CoercibilityCoercible
-	curCollationPriority := -1
-	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
-	if ctx != nil && ctx.GetSessionVars() != nil {
-		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
-		if dstCharset == "" || dstCollation == "" {
-			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
-		}
-	}
-	hasStrArg := false
-	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
-	for _, e := range exprs {
-		if e.GetType().EvalType() != types.ETString {
-			continue
-		}
-		hasStrArg = true
-
-		coer := e.Coercibility()
-		ft := e.GetType()
-		collationPriority, ok := collationPriority[strings.ToLower(ft.Collate)]
-		if !ok {
-			collationPriority = -1
-		}
-		if coer != curCoer {
-			if coer < curCoer {
-				curCoer, curCollationPriority, dstCharset, dstCollation = coer, collationPriority, ft.Charset, ft.Collate
-			}
-			continue
-		}
-		if !ok || collationPriority <= curCollationPriority {
-			continue
-		}
-		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
-=======
 	dstCollation, dstCharset, _, _ = inferCollation(exprs...)
 	return
 }
@@ -266,7 +215,6 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 				dstCollation, dstCharset = arg.GetType().Collate, arg.GetType().Charset
 			}
 		}
->>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 	}
 
 	return dstCollation, dstCharset, coercibility, true
