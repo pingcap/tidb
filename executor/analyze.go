@@ -747,7 +747,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			}
 		}()
 		var partition string
-		if e.tableID.IsPartitionTable() && e.tblInfo.ID != e.tableID.PartitionID {
+		if e.tableID.IsPartitionTable() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.PartitionID {
 					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
