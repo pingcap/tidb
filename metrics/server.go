@@ -204,6 +204,14 @@ var (
 			Help:      "The maximum number of concurrent executing session",
 		},
 	)
+
+	ConfigStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "config",
+			Name:      "status",
+			Help:      "Status of the TiDB server configurations.",
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
