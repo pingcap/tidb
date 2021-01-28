@@ -126,6 +126,8 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	// ExecuteStmt executes an external statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
+	// Parse is deprecated, use ParseWithParams() instead.
+	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	// ParseWithParams is the parameterized version of Parse: it will try to prevent injection under utf8mb4.
 	// It works like printf() in c, there are following format specifiers:
 	// 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
@@ -1294,7 +1296,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNodes, err := s.ParseWithParams(ctx, sql)
+	stmtNodes, err := s.Parse(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -1310,6 +1312,40 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 	return []sqlexec.RecordSet{rs}, err
+}
+
+// Parse parses a query string to raw ast.StmtNode.
+func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+	parseStartTime := time.Now()
+	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
+		}
+		return nil, util.SyntaxError(err)
+	}
+
+	durParse := time.Since(parseStartTime)
+	s.GetSessionVars().DurationParse = durParse
+	isInternal := s.isInternal()
+	if isInternal {
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+	} else {
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+	}
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	return stmts, nil
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
