@@ -15,8 +15,8 @@ package sqlexec
 
 import (
 	"encoding/json"
-	"time"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/hack"
