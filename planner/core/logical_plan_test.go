@@ -612,26 +612,13 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 }
 
 func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
-	switch p.(type) {
-	case *DataSource:
+	switch v := p.(type) {
+	case *DataSource, *LogicalUnionAll:
 		s.testData.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
-		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
-		for i, col := range p.Schema().Columns {
-			s.testData.OnRecord(func() {
-				colList[i] = col.String()
-			})
-			c.Assert(col.String(), Equals, colList[i], comment)
-		}
-	case *LogicalUnionAll:
-		s.testData.OnRecord(func() {
-			ans[p.ID()] = make([]string, p.Schema().Len())
-		})
-		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
+		c.Assert(ok, IsTrue, Commentf("For %s %T ID %d Not found", comment.CheckCommentString(), v, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, col := range p.Schema().Columns {
 			s.testData.OnRecord(func() {
