@@ -134,6 +134,39 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_general_ci", c)
 }
 
+func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
+	defer testleak.AfterTest(c)()
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	compareTable := []compareTable{
+		{"a", "b", -1},
+		{"a", "A", 0},
+		{"abc", "abc", 0},
+		{"abc", "ab", 1},
+		{"a", "a ", 0},
+		{"a ", "a  ", 0},
+		{"😜", "😃", 0},
+		{"a\t", "a", 1},
+		{"ß", "s", 1},
+		{"ß", "ss", 0},
+	}
+	keyTable := []keyTable{
+		{"a", []byte{0x0E, 0x33}},
+		{"A", []byte{0x0E, 0x33}},
+		{"ß", []byte{0x0F, 0xEA, 0x0F, 0xEA}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x0E, 0xB9, 0x0F, 0x82, 0x0F, 0x82, 0x02, 0x09, 0x02,
+			0xC5, 0x02, 0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x0F, 0xC0, 0x02, 0x09, 0xFF, 0xFD, 0x02,
+			0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x10, 0x6A, 0x02, 0x09, 0x06, 0xFF, 0x02, 0x09, 0x0F,
+			0xB4, 0x10, 0x1F, 0x10, 0x5A}},
+		{"a ", []byte{0x0E, 0x33}},
+		{"ﷻ", []byte{0x13, 0x5E, 0x13, 0xAB, 0x02, 0x09, 0x13, 0x5E, 0x13, 0xAB, 0x13, 0x50, 0x13, 0xAB, 0x13, 0xB7}},
+	}
+
+	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
+	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
+}
+
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	defer SetNewCollationEnabledForTest(false)
 
@@ -164,12 +197,16 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
+	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(83), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(45), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
+	c.Assert(GetCollatorByID(224), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollatorByID(192), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
 
 	SetNewCollationEnabledForTest(false)
@@ -178,11 +215,15 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(83), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(45), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(224), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(192), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binCollator{})
 }

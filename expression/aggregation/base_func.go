@@ -179,10 +179,22 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, 0
+		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+21, 0
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
+		if a.Args[0].GetType().Flen < 0 {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+22, a.Args[0].GetType().Decimal
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
+		if a.Args[0].GetType().Flen < 0 {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
@@ -207,7 +219,13 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = mysql.MaxDecimalWidth
+		a.RetTp.Flen = a.Args[0].GetType().Flen + types.DivFracIncr
+		if a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
+		if a.Args[0].GetType().Flen < 0 {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
