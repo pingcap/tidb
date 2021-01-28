@@ -768,7 +768,7 @@ id	estRows	task	access object	operator info
 Sort_9	1.00	root		tpch.lineitem.l_shipmode:asc
 └─Projection_11	1.00	root		tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg_14	1.00	root		group by:Column#37, funcs:sum(Column#34)->Column#27, funcs:sum(Column#35)->Column#28, funcs:firstrow(Column#36)->tpch.lineitem.l_shipmode
-    └─Projection_43	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#34, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(65,0) BINARY)->Column#35, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
+    └─Projection_43	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#34, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#35, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
       └─IndexJoin_18	10023369.01	root		inner join, inner:TableReader_17, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey, equal cond:eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)
         ├─TableReader_39(Build)	10023369.01	root		data:Selection_38
         │ └─Selection_38	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
