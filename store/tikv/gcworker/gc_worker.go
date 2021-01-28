@@ -1759,7 +1759,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%?' FOR UPDATE`, key)
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -1784,9 +1784,9 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%?', '%?', '%?')
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%?', comment = '%?'`
+			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
 	_, err := se.ExecuteInternal(context.Background(), stmt,

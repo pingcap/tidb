@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%?'`
+	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 )
 
 // CheckGCEnable is use to check whether GC is enable.
