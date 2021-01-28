@@ -213,15 +213,6 @@ var (
 		},
 	)
 
-	TokenLimitGauge = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "token_limit",
-			Help:      "The maximum number of concurrent executing session",
-		},
-	)
-
 	ConfigStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
