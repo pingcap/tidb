@@ -172,9 +172,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
-<<<<<<< HEAD
-	prometheus.MustRegister(TokenLimitGauge)
-=======
 	prometheus.MustRegister(ConfigStatus)
->>>>>>> d4796a82f... server: remove TokenLimitGauge and use ConfigStatus instead. (#22590)
 }

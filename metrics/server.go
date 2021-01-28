@@ -196,16 +196,6 @@ var (
 		},
 	)
 
-<<<<<<< HEAD
-	TokenLimitGauge = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "token_limit",
-			Help:      "The maximum number of concurrent executing session",
-		},
-	)
-=======
 	ConfigStatus = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -213,7 +203,6 @@ var (
 			Name:      "status",
 			Help:      "Status of the TiDB server configurations.",
 		}, []string{LblType})
->>>>>>> d4796a82f... server: remove TokenLimitGauge and use ConfigStatus instead. (#22590)
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
