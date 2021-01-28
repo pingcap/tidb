@@ -219,7 +219,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = a.Args[0].GetType().Flen+types.DivFracIncr
+		a.RetTp.Flen = a.Args[0].GetType().Flen + types.DivFracIncr
 		if a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
