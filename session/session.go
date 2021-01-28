@@ -1372,7 +1372,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
 	}
 	if len(stmts) != 1 {
-		err = errors.New("run multiple statements internally is not supported:" + sql)
+		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
