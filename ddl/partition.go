@@ -1241,29 +1241,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	if d.infoHandle != nil && d.infoHandle.IsValid() {
-		bundles := make([]*placement.Bundle, 0, 2)
-		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
-		ptOK = ptOK && !ptBundle.IsEmpty()
-		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
-		ntOK = ntOK && !ntBundle.IsEmpty()
-		if ptOK && ntOK {
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		} else if ptOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
-		} else if ntOK {
-			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
-			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
-		}
-		err = infosync.PutRuleBundles(nil, bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-	}
-
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
@@ -1321,6 +1298,31 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
+		}
+	}
+
+	// the follow code is a swap function for rules of two partitions
+	// though partitions has exchanged their ID, swap still take effect
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
+		bundles := make([]*placement.Bundle, 0, 2)
+		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
+		ptOK = ptOK && !ptBundle.IsEmpty()
+		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
+		ntOK = ntOK && !ntBundle.IsEmpty()
+		if ptOK && ntOK {
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		} else if ptOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+		} else if ntOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		}
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 	}
 
