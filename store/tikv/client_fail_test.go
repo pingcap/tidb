@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -53,7 +52,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	})
 
 	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
-	_, err := rpcClient.getConnArray(addr, true, func(cfg *tidbcfg.TiKVClient) { cfg.GrpcConnectionCount = 1 })
+	_, err := rpcClient.getConnArray(addr, true, func(cfg *config.TiKVClient) { cfg.GrpcConnectionCount = 1 })
 	c.Assert(err, IsNil, Commentf("cannot establish local connection due to env problems(e.g. heavy load in test machine), please retry again"))
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
