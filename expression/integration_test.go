@@ -7648,7 +7648,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00')", "[table:1366]Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1366 Incorrect timestamp value: '0000-00-00 20:00:00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
 			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -7699,7 +7699,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 		{
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1366 Incorrect date value: '2000-01-00'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00'"))
 			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
@@ -7727,7 +7727,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1366]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
 			tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1366 Incorrect datetime value: '2000-00-01'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
 			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
