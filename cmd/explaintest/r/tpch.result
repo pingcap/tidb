@@ -711,10 +711,10 @@ and n_name = 'MOZAMBIQUE'
 order by
 value desc;
 id	estRows	task	access object	operator info
-Projection_52	1304801.67	root		tpch.partsupp.ps_partkey, Column#18
-└─Sort_53	1304801.67	root		Column#18:desc
-  └─Selection_55	1304801.67	root		gt(Column#18, NULL)
-    └─HashAgg_58	1631002.09	root		group by:Column#44, funcs:sum(Column#42)->Column#18, funcs:firstrow(Column#43)->tpch.partsupp.ps_partkey
+Projection_52	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
+└─Sort_53	1304801.67	root		Column#35:desc
+  └─Selection_55	1304801.67	root		gt(Column#35, NULL)
+    └─HashAgg_58	1631002.09	root		group by:Column#44, funcs:sum(Column#42)->Column#35, funcs:firstrow(Column#43)->tpch.partsupp.ps_partkey
       └─Projection_79	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#42, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
         └─HashJoin_62	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
           ├─HashJoin_70(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
