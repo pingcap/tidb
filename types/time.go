@@ -726,7 +726,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	var truncatedOrIncorrect bool
 	switch len(seps) {
 	case 0:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs("datetime", str))
 	case 1:
 		l := len(seps[0])
 		// Values specified as numbers
@@ -817,7 +817,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			err = nil
 		}
 	case 2:
-<<<<<<< HEAD
 		// YYYY-MM is not valid
 		if len(fracStr) == 0 {
 			return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
@@ -826,9 +825,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		// YYYY-MM.DD, DD is treat as fracStr
 		err = scanTimeArgs(append(seps, fracStr), &year, &month, &day)
 		fracStr = ""
-=======
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
->>>>>>> d1d5cc433... time: fix parse datetime won't truncate the reluctant string (#22232)
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -844,9 +840,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-<<<<<<< HEAD
-		return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
-=======
 		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
 		seps = seps[:6]
 		// YYYY-MM-DD HH-MM-SS
@@ -855,7 +848,6 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		}
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
->>>>>>> d1d5cc433... time: fix parse datetime won't truncate the reluctant string (#22232)
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)

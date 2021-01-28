@@ -128,15 +128,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		"20170118.999",
 		"2018-01",
 		"2018.01",
-<<<<<<< HEAD
-=======
 		"20170118-12:34",
 		"20170118-1234",
 		"170118-1234",
 		"170118-12",
 		"1710-10",
 		"1710-1000",
->>>>>>> d1d5cc433... time: fix parse datetime won't truncate the reluctant string (#22232)
 	}
 
 	for _, test := range errTable {
