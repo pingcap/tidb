@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
