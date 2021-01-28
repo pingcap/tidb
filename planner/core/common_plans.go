@@ -762,19 +762,21 @@ type Delete struct {
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
 	TableID int64
-	// PartitionID is only used in the task of analyze partition table in 'dynamic-only' mode.
+	// PartitionID is used for the construction of partition table statistics in 'dynamic-only' mode.
 	// In other situation, the PartitionID is equal to -1.
 	PartitionID int64
 }
 
-// GetID4AnalyzeTask is used to obtain the table ID in the build analyze task.
-// When the 'PartitionID != -1', it means we need to build analyze task for partition table. So we need PartitionId to build the analyze task.
-// As for the tableID here, it will be used to build the global-level stats of the partition table
-func (h *AnalyzeTableID) GetID4AnalyzeTask() int64 {
+// GetStatisticsID is used to obtain the table ID to build statistics.
+// Under normal circumstances('PartitionID == -1'), we directly use the TableID to generate analyze task for the construction of the statistics.
+// But when the 'PartitionID != -1', it means we need to build statistics for the partition table. So we need PartitionId to generate analyze task.
+// And as for the TableID here, it will be used to build the global-level stats of the partition table.
+func (h *AnalyzeTableID) GetStatisticsID() int64 {
+	statisticsID := h.TableID
 	if h.PartitionID != -1 {
-		return h.PartitionID
+		statisticsID = h.PartitionID
 	}
-	return h.TableID
+	return statisticsID
 }
 
 // IsPartitionTable indicates whether the table is partition table.
