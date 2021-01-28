@@ -291,7 +291,7 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -1626,7 +1626,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	defer se.Close()
 
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1651,7 +1651,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 	se.RollbackTxn(ctx)
 
-	_, err = se.Execute(ctx, "BEGIN")
+	_, err = se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1760,7 +1760,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	se := createSession(w.store)
 	defer se.Close()
 	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.Execute(ctx, stmt)
+	rs, err := se.ExecuteInternal(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -1791,7 +1791,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 		key, value, gcVariableComments[key])
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
+	_, err := se.ExecuteInternal(context.Background(), stmt)
 	logutil.BgLogger().Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),

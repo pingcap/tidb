@@ -112,7 +112,7 @@ func (s *testMemTableReaderSuite) TestMetricTableData(c *C) {
 	}
 
 	for _, cas := range cases {
-		rs, err := tk.Se.Execute(ctx, cas.sql)
+		rs, err := tk.Se.ExecuteInternal(ctx, cas.sql)
 		c.Assert(err, IsNil)
 		result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("sql: %s", cas.sql))
 		result.Check(testkit.Rows(cas.exp...))

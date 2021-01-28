@@ -525,7 +525,7 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 }
 
 func mustExec(c *C, se session.Session, sql string) {
-	_, err := se.Execute(context.Background(), sql)
+	_, err := se.ExecuteInternal(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 

@@ -113,7 +113,7 @@ func BenchmarkBasic(b *testing.B) {
 	}()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select 1")
+		rs, err := se.ExecuteInternal(ctx, "select 1")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -133,7 +133,7 @@ func BenchmarkTableScan(b *testing.B) {
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t")
+		rs, err := se.ExecuteInternal(ctx, "select * from t")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func BenchmarkExplainTableScan(b *testing.B) {
 	prepareBenchData(se, "int", "%v", 0)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "explain select * from t")
+		rs, err := se.ExecuteInternal(ctx, "explain select * from t")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -173,7 +173,7 @@ func BenchmarkTableLookup(b *testing.B) {
 	prepareBenchData(se, "int", "%d", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where pk = 64")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where pk = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -193,7 +193,7 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 	prepareBenchData(se, "int", "%d", 0)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "explain select * from t where pk = 64")
+		rs, err := se.ExecuteInternal(ctx, "explain select * from t where pk = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func BenchmarkStringIndexScan(b *testing.B) {
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col > 'hello'")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col > 'hello'")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -233,7 +233,7 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "explain select * from t where col > 'hello'")
+		rs, err := se.ExecuteInternal(ctx, "explain select * from t where col > 'hello'")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -253,7 +253,7 @@ func BenchmarkStringIndexLookup(b *testing.B) {
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col = 'hello 64'")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col = 'hello 64'")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -273,7 +273,7 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col >= 0")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col >= 0")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -293,7 +293,7 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col = 64")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -313,7 +313,7 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col >= 0")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col >= 0")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -333,7 +333,7 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where col = 64.1234")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where col = 64.1234")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -385,7 +385,7 @@ func BenchmarkSort(b *testing.B) {
 	prepareSortBenchData(se, "int", "%v", bigCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t order by col limit 50")
+		rs, err := se.ExecuteInternal(ctx, "select * from t order by col limit 50")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -405,7 +405,7 @@ func BenchmarkJoin(b *testing.B) {
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t a join t b on a.col = b.col")
+		rs, err := se.ExecuteInternal(ctx, "select * from t a join t b on a.col = b.col")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -425,7 +425,7 @@ func BenchmarkJoinLimit(b *testing.B) {
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t a join t b on a.col = b.col limit 1")
+		rs, err := se.ExecuteInternal(ctx, "select * from t a join t b on a.col = b.col limit 1")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1472,7 +1472,7 @@ partition p1023 values less than (738538)
 )`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where dt > to_days('2019-04-01 21:00:00') and dt < to_days('2019-04-07 23:59:59')")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where dt > to_days('2019-04-01 21:00:00') and dt < to_days('2019-04-07 23:59:59')")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1504,7 +1504,7 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	mustExecute(se, build.String())
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1528,7 +1528,7 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where id = 2330")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where id = 2330")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1552,7 +1552,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rs, err := se.Execute(ctx, "select * from t where id = 2330")
+		rs, err := se.ExecuteInternal(ctx, "select * from t where id = 2330")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1560,7 +1560,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		rs, err = se.Execute(ctx, "select * from t where id = 1233 or id = 1512")
+		rs, err = se.ExecuteInternal(ctx, "select * from t where id = 1233 or id = 1512")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1568,7 +1568,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		rs, err = se.Execute(ctx, "select * from t where id in (117, 1233, 15678)")
+		rs, err = se.ExecuteInternal(ctx, "select * from t where id in (117, 1233, 15678)")
 		if err != nil {
 			b.Fatal(err)
 		}

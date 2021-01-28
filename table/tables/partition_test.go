@@ -66,11 +66,11 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 	ctx := context.Background()
-	_, err := ts.se.Execute(ctx, "use test")
+	_, err := ts.se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(ctx, "drop table if exists t1, t2;")
+	_, err = ts.se.ExecuteInternal(ctx, "drop table if exists t1, t2;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(ctx, createTable1)
+	_, err = ts.se.ExecuteInternal(ctx, createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -99,7 +99,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 
 	// Make the changes visible.
-	_, err = ts.se.Execute(context.Background(), "commit")
+	_, err = ts.se.ExecuteInternal(context.Background(), "commit")
 	c.Assert(err, IsNil)
 
 	// Check index count equals to data count.
@@ -111,14 +111,14 @@ PARTITION BY RANGE ( id ) (
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
-	ts.se.Execute(context.Background(), "rollback")
+	ts.se.ExecuteInternal(context.Background(), "rollback")
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p3 VALUES LESS THAN MAXVALUE
 )`
-	_, err = ts.se.Execute(context.Background(), createTable2)
+	_, err = ts.se.ExecuteInternal(context.Background(), createTable2)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
@@ -130,7 +130,7 @@ PARTITION BY RANGE ( id ) (
 	(
        partition p0 values less than (10)
 	)`
-	_, err = ts.se.Execute(context.Background(), createTable3)
+	_, err = ts.se.ExecuteInternal(context.Background(), createTable3)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
@@ -146,7 +146,7 @@ PARTITION BY RANGE ( id ) (
 	(
 	partition p0 values less than (10)
 	);`
-	_, err = ts.se.Execute(context.Background(), createTable4)
+	_, err = ts.se.ExecuteInternal(context.Background(), createTable4)
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
@@ -156,13 +156,13 @@ PARTITION BY RANGE ( id ) (
 }
 
 func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
-	_, err := ts.se.Execute(context.Background(), "use test")
+	_, err := ts.se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err = ts.se.ExecuteInternal(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
+	_, err = ts.se.ExecuteInternal(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
+	_, err = ts.se.ExecuteInternal(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -190,7 +190,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	c.Assert(err, IsNil)
 
 	// Make the changes visible.
-	_, err = ts.se.Execute(context.Background(), "commit")
+	_, err = ts.se.ExecuteInternal(context.Background(), "commit")
 	c.Assert(err, IsNil)
 
 	// Check index count equals to data count.
@@ -200,7 +200,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 2").Check(testkit.Rows("3"))
 
 	// Test for partition expression is negative number.
-	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
+	_, err = ts.se.ExecuteInternal(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
 	c.Assert(err, IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
@@ -217,7 +217,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
+	_, err = ts.se.ExecuteInternal(context.Background(), "drop table if exists t1, t2;")
 	c.Assert(err, IsNil)
 }
 
@@ -231,9 +231,9 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	_, err := ts.se.ExecuteInternal(context.Background(), "Drop table if exists test.t1;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), createTable1)
+	_, err = ts.se.ExecuteInternal(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -248,12 +248,12 @@ PARTITION BY RANGE ( id ) (
 }
 
 func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
-	_, err := ts.se.Execute(context.Background(), "use test")
+	_, err := ts.se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err = ts.se.ExecuteInternal(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
+	_, err = ts.se.ExecuteInternal(context.Background(), `create table t1 (id int)
 							partition by range (id) (
 							partition p0 values less than (4),
 							partition p1 values less than (7),

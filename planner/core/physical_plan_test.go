@@ -83,7 +83,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
@@ -118,7 +118,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
@@ -157,9 +157,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	se.ExecuteInternal(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -198,7 +198,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -233,7 +233,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -271,7 +271,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -305,7 +305,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -345,8 +345,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "use test")
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	se.ExecuteInternal(context.Background(), "use test")
+	se.ExecuteInternal(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -385,7 +385,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -420,9 +420,9 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	se.ExecuteInternal(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
 	var output []struct {
 		SQL  string
@@ -504,7 +504,7 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 	}()
 	se, err := session.CreateSession4Test(overrideStore{store})
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	sql := "select * from t where a in (1, 10, 20)"
@@ -611,7 +611,7 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
@@ -642,7 +642,7 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
 	stmt, err := s.ParseOneStmt(sql, "", "")
@@ -666,7 +666,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
@@ -697,7 +697,7 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
@@ -738,7 +738,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -775,7 +775,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -827,7 +827,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
@@ -1168,7 +1168,7 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1215,7 +1215,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -1263,7 +1263,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -1312,7 +1312,7 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -1351,13 +1351,13 @@ func (s *testPlanSuite) TestInlineProjection(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
+	_, err = se.ExecuteInternal(ctx, `drop table if exists test.t1, test.t2;`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -1395,7 +1395,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	tests := []struct {
 		sql  string
@@ -1466,15 +1466,15 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2, test.t;`)
+	_, err = se.ExecuteInternal(ctx, `drop table if exists test.t1, test.t2, test.t;`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
+	_, err = se.ExecuteInternal(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
@@ -1538,11 +1538,11 @@ func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, o
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
 
 	for _, v := range vars {
-		_, err = se.Execute(ctx, v)
+		_, err = se.ExecuteInternal(ctx, v)
 		c.Assert(err, IsNil)
 	}
 
@@ -1607,20 +1607,20 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.t1`)
+	_, err = se.ExecuteInternal(ctx, `drop table if exists test.t1`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t1(a bigint, index idx_a(a));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t1(a bigint, index idx_a(a));`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.t2(a bigint, index idx_a(a));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.t2(a bigint, index idx_a(a));`)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute(ctx, "drop database if exists test2")
+	_, err = se.ExecuteInternal(ctx, "drop database if exists test2")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "create database test2")
+	_, err = se.ExecuteInternal(ctx, "create database test2")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, "use test2")
+	_, err = se.ExecuteInternal(ctx, "use test2")
 	c.Assert(err, IsNil)
 
 	var input []string
@@ -1656,14 +1656,14 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	_, err = se.Execute(ctx, "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.tt`)
+	_, err = se.ExecuteInternal(ctx, `drop table if exists test.tt`)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	_, err = se.ExecuteInternal(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
 	c.Assert(err, IsNil)
 
-	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
+	_, err = se.ExecuteInternal(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
 	c.Assert(err, IsNil)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)

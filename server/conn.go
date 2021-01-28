@@ -1068,7 +1068,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
+	stmts, err := cc.ctx.ParseWithParams(ctx, "use %n", db)
 	if err != nil {
 		return err
 	}
@@ -1410,7 +1410,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
-	stmts, err := cc.ctx.Parse(ctx, sql)
+	stmts, err := cc.ctx.ParseWithParams(ctx, sql)
 	if err != nil {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err

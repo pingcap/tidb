@@ -97,7 +97,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -107,7 +107,7 @@ func newBenchDB() *benchDB {
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rs, err := ut.session.Execute(context.Background(), sql)
+	rs, err := ut.session.ExecuteInternal(context.Background(), sql)
 	defer func() {
 		if rs != nil {
 			err = rs.Close()

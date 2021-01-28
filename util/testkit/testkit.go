@@ -159,7 +159,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	if len(args) == 0 {
 		sc := tk.Se.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
-		stmts, err := tk.Se.Parse(ctx, sql)
+		stmts, err := tk.Se.ParseWithParams(ctx, sql)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -165,7 +165,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 	}
 
 	for _, cs := range cases {
-		rs, err := tk.Se.Execute(ctx, cs.sql)
+		rs, err := tk.Se.ExecuteInternal(ctx, cs.sql)
 		c.Assert(err, IsNil)
 		result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("SQL: %v", cs.sql))
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
@@ -288,7 +288,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.ExecuteInternal(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -325,7 +325,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	}
 
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	rs, err = tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err = tk.Se.ExecuteInternal(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs, Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -392,7 +392,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.ExecuteInternal(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -452,7 +452,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+	rs, err := tk.Se.ExecuteInternal(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
 		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance','leader-drop')
 		order by item`)
@@ -558,7 +558,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
+	rs, err := tk.Se.ExecuteInternal(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -646,7 +646,7 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+	rs, err := tk.Se.ExecuteInternal(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance, value, reference, details from information_schema.inspection_result
 		where rule='node-load' order by item, value`)
 	c.Assert(err, IsNil)
@@ -693,7 +693,7 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	ctx := s.setupForInspection(c, mockData, configurations)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
+	rs, err := tk.Se.ExecuteInternal(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs, Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))

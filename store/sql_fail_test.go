@@ -83,7 +83,7 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 
 	go func() {
 		defer wg.Done()
-		rs, err := se.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
+		rs, err := se.ExecuteInternal(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if rs != nil {
 			defer terror.Call(rs.Close)
 		}
@@ -131,7 +131,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 			enable = false
 		})
 
-		rs, err := tk.Se.Execute(ctx, "select * from cop_stream_timeout")
+		rs, err := tk.Se.ExecuteInternal(ctx, "select * from cop_stream_timeout")
 		c.Assert(err, IsNil)
 
 		req := rs.NewChunk()
@@ -171,7 +171,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 			enable = false
 		})
 
-		rs, err := tk.Se.Execute(ctx, "select * from cop_stream_timeout")
+		rs, err := tk.Se.ExecuteInternal(ctx, "select * from cop_stream_timeout")
 		c.Assert(err, IsNil)
 
 		req := rs.NewChunk()
