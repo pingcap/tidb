@@ -21,14 +21,13 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -108,13 +107,13 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 }
 
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
-	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
+	if val, err := MockSplitRegionTimeout.Eval(); err == nil {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
 				<-bo.ctx.Done()
 			}
 		}
-	})
+	}
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
@@ -217,11 +216,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 		}
 		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
-		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
+		if val, err2 := MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
 				err = ErrPDServerTimeout
 			}
-		})
+		}
 
 		if err == nil {
 			break

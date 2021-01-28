@@ -33,12 +33,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
+	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -118,7 +119,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	cfg := config.GetGlobalConfig()
+	cfg := tidbcfg.GetGlobalConfig()
 	var (
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
@@ -279,7 +280,7 @@ func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		client := config.GetGlobalConfig().TiKVClient
+		client := tidbcfg.GetGlobalConfig().TiKVClient
 		for _, opt := range opts {
 			opt(&client)
 		}
@@ -363,7 +364,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+	if tidbcfg.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
