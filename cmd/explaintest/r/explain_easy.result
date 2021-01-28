@@ -744,7 +744,7 @@ explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from
 id	estRows	task	access object	operator info
 Projection_8	2666.67	root		test.t.a, test.t.b
 └─Selection_9	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
-  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(65,4) BINARY))->Column#5 over(partition by test.t.a)
+  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root		test.t.a:asc
       └─TableReader_13	3333.33	root		data:Selection_12
         └─Selection_12	3333.33	cop[tikv]		gt(test.t.a, 10)
@@ -808,7 +808,7 @@ Projection_23	1.00	root		Column#7
   └─HashAgg_43(Probe)	1.00	root		funcs:sum(Column#12)->Column#7
     └─HashJoin_44	1.00	root		CARTESIAN left outer join
       ├─HashAgg_49(Build)	1.00	root		group by:1, funcs:sum(Column#16)->Column#12
-      │ └─Projection_54	1.00	root		cast(Column#6, decimal(65,0) BINARY)->Column#16
+      │ └─Projection_54	1.00	root		cast(Column#6, decimal(42,0) BINARY)->Column#16
       │   └─MaxOneRow_50	1.00	root		
       │     └─Projection_51	1.00	root		Column#5
       │       └─TableDual_52	1.00	root		rows:1
@@ -834,7 +834,7 @@ Projection_11	1.00	root		Column#5
   │   └─StreamAgg_17	1.00	cop[tikv]		funcs:count(test.t.a)->Column#8
   │     └─TableFullScan_24	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg_32(Probe)	1.00	root		funcs:sum(Column#9)->Column#5
-    └─Projection_39	1.00	root		cast(Column#4, decimal(65,0) BINARY)->Column#9
+    └─Projection_39	1.00	root		cast(Column#4, decimal(42,0) BINARY)->Column#9
       └─TableDual_37	1.00	root		rows:1
 explain select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
