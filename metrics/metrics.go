@@ -146,7 +146,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
 	prometheus.MustRegister(TokenGauge)
-	prometheus.MustRegister(TokenLimitGauge)
 	prometheus.MustRegister(ConfigStatus)
 
 	tikvmetrics.InitMetrics("tidb", "tikvclient")
