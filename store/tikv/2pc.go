@@ -1000,7 +1000,11 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 
 func (c *twoPhaseCommitter) needExternalConsistency() bool {
 	guaranteeExternalConsistencyOption := c.txn.us.GetOption(kv.GuaranteeExternalConsistency)
-	return guaranteeExternalConsistencyOption != nil && guaranteeExternalConsistencyOption.(bool)
+	if guaranteeExternalConsistencyOption == nil {
+		// by default, guarantee
+		return true
+	}
+	return guaranteeExternalConsistencyOption.(bool)
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
