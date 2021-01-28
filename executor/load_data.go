@@ -311,6 +311,93 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	return nil, curData
 }
 
+<<<<<<< HEAD
+=======
+// indexOfTerminator return index of terminator, if not, return -1.
+// normally, the field terminator and line terminator is short, so we just use brute force algorithm.
+func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
+	fieldTerm := []byte(e.FieldsInfo.Terminated)
+	fieldTermLen := len(fieldTerm)
+	lineTerm := []byte(e.LinesInfo.Terminated)
+	lineTermLen := len(lineTerm)
+	type termType int
+	const (
+		notTerm termType = iota
+		fieldTermType
+		lineTermType
+	)
+	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
+	cmpTerm := func(restLen int, bs []byte) (typ termType) {
+		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+			typ = fieldTermType
+			return
+		}
+		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+			typ = lineTermType
+			return
+		}
+		return
+	}
+	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
+		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
+		cmpTerm = func(restLen int, bs []byte) (typ termType) {
+			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+				typ = lineTermType
+				return
+			}
+			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+				typ = fieldTermType
+				return
+			}
+			return
+		}
+	}
+	atFieldStart := true
+	inQuoter := false
+loop:
+	for i := 0; i < len(bs); i++ {
+		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
+			inQuoter = true
+			atFieldStart = false
+			continue
+		}
+		restLen := len(bs) - i - 1
+		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen, bs[i+1:]) {
+			case lineTermType:
+				return i + 1
+			case fieldTermType:
+				i += fieldTermLen
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
+		}
+		if !inQuoter {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen+1, bs[i:]) {
+			case lineTermType:
+				return i
+			case fieldTermType:
+				i += fieldTermLen - 1
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
+		}
+		// if it is escaped char, skip next char.
+		if bs[i] == e.FieldsInfo.Escaped {
+			i++
+		}
+		atFieldStart = false
+	}
+	return -1
+}
+
+>>>>>>> 558d5610c... executor: fix load-data result when field term be the prefix of line term (#22585)
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
 func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
