@@ -35,9 +35,10 @@ import (
 	"github.com/pingcap/parser/terror"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/prometheus/client_golang/prometheus"
@@ -374,7 +375,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	clientConn := connArray.Get()
 	if state := clientConn.GetState(); state == connectivity.TransientFailure {
 		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+		tidbmetrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
 	}
 
 	if req.IsDebugReq() {
