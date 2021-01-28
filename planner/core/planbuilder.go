@@ -641,8 +641,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -2250,28 +2249,6 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
-	case *ast.CreateStatisticsStmt:
-		var selectErr, insertErr error
-		user := b.ctx.GetSessionVars().User
-		if user != nil {
-			selectErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE STATISTICS", user.AuthUsername,
-				user.AuthHostname, raw.Table.Name.L)
-			insertErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE STATISTICS", user.AuthUsername,
-				user.AuthHostname, "stats_extended")
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, raw.Table.Schema.L,
-			raw.Table.Name.L, "", selectErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, mysql.SystemDB,
-			"stats_extended", "", insertErr)
-	case *ast.DropStatisticsStmt:
-		var err error
-		user := b.ctx.GetSessionVars().User
-		if user != nil {
-			err = ErrTableaccessDenied.GenWithStackByArgs("DROP STATISTICS", user.AuthUsername,
-				user.AuthHostname, "stats_extended")
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
-			"stats_extended", "", err)
 	}
 	return p, nil
 }
@@ -3232,6 +3209,27 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 					v.Table.Name.L, "", authErr)
 			} else if spec.Tp == ast.AlterTableWriteable {
 				b.visitInfo[0].alterWritable = true
+			} else if spec.Tp == ast.AlterTableAddStatistics {
+				var selectErr, insertErr error
+				user := b.ctx.GetSessionVars().User
+				if user != nil {
+					selectErr = ErrTableaccessDenied.GenWithStackByArgs("ADD STATS_EXTENDED", user.AuthUsername,
+						user.AuthHostname, v.Table.Name.L)
+					insertErr = ErrTableaccessDenied.GenWithStackByArgs("ADD STATS_EXTENDED", user.AuthUsername,
+						user.AuthHostname, "stats_extended")
+				}
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.Table.Schema.L,
+					v.Table.Name.L, "", selectErr)
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, mysql.SystemDB,
+					"stats_extended", "", insertErr)
+			} else if spec.Tp == ast.AlterTableDropStatistics {
+				user := b.ctx.GetSessionVars().User
+				if user != nil {
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP STATS_EXTENDED", user.AuthUsername,
+						user.AuthHostname, "stats_extended")
+				}
+				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
+					"stats_extended", "", authErr)
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -3671,9 +3669,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Bucket_id", "Count",
-			"Repeats", "Lower_Bound", "Upper_Bound"}
+			"Repeats", "Lower_Bound", "Upper_Bound", "Ndv"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowStatsTopN:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Value", "Count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeVarchar, mysql.TypeLonglong}
