@@ -186,6 +186,32 @@ var (
 			Name:      "info",
 			Help:      "Indicate the tidb server info, and the value is the start timestamp (s).",
 		}, []string{LblVersion, LblHash})
+
+	TokenGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tokens",
+			Help:      "The number of concurrent executing session",
+		},
+	)
+
+	TokenLimitGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "token_limit",
+			Help:      "The maximum number of concurrent executing session",
+		},
+	)
+
+	ConfigStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "config",
+			Name:      "status",
+			Help:      "Status of the TiDB server configurations.",
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

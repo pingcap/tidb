@@ -329,11 +329,24 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.aggrMap != nil {
 			index, ok = er.aggrMap[v]
 		}
-		if !ok {
-			er.err = ErrInvalidGroupFuncUse
+		if ok {
+			// index < 0 indicates this is a correlated aggregate belonging to outer query,
+			// for which a correlated column will be created later, so we append a null constant
+			// as a temporary result expression.
+			if index < 0 {
+				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+			} else {
+				// index >= 0 indicates this is a regular aggregate column
+				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			}
 			return inNode, true
 		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		// replace correlated aggregate in sub-query with its corresponding correlated column
+		if col, ok := er.b.correlatedAggMapper[v]; ok {
+			er.ctxStackAppend(col, types.EmptyName)
+			return inNode, true
+		}
+		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
@@ -1518,7 +1531,7 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	stkLen := len(er.ctxStack)
 	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
 	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
-	switch expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) {
+	switch expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
 	case types.ETReal:

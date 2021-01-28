@@ -171,4 +171,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GOGC)
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
+	prometheus.MustRegister(TokenGauge)
+	prometheus.MustRegister(TokenLimitGauge)
+	prometheus.MustRegister(ConfigStatus)
 }
