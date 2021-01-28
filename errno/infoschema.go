@@ -57,7 +57,12 @@ func FlushStats() {
 func copyMap(oldMap map[uint16]*ErrorSummary) map[uint16]*ErrorSummary {
 	newMap := make(map[uint16]*ErrorSummary, len(oldMap))
 	for k, v := range oldMap {
-		newMap[k] = v
+		newMap[k] = &ErrorSummary{
+			ErrorCount:   v.ErrorCount,
+			WarningCount: v.WarningCount,
+			FirstSeen:    v.FirstSeen,
+			LastSeen:     v.LastSeen,
+		}
 	}
 	return newMap
 }
