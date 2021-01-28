@@ -141,6 +141,7 @@ func (s *Server) ConnectionCount() int {
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
+	metrics.TokenGauge.Inc()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
@@ -148,6 +149,7 @@ func (s *Server) getToken() *Token {
 
 func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
+	metrics.TokenGauge.Dec()
 }
 
 // SetDomain use to set the server domain.
@@ -304,9 +306,15 @@ func setTxnScope() {
 	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
 }
 
+// Export config-related metrics
+func (s *Server) reportConfig() {
+	metrics.TokenLimitGauge.Set(float64(s.cfg.TokenLimit))
+}
+
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {

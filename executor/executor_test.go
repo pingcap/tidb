@@ -2388,7 +2388,7 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
+	c.Assert(tikv.MockSplitRegionTimeout.Enable(`return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -2397,22 +2397,22 @@ func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+	tikv.MockSplitRegionTimeout.Disable()
 
 	// Test scatter regions timeout.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+	tikv.MockScatterRegionTimeout.Disable()
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	c.Assert(tikv.MockScatterRegionTimeout.Enable(`return(true)`), IsNil)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
 	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
 	c.Assert(time.Since(start).Seconds(), Less, 10.0)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+	tikv.MockScatterRegionTimeout.Disable()
 }
 
 func (s *testSuiteP2) TestRow(c *C) {

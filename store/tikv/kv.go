@@ -27,7 +27,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
+	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/latch"
@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
@@ -56,7 +55,7 @@ type Driver struct {
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
-	cfg := config.GetGlobalConfig()
+	cfg := tidbcfg.GetGlobalConfig()
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:            addrs,
 		AutoSyncInterval:     30 * time.Second,
@@ -76,12 +75,11 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
-
-	security := config.GetGlobalConfig().Security
-	pdConfig := config.GetGlobalConfig().PDClient
-	tikvConfig := config.GetGlobalConfig().TiKVClient
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
-	etcdAddrs, disableGC, err := config.ParsePath(path)
+	security := tidbcfg.GetGlobalConfig().Security.ClusterSecurity()
+	pdConfig := tidbcfg.GetGlobalConfig().PDClient
+	tikvConfig := tidbcfg.GetGlobalConfig().TiKVClient
+	txnLocalLatches := tidbcfg.GetGlobalConfig().TxnLocalLatches
+	etcdAddrs, disableGC, err := tidbcfg.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -118,7 +116,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
+	coprCacheConfig := &tidbcfg.GetGlobalConfig().TiKVClient.CoprCache
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -196,7 +194,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *tidbcfg.CoprocessorCache) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -213,7 +211,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		safePoint:       0,
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
-		replicaReadSeed: fastrand.Uint32(),
+		replicaReadSeed: rand.Uint32(),
 		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
@@ -251,7 +249,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if ldflagGetEtcdAddrsFromConfig == "1" {
 		// For automated test purpose.
 		// To manipulate connection to etcd by mandatorily setting path to a proxy.
-		cfg := config.GetGlobalConfig()
+		cfg := tidbcfg.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
 
