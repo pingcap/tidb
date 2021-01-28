@@ -183,12 +183,16 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 		}
-		if len(e.handleVal) == 0 {
-			// handle is not found, try lock the index key if isolation level is not read consistency
-			if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-				return nil
+		// try lock the index key if isolation level is not read consistency
+		// also lock key if read consistency read a value
+		if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+			err = e.lockKeyIfNeeded(ctx, e.idxKey)
+			if err != nil {
+				return err
 			}
-			return e.lockKeyIfNeeded(ctx, e.idxKey)
+		}
+		if len(e.handleVal) == 0 {
+			return nil
 		}
 		e.handle, err = tablecodec.DecodeHandle(e.handleVal)
 		if err != nil {
@@ -276,6 +280,15 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 		if err != nil {
 			return err
 		}
+		// Key need lock get table ID
+		var tblID int64
+		if e.partInfo != nil {
+			tblID = e.partInfo.ID
+		} else {
+			tblID = e.tblInfo.ID
+		}
+		e.updateDeltaForTableID(tblID)
+
 		lockCtx.ValuesLock.Lock()
 		defer lockCtx.ValuesLock.Unlock()
 		for key, val := range lockCtx.Values {

@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -43,8 +44,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -968,6 +971,54 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
+func (w *addIndexWorker) checkHandleExists(key kv.Key, value []byte, handle int64) error {
+	idxInfo := w.index.Meta()
+	tblInfo := w.table.Meta()
+	name := w.index.Meta().Name.String()
+
+	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         col.ID,
+			Tp:         int32(col.Tp),
+			Flag:       int32(col.Flag),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Flen:       col.Flen,
+			Decimal:    col.Decimal,
+			Elems:      col.Elems,
+			Collate:    col.Collate,
+		})
+	}
+
+	values, err := tablecodec.DecodeIndexKV(key, value, len(idxInfo.Columns), tablecodec.HandleIsSigned, colInfo)
+	if err != nil {
+		return err
+	}
+
+	_, d, err := codec.DecodeOne(values[len(colInfo)])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if d.GetInt64() == handle {
+		return nil
+	}
+
+	valueStr := make([]string, 0, len(colInfo))
+	for i, val := range values[:len(colInfo)] {
+		d, err := tablecodec.DecodeColumnValue(val, &tblInfo.Columns[idxInfo.Columns[i].Offset].FieldType, time.Local)
+		if err != nil {
+			return kv.ErrKeyExists.FastGenByArgs(key.String(), name)
+		}
+		str, err := d.ToString()
+		if err != nil {
+			str = string(val)
+		}
+		valueStr = append(valueStr, str)
+	}
+	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), name)
+}
+
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
@@ -1001,13 +1052,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	for i, key := range w.batchCheckKeys {
 		if val, found := batchVals[string(key)]; found {
 			if w.distinctCheckFlags[i] {
-				handle, err1 := tablecodec.DecodeHandle(val)
-				if err1 != nil {
-					return errors.Trace(err1)
-				}
-
-				if handle != idxRecords[i].handle {
-					return errors.Trace(kv.ErrKeyExists)
+				if err := w.checkHandleExists(key, val, idxRecords[i].handle); err != nil {
+					return errors.Trace(err)
 				}
 			}
 			idxRecords[i].skip = true
@@ -1015,7 +1061,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
 			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tablecodec.EncodeHandle(idxRecords[i].handle)
+				val, err := w.index.GenIndexValue(stmtCtx, idxRecords[i].vals, w.distinctCheckFlags[i], false, idxRecords[i].handle)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				batchVals[string(key)] = val
 			}
 		}
 	}
