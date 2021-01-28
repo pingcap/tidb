@@ -151,7 +151,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
-	coer := CoercibilityCoercible
+	coer := CoercibilityIgnorable
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
 			coer = arg.Coercibility()
