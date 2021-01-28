@@ -85,3 +85,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/ekexium/parser v0.0.0-20210127083829-8b5443f3aa8b
