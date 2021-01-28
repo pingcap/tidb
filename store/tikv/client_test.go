@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
@@ -48,13 +47,13 @@ var _ = SerialSuites(&testClientFailSuite{})
 var _ = SerialSuites(&testClientSerialSuite{})
 
 func setMaxBatchSize(size uint) {
-	newConf := tidbcfg.NewConfig()
+	newConf := config.DefaultConfig()
 	newConf.TiKVClient.MaxBatchSize = size
-	tidbcfg.StoreGlobalConfig(newConf)
+	config.StoreGlobalConfig(&newConf)
 }
 
 func (s *testClientSerialSuite) TestConn(c *C) {
-	maxBatchSize := tidbcfg.GetGlobalConfig().TiKVClient.MaxBatchSize
+	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
 	setMaxBatchSize(0)
 
 	client := newRPCClient(config.Security{})

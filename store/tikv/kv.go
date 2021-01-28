@@ -27,7 +27,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -56,7 +55,7 @@ type Driver struct {
 }
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
-	cfg := tidbcfg.GetGlobalConfig()
+	cfg := config.GetGlobalConfig()
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:            addrs,
 		AutoSyncInterval:     30 * time.Second,
@@ -76,11 +75,11 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
-	security := tidbcfg.GetGlobalConfig().Security.ClusterSecurity()
-	pdConfig := tidbcfg.GetGlobalConfig().PDClient
-	tikvConfig := tidbcfg.GetGlobalConfig().TiKVClient
-	txnLocalLatches := tidbcfg.GetGlobalConfig().TxnLocalLatches
-	etcdAddrs, disableGC, err := tidbcfg.ParsePath(path)
+	security := config.GetGlobalConfig().Security
+	pdConfig := config.GetGlobalConfig().PDClient
+	tikvConfig := config.GetGlobalConfig().TiKVClient
+	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	etcdAddrs, disableGC, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -117,7 +116,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	coprCacheConfig := &tidbcfg.GetGlobalConfig().TiKVClient.CoprCache
+	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
 	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -250,7 +249,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if ldflagGetEtcdAddrsFromConfig == "1" {
 		// For automated test purpose.
 		// To manipulate connection to etcd by mandatorily setting path to a proxy.
-		cfg := tidbcfg.GetGlobalConfig()
+		cfg := config.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
 

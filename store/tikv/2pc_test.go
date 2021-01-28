@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1298,9 +1298,24 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	})
 }
 
+func updateGlobalConfig(f func(conf *config.Config)) {
+	g := config.GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	config.StoreGlobalConfig(&newConf)
+}
+
+// restoreFunc gets a function that restore the config to the current value.
+func restoreGlobalConfFunc() (restore func()) {
+	g := config.GetGlobalConfig()
+	return func() {
+		config.StoreGlobalConfig(g)
+	}
+}
+
 func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer restoreGlobalConfFunc()()
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 16
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
 	})
@@ -1318,12 +1333,12 @@ func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(committer.checkAsyncCommit(), IsTrue)
 
-	config.UpdateGlobal(func(conf *config.Config) {
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 15
 	})
 	c.Assert(committer.checkAsyncCommit(), IsFalse)
 
-	config.UpdateGlobal(func(conf *config.Config) {
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 20
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
 	})

@@ -16,8 +16,8 @@ package tikv
 import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/config"
 	pd "github.com/tikv/pd/client"
 )
 
