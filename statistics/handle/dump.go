@@ -134,7 +134,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 }
 
 func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
+	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
 	if err != nil || tbl == nil {
 		return nil, err
 	}
@@ -264,7 +264,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				continue
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
-			count := int64(hist.TotalRowCount())
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
@@ -284,10 +283,10 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				CMSketch:   cm,
 				TopN:       topN,
 				Info:       colInfo,
-				Count:      count,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				StatsVer:   statsVer,
 			}
+			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
 		}
 	}
