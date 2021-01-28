@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -299,7 +300,8 @@ func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot ui
 	}
 	if len(rows) != 1 {
 		var sb strings.Builder
-		_ = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+		err1 := stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+		terror.Log(err1)
 		return 0, errors.Errorf("can not get count, sql %s result rows %d", sb.String(), len(rows))
 	}
 	return rows[0].GetInt64(0), nil
