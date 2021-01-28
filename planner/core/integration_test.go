@@ -1626,6 +1626,86 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
 
+func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// #18350
+	tk.MustExec("DROP TABLE IF EXISTS tab, tab2")
+	tk.MustExec("CREATE TABLE tab(i INT)")
+	tk.MustExec("CREATE TABLE tab2(j INT)")
+	tk.MustExec("insert into tab values(1),(2),(3)")
+	tk.MustExec("insert into tab2 values(1),(2),(3),(15)")
+	tk.MustQuery(`SELECT m.i,
+       (SELECT COUNT(n.j)
+           FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n GROUP BY 1 order by m.i`).Check(testkit.Rows("1 4", "2 4", "3 4"))
+	tk.MustQuery(`SELECT
+         (SELECT COUNT(n.j)
+             FROM tab2 WHERE j=15) AS o
+    FROM tab m, tab2 n order by m.i`).Check(testkit.Rows("12"))
+
+	// #17748
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (m int, n int)")
+	tk.MustExec("insert into t1 values (2,2), (2,2), (3,3), (3,3), (3,3), (4,4)")
+	tk.MustExec("insert into t2 values (1,11), (2,22), (3,32), (4,44), (4,44)")
+	tk.MustExec("set @@sql_mode='TRADITIONAL'")
+
+	tk.MustQuery(`select count(*) c, a,
+		( select group_concat(count(a)) from t2 where m = a )
+		from t1 group by a order by a`).
+		Check(testkit.Rows("2 2 2", "3 3 3", "1 4 1,1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,1),(2,1),(2,2),(3,1),(3,2),(3,3)")
+
+	// Sub-queries in SELECT fields
+	// from SELECT fields
+	tk.MustQuery("select (select count(a)) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select (select (select count(a)))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select (select count(n.a)) from t m order by count(m.b)) from t n").Check(testkit.Rows("6"))
+	// from WHERE
+	tk.MustQuery("select (select count(n.a) from t where count(n.a)=3) from t n").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (select count(a) from t where count(distinct n.a)=3) from t n").Check(testkit.Rows("6"))
+	// from HAVING
+	tk.MustQuery("select (select count(n.a) from t having count(n.a)=6 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(n.a) from t having count(distinct n.b)=3 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(distinct n.a) from t having count(distinct n.b)=3 limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(distinct n.a) from t having count(distinct n.b)=6 limit 1) from t n").Check(testkit.Rows("<nil>"))
+	// from ORDER BY
+	tk.MustQuery("select (select count(n.a) from t order by count(n.b) limit 1) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(distinct n.b) from t order by count(n.b) limit 1) from t n").Check(testkit.Rows("3"))
+	// from TableRefsClause
+	tk.MustQuery("select (select cnt from (select count(a) cnt) s) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(cnt) from (select count(a) cnt) s) from t").Check(testkit.Rows("1"))
+	// from sub-query inside aggregate
+	tk.MustQuery("select (select sum((select count(a)))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum((select count(a))+sum(a))) from t").Check(testkit.Rows("20"))
+	// from GROUP BY
+	tk.MustQuery("select (select count(a) from t group by count(n.a)) from t n").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select count(distinct a) from t group by count(n.a)) from t n").Check(testkit.Rows("3"))
+
+	// Sub-queries in HAVING
+	tk.MustQuery("select sum(a) from t having (select count(a)) = 0").Check(testkit.Rows())
+	tk.MustQuery("select sum(a) from t having (select count(a)) > 0").Check(testkit.Rows("14"))
+
+	// Sub-queries in ORDER BY
+	tk.MustQuery("select count(a) from t group by b order by (select count(a))").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select count(a) from t group by b order by (select -count(a))").Check(testkit.Rows("3", "2", "1"))
+
+	// Nested aggregate (correlated aggregate inside aggregate)
+	tk.MustQuery("select (select sum(count(a))) from t").Check(testkit.Rows("6"))
+	tk.MustQuery("select (select sum(sum(a))) from t").Check(testkit.Rows("14"))
+
+	// Combining aggregates
+	tk.MustQuery("select count(a), (select count(a)) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select sum(distinct b), count(a), (select count(a)), (select cnt from (select sum(distinct b) as cnt) n) from t").
+		Check(testkit.Rows("6 6 6 6"))
+}
+
 func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
 	// #12356
 	tk := testkit.NewTestKit(c, s.store)
