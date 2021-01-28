@@ -299,7 +299,7 @@ func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot ui
 	}
 	if len(rows) != 1 {
 		var sb strings.Builder
-		stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+		_ = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 		return 0, errors.Errorf("can not get count, sql %s result rows %d", sb.String(), len(rows))
 	}
 	return rows[0].GetInt64(0), nil
