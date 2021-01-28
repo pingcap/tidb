@@ -2206,11 +2206,13 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+}
+
+func (s *testSerialDBSuite) TestCreateTableWithCollation(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
+	failSQL := "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
@@ -2225,7 +2227,7 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	_, err = s.tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	_, err := s.tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
 	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
@@ -2233,7 +2235,6 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
-
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
