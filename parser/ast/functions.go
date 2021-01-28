@@ -229,6 +229,7 @@ const (
 	CharacterLength = "character_length"
 	FindInSet       = "find_in_set"
 	WeightString    = "weight_string"
+	Soundex         = "soundex"
 
 	// information functions
 	Benchmark      = "benchmark"

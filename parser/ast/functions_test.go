@@ -97,6 +97,8 @@ func (ts *testFunctionsSuite) TestFuncCallExprRestore(c *C) {
 		{"weight_string(a as character(5))", "WEIGHT_STRING(`a` AS CHAR(5))"},
 		{"weight_string(a as binary(5))", "WEIGHT_STRING(`a` AS BINARY(5))"},
 		{"hex(weight_string('abc' as binary(5)))", "HEX(WEIGHT_STRING(_UTF8MB4'abc' AS BINARY(5)))"},
+		{"soundex(attr)", "SOUNDEX(`attr`)"},
+		{"soundex('string')", "SOUNDEX(_UTF8MB4'string')"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
