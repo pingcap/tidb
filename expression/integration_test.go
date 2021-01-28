@@ -7523,6 +7523,10 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_general_ci;`).Check(testkit.Rows("1"))
 	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_general_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
+	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
