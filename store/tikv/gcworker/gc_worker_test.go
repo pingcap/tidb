@@ -499,23 +499,24 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
 	c.Assert(usePhysical, Equals, gcScanLockModeDefault == gcScanLockModePhysical)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
 	c.Assert(err, IsNil)
 	c.Assert(str, Equals, gcScanLockModeDefault)
 
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
-	c.Assert(err, IsNil)
-	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	c.Assert(err, IsNil)
-	c.Assert(usePhysical, Equals, false)
-
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
 	c.Assert(err, IsNil)
 	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
 	c.Assert(err, IsNil)
 	c.Assert(usePhysical, Equals, true)
+
+	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
+	c.Assert(err, IsNil)
+	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
+	c.Assert(err, IsNil)
+	c.Assert(usePhysical, Equals, false)
 
 	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
 	c.Assert(err, IsNil)

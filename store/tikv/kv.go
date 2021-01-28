@@ -29,13 +29,14 @@ import (
 	"github.com/pingcap/failpoint"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/latch"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -194,7 +195,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *tidbcfg.CoprocessorCache) (*tikvStore, error) {
+func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*tikvStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
