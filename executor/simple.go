@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -887,7 +888,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		err = txn.Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		err = txn.Commit(tikvutil.SetSessionCtx(context.Background(), e.ctx.GetSessionVars().ConnectionID))
 		if err != nil {
 			return err
 		}
