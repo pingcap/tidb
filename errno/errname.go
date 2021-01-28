@@ -895,6 +895,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
+	ErrAggregateOrderNonAggQuery:                             mysql.Message("Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
 	ErrInvalidJSONData:                                       mysql.Message("Invalid JSON data provided to function %s: %s", nil),
 	ErrInvalidJSONText:                                       mysql.Message("Invalid JSON text: %-.192s", nil),
@@ -1080,6 +1081,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
+
+	ErrJSONObjectKeyTooLong:   mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),

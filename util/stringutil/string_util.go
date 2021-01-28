@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -151,32 +150,18 @@ func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []
 
 // CompilePatternInner handles escapes and wild cards convert pattern characters and
 // pattern types.
-<<<<<<< HEAD
-func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
-	patChars = make([]byte, len(pattern))
-	patTypes = make([]byte, len(pattern))
-=======
 func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
 	lenRunes := len(runes)
 	patWeights = make([]rune, lenRunes)
 	patTypes = make([]byte, lenRunes)
->>>>>>> 42590965e... *: refactor `CompilePattern` and `DoMatch` used by `like` (#20610)
 	patLen := 0
 	for i := 0; i < lenRunes; i++ {
 		var tp byte
-<<<<<<< HEAD
-		var c = pattern[i]
-		switch c {
-		case escape:
-			lastAny = false
-=======
 		var r = runes[i]
 		switch r {
 		case escapeRune:
->>>>>>> 42590965e... *: refactor `CompilePattern` and `DoMatch` used by `like` (#20610)
 			tp = PatMatch
 			if i < lenRunes-1 {
 				i++
@@ -195,10 +180,6 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 				}
 			}
 		case '_':
-<<<<<<< HEAD
-			if lastAny {
-				continue
-=======
 			// %_ => _%
 			if patLen > 0 && patTypes[patLen-1] == PatAny {
 				tp = PatAny
@@ -206,17 +187,14 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 				patWeights[patLen-1], patTypes[patLen-1] = '_', PatOne
 			} else {
 				tp = PatOne
->>>>>>> 42590965e... *: refactor `CompilePattern` and `DoMatch` used by `like` (#20610)
 			}
-			tp = PatOne
 		case '%':
-			if lastAny {
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
 				continue
 			}
-			lastAny = true
 			tp = PatAny
 		default:
-			lastAny = false
 			tp = PatMatch
 		}
 		patWeights[patLen] = r
@@ -251,21 +229,9 @@ func CompileLike2Regexp(str string) string {
 		case PatMatch:
 			result = append(result, patChars[i])
 		case PatOne:
-			// .*. == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-			}
+			result = append(result, '.')
 		case PatAny:
-			// ..* == .*
-			if bytes.HasSuffix(result, []byte{'.'}) {
-				result = append(result, '*')
-				continue
-			}
-			// .*.* == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-				result = append(result, '*')
-			}
+			result = append(result, '.', '*')
 		}
 	}
 	return string(result)
