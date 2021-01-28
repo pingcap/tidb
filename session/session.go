@@ -1414,9 +1414,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
 
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
-
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
 	if cache := s.sessionVars.InspectionTableCache; cache != nil {
@@ -1458,20 +1456,21 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
 
-	origin := s.sessionVars.InRestrictedSQL
-	s.sessionVars.InRestrictedSQL = true
-	defer func() {
-		s.sessionVars.InRestrictedSQL = origin
-	}()
-
-	rs, err := s.ExecuteStmt(ctx, stmtNode)
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
-		s.sessionVars.StmtCtx.AppendError(err)
+		se.sessionVars.StmtCtx.AppendError(err)
 	}
 	if rs == nil {
 		return nil, nil, err
 	}
-	rows, err := drainRecordSet(ctx, se, rs)
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	var rows []chunk.Row
+	rows, err = drainRecordSet(ctx, se, rs)
 	if err != nil {
 		return nil, nil, err
 	}
