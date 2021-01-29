@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
@@ -87,4 +87,10 @@ func EncodeTSO(ts int64) uint64 {
 func GetTimeFromTS(ts uint64) time.Time {
 	ms := ExtractPhysical(ts)
 	return time.Unix(ms/1e3, (ms%1e3)*1e6)
+}
+
+// GoTimeToTS converts a Go time to uint64 timestamp.
+func GoTimeToTS(t time.Time) uint64 {
+	ts := (t.UnixNano() / int64(time.Millisecond)) << physicalShiftBits
+	return uint64(ts)
 }

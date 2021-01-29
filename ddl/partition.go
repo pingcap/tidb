@@ -1108,9 +1108,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
 				yoldIDs = append(yoldIDs, oldID)
-				newIDs = append(newIDs, newIDs[i])
+				newIDs = append(newIDs, newPartitions[i].ID)
 				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
-				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newIDs[i]))
+				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newPartitions[i].ID))
 			}
 		}
 		job.CtxVars = []interface{}{yoldIDs, newIDs}
@@ -1232,18 +1232,17 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	tempID := partDef.ID
-	// exchange table meta id
-	partDef.ID = nt.ID
-
 	if pt.TiFlashReplica != nil {
 		for i, id := range pt.TiFlashReplica.AvailablePartitionIDs {
-			if id == tempID {
-				pt.TiFlashReplica.AvailablePartitionIDs[i] = partDef.ID
+			if id == partDef.ID {
+				pt.TiFlashReplica.AvailablePartitionIDs[i] = nt.ID
 				break
 			}
 		}
 	}
+
+	// exchange table meta id
+	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
@@ -1259,13 +1258,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, nt.ID, true)
+	err = t.DropTableOrView(job.SchemaID, partDef.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	nt.ID = tempID
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
@@ -1304,6 +1301,31 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	// the follow code is a swap function for rules of two partitions
+	// though partitions has exchanged their ID, swap still take effect
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
+		bundles := make([]*placement.Bundle, 0, 2)
+		ptBundle, ptOK := d.infoHandle.Get().BundleByName(placement.GroupID(partDef.ID))
+		ptOK = ptOK && !ptBundle.IsEmpty()
+		ntBundle, ntOK := d.infoHandle.Get().BundleByName(placement.GroupID(nt.ID))
+		ntOK = ntOK && !ntBundle.IsEmpty()
+		if ptOK && ntOK {
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		} else if ptOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(partDef.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ptBundle, nt.ID))
+		} else if ntOK {
+			bundles = append(bundles, placement.BuildPlacementDropBundle(nt.ID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(ntBundle, partDef.ID))
+		}
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1334,6 +1356,12 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 			sql = buildCheckSQLForRangeExprPartition(pi, index, schemaName, tableName)
 		} else if len(pi.Columns) == 1 {
 			sql = buildCheckSQLForRangeColumnsPartition(pi, index, schemaName, tableName)
+		}
+	case model.PartitionTypeList:
+		if len(pi.Columns) == 0 {
+			sql = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
+		} else if len(pi.Columns) == 1 {
+			sql = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
 		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
@@ -1376,6 +1404,27 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 	} else {
 		return fmt.Sprintf("select 1 from `%s`.`%s` where `%s` < %s or `%s` >= %s limit 1", schemaName.L, tableName.L, colName, pi.Definitions[index-1].LessThan[0], colName, pi.Definitions[index].LessThan[0])
 	}
+}
+
+func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	inValues := getInValues(pi, index)
+	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s not in (%s) limit 1", schemaName.L, tableName.L, pi.Expr, inValues)
+	return sql
+}
+
+func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) string {
+	colName := pi.Columns[0].L
+	inValues := getInValues(pi, index)
+	sql := fmt.Sprintf("select 1 from `%s`.`%s` where %s not in (%s) limit 1", schemaName.L, tableName.L, colName, inValues)
+	return sql
+}
+
+func getInValues(pi *model.PartitionInfo, index int) string {
+	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
+	for _, inValue := range pi.Definitions[index].InValues {
+		inValues = append(inValues, inValue...)
+	}
+	return strings.Join(inValues, ",")
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {

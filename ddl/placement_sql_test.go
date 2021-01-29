@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"sort"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -50,10 +51,10 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	partDefs := tb.Meta().GetPartitionInfo().Definitions
 	p0ID := placement.GroupID(partDefs[0].ID)
-	is.SetBundle(&placement.Bundle{
+	bundle := &placement.Bundle{
 		ID:    p0ID,
 		Rules: []*placement.Rule{{Role: placement.Leader, Count: 1}},
-	})
+	}
 
 	// normal cases
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -118,6 +119,7 @@ alter placement policy
 	replicas=3`)
 	c.Assert(err, IsNil)
 
+	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader`)
@@ -201,6 +203,7 @@ drop placement policy
 	role=leader`)
 	c.Assert(err, NotNil)
 
+	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+zone=sh,-zone=bj":1,"+zone=sh,-zone=nj":1}'
@@ -373,18 +376,23 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	defer func() {
 		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
 	initTable := func() []string {
+		tk.MustExec("drop table if exists t2")
 		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t1(id int) partition by hash(id) partitions 2")
+		tk.MustExec(`create table t1(id int) partition by range(id)
+(partition p0 values less than (100), partition p1 values less than (200))`)
 
 		is := s.dom.InfoSchema()
 
 		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 		c.Assert(err, IsNil)
 		partDefs := tb.Meta().GetPartitionInfo().Definitions
+
+		sort.Slice(partDefs, func(i, j int) bool { return partDefs[i].Name.L < partDefs[j].Name.L })
 
 		rows := []string{}
 		for k, v := range partDefs {
@@ -401,13 +409,30 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	// test drop
 	rows := initTable()
 	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("alter table t1 drop partition p0")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows[1:]...))
+
+	rows = initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	// test truncate
 	rows = initTable()
 	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("alter table t1 truncate partition p0")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows[1:]...))
+
+	rows = initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
 	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+
+	// test exchange
+	rows = initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("create table t2(id int)")
+	tk.MustExec("alter table t1 exchange partition p0 with table t2")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }
 
@@ -641,7 +666,7 @@ PARTITION BY RANGE (c) (
 	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
 	c.Assert(err, IsNil)
 	groupID := placement.GroupID(pid)
-	is.SetBundle(&placement.Bundle{
+	bundle := &placement.Bundle{
 		ID: groupID,
 		Rules: []*placement.Rule{
 			{
@@ -657,7 +682,7 @@ PARTITION BY RANGE (c) (
 				},
 			},
 		},
-	})
+	}
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
@@ -674,6 +699,7 @@ PARTITION BY RANGE (c) (
 				hook.OnJobUpdatedExported = func(job *model.Job) {
 					if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
 						job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
 						tk2.MustExec("set @@txn_scope=bj")

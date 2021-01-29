@@ -570,6 +570,73 @@ func BenchmarkSelectivity(b *testing.B) {
 	pprof.StopCPUProfile()
 }
 
+func (s *testStatsSuite) TestStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists tint")
+	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tint with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdouble")
+	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdouble with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdecimal")
+	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table tdecimal with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tstring")
+	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
+	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tdatetime")
+	testKit.MustExec("create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c))")
+	testKit.MustExec("insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04')")
+	testKit.MustExec("analyze table tdatetime with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists tprefix")
+	testKit.MustExec("create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)))")
+	testKit.MustExec("insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666')")
+	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
+
+	// test with clustered index
+	testKit.MustExec("set @@tidb_enable_clustered_index = 1")
+	testKit.MustExec("drop table if exists ct1")
+	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk))")
+	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
+	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
+
+	testKit.MustExec("drop table if exists ct2")
+	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b))")
+	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
+	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
+
+	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
+	for _, r := range rows {
+		// ensure statsVer = 2
+		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2")
+	}
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
 func (s *testStatsSuite) TestColumnIndexNullEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -749,6 +816,19 @@ func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
+
+	// Test issue 22466
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int, key b(b))")
+	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3), (4, 4), (5,5)")
+	// This line of select will mark column b stats as needed, and an invalid(empty) stats for column b
+	// will be loaded at the next analyze line, this will trigger the bug.
+	tk.MustQuery("select * from t2 where b=2")
+	tk.MustExec("analyze table t2 index b")
+	tk.MustQuery("explain select * from t2 where b=2").Check(testkit.Rows(
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t2.b, 2)",
+		"  └─TableFullScan_5 5.00 cop[tikv] table:t2 keep order:false"))
 }
 
 func (s *testStatsSuite) TestOutOfRangeIntervalEstimation(c *C) {

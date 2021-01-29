@@ -915,11 +915,36 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
+// AggMppRunMode defines the running mode of aggregation in MPP
+type AggMppRunMode int
+
+const (
+	// NoMpp means the default value which does not run in MPP
+	NoMpp AggMppRunMode = iota
+	// Mpp1Phase runs only 1 phase but requires its child's partition property
+	Mpp1Phase
+	// Mpp2Phase runs partial agg + final agg with hash partition
+	Mpp2Phase
+	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
+	MppTiDB
+)
+
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
+	AggFuncs         []*aggregation.AggFuncDesc
+	GroupByItems     []expression.Expression
+	MppRunMode       AggMppRunMode
+	MppPartitionCols []*expression.Column
+}
+
+func (p *basePhysicalAgg) isFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {

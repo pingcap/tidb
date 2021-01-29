@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -887,7 +888,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		err = txn.Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		err = txn.Commit(tikvutil.SetSessionID(context.Background(), e.ctx.GetSessionVars().ConnectionID))
 		if err != nil {
 			return err
 		}
@@ -1324,7 +1325,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD TIDB_STATS")
+		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
 	}
 	if !e.ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
