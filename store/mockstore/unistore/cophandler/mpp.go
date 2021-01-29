@@ -99,11 +99,11 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 			return nil, err
 		}
 		tunnel := &ExchangerTunnel{
-			DataCh:     make(chan *tipb.Chunk, 10),
-			sourceTask: b.mppCtx.TaskHandler.Meta,
-			targetTask: targetTask,
-			connectedCh:     make(chan struct{}),
-			ErrCh:      make(chan error, 1),
+			DataCh:      make(chan *tipb.Chunk, 10),
+			sourceTask:  b.mppCtx.TaskHandler.Meta,
+			targetTask:  targetTask,
+			connectedCh: make(chan struct{}),
+			ErrCh:       make(chan error, 1),
 		}
 		e.tunnels = append(e.tunnels, tunnel)
 		err = b.mppCtx.TaskHandler.registerTunnel(tunnel)
@@ -363,7 +363,7 @@ type ExchangerTunnel struct {
 	targetTask *mpp.TaskMeta // target task is nearer to the client end , as tidb.
 
 	connectedCh chan struct{}
-	ErrCh  chan error
+	ErrCh       chan error
 }
 
 // RecvChunk recive tipb chunk

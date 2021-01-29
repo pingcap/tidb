@@ -138,13 +138,20 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 }
 
 func (e *exchSenderExec) next() (*chunk.Chunk, error) {
+	defer func() {
+		for _, tunnel := range e.tunnels {
+			<-tunnel.connectedCh
+			close(tunnel.ErrCh)
+			close(tunnel.DataCh)
+		}
+	}()
 	for {
 		chk, err := e.children[0].next()
 		if err != nil {
 			for _, tunnel := range e.tunnels {
 				tunnel.ErrCh <- err
 			}
-			break
+			return nil, nil
 		} else if chk != nil {
 			for _, tunnel := range e.tunnels {
 				tipbChunks, err := e.toTiPBChunk(chk)
@@ -152,23 +159,16 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 					for _, tunnel := range e.tunnels {
 						tunnel.ErrCh <- err
 					}
-					break
-				} else {
-					for _, tipbChunk := range tipbChunks {
-						tunnel.DataCh <- &tipbChunk
-					}
+					return nil, nil
+				}
+				for _, tipbChunk := range tipbChunks {
+					tunnel.DataCh <- &tipbChunk
 				}
 			}
 		} else {
-			break
+			return nil, nil
 		}
 	}
-	for _, tunnel := range e.tunnels {
-		<- tunnel.connectedCh
-		close(tunnel.ErrCh)
-		close(tunnel.DataCh)
-	}
-	return nil, nil
 }
 
 type exchRecvExec struct {

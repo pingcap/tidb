@@ -118,7 +118,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
-	for i:=0; i<20; i++ {
+	for i := 0; i < 20; i++ {
 		// test if it is stable.
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	}
