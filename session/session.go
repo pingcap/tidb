@@ -1350,10 +1350,14 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
+// Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	sql, err := EscapeSQL(sql, args...)
-	if err != nil {
-		return nil, err
+	var err error
+	if len(args) > 0 {
+		sql, err = sqlexec.EscapeSQL(sql, args...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	internal := s.isInternal()
