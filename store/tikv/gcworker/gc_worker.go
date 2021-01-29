@@ -1040,6 +1040,7 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
+		req.ScanLock().EndKey = loc.EndKey
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1785,13 +1786,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.ExecuteInternal(context.Background(), stmt)
+	_, err := se.ExecuteInternal(context.Background(), stmt,
+		key, value, gcVariableComments[key],
+		value, gcVariableComments[key])
 	logutil.BgLogger().Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
