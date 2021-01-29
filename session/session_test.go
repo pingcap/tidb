@@ -3584,13 +3584,12 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmts, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
-	c.Assert(stmts, HasLen, 1)
 
 	var sb strings.Builder
 	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
-	err = stmts[0].Restore(ctx)
+	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
@@ -3601,4 +3600,14 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	// test invalid arguments to escape
 	_, err = se.ParseWithParams(context.Background(), "SELECT %?")
 	c.Assert(err, ErrorMatches, "missing arguments.*")
+
+	// test noescape
+	stmt, err = se.ParseWithParams(context.TODO(), "SELECT 3")
+	c.Assert(err, IsNil)
+
+	sb.Reset()
+	ctx = format.NewRestoreCtx(0, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT 3")
 }
