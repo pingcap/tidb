@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -564,9 +563,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := time.Unix(0, oracle.ExtractPhysical(currentVer.Ver)*1e6)
-	startTSLowerLimit := variable.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
+	startTSLowerLimit := oracle.GoTimeToTS(now.Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond))
 
-	minStartTS := variable.GoTimeToTS(now)
+	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
