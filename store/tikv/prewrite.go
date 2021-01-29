@@ -129,6 +129,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	if c.connID > 0 {
 		failpoint.Inject("prewritePrimaryFail", func() {
 			if batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting primary batch"))
@@ -139,6 +141,8 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	if c.connID > 0 {
 		failpoint.Inject("prewriteSecondaryFail", func() {
 			if !batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
