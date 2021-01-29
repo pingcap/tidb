@@ -2219,14 +2219,6 @@ func (s *testSuite4) TestLoadData(c *C) {
 			[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx"), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-
-	// test line terminator in field quoter
-	ld.LinesInfo.Terminated = "\n"
-	ld.FieldsInfo.Enclosed = '"'
-	tests = []testCase{
-		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), nil, []string{"1|1|2\n|3", "4|4|5\n5|6"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
-	}
-	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func (s *testSuite4) TestLoadDataEscape(c *C) {
