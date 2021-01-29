@@ -104,6 +104,11 @@ type Session interface {
 	ExecuteInternal(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a internal sql statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
+<<<<<<< HEAD
+=======
+	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	ExecuteInternal(context.Context, string, ...interface{}) ([]sqlexec.RecordSet, error)
+>>>>>>> ea6ccf82e... *: refactor the RestrictedSQLExecutor interface (#22579)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
@@ -1132,7 +1137,32 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string) (recordSets [
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
 	}()
+<<<<<<< HEAD
 	return s.Execute(ctx, sql)
+=======
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.ExecuteInternal", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+		logutil.Eventf(ctx, "execute: %s", sql)
+	}
+
+	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := s.ExecuteStmt(ctx, stmtNode)
+	if err != nil {
+		s.sessionVars.StmtCtx.AppendError(err)
+	}
+	if rs == nil {
+		return nil, err
+	}
+
+	return []sqlexec.RecordSet{rs}, err
+>>>>>>> ea6ccf82e... *: refactor the RestrictedSQLExecutor interface (#22579)
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
@@ -1205,6 +1235,139 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	return stmts, nil
 }
 
+<<<<<<< HEAD
+=======
+// ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	sql, err := EscapeSQL(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	internal := s.isInternal()
+
+	var stmts []ast.StmtNode
+	var warns []error
+	var parseStartTime time.Time
+	if internal {
+		// Do no respect the settings from clients, if it is for internal usage.
+		// Charsets from clients may give chance injections.
+		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
+		parseStartTime = time.Now()
+		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+	} else {
+		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
+		parseStartTime = time.Now()
+		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+	}
+	if len(stmts) != 1 {
+		err = errors.New("run multiple statements internally is not supported")
+	}
+	if err != nil {
+		s.rollbackOnError(ctx)
+		// Only print log message when this SQL is from the user.
+		// Mute the warning for internal SQLs.
+		if !s.sessionVars.InRestrictedSQL {
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
+		}
+		return nil, util.SyntaxError(err)
+	}
+	durParse := time.Since(parseStartTime)
+	if s.isInternal() {
+		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
+	} else {
+		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
+	}
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
+	return stmts[0], nil
+}
+
+// ExecRestrictedStmt implements RestrictedSQLExecutor interface.
+func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
+	// Use special session to execute the sql.
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer s.sysSessionPool().Put(tmp)
+	se := tmp.(*session)
+
+	startTime := time.Now()
+	// The special session will share the `InspectionTableCache` with current session
+	// if the current session in inspection mode.
+	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+		se.sessionVars.InspectionTableCache = cache
+		defer func() { se.sessionVars.InspectionTableCache = nil }()
+	}
+	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
+		se.sessionVars.OptimizerUseInvisibleIndexes = true
+		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
+	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+	defer func() {
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
+		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
+	}()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			}
+			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
+	// for analyze stmt we need let worker session follow user session that executing stmt.
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+	metrics.SessionRestrictedSQLCounter.Inc()
+
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	rs, err := se.ExecuteStmt(ctx, stmtNode)
+	if err != nil {
+		se.sessionVars.StmtCtx.AppendError(err)
+	}
+	if rs == nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeErr := rs.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+	var rows []chunk.Row
+	rows, err = drainRecordSet(ctx, se, rs)
+	if err != nil {
+		return nil, nil, err
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
+	return rows, rs.Fields(), err
+}
+
+>>>>>>> ea6ccf82e... *: refactor the RestrictedSQLExecutor interface (#22579)
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))

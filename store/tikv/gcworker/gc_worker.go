@@ -285,7 +285,7 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -1599,7 +1599,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	defer se.Close()
 
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1624,7 +1624,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 	se.RollbackTxn(ctx)
 
-	_, err = se.Execute(ctx, "BEGIN")
+	_, err = se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1732,8 +1732,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.Execute(ctx, stmt)
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -1758,13 +1757,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
+	_, err := se.ExecuteInternal(context.Background(), stmt,
+		key, value, gcVariableComments[key],
+		value, gcVariableComments[key])
 	logutil.BgLogger().Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
