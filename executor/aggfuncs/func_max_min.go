@@ -81,7 +81,7 @@ func (d *Deque) Back() (Pair, error) {
 }
 
 // Front returns the element at the front of Deque
-func (d *Deque) Front() (Pair,error) {
+func (d *Deque) Front() (Pair, error) {
 	if len(d.Items) <= 0 {
 		return Pair{}, errors.New("Cannot get back when deque is empty")
 	}
@@ -137,11 +137,11 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 		var bigger bool
 		switch it := pair.item; it.(type) {
 		case int64:
-			if item.(int64) > it.(int64)  {
+			if item.(int64) > it.(int64) {
 				bigger = true
 			}
 		case float64:
-			if item.(int64) > it.(int64)  {
+			if item.(int64) > it.(int64) {
 				bigger = true
 			}
 		case types.MyDecimal:
@@ -160,7 +160,7 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 			if err != nil {
 				return nil
 			}
-		}else {
+		} else {
 			break
 		}
 	}
@@ -307,7 +307,7 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
-	deque *Deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinUint struct {
@@ -477,8 +477,8 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
