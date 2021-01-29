@@ -7635,6 +7635,8 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select 'ss' collate utf8mb4_unicode_ci like 'ß';`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select 'ss' collate utf8mb4_unicode_ci = 'ß';`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
