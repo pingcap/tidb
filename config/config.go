@@ -702,7 +702,7 @@ var defaultConf = Config{
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.05,
+		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
