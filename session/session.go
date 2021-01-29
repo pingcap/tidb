@@ -511,7 +511,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
-	return s.txn.Commit(tikvutil.SetSessionCtx(ctx, s.GetSessionVars().ConnectionID))
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {

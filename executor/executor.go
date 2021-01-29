@@ -998,7 +998,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	}
 	var lockKeyStats *execdetails.LockKeysDetails
 	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
-	err = txn.LockKeys(tikvutil.SetSessionCtx(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
+	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}

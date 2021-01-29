@@ -888,7 +888,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return err
 		}
-		err = txn.Commit(tikvutil.SetSessionCtx(context.Background(), e.ctx.GetSessionVars().ConnectionID))
+		err = txn.Commit(tikvutil.SetSessionID(context.Background(), e.ctx.GetSessionVars().ConnectionID))
 		if err != nil {
 			return err
 		}

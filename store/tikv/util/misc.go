@@ -70,7 +70,7 @@ type sessionIDCtxKey struct{}
 // SessionID is the context key type to mark a session.
 var SessionID = sessionIDCtxKey{}
 
-// SetSessionCtx sets session id into context
-func SetSessionCtx(ctx context.Context, sessionID uint64) context.Context {
+// SetSessionID sets session id into context
+func SetSessionID(ctx context.Context, sessionID uint64) context.Context {
 	return context.WithValue(ctx, SessionID, sessionID)
 }
