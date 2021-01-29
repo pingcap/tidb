@@ -1443,6 +1443,7 @@ func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test;")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
 	testKit.MustExec("drop table if exists t;")
 	testKit.MustExec("CREATE TABLE `t` (" +
 		"a bit(1) DEFAULT NULL," +
