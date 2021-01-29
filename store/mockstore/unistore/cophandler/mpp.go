@@ -102,7 +102,7 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 			DataCh:     make(chan *tipb.Chunk, 10),
 			sourceTask: b.mppCtx.TaskHandler.Meta,
 			targetTask: targetTask,
-			active:     false,
+			connectedCh:     make(chan struct{}),
 			ErrCh:      make(chan error, 1),
 		}
 		e.tunnels = append(e.tunnels, tunnel)
@@ -323,10 +323,8 @@ func (h *MPPTaskHandler) run(ctx context.Context, addr string, req *tikvrpc.Requ
 func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, error) {
 	meta := req.ReceiverMeta
 	for i := 0; i < 10; i++ {
-		h.tunnelSetLock.Lock()
-		tunnel, ok := h.TunnelSet[meta.TaskId]
-		h.tunnelSetLock.Unlock()
-		if ok {
+		tunnel, err := h.getAndActiveTunnel(req)
+		if err == nil {
 			return tunnel, nil
 		}
 		time.Sleep(time.Second)
@@ -346,18 +344,14 @@ func (h *MPPTaskHandler) registerTunnel(tunnel *ExchangerTunnel) error {
 	return nil
 }
 
-func (h *MPPTaskHandler) getAndActiveTunnel(req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, *mpp.Error, error) {
+func (h *MPPTaskHandler) getAndActiveTunnel(req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, *mpp.Error) {
 	targetID := req.ReceiverMeta.TaskId
 	if tunnel, ok := h.TunnelSet[targetID]; ok {
-		if tunnel.active {
-			// We find the dataCh, but the dataCh has been used.
-			return nil, &mpp.Error{Code: MPPErrEstablishConnMultiTimes, Msg: "dataCh has been connected"}, nil
-		}
-		tunnel.active = true
-		return tunnel, nil, nil
+		close(tunnel.connectedCh)
+		return tunnel, nil
 	}
 	// We dont find this dataCh, may be task not ready or have been deleted.
-	return nil, &mpp.Error{Code: MPPErrTunnelNotFound, Msg: "task not found, please wait for a while"}, nil
+	return nil, &mpp.Error{Code: MPPErrTunnelNotFound, Msg: "task not found, please wait for a while"}
 }
 
 // ExchangerTunnel contains a channel that can transfer data.
@@ -368,7 +362,7 @@ type ExchangerTunnel struct {
 	sourceTask *mpp.TaskMeta // source task is nearer to the data source
 	targetTask *mpp.TaskMeta // target task is nearer to the client end , as tidb.
 
-	active bool
+	connectedCh chan struct{}
 	ErrCh  chan error
 }
 
