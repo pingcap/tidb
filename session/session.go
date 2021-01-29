@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -501,7 +502,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
-	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {

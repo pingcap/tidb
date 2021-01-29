@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
@@ -241,7 +240,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 	spkv := s.store.GetSafePointKV()
 	err := spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(err, IsNil)
-	now := variable.GoTimeToTS(time.Now())
+	now := oracle.GoTimeToTS(time.Now())
 	sp := s.gcWorker.calcSafePointByMinStartTS(ctx, now)
 	c.Assert(sp, Equals, now)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), "0")
@@ -380,7 +379,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 
 	// Check skipping GC if safe point is not changed.
 	safePointTime, err := s.gcWorker.loadTime(gcSafePointKey)
-	minStartTS := variable.GoTimeToTS(*safePointTime) + 1
+	minStartTS := oracle.GoTimeToTS(*safePointTime) + 1
 	c.Assert(err, IsNil)
 	spkv := s.store.GetSafePointKV()
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(minStartTS, 10))
