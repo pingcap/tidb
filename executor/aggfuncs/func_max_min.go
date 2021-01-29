@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"container/heap"
+	"github.com/pingcap/errors"
 	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,6 +24,147 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 )
+
+// newDeque inits a new Deque
+func newDeque(isMax bool) *Deque {
+	return &Deque{[]Pair{}, isMax}
+}
+
+// Deque is an array based double end queue
+type Deque struct {
+	Items []Pair
+	IsMax bool
+}
+
+// PushFront pushes idx and item(wrapped in Pair) to the front of Deque
+func (d *Deque) PushFront(idx uint64, item interface{}) {
+	p := Pair{item, idx}
+	d.Items = append([]Pair{p}, d.Items...)
+}
+
+// PushBack pushes idx and item(wrapped in Pair) to the end of Deque
+func (d *Deque) PushBack(idx uint64, item interface{}) {
+	p := Pair{item, idx}
+	d.Items = append(d.Items, p)
+}
+
+// PopFront pops an item from the front of Deque
+func (d *Deque) PopFront() (interface{}, error) {
+	if len(d.Items) <= 0 {
+		return nil, errors.New("Pop front when deque is empty")
+	}
+	defer func() {
+		d.Items = d.Items[1:]
+	}()
+	return d.Items[0], nil
+}
+
+// PopBack pops an item from the end of Deque
+func (d *Deque) PopBack() (interface{}, error) {
+	i := len(d.Items) - 1
+	if i < 0 {
+		return nil, errors.New("Pop back when deque is empty")
+	}
+	defer func() {
+		d.Items = d.Items[:i]
+	}()
+	return d.Items[i], nil
+}
+
+// Back returns the element at the end of Deque
+func (d *Deque) Back() (Pair, error) {
+	i := len(d.Items) - 1
+	if i < 0 {
+		return Pair{}, errors.New("Cannot get back when deque is empty")
+	}
+	return d.Items[i], nil
+}
+
+// Front returns the element at the front of Deque
+func (d *Deque) Front() (Pair,error) {
+	if len(d.Items) <= 0 {
+		return Pair{}, errors.New("Cannot get back when deque is empty")
+	}
+	return d.Items[0], nil
+}
+
+// IsEmpty returns if Deque is empty
+func (d *Deque) IsEmpty() bool {
+	if len(d.Items) == 0 {
+		return true
+	}
+	return false
+}
+
+// Pair pairs items and their indices in deque
+type Pair struct {
+	item interface{}
+	idx  uint64
+}
+
+// Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index
+func (d *Deque) Dequeue(boundary uint64) error {
+	for !d.IsEmpty() {
+		frontEle, err := d.Front()
+		if err != nil {
+			return err
+		}
+		if frontEle.idx < boundary {
+			_, err := d.PopFront()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		return nil
+	}
+	return nil
+}
+
+// Enqueue put item at the back of queue, while popping any element that is lesser element in queue
+func (d *Deque) Enqueue(idx uint64, item interface{}) error {
+	if d.IsEmpty() {
+		d.PushBack(idx, item)
+		return nil
+	}
+
+	for !d.IsEmpty() {
+		pair, err := d.Back()
+		if err != nil {
+			return err
+		}
+
+		var bigger bool
+		switch it := pair.item; it.(type) {
+		case int64:
+			if it.(int64) > item.(int64) {
+				bigger = true
+			}
+		case float64:
+			if it.(int64) > item.(int64) {
+				bigger = true
+			}
+		case types.MyDecimal:
+			it, itemVal := it.(types.MyDecimal), item.(types.MyDecimal)
+			if it.Compare(&itemVal) >= 0 {
+				bigger = true
+			}
+		default:
+			return errors.New("unsupported type")
+		}
+
+		// 1. if deque aims for finding max and item is bigger than element at back
+		// 2. if deque aims for finding min and item is smaller than element at back
+		if bigger && d.IsMax || !bigger && !d.IsMax {
+			_, err := d.PopBack()
+			if err != nil {
+				return nil
+			}
+		}
+	}
+	d.PushBack(idx, item)
+	return nil
+}
 
 type maxMinHeap struct {
 	data    []interface{}
@@ -164,7 +306,8 @@ type partialResult4MaxMinInt struct {
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
 	// maxMinHeap is an ordered queue, using to evaluate the maximum or minimum value in a sliding window.
-	heap *maxMinHeap
+	heap  *maxMinHeap
+	deque *Deque
 }
 
 type partialResult4MaxMinUint struct {
@@ -240,6 +383,7 @@ func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
+	p.deque = newDeque(e.isMax)
 	return PartialResult(p), DefPartialResult4MaxMinIntSize
 }
 
@@ -332,20 +476,17 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 		if isNull {
 			continue
 		}
-		p.heap.Append(input)
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastStart+i])
+		err = p.deque.Enqueue(lastEnd+i, input)
 		if err != nil {
 			return err
 		}
-		if isNull {
-			continue
-		}
-		p.heap.Remove(input)
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(int64)
+	err := p.deque.Dequeue(lastStart+shiftStart)
+	if err != nil {
+		return err
+	}
+	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+		p.val = val.item.(int64)
 		p.isNull = false
 	} else {
 		p.isNull = true
