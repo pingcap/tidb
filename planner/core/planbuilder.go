@@ -1791,7 +1791,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't been GA and is not available for new statistics.")
+			return nil, errors.Errorf("Fast analyze hasn't been General Availability and only support analyze version 1 currently.")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
 	}
@@ -1878,7 +1878,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't been GA and is not available for new statistics.")
+			return nil, errors.Errorf("Fast analyze hasn't been General Availability and only support analyze version 1 currently.")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
 	}
@@ -1986,8 +1986,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
 	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
-		statsVersion = statistics.Version1
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Fast analyze hasn't been General Availability and only support analyze version 1 currently."))
+		return nil, errors.Errorf("Fast analyze hasn't been General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User

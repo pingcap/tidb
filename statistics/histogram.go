@@ -374,7 +374,7 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 	}
 }
 
-// AddIdxVals adds the given values from the histogram.
+// AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
 	sort.Slice(idxValCntPairs, func(i, j int) bool {
@@ -776,8 +776,9 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	if cmp == 0 {
 		lh.NDV--
 		lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV
+		// There's an overlapped one. So we need to subtract it if needed.
 		if rh.Buckets[0].NDV > 0 && lh.Buckets[lLen-1].Repeat > 0 {
-			lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV - 1
+			lh.Buckets[lLen-1].NDV--
 		}
 		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat, false)
 		offset = rh.Buckets[0].Count

@@ -223,24 +223,14 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // UpdateSessionVar updates the necessary session variables for the stats reader.
 func (h *Handle) UpdateSessionVar() error {
-	reader, err := h.getStatsReader(nil)
+	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
-
-	defer func() {
-		err1 := h.releaseStatsReader(reader)
-		if err1 != nil && err == nil {
-			err = err1
-		}
-	}()
-
-	verInString, err := reader.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("set @@session.tidb_analyze_version=%v", verInString))
 	if err != nil {
 		return err
 	}
-	ver, err := strconv.ParseInt(verInString, 10, 64)
-	reader.ctx.GetSessionVars().AnalyzeVersion = int(ver)
 	return err
 }
 
