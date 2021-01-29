@@ -2513,7 +2513,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	},
 	"tidb_distsql_copr_cache": {
 		Comment:  "The quantile of TiDB distsql coprocessor cache",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_distsql_copr_cache_buckets{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
+		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_distsql_copr_cache_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance))",
 		Labels:   []string{"instance", "type"},
 		Quantile: 0.95,
 	},
