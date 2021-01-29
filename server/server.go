@@ -292,7 +292,6 @@ func setSSLVariable(ca, key, cert string) {
 
 // Export config-related metrics
 func (s *Server) reportConfig() {
-	metrics.TokenLimitGauge.Set(float64(s.cfg.TokenLimit))
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
 	metrics.ConfigStatus.WithLabelValues("mem-quota-query").Set(float64(s.cfg.MemQuotaQuery))
 	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
