@@ -390,15 +390,16 @@
     "Name": "TestIndexRangeForBit",
     "Cases": [
       {
-        "SQL": "select * from t;",
+        "SQL": "select * from t order by a;",
         "Plan": [
-          "PartitionUnion_9 10004.00 root  ",
-          "├─TableReader_11 1.00 root  data:TableFullScan_10",
-          "│ └─TableFullScan_10 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "├─TableReader_13 3.00 root  data:TableFullScan_12",
-          "│ └─TableFullScan_12 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "└─TableReader_15 10000.00 root  data:TableFullScan_14",
-          "  └─TableFullScan_14 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_9 10004.00 root  test.t.a",
+          "└─PartitionUnion_12 10004.00 root  ",
+          "  ├─TableReader_14 1.00 root  data:TableFullScan_13",
+          "  │ └─TableFullScan_13 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "  ├─TableReader_16 3.00 root  data:TableFullScan_15",
+          "  │ └─TableFullScan_15 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "  └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "    └─TableFullScan_17 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "\u0000 0",
@@ -408,33 +409,36 @@
         ]
       },
       {
-        "SQL": "select * from t where a = 0;",
+        "SQL": "select * from t where a = 0 order by a;",
         "Plan": [
-          "Selection_7 0.80 root  eq(test.t.a, 0)",
-          "└─TableReader_9 1.00 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 1.00 cop[tikv] table:t, partition:p0 keep order:false"
+          "Sort_7 0.80 root  test.t.a",
+          "└─Selection_10 0.80 root  eq(test.t.a, 0)",
+          "  └─TableReader_12 1.00 root  data:TableFullScan_11",
+          "    └─TableFullScan_11 1.00 cop[tikv] table:t, partition:p0 keep order:false"
         ],
         "Result": [
           "\u0000 0"
         ]
       },
       {
-        "SQL": "select * from t where a = 0 or a = 4;",
+        "SQL": "select * from t where a = 0 or a = 4 order by a;",
         "Plan": [
-          "Selection_7 0.80 root  or(eq(test.t.a, 0), eq(test.t.a, 4))",
-          "└─TableReader_9 1.00 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 1.00 cop[tikv] table:t, partition:p0 keep order:false"
+          "Sort_7 0.80 root  test.t.a",
+          "└─Selection_10 0.80 root  or(eq(test.t.a, 0), eq(test.t.a, 4))",
+          "  └─TableReader_12 1.00 root  data:TableFullScan_11",
+          "    └─TableFullScan_11 1.00 cop[tikv] table:t, partition:p0 keep order:false"
         ],
         "Result": [
           "\u0000 0"
         ]
       },
       {
-        "SQL": "select * from t where a = 1;",
+        "SQL": "select * from t where a = 1 order by a;",
         "Plan": [
-          "Selection_7 2.40 root  eq(test.t.a, 1)",
-          "└─TableReader_9 3.00 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 3.00 cop[tikv] table:t, partition:p1 keep order:false"
+          "Sort_7 2.40 root  test.t.a",
+          "└─Selection_10 2.40 root  eq(test.t.a, 1)",
+          "  └─TableReader_12 3.00 root  data:TableFullScan_11",
+          "    └─TableFullScan_11 3.00 cop[tikv] table:t, partition:p1 keep order:false"
         ],
         "Result": [
           "\u0001 -1",
@@ -443,48 +447,50 @@
         ]
       },
       {
-        "SQL": "select * from t where a = -1;",
+        "SQL": "select * from t where a = -1 order by a;",
         "Plan": [
-          "Selection_7 0.00 root  eq(test.t.a, -1)",
-          "└─TableDual_8 0.00 root  rows:0"
+          "Selection_13 0.00 root  eq(test.t.a, -1)",
+          "└─TableDual_14 0.00 root  rows:0"
         ],
         "Result": null
       },
       {
-        "SQL": "select * from t where a = 3;",
+        "SQL": "select * from t where a = 3 order by a;",
         "Plan": [
-          "Selection_7 0.00 root  eq(test.t.a, 3)",
-          "└─TableDual_8 0.00 root  rows:0"
+          "Selection_13 0.00 root  eq(test.t.a, 3)",
+          "└─TableDual_14 0.00 root  rows:0"
         ],
         "Result": null
       },
       {
-        "SQL": "select * from t where a < 1;",
+        "SQL": "select * from t where a < 1 order by a;",
         "Plan": [
-          "Selection_10 8003.20 root  lt(test.t.a, 1)",
-          "└─PartitionUnion_11 10004.00 root  ",
-          "  ├─TableReader_13 1.00 root  data:TableFullScan_12",
-          "  │ └─TableFullScan_12 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "  ├─TableReader_15 3.00 root  data:TableFullScan_14",
-          "  │ └─TableFullScan_14 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_10 8003.20 root  test.t.a",
+          "└─Selection_13 8003.20 root  lt(test.t.a, 1)",
+          "  └─PartitionUnion_14 10004.00 root  ",
+          "    ├─TableReader_16 1.00 root  data:TableFullScan_15",
+          "    │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "    ├─TableReader_18 3.00 root  data:TableFullScan_17",
+          "    │ └─TableFullScan_17 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "    └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "      └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "\u0000 0"
         ]
       },
       {
-        "SQL": "select * from t where a < 3;",
+        "SQL": "select * from t where a < 3 order by a;",
         "Plan": [
-          "Selection_10 8003.20 root  lt(test.t.a, 3)",
-          "└─PartitionUnion_11 10004.00 root  ",
-          "  ├─TableReader_13 1.00 root  data:TableFullScan_12",
-          "  │ └─TableFullScan_12 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "  ├─TableReader_15 3.00 root  data:TableFullScan_14",
-          "  │ └─TableFullScan_14 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_10 8003.20 root  test.t.a",
+          "└─Selection_13 8003.20 root  lt(test.t.a, 3)",
+          "  └─PartitionUnion_14 10004.00 root  ",
+          "    ├─TableReader_16 1.00 root  data:TableFullScan_15",
+          "    │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "    ├─TableReader_18 3.00 root  data:TableFullScan_17",
+          "    │ └─TableFullScan_17 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "    └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "      └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "\u0000 0",
@@ -494,24 +500,25 @@
         ]
       },
       {
-        "SQL": "select * from t where a < -1;",
+        "SQL": "select * from t where a < -1 order by a;",
         "Plan": [
-          "Selection_7 0.00 root  lt(test.t.a, -1)",
-          "└─TableDual_8 0.00 root  rows:0"
+          "Selection_13 0.00 root  lt(test.t.a, -1)",
+          "└─TableDual_14 0.00 root  rows:0"
         ],
         "Result": null
       },
       {
-        "SQL": "select * from t where a > 0;",
+        "SQL": "select * from t where a > 0 order by a;",
         "Plan": [
-          "Selection_10 8003.20 root  gt(test.t.a, 0)",
-          "└─PartitionUnion_11 10004.00 root  ",
-          "  ├─TableReader_13 1.00 root  data:TableFullScan_12",
-          "  │ └─TableFullScan_12 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "  ├─TableReader_15 3.00 root  data:TableFullScan_14",
-          "  │ └─TableFullScan_14 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_10 8003.20 root  test.t.a",
+          "└─Selection_13 8003.20 root  gt(test.t.a, 0)",
+          "  └─PartitionUnion_14 10004.00 root  ",
+          "    ├─TableReader_16 1.00 root  data:TableFullScan_15",
+          "    │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "    ├─TableReader_18 3.00 root  data:TableFullScan_17",
+          "    │ └─TableFullScan_17 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "    └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "      └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "\u0001 -1",
@@ -520,16 +527,17 @@
         ]
       },
       {
-        "SQL": "select * from t where a > -1;",
+        "SQL": "select * from t where a > -1 order by a;",
         "Plan": [
-          "Selection_10 8003.20 root  gt(test.t.a, -1)",
-          "└─PartitionUnion_11 10004.00 root  ",
-          "  ├─TableReader_13 1.00 root  data:TableFullScan_12",
-          "  │ └─TableFullScan_12 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "  ├─TableReader_15 3.00 root  data:TableFullScan_14",
-          "  │ └─TableFullScan_14 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_10 8003.20 root  test.t.a",
+          "└─Selection_13 8003.20 root  gt(test.t.a, -1)",
+          "  └─PartitionUnion_14 10004.00 root  ",
+          "    ├─TableReader_16 1.00 root  data:TableFullScan_15",
+          "    │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "    ├─TableReader_18 3.00 root  data:TableFullScan_17",
+          "    │ └─TableFullScan_17 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "    └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "      └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": [
           "\u0000 0",
@@ -539,16 +547,17 @@
         ]
       },
       {
-        "SQL": "select * from t where a > 3;",
+        "SQL": "select * from t where a > 3 order by a;",
         "Plan": [
-          "Selection_10 8003.20 root  gt(test.t.a, 3)",
-          "└─PartitionUnion_11 10004.00 root  ",
-          "  ├─TableReader_13 1.00 root  data:TableFullScan_12",
-          "  │ └─TableFullScan_12 1.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "  ├─TableReader_15 3.00 root  data:TableFullScan_14",
-          "  │ └─TableFullScan_14 3.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "Sort_10 8003.20 root  test.t.a",
+          "└─Selection_13 8003.20 root  gt(test.t.a, 3)",
+          "  └─PartitionUnion_14 10004.00 root  ",
+          "    ├─TableReader_16 1.00 root  data:TableFullScan_15",
+          "    │ └─TableFullScan_15 1.00 cop[tikv] table:t, partition:p0 keep order:false",
+          "    ├─TableReader_18 3.00 root  data:TableFullScan_17",
+          "    │ └─TableFullScan_17 3.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "    └─TableReader_20 10000.00 root  data:TableFullScan_19",
+          "      └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Result": null
       }

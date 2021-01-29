@@ -71,18 +71,18 @@
   {
     "name": "TestIndexRangeForBit",
     "cases": [
-      "select * from t;",
-      "select * from t where a = 0;",
-      "select * from t where a = 0 or a = 4;",
-      "select * from t where a = 1;",
-      "select * from t where a = -1;",
-      "select * from t where a = 3;",
-      "select * from t where a < 1;",
-      "select * from t where a < 3;",
-      "select * from t where a < -1;",
-      "select * from t where a > 0;",
-      "select * from t where a > -1;",
-      "select * from t where a > 3;"
+      "select * from t order by a;",
+      "select * from t where a = 0 order by a;",
+      "select * from t where a = 0 or a = 4 order by a;",
+      "select * from t where a = 1 order by a;",
+      "select * from t where a = -1 order by a;",
+      "select * from t where a = 3 order by a;",
+      "select * from t where a < 1 order by a;",
+      "select * from t where a < 3 order by a;",
+      "select * from t where a < -1 order by a;",
+      "select * from t where a > 0 order by a;",
+      "select * from t where a > -1 order by a;",
+      "select * from t where a > 3 order by a;"
     ]
   }
 ]
