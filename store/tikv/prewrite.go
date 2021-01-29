@@ -138,7 +138,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		})
 	}
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("prewriteSecondaryFail", func() {
 			if !batch.isPrimary {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
