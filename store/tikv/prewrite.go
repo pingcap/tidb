@@ -75,7 +75,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 
 	ttl := c.lockTTL
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("twoPCShortLockTTL", func() {
 			ttl = 1
 			keys := make([]string, 0, len(mutations))
@@ -126,7 +126,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("prewritePrimaryFail", func() {
 			if batch.isPrimary {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
@@ -260,7 +260,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
-				zap.Uint64("conn", c.connID),
+				zap.Uint64("session", c.sessionID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}

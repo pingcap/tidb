@@ -423,8 +423,8 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
-func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, connID)
+func newTwoPhaseCommitterWithInit(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+	c, err := newTwoPhaseCommitter(txn, sessionID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1286,7 +1286,7 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	committer.connID = 1
+	committer.sessionID = 1
 	committer.minCommitTS = txn1.startTS + 10
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
