@@ -31,7 +31,6 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -957,14 +956,14 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 		LockType:        kvrpcpb.Op_PessimisticLock,
 		LockForUpdateTS: txn1.startTS,
 	}
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_TTLExpirePessimisticRollback)
 
 	// Txn2 tries to lock the secondary key k2, there should be no dead loop.
 	// Since the resolving key k2 is a pessimistic lock, no rollback record should be written, and later lock
 	// and the other secondary key k3 should succeed if there is no fail point enabled.
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_LockNotExistDoNothing)
 	txn2 := s.begin(c)
@@ -997,7 +996,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
 	err = txn3.LockKeys(ctx, lockCtx, k3)
 	c.Assert(err, IsNil)
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey3, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey3, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_LockNotExistDoNothing)
 }
