@@ -349,6 +349,10 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			if possiblePath == nil {
+				return
+			}
+
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
 				accessConds = append(accessConds, p.AccessConds...)
@@ -471,8 +475,15 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	tableFilterCnt := 0
 	for _, path := range partialPaths {
+		// IndexMerge should not be used when the SQL is like 'select x from t WHERE (key1=1 AND key2=2) OR (key1=4 AND key3=6);'.
+		// Check issue https://github.com/pingcap/tidb/issues/22105 for details.
 		if len(path.TableFilters) > 0 {
+			tableFilterCnt++
+			if tableFilterCnt > 1 {
+				return nil
+			}
 			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
 		}
 	}
