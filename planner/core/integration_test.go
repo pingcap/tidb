@@ -1763,7 +1763,6 @@ func (s *testIntegrationSuite) TestCorrelatedColumnAggFuncPushDown(c *C) {
 	))
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue22105(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1811,7 +1810,7 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
 
 	var input []string
-	var output []struct {
+	var output[]struct {
 		SQL  string
 		Plan []string
 	}
@@ -1823,7 +1822,8 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
-=======
+}
+
 // Test for issue https://github.com/pingcap/tidb/issues/21607.
 func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1843,5 +1843,4 @@ func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 		Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t where c = 1 and c in (3);").
 		Check(testkit.Rows("0"))
->>>>>>> f08c5fc4a...  planner: not pruning column used by union scan condition (#21640)
 }

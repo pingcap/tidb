@@ -216,15 +216,9 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
-<<<<<<< HEAD
 	parentUsedCols = append(parentUsedCols, p.handleCol)
-=======
-	for i := 0; i < p.handleCols.NumCols(); i++ {
-		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
-	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
->>>>>>> f08c5fc4a...  planner: not pruning column used by union scan condition (#21640)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
