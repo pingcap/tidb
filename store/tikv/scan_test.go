@@ -20,9 +20,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
@@ -43,7 +43,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 	// Avoid using async commit logic.
-	s.ctx = context.WithValue(context.Background(), sessionctx.ConnID, uint64(0))
+	s.ctx = context.WithValue(context.Background(), util.SessionID, uint64(0))
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {

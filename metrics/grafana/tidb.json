@@ -6334,7 +6334,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_buckets{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type))",
+              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
@@ -11948,7 +11948,7 @@
         "options": [
 
         ],
-        "query": "label_values(pd_cluster_status, cluster)",
+        "query": "label_values(pd_cluster_status, tidb_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
