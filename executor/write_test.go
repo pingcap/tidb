@@ -3868,7 +3868,7 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testSerialSuite) TestIssue22507(c *C) {
+func (s *testSerialSuite) TestIssue22496(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12")
