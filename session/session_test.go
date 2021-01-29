@@ -4166,30 +4166,35 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	defer func() {
 		se.GetSessionVars().InRestrictedSQL = origin
 	}()
-	_, err := se.ParseWithParams(context.TODO(), "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	_, err = se.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
 	ctx := format.NewRestoreCtx(0, &sb)
-	err = stmts.Restore(ctx)
+	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	// FIXME: well... so the restore function is vulnerable...
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
 
 	// test invalid sql
-	_, err = se.ParseWithParams(context.TODO(), "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = se.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	sql, err := se.ParseWithParams(context.TODO(), "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
-	c.Assert(sql, Equals, "SELECT 3")
+
+	sb.Reset()
+	ctx = format.NewRestoreCtx(0, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT 3")
 }
