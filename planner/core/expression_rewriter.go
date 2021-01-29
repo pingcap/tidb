@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 
@@ -1485,7 +1484,6 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				isPatternExactMatch = true
 				if collate.NewCollationEnabled() {
 					_, coll := expression.DeriveCollationFromExprs(er.sctx, er.ctxStack[l-1], er.ctxStack[l-2])
-					logutil.BgLogger().Warn(coll)
 					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
 						isPatternExactMatch = false
 					}
