@@ -136,6 +136,16 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		})
 	}
 
+	if c.connID > 0 {
+		failpoint.Inject("prewriteSecondaryFail", func() {
+			if !batch.isPrimary {
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
+			}
+		})
+	}
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
