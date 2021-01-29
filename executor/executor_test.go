@@ -7037,17 +7037,17 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 	}
 
 	// ticase-4169, trigger oom action twice after workers consuming all the data
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4169", `return(true)`)
+	c.Assert(tikv.MockTicase4169.Enable(`return(true)`), IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4169")
+	tikv.MockTicase4169.Disable()
 	// ticase-4170, trigger oom action twice after iterator receiving all the data.
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
+	c.Assert(tikv.MockTicase4170.Enable(`return(true)`), IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4170")
+	tikv.MockTicase4170.Disable()
 	// ticase-4171, trigger oom before reading or consuming any data
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4171", `return(true)`)
+	c.Assert(tikv.MockTicase4171.Enable(`return(true)`), IsNil)
 	f()
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4171")
+	tikv.MockTicase4171.Disable()
 }
 
 func (s *testSuite) TestIssue20237(c *C) {
