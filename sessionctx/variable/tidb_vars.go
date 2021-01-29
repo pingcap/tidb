@@ -520,6 +520,9 @@ const (
 
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition.
+	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
 )
 
 // TiDB vars that have only global scope
@@ -659,6 +662,7 @@ const (
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
+	DefTiDBEnableExchangePartition		= false
 )
 
 // Process global variables.
