@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"math/rand"
 	"strings"
@@ -33,15 +34,15 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -403,6 +404,12 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 	}
 
 	if handle.IsInt() {
+		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
+			if mysql.HasUnsignedFlag(pkInfo.Flag) {
+				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
+				return c.genKeyExistsError(name, handleStr, nil)
+			}
+		}
 		return c.genKeyExistsError(name, handle.String(), nil)
 	}
 
@@ -838,7 +845,14 @@ func (tm *ttlManager) run(c *twoPhaseCommitter, lockCtx *kv.LockCtx) {
 		return
 	}
 	tm.lockCtx = lockCtx
-	go tm.keepAlive(c)
+	noKeepAlive := false
+	failpoint.Inject("doNotKeepAlive", func() {
+		noKeepAlive = true
+	})
+
+	if !noKeepAlive {
+		go tm.keepAlive(c)
+	}
 }
 
 func (tm *ttlManager) close() {
@@ -1284,7 +1298,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.isAsyncCommit() {
 		// For async commit protocol, the commit is considered success here.
 		c.txn.commitTS = c.commitTS
-		logutil.Logger(ctx).Info("2PC will use async commit protocol to commit this txn",
+		logutil.Logger(ctx).Debug("2PC will use async commit protocol to commit this txn",
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("connID", c.connID))
 		go func() {

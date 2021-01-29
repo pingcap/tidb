@@ -88,7 +88,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, fmt.Sprintf("use %v", curDB))
+		_, err = sh.s.ExecuteInternal(context.Background(), "use %n", curDB)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return

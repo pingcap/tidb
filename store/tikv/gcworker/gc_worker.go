@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tidbutil "github.com/pingcap/tidb/util"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -144,7 +144,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModePhysical
+	gcScanLockModeDefault  = gcScanLockModeLegacy
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -291,7 +291,7 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -324,7 +324,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calculateNewSafePoint(ctx, now)
+	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -339,12 +339,10 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	return true, newSafePointValue, nil
 }
 
-// calculateNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.Time) time.Time {
+func (w *GCWorker) calcGlobalMinStartTS(ctx context.Context) (uint64, error) {
 	kvs, err := w.store.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
-		return safePoint
+		return 0, err
 	}
 
 	var globalMinStartTS uint64 = math.MaxUint64
@@ -358,14 +356,23 @@ func (w *GCWorker) calSafePointByMinStartTS(ctx context.Context, safePoint time.
 			globalMinStartTS = minStartTS
 		}
 	}
+	return globalMinStartTS, nil
+}
 
-	safePointTS := variable.GoTimeToTS(safePoint)
-	if globalMinStartTS < safePointTS {
-		safePoint = time.Unix(0, oracle.ExtractPhysical(globalMinStartTS)*1e6)
+// calcNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
+func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint64) uint64 {
+	globalMinStartTS, err := w.calcGlobalMinStartTS(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
+		return safePoint
+	}
+
+	if globalMinStartTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
-			zap.Time("safePoint", safePoint))
+			zap.Uint64("safePoint", safePoint))
+		safePoint = globalMinStartTS
 	}
 	return safePoint
 }
@@ -375,9 +382,7 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(currentVer.Ver)
-	sec, nsec := physical/1e3, (physical%1e3)*1e6
-	return time.Unix(sec, nsec), nil
+	return oracle.GetTimeFromTS(currentVer.Ver), nil
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
@@ -481,7 +486,7 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -491,21 +496,24 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 		return nil, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
+
 	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	safePoint := w.calSafePointByMinStartTS(ctx, now.Add(-*lifeTime))
 
-	safePointValue := oracle.ComposeTS(oracle.GetPhysical(safePoint), 0)
+	safePointValue := w.calcSafePointByMinStartTS(ctx, variable.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
-	safePoint = oracle.GetTimeFromTS(safePointValue)
-
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+
+	// safepoint is recorded in time.Time format which strips the logical part of the timestamp.
+	// To prevent the GC worker from keeping working due to the loss of logical part when the
+	// safe point isn't changed, we should compare them in time.Time format.
+	safePoint := oracle.GetTimeFromTS(safePointValue)
 	// We should never decrease safePoint.
-	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
+	if lastSafePoint != nil && !safePoint.After(*lastSafePoint) {
 		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
@@ -1006,6 +1014,10 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		Limit:      gcScanLockLimit,
 	})
 
+	failpoint.Inject("lowScanLockLimit", func() {
+		req.ScanLock().Limit = 3
+	})
+
 	var stat tikv.RangeTaskStat
 	key := startKey
 	bo := tikv.NewBackofferWithVars(ctx, tikv.GcResolveLockMaxBackoff, nil)
@@ -1028,6 +1040,7 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
+		req.ScanLock().EndKey = loc.EndKey
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1614,7 +1627,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	defer se.Close()
 
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1639,7 +1652,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 	se.RollbackTxn(ctx)
 
-	_, err = se.Execute(ctx, "BEGIN")
+	_, err = se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1689,7 +1702,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(tidbutil.GCTimeFormat))
+	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
 	return errors.Trace(err)
 }
 
@@ -1701,7 +1714,7 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 	if str == "" {
 		return nil, nil
 	}
-	t, err := tidbutil.CompatibleParseGCTime(str)
+	t, err := tikvutil.CompatibleParseGCTime(str)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1747,8 +1760,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.Execute(ctx, stmt)
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -1773,13 +1785,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
+	_, err := se.ExecuteInternal(context.Background(), stmt,
+		key, value, gcVariableComments[key],
+		value, gcVariableComments[key])
 	logutil.BgLogger().Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
@@ -2038,12 +2051,16 @@ type scanLockResult struct {
 }
 
 func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64]*metapb.Store) *mergeLockScanner {
-	return &mergeLockScanner{
+	scanner := &mergeLockScanner{
 		safePoint:     safePoint,
 		client:        client,
 		stores:        stores,
 		scanLockLimit: gcScanLockLimit,
 	}
+	failpoint.Inject("lowPhysicalScanLockLimit", func() {
+		scanner.scanLockLimit = 3
+	})
+	return scanner
 }
 
 // Start initializes the scanner and enables retrieving items from the scanner.
