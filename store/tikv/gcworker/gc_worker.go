@@ -42,13 +42,12 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -144,7 +143,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModePhysical
+	gcScanLockModeDefault  = gcScanLockModeLegacy
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -291,7 +290,7 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -502,7 +501,7 @@ func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.T
 		return nil, 0, errors.Trace(err)
 	}
 
-	safePointValue := w.calcSafePointByMinStartTS(ctx, variable.GoTimeToTS(now.Add(-*lifeTime)))
+	safePointValue := w.calcSafePointByMinStartTS(ctx, oracle.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -1040,6 +1039,7 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
+		req.ScanLock().EndKey = loc.EndKey
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
@@ -1626,7 +1626,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	defer se.Close()
 
 	ctx := context.Background()
-	_, err := se.Execute(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1651,7 +1651,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 
 	se.RollbackTxn(ctx)
 
-	_, err = se.Execute(ctx, "BEGIN")
+	_, err = se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1759,8 +1759,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.Execute(ctx, stmt)
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -1785,13 +1784,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
+	_, err := se.ExecuteInternal(context.Background(), stmt,
+		key, value, gcVariableComments[key],
+		value, gcVariableComments[key])
 	logutil.BgLogger().Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),
