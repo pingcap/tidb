@@ -4185,6 +4185,6 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParams(context.Background(), "SELECT %?")
+	_, err = se.ParseWithParams(context.Background(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 }
