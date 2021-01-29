@@ -6334,11 +6334,7 @@
           "steppedLine": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_buckets[1m])) by (type))",
-=======
-              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type))",
->>>>>>> 94fe8d954... metrics: fix wrong bucket name of coprocessor cache (#22454)
+              "expr": "histogram_quantile(1, sum(rate(tidb_distsql_copr_cache_bucket[1m])) by (type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
