@@ -65,6 +65,7 @@ func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 func (s *testSuite9) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
+	tkRoot.MustExec("drop table if exists t1,t2")
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")
