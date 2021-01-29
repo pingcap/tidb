@@ -407,7 +407,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		str = str[1:]
 	}
 	var strIdx int
-	for strIdx < len(str) && (isDigit(str[strIdx])) {
+	for strIdx < len(str) && isDigit(str[strIdx]) {
 		strIdx++
 	}
 	digitsInt := strIdx
@@ -446,8 +446,8 @@ func (d *MyDecimal) FromString(str []byte) error {
 	var word int32
 	var innerIdx int
 	for digitsInt > 0 {
-		strIdx--
 		digitsInt--
+		strIdx--
 		word += int32(str[strIdx]-'0') * powers10[innerIdx]
 		innerIdx++
 		if innerIdx == digitsPerWord {
