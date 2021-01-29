@@ -4187,4 +4187,9 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	// test invalid arguments to escape
 	_, err = se.ParseWithParams(context.Background(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
+
+	// test noescape
+	sql, err := se.ParseWithParams(context.Background(), "SELECT %?")
+	c.Assert(err, IsNil)
+	c.Assert(sql, Equals, "SELECT %?")
 }

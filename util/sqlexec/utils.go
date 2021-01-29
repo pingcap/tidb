@@ -83,7 +83,6 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 }
 
 // EscapeSQL will escape input arguments into the sql string, doing necessary processing.
-// Note that it will do nothing if pass zero variadic arguments.
 // It works like printf() in c, there are following format specifiers:
 // 1. %?: automatic conversion by the type of arguments. E.g. []string -> ('s1','s2'..)
 // 2. %%: output %
@@ -91,9 +90,6 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 // But it does not prevent you from doing EscapeSQL("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 // It is still your responsibility to write safe SQL.
 func EscapeSQL(sql string, args ...interface{}) (string, error) {
-	if len(args) == 0 {
-		return sql, nil
-	}
 	buf := make([]byte, 0, len(sql))
 	argPos := 0
 	for i := 0; i < len(sql); i++ {
