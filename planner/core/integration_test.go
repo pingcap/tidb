@@ -1810,7 +1810,7 @@ func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
 	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
 
 	var input []string
-	var output[]struct {
+	var output []struct {
 		SQL  string
 		Plan []string
 	}
