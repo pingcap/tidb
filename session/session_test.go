@@ -4166,11 +4166,11 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	defer func() {
 		se.GetSessionVars().InRestrictedSQL = origin
 	}()
-	_, err := exec.ParseWithParams(context.Background(), "SELECT 4")
+	_, err := se.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmts, err := exec.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	_, err = se.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4181,15 +4181,15 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParams(context.Background(), "SELECT")
+	_, err = se.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = se.ParseWithParams(context.Background(), "SELECT %?, %?", 3)
+	_, err = se.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	sql, err := se.ParseWithParams(context.Background(), "SELECT %?")
+	sql, err := se.ParseWithParams(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
-	c.Assert(sql, Equals, "SELECT %?")
+	c.Assert(sql, Equals, "SELECT 3")
 }
