@@ -29,6 +29,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	tikvlog "github.com/pingcap/tidb/store/tikv/logutil"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -282,6 +283,9 @@ func InitLogger(cfg *LogConfig) error {
 		}
 		SlowQueryLogger.Formatter = &slowLogFormatter{}
 	}
+
+	// Setup log key for tikv client.
+	tikvlog.CtxLogKey = ctxLogKey
 
 	return nil
 }

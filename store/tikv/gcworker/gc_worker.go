@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -144,7 +144,7 @@ const (
 	gcScanLockModeKey      = "tikv_gc_scan_lock_mode"
 	gcScanLockModeLegacy   = "legacy"
 	gcScanLockModePhysical = "physical"
-	gcScanLockModeDefault  = gcScanLockModePhysical
+	gcScanLockModeDefault  = gcScanLockModeLegacy
 
 	gcAutoConcurrencyKey     = "tikv_gc_auto_concurrency"
 	gcDefaultAutoConcurrency = true
@@ -1040,6 +1040,7 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
+		req.ScanLock().EndKey = loc.EndKey
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
