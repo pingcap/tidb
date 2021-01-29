@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -86,6 +87,6 @@ func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	ts := variable.GoTimeToTS(safePointTime)
+	ts := oracle.GoTimeToTS(safePointTime)
 	return ts, nil
 }
