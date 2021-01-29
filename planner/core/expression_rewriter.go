@@ -1464,7 +1464,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
 		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
 		if err != nil {
 			er.err = err
@@ -1477,11 +1477,17 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				if v.Not {
 					op = ast.NE
 				}
-				types.DefaultTypeForValue(string(patValue), fieldType, char, col)
-				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
-					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op)
+				types.DefaultTypeForValue(string(patValue), fieldType, patExpression.RetType.Charset, patExpression.RetType.Collate)
+				constant := &expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType}
+				constant.SetCoercibility(patExpression.Coercibility())
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2], constant, op)
 				isPatternExactMatch = true
+				if collate.NewCollationEnabled() {
+					_, coll := expression.DeriveCollationFromExprs(er.sctx, er.ctxStack[l-1], er.ctxStack[l-2])
+					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
+						isPatternExactMatch = false
+					}
+				}
 			}
 		}
 	}

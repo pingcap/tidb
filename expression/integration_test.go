@@ -5158,9 +5158,9 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
 	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
-		"TableReader_43 10.00 root  data:Selection_42",
-		"└─Selection_42 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan_41 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_40 10.00 root  data:Selection_39",
+		"└─Selection_39 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableFullScan_38 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
@@ -6224,6 +6224,24 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("create table t(a char collate utf8mb4_bin, b char collate utf8mb4_general_ci);")
 	tk.MustExec("insert into t values ('a', 'a');")
 	tk.MustQuery("select * from t t1, t t2 where  t2.b = 'A' and lower(concat(t1.a , '' ))  = t2.b;").Check(testkit.Rows("a a a a"))
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a char collate utf8_unicode_ci, b char collate utf8mb4_unicode_ci, c char collate utf8_bin);")
+	tk.MustExec("insert into t values ('b', 'B', 'B');")
+	tk.MustQuery("select * from t t1, t t2 where t1.a=t2.b and t2.b=t2.c;").Check(testkit.Rows("b B B b B B"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;")
+	tk.MustExec("insert into t1 values ('A', 'a');")
+	tk.MustExec("insert into t2 values ('a', 'a')")
+	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';").Check(testkit.Rows("A a <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustExec("create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t1 values ('ß', 's');")
+	tk.MustExec("insert into t2 values ('s', 's')")
+	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
 }
 
 func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
@@ -7624,6 +7642,21 @@ func (s *testIntegrationSuite2) TestIssue15847(c *C) {
 	tk.MustExec("CREATE VIEW t15847(c0) AS SELECT NULL;")
 	tk.MustQuery("SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));").Check(testkit.Rows())
 	tk.MustExec("drop view if exists t15847")
+}
+
+func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_general_ci;`).Check(testkit.Rows("1"))
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_general_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
+	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci = '😋';`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select 'ss' collate utf8mb4_unicode_ci like 'ß';`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select 'ss' collate utf8mb4_unicode_ci = 'ß';`).Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
