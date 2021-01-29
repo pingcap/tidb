@@ -85,18 +85,18 @@
       {
         "SQL": "explain (select max(a) from t) union (select min(a) from t)",
         "Plan": [
-          "HashAgg_19 2.00 root  group by:Column#5, funcs:firstrow(Column#5)->Column#5",
-          "└─Union_20 2.00 root  ",
-          "  ├─StreamAgg_26 1.00 root  funcs:max(test.t.a)->Column#4",
-          "  │ └─Limit_30 1.00 root  offset:0, count:1",
-          "  │   └─TableReader_40 1.00 root  data:Limit_39",
-          "  │     └─Limit_39 1.00 cop[tikv]  offset:0, count:1",
-          "  │       └─TableFullScan_38 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
-          "  └─StreamAgg_48 1.00 root  funcs:min(test.t.a)->Column#2",
-          "    └─Limit_52 1.00 root  offset:0, count:1",
-          "      └─TableReader_62 1.00 root  data:Limit_61",
-          "        └─Limit_61 1.00 cop[tikv]  offset:0, count:1",
-          "          └─TableFullScan_60 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "HashAgg_17 2.00 root  group by:Column#5, funcs:firstrow(Column#5)->Column#5",
+          "└─Union_18 2.00 root  ",
+          "  ├─StreamAgg_21 1.00 root  funcs:max(test.t.a)->Column#4",
+          "  │ └─Limit_25 1.00 root  offset:0, count:1",
+          "  │   └─TableReader_35 1.00 root  data:Limit_34",
+          "  │     └─Limit_34 1.00 cop[tikv]  offset:0, count:1",
+          "  │       └─TableFullScan_33 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
+          "  └─StreamAgg_40 1.00 root  funcs:min(test.t.a)->Column#2",
+          "    └─Limit_44 1.00 root  offset:0, count:1",
+          "      └─TableReader_54 1.00 root  data:Limit_53",
+          "        └─Limit_53 1.00 cop[tikv]  offset:0, count:1",
+          "          └─TableFullScan_52 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
       }
     ]

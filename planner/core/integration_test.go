@@ -923,14 +923,14 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
 	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down=1"))
 	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_11 16000.00 root  test.t.b:desc",
-		"└─HashAgg_16 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
-		"  └─PartitionUnion_17 16000.00 root  ",
-		"    ├─HashAgg_18 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-		"    │ └─TableReader_22 10000.00 root  data:TableFullScan_21",
-		"    │   └─TableFullScan_21 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-		"    └─HashAgg_25 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-		"      └─TableReader_29 10000.00 root  data:TableFullScan_28",
-		"        └─TableFullScan_28 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+		"└─HashAgg_14 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
+		"  └─PartitionUnion_15 16000.00 root  ",
+		"    ├─HashAgg_16 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"    │ └─TableReader_20 10000.00 root  data:TableFullScan_19",
+		"    │   └─TableFullScan_19 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+		"    └─HashAgg_23 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"      └─TableReader_27 10000.00 root  data:TableFullScan_26",
+		"        └─TableFullScan_26 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
