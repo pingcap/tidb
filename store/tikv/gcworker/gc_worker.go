@@ -1036,6 +1036,7 @@ retryScanAndResolve:
 		if err != nil {
 			return stat, errors.Trace(err)
 		}
+		req.ScanLock().EndKey = loc.EndKey
 		resp, err := w.store.SendReq(bo, req, loc.Region, tikv.ReadTimeoutMedium)
 		if err != nil {
 			return stat, errors.Trace(err)
