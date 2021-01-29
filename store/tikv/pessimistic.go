@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"encoding/hex"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -23,9 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -73,12 +74,22 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		mutations[i] = mut
 	}
 	elapsed := uint64(time.Since(c.txn.startTime) / time.Millisecond)
+	ttl := elapsed + atomic.LoadUint64(&ManagedLockTTL)
+	failpoint.Inject("shortPessimisticLockTTL", func() {
+		ttl = 1
+		keys := make([]string, 0, len(mutations))
+		for _, m := range mutations {
+			keys = append(keys, hex.EncodeToString(m.Key))
+		}
+		logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on pessimistic lock",
+			zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+	})
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
 		Mutations:    mutations,
 		PrimaryLock:  c.primary(),
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + atomic.LoadUint64(&ManagedLockTTL),
+		LockTtl:      ttl,
 		IsFirstLock:  c.isFirstLock,
 		WaitTimeout:  action.LockWaitTime,
 		ReturnValues: action.ReturnValues,

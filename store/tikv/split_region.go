@@ -21,15 +21,13 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/store/tikv/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -109,13 +107,13 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 }
 
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
-	failpoint.Inject("MockSplitRegionTimeout", func(val failpoint.Value) {
+	if val, err := MockSplitRegionTimeout.Eval(); err == nil {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
 				<-bo.ctx.Done()
 			}
 		}
-	})
+	}
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
 		SplitKeys: batch.keys,
@@ -155,15 +153,14 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		// so n-1 needs to be scattered to other stores.
 		spResp.Regions = regions[:len(regions)-1]
 	}
+	var newRegionLeft string
+	if len(spResp.Regions) > 0 {
+		newRegionLeft = logutil.Hex(spResp.Regions[0]).String()
+	}
 	logutil.BgLogger().Info("batch split regions complete",
 		zap.Uint64("batch region ID", batch.regionID.id),
 		zap.Stringer("first at", kv.Key(batch.keys[0])),
-		zap.Stringer("first new region left", stringutil.MemoizeStr(func() string {
-			if len(spResp.Regions) == 0 {
-				return ""
-			}
-			return logutil.Hex(spResp.Regions[0]).String()
-		})),
+		zap.String("first new region left", newRegionLeft),
 		zap.Int("new region count", len(spResp.Regions)))
 
 	if !scatter {
@@ -219,11 +216,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 		}
 		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
-		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
+		if val, err2 := MockScatterRegionTimeout.Eval(); err2 == nil {
 			if val.(bool) {
 				err = ErrPDServerTimeout
 			}
-		})
+		}
 
 		if err == nil {
 			break
