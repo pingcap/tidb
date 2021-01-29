@@ -1135,7 +1135,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 
-	failpoint.Inject("beforePrewrite", nil)
+	if _, err := MockBeforePrewrite.Eval(); err == nil {
+	}
 
 	c.prewriteStarted = true
 	binlogChan := c.prewriteBinlog(ctx)
@@ -1228,10 +1229,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	if c.connID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
+		if _, err2 := MockBeforeSchemaCheck.Eval(); err2 == nil {
 			c.ttlManager.close()
-			failpoint.Return()
-		})
+			return
+		}
 	}
 
 	if !c.isAsyncCommit() {
@@ -1604,12 +1605,12 @@ func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.Bin
 
 	wg := sync.WaitGroup{}
 	mock := false
-	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
+	if val, err2 := MockSyncBinlogCommit.Eval(); err2 == nil {
 		if val.(bool) {
 			wg.Add(1)
 			mock = true
 		}
-	})
+	}
 	go func() {
 		logutil.Eventf(ctx, "start write finish binlog")
 		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)

@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -62,7 +63,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry"), IsNil)
+		tikv.MockGetTSErrorInRetry.Disable()
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -71,8 +72,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
 	// This test will mock a PD timeout error, and recover then.
 	// Just make mockGetTSErrorInRetry return true once, and then return false.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry",
-		`1*return(true)->return(false)`), IsNil)
+	c.Assert(tikv.MockGetTSErrorInRetry.Enable(`1*return(true)->return(false)`), IsNil)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }
@@ -87,7 +87,7 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 	tk.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
 		killValue = atomic.LoadUint32(vars.Killed)
 	}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("callBackofferHook")`), IsNil)
+	c.Assert(tikv.MockTikvStoreSendReqResult.Enable(`return("callBackofferHook")`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
 	tk.Se.GetSessionVars().Killed = 3
@@ -97,7 +97,7 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 
 func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
+	c.Assert(tikv.MockTikvStoreSendReqResult.Enable(`return("requestTiDBStoreError")`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))

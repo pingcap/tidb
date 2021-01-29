@@ -26,7 +26,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -414,11 +413,11 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint6
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
 		// This may cause duplicate data to be written.
-		failpoint.Inject("mockGetTSErrorInRetry", func(val failpoint.Value) {
+		if val, err2 := MockGetTSErrorInRetry.Eval(); err2 == nil {
 			if val.(bool) && !kv.IsMockCommitErrorEnable() {
 				err = ErrPDServerTimeout.GenWithStackByArgs("mock PD timeout")
 			}
-		})
+		}
 
 		if err == nil {
 			return startTS, nil

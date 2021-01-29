@@ -1031,9 +1031,9 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	txn3 := s.begin(c)
 	txn3.SetOption(kv.Pessimistic, true)
 	lockCtx3 := &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL", "return"), IsNil)
+	c.Assert(MockTxnNotFoundRetTTL.Enable("return"), IsNil)
 	err = txn3.LockKeys(context.Background(), lockCtx3, k2)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnNotFoundRetTTL"), IsNil)
+	MockTxnNotFoundRetTTL.Disable()
 	c.Assert(err, IsNil)
 	waitErr := <-doneCh
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)

@@ -24,4 +24,46 @@ var (
 	MockScatterRegionTimeout failpoint.Failpoint
 	// MockSplitRegionTimeout mocks timeout when trying to split region
 	MockSplitRegionTimeout failpoint.Failpoint
+	// MockPessimisticLockErrWriteConflict mocks
+	MockPessimisticLockErrWriteConflict failpoint.Failpoint
+	// MockSingleStmtDeadLockRetrySleep mocks
+	MockSingleStmtDeadLockRetrySleep failpoint.Failpoint
+	// MockBeforeAsyncPessimisticRollback mocks
+	MockBeforeAsyncPessimisticRollback failpoint.Failpoint
+	// MockBeforePrewrite mocks
+	MockBeforePrewrite failpoint.Failpoint
+	// MockBeforeSchemaCheck mocks
+	MockBeforeSchemaCheck failpoint.Failpoint
+	// MockGetTxnStatusDelay mocks
+	MockGetTxnStatusDelay failpoint.Failpoint
+	// MockHandleTaskOnceError mocks
+	MockHandleTaskOnceError failpoint.Failpoint
+	// MockCommitError mocks
+	MockCommitError failpoint.Failpoint
+	// MockGetTSErrorInRetry mocks
+	MockGetTSErrorInRetry failpoint.Failpoint
+	// MockRetrySendReqToRegion mocks
+	MockRetrySendReqToRegion failpoint.Failpoint
+	// MockSyncBinlogCommit mocks
+	MockSyncBinlogCommit failpoint.Failpoint
+	// MockProbeSetVars mocks
+	MockProbeSetVars failpoint.Failpoint
+	// MockTestRateLimitActionMockConsumeAndAssert mocks
+	MockTestRateLimitActionMockConsumeAndAssert failpoint.Failpoint
+	// MockTestRateLimitActionMockWaitMax mocks
+	MockTestRateLimitActionMockWaitMax failpoint.Failpoint
+	// MockTicase4169 mocks
+	MockTicase4169 failpoint.Failpoint
+	// MockTicase4170 mocks
+	MockTicase4170 failpoint.Failpoint
+	// MockTicase4171 mocks
+	MockTicase4171 failpoint.Failpoint
+	// MockTikvStoreRespResult mocks
+	MockTikvStoreRespResult failpoint.Failpoint
+	// MockTikvStoreSendReqResult mocks
+	MockTikvStoreSendReqResult failpoint.Failpoint
+	// MockTxnExpireRetTTL mocks
+	MockTxnExpireRetTTL failpoint.Failpoint
+	// MockTxnNotFoundRetTTL mocks
+	MockTxnNotFoundRetTTL failpoint.Failpoint
 )

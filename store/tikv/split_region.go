@@ -107,7 +107,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 }
 
 func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
-	if val, err := MockSplitRegionTimeout.Eval(); err == nil {
+	if val, err2 := MockSplitRegionTimeout.Eval(); err2 == nil {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
 				<-bo.ctx.Done()

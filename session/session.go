@@ -468,12 +468,12 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, err2 := tikv.MockCommitError.Eval(); err2 == nil {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(kv.ErrTxnRetryable)
+			return kv.ErrTxnRetryable
 		}
-	})
+	}
 
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)

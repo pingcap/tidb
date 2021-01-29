@@ -214,7 +214,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep", "return"), IsNil)
+	c.Assert(tikv.MockSingleStmtDeadLockRetrySleep.Enable("return"), IsNil)
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		<-syncCh
@@ -230,7 +230,7 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	s.cluster.ScheduleDelay(tk.Se.GetSessionVars().TxnCtx.StartTS, region1ID, time.Millisecond*10)
 	tk.MustExec("update single_statement set v = v + 1")
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/SingleStmtDeadLockRetrySleep"), IsNil)
+	tikv.MockSingleStmtDeadLockRetrySleep.Disable()
 	syncCh <- true
 }
 
@@ -536,10 +536,10 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback", "sleep(100)"), IsNil)
+	c.Assert(tikv.MockBeforeAsyncPessimisticRollback.Enable("sleep(100)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback"), IsNil)
+		tikv.MockBeforeAsyncPessimisticRollback.Disable()
 	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
@@ -808,7 +808,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 
 	tk2.MustExec("begin pessimistic")
 	done := make(chan error)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict", "return"), IsNil)
+	c.Assert(tikv.MockPessimisticLockErrWriteConflict.Enable("return"), IsNil)
 	var duration time.Duration
 	go func() {
 		var err error
@@ -820,7 +820,7 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 		_, err = tk2.Exec("select * from tk where c1 = 1 for update")
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflict"), IsNil)
+	tikv.MockPessimisticLockErrWriteConflict.Disable()
 	waitErr := <-done
 	c.Assert(waitErr, NotNil)
 	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
@@ -1316,8 +1316,8 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	tk.MustExec("insert into t1 values (5, 5, 5)")
 	tk.MustExec("insert into t1 values (10, 10, 10)")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL", "return"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay", "return"), IsNil)
+	c.Assert(tikv.MockTxnExpireRetTTL.Enable("return"), IsNil)
+	c.Assert(tikv.MockGetTxnStatusDelay.Enable("return"), IsNil)
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
@@ -1338,8 +1338,8 @@ func (s *testPessimisticSuite) TestRollbackWakeupBlockedTxn(c *C) {
 	err := <-errCh
 	c.Assert(err, IsNil)
 	tk2.MustExec("rollback")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/txnExpireRetTTL"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getTxnStatusDelay"), IsNil)
+	tikv.MockTxnExpireRetTTL.Disable()
+	tikv.MockGetTxnStatusDelay.Disable()
 }
 
 func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
@@ -2041,9 +2041,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
+	c.Assert(tikv.MockBeforeSchemaCheck.Enable("return"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck"), IsNil)
+		tikv.MockBeforeSchemaCheck.Disable()
 	}()
 
 	tk := s.newAsyncCommitTestKitWithInit(c)
@@ -2097,7 +2097,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	tikv.MockBeforePrewrite.Disable()
 	tk3.MustExec("admin check table tk")
 }
 
@@ -2153,7 +2153,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	tikv.MockBeforePrewrite.Disable()
 	tk3.MustExec("admin check table tk")
 }
 

@@ -259,7 +259,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
+	if val, err2 := MockTikvStoreSendReqResult.Eval(); err2 == nil {
 		switch val.(string) {
 		case "timeout":
 			failpoint.Return(nil, nil, errors.New("timeout"))
@@ -284,7 +284,7 @@ func (s *RegionRequestSender) SendReqCtx(
 				failpoint.Return(nil, nil, ErrTiKVServerTimeout)
 			}
 		}
-	})
+	}
 
 	tryTimes := 0
 	for {
@@ -327,11 +327,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
 			return nil, nil, ErrQueryInterrupted
 		}
-		failpoint.Inject("mockRetrySendReqToRegion", func(val failpoint.Value) {
+		if val, err2 := MockRetrySendReqToRegion.Eval(); err2 == nil {
 			if val.(bool) {
 				retry = true
 			}
-		})
+		}
 		if retry {
 			tryTimes++
 			continue
@@ -454,7 +454,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 		if s.Stats != nil {
 			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+			if val, err2 := MockTikvStoreRespResult.Eval(); err2 == nil {
 				if val.(bool) {
 					if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
 						failpoint.Return(&tikvrpc.Response{
@@ -462,7 +462,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 						}, false, nil)
 					}
 				}
-			})
+			}
 		}
 
 		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {

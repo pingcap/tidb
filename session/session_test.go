@@ -2670,9 +2670,9 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(vars.BackOffWeight, Equals, 50)
 
 	tk.MustExec("set @@autocommit = 1")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	c.Assert(tikv.MockProbeSetVars.Enable(`return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	tikv.MockProbeSetVars.Disable()
 	c.Assert(tikv.SetSuccess, IsTrue)
 	tikv.SetSuccess = false
 }

@@ -29,7 +29,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
@@ -526,12 +525,12 @@ func init() {
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+		if val, err2 := MockTicase4169.Eval(); err2 == nil {
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 			}
-		})
+		}
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -592,12 +591,12 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
-	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
+	if val, err2 := MockTicase4171.Eval(); err2 == nil {
 		if val.(bool) {
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
-	})
+	}
 	go taskSender.run()
 }
 
@@ -635,13 +634,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
 				consumed := resp.MemSize()
-				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+				if val, err2 := MockTestRateLimitActionMockConsumeAndAssert.Eval(); err2 == nil {
 					if val.(bool) {
 						if resp != finCopResp {
 							consumed = MockResponseSizeForTest
 						}
 					}
-				})
+				}
 				it.memTracker.Consume(-consumed)
 			}
 			return
@@ -677,13 +676,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
 		consumed := resp.MemSize()
-		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+		if val, err2 := MockTestRateLimitActionMockConsumeAndAssert.Eval(); err2 == nil {
 			if val.(bool) {
 				if resp != finCopResp {
 					consumed = MockResponseSizeForTest
 				}
 			}
-		})
+		}
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -707,16 +706,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	)
 	defer func() {
 		if resp == nil {
-			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+			if val, err2 := MockTicase4170.Eval(); err2 == nil {
 				if val.(bool) {
 					it.memTracker.Consume(10 * MockResponseSizeForTest)
 					it.memTracker.Consume(10 * MockResponseSizeForTest)
 				}
-			})
+			}
 		}
 	}()
 	// wait unit at least 5 copResponse received.
-	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
+	if val, err2 := MockTestRateLimitActionMockWaitMax.Eval(); err2 == nil {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
 			if len(it.tasks) > 9 {
@@ -725,7 +724,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				}
 			}
 		}
-	})
+	}
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
@@ -832,11 +831,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
-	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
+	if val, err2 := MockHandleTaskOnceError.Eval(); err2 == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+			return nil, errors.New("mock handleTaskOnce error")
 		}
-	})
+	}
 
 	copReq := coprocessor.Request{
 		Tp:        worker.req.Tp,
@@ -1388,13 +1387,13 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+		if val, err2 := MockTestRateLimitActionMockConsumeAndAssert.Eval(); err2 == nil {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
 					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
 				}
 			}
-		})
+		}
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),

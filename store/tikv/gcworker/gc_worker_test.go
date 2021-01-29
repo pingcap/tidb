@@ -405,23 +405,23 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
+	c.Assert(tikv.MockTikvStoreSendReqResult.Enable(`return("timeout")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	tikv.MockTikvStoreSendReqResult.Disable()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
+	c.Assert(tikv.MockTikvStoreSendReqResult.Enable(`return("GCNotLeader")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	tikv.MockTikvStoreSendReqResult.Disable()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
+	c.Assert(tikv.MockTikvStoreSendReqResult.Enable(`return("GCServerIsBusy")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	tikv.MockTikvStoreSendReqResult.Disable()
 }
 
 func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {

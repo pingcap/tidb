@@ -27,7 +27,6 @@ import (
 	"github.com/dgryski/go-farm"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -138,11 +137,11 @@ var SetSuccess = false
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
-	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+	if val, err2 := MockProbeSetVars.Eval(); err2 == nil {
 		if val.(bool) {
 			SetSuccess = true
 		}
-	})
+	}
 }
 
 func (txn *tikvTxn) GetVars() *kv.Variables {
@@ -227,12 +226,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, err2 := MockCommitError.Eval(); err2 == nil {
 		if val.(bool) && kv.IsMockCommitErrorEnable() {
 			kv.MockCommitErrorDisable()
-			failpoint.Return(errors.New("mock commit error"))
+			return errors.New("mock commit error")
 		}
-	})
+	}
 
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
@@ -486,9 +485,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 					wg.Wait()
 					// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
 					time.Sleep(time.Millisecond * 5)
-					failpoint.Inject("SingleStmtDeadLockRetrySleep", func() {
+					if _, err2 := MockSingleStmtDeadLockRetrySleep.Eval(); err2 == nil {
 						time.Sleep(300 * time.Millisecond)
-					})
+					}
 				}
 			}
 			if assignedPrimaryKey {
@@ -543,13 +542,13 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
-		failpoint.Inject("beforeAsyncPessimisticRollback", func(val failpoint.Value) {
+		if val, err2 := MockBeforeAsyncPessimisticRollback.Eval(); err2 == nil {
 			if s, ok := val.(string); ok {
 				if s == "skip" {
 					logutil.Logger(ctx).Info("[failpoint] injected skip async pessimistic rollback",
 						zap.Uint64("txnStartTS", txn.startTS))
 					wg.Done()
-					failpoint.Return()
+					return
 				} else if s == "delay" {
 					duration := time.Duration(rand.Int63n(int64(time.Second) * 2))
 					logutil.Logger(ctx).Info("[failpoint] injected delay before async pessimistic rollback",
@@ -557,7 +556,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 					time.Sleep(duration)
 				}
 			}
-		})
+		}
 
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {

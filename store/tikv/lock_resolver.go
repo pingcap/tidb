@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -518,9 +517,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	}
 
 	rollbackIfNotExist := false
-	failpoint.Inject("getTxnStatusDelay", func() {
+	if _, err2 := MockGetTxnStatusDelay.Eval(); err2 == nil {
 		time.Sleep(100 * time.Millisecond)
-	})
+	}
 	for {
 		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit, l)
 		if err == nil {
@@ -532,9 +531,9 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 			return TxnStatus{}, err
 		}
 
-		failpoint.Inject("txnNotFoundRetTTL", func() {
-			failpoint.Return(TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction}, nil)
-		})
+		if _, err2 := MockTxnNotFoundRetTTL.Eval(); err2 == nil {
+			return TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction}, nil
+		}
 
 		// Handle txnNotFound error.
 		// getTxnStatus() returns it when the secondary locks exist while the primary lock doesn't.
@@ -549,10 +548,10 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 				zap.Uint64("CallerStartTs", callerStartTS),
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
-				failpoint.Inject("txnExpireRetTTL", func() {
-					failpoint.Return(TxnStatus{action: kvrpcpb.Action_LockNotExistDoNothing},
-						errors.New("error txn not found and lock expired"))
-				})
+				if _, err2 := MockTxnExpireRetTTL.Eval(); err2 == nil {
+					return TxnStatus{action: kvrpcpb.Action_LockNotExistDoNothing},
+						errors.New("error txn not found and lock expired")
+				}
 			}
 			// For pessimistic lock resolving, if the primary lock dose not exist and rollbackIfNotExist is true,
 			// The Action_LockNotExistDoNothing will be returned as the status.
