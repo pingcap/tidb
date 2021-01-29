@@ -1068,7 +1068,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	stmts, err := cc.ctx.ParseWithParams(ctx, "use %n", db)
+	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
 	if err != nil {
 		return err
 	}

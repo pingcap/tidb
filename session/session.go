@@ -1263,7 +1263,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		return nil, err
 	}
 
-	rs, err := s.ExecuteStmt(ctx, stmtNode)
+	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
