@@ -111,9 +111,12 @@ func doPhysicalProjectionElimination(p PhysicalPlan) (PhysicalPlan, error) {
 	// eliminate projection in a coprocessor task
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
+		tableReader.tablePlan, err = eliminatePhysicalProjection(tableReader.tablePlan)
+		if err != nil {
+			return nil, err
+		}
 		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
-		return p
+		return p, nil
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
