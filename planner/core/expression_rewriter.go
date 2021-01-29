@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 
@@ -1480,13 +1481,11 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 				types.DefaultTypeForValue(string(patValue), fieldType, patExpression.RetType.Charset, patExpression.RetType.Collate)
 				constant := &expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType}
 				constant.SetCoercibility(patExpression.Coercibility())
-				oldDisableFoldCounter := er.disableFoldCounter
-				er.disableFoldCounter = 1
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2], constant, op)
-				er.disableFoldCounter = oldDisableFoldCounter
 				isPatternExactMatch = true
-				if er.err == nil {
-					_, coll := function.CharsetAndCollation(er.sctx)
+				if collate.NewCollationEnabled() {
+					_, coll := expression.DeriveCollationFromExprs(er.sctx, er.ctxStack[l-1], er.ctxStack[l-2])
+					logutil.BgLogger().Warn(coll)
 					if coll == "utf8mb4_unicode_ci" || coll == "utf8_unicode_ci" {
 						isPatternExactMatch = false
 					}
