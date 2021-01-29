@@ -116,7 +116,7 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 
 	s.ctx = s.s.(sessionctx.Context)
 	goCtx := goctx.Background()
-	_, err = s.s.ExecuteInternal(goCtx, "create database if not exists test_ddl")
+	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	c.Assert(err, IsNil)
 
 	s.Bootstrap(c)
@@ -131,7 +131,7 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.ctx = s.s.(sessionctx.Context)
-	_, err = s.s.ExecuteInternal(goCtx, "use test_ddl")
+	_, err = s.s.Execute(goCtx, "use test_ddl")
 	c.Assert(err, IsNil)
 
 	addEnvPath("..")
@@ -450,7 +450,7 @@ func (s *TestDDLSuite) getServer() *server {
 func (s *TestDDLSuite) runDDL(sql string) chan error {
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.s.ExecuteInternal(goctx.Background(), sql)
+		_, err := s.s.Execute(goctx.Background(), sql)
 		// We must wait 2 * lease time to guarantee all servers update the schema.
 		if err == nil {
 			time.Sleep(time.Duration(*lease) * time.Second * 2)

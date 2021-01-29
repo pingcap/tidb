@@ -414,7 +414,7 @@ func doBatchDeleteIndiceRange(s sqlexec.SQLExecutor, jobID, tableID int64, index
 			sql += ","
 		}
 	}
-	_, err := s.ExecuteInternal(context.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	return errors.Trace(err)
 }
 
@@ -423,7 +423,7 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	_, err := s.ExecuteInternal(context.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	return errors.Trace(err)
 }
 
@@ -440,7 +440,7 @@ func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint
 			sql += ","
 		}
 	}
-	_, err := s.ExecuteInternal(context.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	return errors.Trace(err)
 }
 

@@ -481,9 +481,9 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
-	_, err = se.ExecuteInternal(context.Background(), "create table test.t(a int)")
+	_, err = se.Execute(context.Background(), "create table test.t(a int)")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "insert into test.t values (1)")
+	_, err = se.Execute(context.Background(), "insert into test.t values (1)")
 	c.Assert(err, IsNil)
 
 	var outBuffer bytes.Buffer
@@ -586,37 +586,37 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
-	_, err = se.ExecuteInternal(context.Background(), "use test;")
+	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
+	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
 	c.Assert(err, IsNil)
 	for i := 0; i < 10; i++ {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
-		_, err = se.ExecuteInternal(context.Background(), str)
+		_, err = se.Execute(context.Background(), str)
 		c.Assert(err, IsNil)
 	}
 
-	_, err = se.ExecuteInternal(context.Background(), "select SLEEP(1);")
+	_, err = se.Execute(context.Background(), "select SLEEP(1);")
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(context.Background(), "set @@max_execution_time = 500;")
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(context.Background(), "set @@max_execution_time = 1500;")
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
+	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
 	c.Assert(err, IsNil)
 
-	record, err := se.ExecuteInternal(context.Background(), "select SLEEP(2);")
+	records, err := se.Execute(context.Background(), "select SLEEP(2);")
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, ts.store)
-	tk.ResultSetToResult(record, Commentf("%v", record)).Check(testkit.Rows("1"))
+	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
 
-	_, err = se.ExecuteInternal(context.Background(), "set @@max_execution_time = 0;")
+	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
 	c.Assert(err, IsNil)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")

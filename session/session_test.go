@@ -319,11 +319,11 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	c.Assert(queryStr, Equals, "create table multi2 (a int)")
 
 	// Test execution of DDL through the "ExecutePreparedStmt" interface.
-	_, err := tk.Se.ExecuteInternal(context.Background(), "use test;")
+	_, err := tk.Se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
-	_, err = tk.Se.ExecuteInternal(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
+	_, err = tk.Se.Execute(context.Background(), "CREATE TABLE t (id bigint PRIMARY KEY, age int)")
 	c.Assert(err, IsNil)
-	_, err = tk.Se.ExecuteInternal(context.Background(), "show create table t")
+	_, err = tk.Se.Execute(context.Background(), "show create table t")
 	c.Assert(err, IsNil)
 	id, _, _, err := tk.Se.PrepareStmt("CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 	c.Assert(err, IsNil)
@@ -334,13 +334,13 @@ func (s *testSessionSuite) TestQueryString(c *C) {
 	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
 
 	// Test execution of DDL through the "Execute" interface.
-	_, err = tk.Se.ExecuteInternal(context.Background(), "use test;")
+	_, err = tk.Se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
-	_, err = tk.Se.ExecuteInternal(context.Background(), "drop table t2")
+	_, err = tk.Se.Execute(context.Background(), "drop table t2")
 	c.Assert(err, IsNil)
-	_, err = tk.Se.ExecuteInternal(context.Background(), "prepare stmt from 'CREATE TABLE t2(id bigint PRIMARY KEY, age int)'")
+	_, err = tk.Se.Execute(context.Background(), "prepare stmt from 'CREATE TABLE t2(id bigint PRIMARY KEY, age int)'")
 	c.Assert(err, IsNil)
-	_, err = tk.Se.ExecuteInternal(context.Background(), "execute stmt")
+	_, err = tk.Se.Execute(context.Background(), "execute stmt")
 	c.Assert(err, IsNil)
 	qs = tk.Se.Value(sessionctx.QueryString)
 	c.Assert(qs.(string), Equals, "CREATE TABLE t2(id bigint PRIMARY KEY, age int)")
@@ -2624,17 +2624,17 @@ func (s *testSessionSuite3) TestSetTransactionIsolationOneShot(c *C) {
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
-	tk.Se.ExecuteInternal(ctx, "select * from t where k = 1")
+	tk.Se.Execute(ctx, "select * from t where k = 1")
 
 	// Check it just take effect for one time.
 	ctx = context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
-	tk.Se.ExecuteInternal(ctx, "select * from t where k = 1")
+	tk.Se.Execute(ctx, "select * from t where k = 1")
 
 	// Can't change isolation level when it's inside a transaction.
 	tk.MustExec("begin")
-	_, err := tk.Se.ExecuteInternal(ctx, "set transaction isolation level read committed")
+	_, err := tk.Se.Execute(ctx, "set transaction isolation level read committed")
 	c.Assert(err, NotNil)
 }
 
@@ -2692,7 +2692,7 @@ func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
 	tk2.MustExec("commit")
 
 	// No auto retry because retry limit is set to 0.
-	_, err := tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err := tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 }
 
@@ -2723,7 +2723,7 @@ func (s *testSessionSerialSuite) TestTxnRetryErrMsg(c *C) {
 	tk2.MustExec("update no_retry set id = id + 1")
 	tk1.MustExec("update no_retry set id = id + 1")
 	c.Assert(tikv.MockRetryableErrorResp.Enable(`return(true)`), IsNil)
-	_, err := tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err := tk1.Se.Execute(context.Background(), "commit")
 	tikv.MockRetryableErrorResp.Disable()
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrTxnRetryable.Equal(err), IsTrue, Commentf("error: %s", err))
@@ -2746,7 +2746,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk2.MustExec("commit")
 
 	// No auto retry because tidb_disable_txn_auto_retry is set to 1.
-	_, err := tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err := tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 
 	// session 1 starts a transaction early.
@@ -2778,7 +2778,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk2.MustExec("update no_retry set id = 8")
 
-	_, err = tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
@@ -2791,7 +2791,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk1.MustExec("update no_retry set id = 10")
-	_, err = tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 
 	// set autocommit to begin and commit
@@ -2799,7 +2799,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
 	tk2.MustExec("update no_retry set id = 11")
 	tk1.MustExec("update no_retry set id = 12")
-	_, err = tk1.Se.ExecuteInternal(context.Background(), "set autocommit = 1")
+	_, err = tk1.Se.Execute(context.Background(), "set autocommit = 1")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
@@ -2810,7 +2810,7 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustQuery("select * from no_retry").Check(testkit.Rows("11"))
 	tk2.MustExec("update no_retry set id = 13")
 	tk1.MustExec("update no_retry set id = 14")
-	_, err = tk1.Se.ExecuteInternal(context.Background(), "commit")
+	_, err = tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("error: %s", err))
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))

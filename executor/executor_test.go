@@ -2341,9 +2341,9 @@ func (s *testSerialSuite) TestPointGetRepeatableRead(c *C) {
 		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 			return fpname == step1 || fpname == step2
 		})
-		rs, err := tk1.Se.ExecuteInternal(ctx, "select c from point_get where b = 1")
+		rs, err := tk1.Se.Execute(ctx, "select c from point_get where b = 1")
 		c.Assert(err, IsNil)
-		result := tk1.ResultSetToResultWithCtx(ctx, rs, Commentf("execute sql fail"))
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
@@ -2375,9 +2375,9 @@ func (s *testSerialSuite) TestBatchPointGetRepeatableRead(c *C) {
 		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 			return fpname == step1 || fpname == step2
 		})
-		rs, err := tk1.Se.ExecuteInternal(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
+		rs, err := tk1.Se.Execute(ctx, "select c from batch_point_get where (a, b, c) in ((1, 1, 1))")
 		c.Assert(err, IsNil)
-		result := tk1.ResultSetToResultWithCtx(ctx, rs, Commentf("execute sql fail"))
+		result := tk1.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute sql fail"))
 		result.Check(testkit.Rows("1"))
 	}()
 
@@ -3325,10 +3325,10 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(dagReq.GetTimeZoneName(), Equals, systemTZ.String())
 	})
-	tk.Se.ExecuteInternal(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 
 	tk.MustExec(`set time_zone="System"`)
-	tk.Se.ExecuteInternal(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 
 	c.Assert(count, Equals, 2) // Make sure the hook function is called.
 }
@@ -3357,9 +3357,9 @@ func (s *testSuite) TestNotFillCacheFlag(c *C) {
 				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.NotFillCache)
 			}
 		})
-		rs, err := tk.Se.ExecuteInternal(ctx1, test.sql)
+		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("sql: %v", test.sql))
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
 	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
@@ -3630,11 +3630,11 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	defer se.Close()
 
-	_, err = se.ExecuteInternal(context.Background(), "create database test_admin")
+	_, err = se.Execute(context.Background(), "create database test_admin")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "use test_admin")
+	_, err = se.Execute(context.Background(), "use test_admin")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
+	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
 	is := s.domain.InfoSchema()
 	db := model.NewCIStr("test_admin")
@@ -3649,10 +3649,10 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t c")
+	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t C")
+	_, err = se.Execute(context.Background(), "admin check index t C")
 	c.Assert(err, IsNil)
 
 	// set data to:
@@ -3673,7 +3673,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	idx := tb.Indices()[0]
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t idx_inexistent")
+	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	c.Assert(strings.Contains(err.Error(), "not exist"), IsTrue)
 
 	// set data to:
@@ -3687,7 +3687,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	setColValue(c, txn, key, types.NewDatum(int64(40)))
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t c")
+	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "handle 3, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:30, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>")
 
@@ -3700,7 +3700,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t c")
+	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 4"), IsTrue)
 
 	// set data to:
@@ -3714,7 +3714,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "admin check index t c")
+	_, err = se.Execute(context.Background(), "admin check index t c")
 	c.Assert(strings.Contains(err.Error(), "table count 3 != index(c) count 2"), IsTrue)
 
 	// TODO: pass the case below：
@@ -3785,9 +3785,9 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
 			}
 		})
-		rs, err := tk.Se.ExecuteInternal(ctx1, test.sql)
+		rs, err := tk.Se.Execute(ctx1, test.sql)
 		c.Assert(err, IsNil)
-		tk.ResultSetToResult(rs, Commentf("sql: %v", test.sql))
+		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
 }
 
@@ -3803,10 +3803,10 @@ func (s *testSuite) TestIncorrectLimitArg(c *C) {
 	tk.MustExec(`set @b =  1;`)
 
 	var err error
-	_, err = tk.Se.ExecuteInternal(context.TODO(), `execute stmt1 using @a;`)
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt1 using @a;`)
 	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
 
-	_, err = tk.Se.ExecuteInternal(context.TODO(), `execute stmt2 using @b, @a;`)
+	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
 	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
 }
 
@@ -4262,7 +4262,7 @@ func (s *testSerialSuite) TestTSOFail(c *C) {
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
 		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
 	})
-	_, err := tk.Se.ExecuteInternal(ctx, `select * from t`)
+	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }

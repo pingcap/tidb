@@ -63,14 +63,15 @@ func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []De
 
 func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	sql := fmt.Sprintf(loadDeleteRangeSQL, table, safePoint)
-	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rss) > 0 {
+		defer terror.Call(rss[0].Close)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	rs := rss[0]
 	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {
@@ -106,7 +107,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -117,7 +118,7 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
 	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -131,14 +132,14 @@ func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementID
 		buf.WriteString(strconv.FormatInt(elementID, 10))
 	}
 	sql := fmt.Sprintf(completeDeleteMultiRangesSQL, jobID, buf.String())
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -147,7 +148,7 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 

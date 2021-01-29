@@ -1759,8 +1759,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.ExecuteInternal(ctx, stmt)
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}

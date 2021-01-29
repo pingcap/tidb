@@ -52,9 +52,9 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "create database test_mem")
+	_, err = se.Execute(context.Background(), "create database test_mem")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), "use test_mem")
+	_, err = se.Execute(context.Background(), "use test_mem")
 	c.Assert(err, IsNil)
 
 	// prepare data
@@ -62,23 +62,24 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 5
 	numRows := totalSize / blockSize
-	_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
+	_, err = se.Execute(context.Background(), fmt.Sprintf("create table t (c varchar(%v))", blockSize))
 	c.Assert(err, IsNil)
 	defer func() {
-		_, err = se.ExecuteInternal(context.Background(), "drop table t")
+		_, err = se.Execute(context.Background(), "drop table t")
 		c.Assert(err, IsNil)
 	}()
 	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)
 	for i := uint64(0); i < numRows; i++ {
-		_, err = se.ExecuteInternal(context.Background(), sql)
+		_, err = se.Execute(context.Background(), sql)
 		c.Assert(err, IsNil)
 	}
 
 	// read data
 	runtime.GC()
 	allocatedBegin, inUseBegin := s.readMem()
-	record, err := se.ExecuteInternal(context.Background(), "select * from t")
+	records, err := se.Execute(context.Background(), "select * from t")
 	c.Assert(err, IsNil)
+	record := records[0]
 	rowCnt := 0
 	chk := record.NewChunk()
 	for {

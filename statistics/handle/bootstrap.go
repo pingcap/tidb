@@ -60,18 +60,18 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
 		return statsCache{}, errors.Trace(err)
 	}
 	tables := statsCache{tables: make(map[int64]*statistics.Table)}
-	req := rs.NewChunk()
+	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rs.Next(context.TODO(), req)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return statsCache{}, errors.Trace(err)
 		}
@@ -148,17 +148,17 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rs.Next(context.TODO(), req)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -196,17 +196,17 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 
 func (h *Handle) initStatsTopN(cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rs.Next(context.TODO(), req)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -266,17 +266,17 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chu
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
-		err := rs.Next(context.TODO(), req)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -309,13 +309,13 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	h.mu.Lock()
 	defer func() {
-		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
+		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 		h.mu.Unlock()
 	}()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return err
 	}

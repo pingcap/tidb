@@ -49,7 +49,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
 		return fpname == "github.com/pingcap/tidb/session/mockGetTSFail"
 	})
-	_, err := tk.Se.ExecuteInternal(ctx, "select * from t")
+	_, err := tk.Se.Execute(ctx, "select * from t")
 	c.Assert(err, NotNil)
 
 	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write

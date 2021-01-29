@@ -520,10 +520,11 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := context.Background()
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rs := tmp[0]
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()

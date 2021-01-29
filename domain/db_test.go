@@ -44,13 +44,13 @@ func (ts *dbTestSuite) TestIntegration(c *C) {
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(context.Background(), createRoleSQL)
+	_, err = se.Execute(context.Background(), createRoleSQL)
 	c.Assert(err, IsNil)
 
 	// for BindHandle
-	se.ExecuteInternal(context.Background(), "use test")
-	se.ExecuteInternal(context.Background(), "drop table if exists t")
-	se.ExecuteInternal(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
-	_, err = se.ExecuteInternal(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
+	se.Execute(context.Background(), "use test")
+	se.Execute(context.Background(), "drop table if exists t")
+	se.Execute(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
+	_, err = se.Execute(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 }

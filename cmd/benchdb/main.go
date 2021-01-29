@@ -97,7 +97,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.ExecuteInternal(context.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -107,9 +107,9 @@ func newBenchDB() *benchDB {
 }
 
 func (ut *benchDB) mustExec(sql string) {
-	rs, err := ut.session.ExecuteInternal(context.Background(), sql)
+	rss, err := ut.session.Execute(context.Background(), sql)
 	defer func() {
-		if rs != nil {
+		for _, rs := range rss {
 			err = rs.Close()
 			if err != nil {
 				log.Fatal(err.Error())
@@ -120,8 +120,9 @@ func (ut *benchDB) mustExec(sql string) {
 		log.Fatal(err.Error())
 		return
 	}
-	if rs != nil {
+	if len(rss) > 0 {
 		ctx := context.Background()
+		rs := rss[0]
 		req := rs.NewChunk()
 		for {
 			err := rs.Next(ctx, req)

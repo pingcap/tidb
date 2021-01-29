@@ -40,13 +40,13 @@ func ExecMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL [
 			return
 		}
 		defer se.Close()
-		_, err = se.ExecuteInternal(context.Background(), "use %n", dbName)
+		_, err = se.Execute(context.Background(), "use "+dbName)
 		if err != nil {
 			done <- errors.Trace(err)
 			return
 		}
 		for _, sql := range multiSQL {
-			rs, err := se.ExecuteInternal(context.Background(), sql)
+			rs, err := se.Execute(context.Background(), sql)
 			if err != nil {
 				done <- errors.Trace(err)
 				return

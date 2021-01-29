@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -538,7 +539,7 @@ var (
 
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
-	_, err := s.ExecuteInternal(context.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
+	_, err := s.Execute(context.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		logutil.BgLogger().Fatal("check bootstrap error",
 			zap.Error(err))
@@ -564,17 +565,20 @@ func checkBootstrapped(s Session) (bool, error) {
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
+	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
+		mysql.SystemDB, mysql.TiDBTable, name)
 	ctx := context.Background()
-	rs, err := s.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME = %?`, mysql.SystemDB, mysql.TiDBTable, name)
+	rs, err := s.Execute(ctx, sql)
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
-	if rs == nil {
+	if len(rs) != 1 {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
-	err = rs.Next(ctx, req)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	err = r.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -600,7 +604,7 @@ func upgrade(s Session) {
 	}
 
 	updateBootstrapVer(s)
-	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
+	_, err = s.Execute(context.Background(), "COMMIT")
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -692,7 +696,7 @@ func upgradeToVer8(s Session, ver int64) {
 		return
 	}
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.ExecuteInternal(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
+	if _, err := s.Execute(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s, ver)
@@ -708,7 +712,7 @@ func upgradeToVer9(s Session, ver int64) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	_, err := s.ExecuteInternal(context.Background(), sql)
+	_, err := s.Execute(context.Background(), sql)
 	for _, ignorableErr := range ignorableErrs {
 		if terror.ErrorEqual(err, ignorableErr) {
 			return
@@ -734,7 +738,7 @@ func upgradeToVer11(s Session, ver int64) {
 	if ver >= version11 {
 		return
 	}
-	_, err := s.ExecuteInternal(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -749,20 +753,21 @@ func upgradeToVer12(s Session, ver int64) {
 		return
 	}
 	ctx := context.Background()
-	_, err := s.ExecuteInternal(ctx, "BEGIN")
+	_, err := s.Execute(ctx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
-	rs, err := s.ExecuteInternal(ctx, sql)
+	rs, err := s.Execute(ctx, sql)
 	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
 		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
-		rs, err = s.ExecuteInternal(ctx, sql)
+		rs, err = s.Execute(ctx, sql)
 	}
 	terror.MustNil(err)
+	r := rs[0]
 	sqls := make([]string, 0, 1)
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = rs.Next(ctx, req)
+	err = r.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -774,7 +779,7 @@ func upgradeToVer12(s Session, ver int64) {
 			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user SET password = "%s" WHERE user="%s" AND host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = rs.Next(ctx, req)
+		err = r.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -804,7 +809,7 @@ func upgradeToVer13(s Session, ver int64) {
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.ExecuteInternal(ctx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -833,7 +838,7 @@ func upgradeToVer14(s Session, ver int64) {
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.ExecuteInternal(ctx, sql)
+		_, err := s.Execute(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -848,7 +853,7 @@ func upgradeToVer15(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.ExecuteInternal(context.Background(), CreateGCDeleteRangeTable)
+	_, err = s.Execute(context.Background(), CreateGCDeleteRangeTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer15 error", zap.Error(err))
 	}
@@ -1049,7 +1054,7 @@ func upgradeToVer38(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.ExecuteInternal(context.Background(), CreateGlobalPrivTable)
+	_, err = s.Execute(context.Background(), CreateGlobalPrivTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer38 error", zap.Error(err))
 	}
@@ -1214,12 +1219,13 @@ func upgradeToVer55(s Session, ver int64) {
 
 	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
 	ctx := context.Background()
-	rs, err := s.ExecuteInternal(ctx, selectSQL)
+	rs, err := s.Execute(ctx, selectSQL)
 	terror.MustNil(err)
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = rs.Next(ctx, req)
+	err = r.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			n := strings.ToLower(row.GetString(0))
@@ -1228,7 +1234,7 @@ func upgradeToVer55(s Session, ver int64) {
 				return
 			}
 		}
-		err = rs.Next(ctx, req)
+		err = r.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -1319,7 +1325,8 @@ func upgradeToVer61(s Session, ver int64) {
 		mustExecute(s, "COMMIT")
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
-	rs, err := s.ExecuteInternal(context.Background(),
+	var rs sqlexec.RecordSet
+	rs, err = s.ExecuteInternal(context.Background(),
 		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
 			FROM mysql.bind_info
 			WHERE source != 'builtin'
@@ -1558,7 +1565,7 @@ func doDMLWorks(s Session) {
 
 	writeStmtSummaryVars(s)
 
-	_, err := s.ExecuteInternal(context.Background(), "COMMIT")
+	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
 		logutil.BgLogger().Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))

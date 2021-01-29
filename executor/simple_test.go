@@ -80,9 +80,9 @@ func (s *testSuite3) TestSetRoleAllCorner(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil), IsTrue)
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, `set role all`)
+	_, err = se.Execute(ctx, `set role all`)
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, `select current_role`)
+	_, err = se.Execute(ctx, `select current_role`)
 	c.Assert(err, IsNil)
 }
 
@@ -96,15 +96,15 @@ func (s *testSuite3) TestCreateRole(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, `create role test_create_role;`)
+	_, err = se.Execute(ctx, `create role test_create_role;`)
 	c.Assert(err, IsNil)
 	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
 	tk.MustExec("drop role test_create_role;")
 	tk.MustExec("grant CREATE ROLE on *.* to testCreateRole;")
-	_, err = se.ExecuteInternal(ctx, `create role test_create_role;`)
+	_, err = se.Execute(ctx, `create role test_create_role;`)
 	c.Assert(err, IsNil)
 	tk.MustExec("drop role test_create_role;")
-	_, err = se.ExecuteInternal(ctx, `create user test_create_role;`)
+	_, err = se.Execute(ctx, `create user test_create_role;`)
 	c.Assert(err, NotNil)
 	tk.MustExec("drop user testCreateRole;")
 }
@@ -120,15 +120,15 @@ func (s *testSuite3) TestDropRole(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, `drop role test_create_role;`)
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
 	c.Assert(err, IsNil)
 	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
 	tk.MustExec("create role test_create_role;")
 	tk.MustExec("grant DROP ROLE on *.* to testCreateRole;")
-	_, err = se.ExecuteInternal(ctx, `drop role test_create_role;`)
+	_, err = se.Execute(ctx, `drop role test_create_role;`)
 	c.Assert(err, IsNil)
 	tk.MustExec("create user test_create_role;")
-	_, err = se.ExecuteInternal(ctx, `drop user test_create_role;`)
+	_, err = se.Execute(ctx, `drop user test_create_role;`)
 	c.Assert(err, NotNil)
 	tk.MustExec("drop user testCreateRole;")
 	tk.MustExec("drop user test_create_role;")
@@ -275,13 +275,13 @@ func (s *testSuite3) TestRoleAdmin(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
 	c.Assert(err, NotNil)
 
 	tk.MustExec("GRANT SUPER ON *.* TO `testRoleAdmin`;")
-	_, err = se.ExecuteInternal(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
+	_, err = se.Execute(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
 	c.Assert(err, IsNil)
 
 	tk.MustExec("DROP USER 'testRoleAdmin';")
@@ -347,7 +347,7 @@ func (s *testSuite7) TestSetDefaultRoleAll(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, "set default role all to test_all;")
+	_, err = se.Execute(ctx, "set default role all to test_all;")
 	c.Assert(err, IsNil)
 }
 
@@ -567,13 +567,13 @@ func (s *testSuite3) TestFlushPrivileges(c *C) {
 
 	ctx := context.Background()
 	// Before flush.
-	_, err = se.ExecuteInternal(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, NotNil)
 
 	tk.MustExec("FLUSH PRIVILEGES")
 
 	// After flush.
-	_, err = se.ExecuteInternal(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
+	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
 	c.Check(err, IsNil)
 
 }
@@ -723,22 +723,22 @@ func (s *testSuite3) TestIssue9111(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, `create user test_create_user`)
+	_, err = se.Execute(ctx, `create user test_create_user`)
 	c.Check(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, `drop user test_create_user`)
+	_, err = se.Execute(ctx, `drop user test_create_user`)
 	c.Check(err, IsNil)
 
 	tk.MustExec("revoke create user on *.* from 'user_admin'@'localhost';")
 	tk.MustExec("grant insert, delete on mysql.user to 'user_admin'@'localhost';")
 
-	_, err = se.ExecuteInternal(ctx, `create user test_create_user`)
+	_, err = se.Execute(ctx, `create user test_create_user`)
 	c.Check(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, `drop user test_create_user`)
+	_, err = se.Execute(ctx, `drop user test_create_user`)
 	c.Check(err, IsNil)
 
-	_, err = se.ExecuteInternal(ctx, `create role test_create_user`)
+	_, err = se.Execute(ctx, `create role test_create_user`)
 	c.Check(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, `drop role test_create_user`)
+	_, err = se.Execute(ctx, `drop role test_create_user`)
 	c.Check(err, IsNil)
 
 	tk.MustExec("drop user 'user_admin'@'localhost';")
@@ -772,30 +772,30 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	defer se.Close()
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
 	ctx := context.Background()
-	_, err = se.ExecuteInternal(ctx, "set session tidb_enable_extended_stats = on")
+	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'")
 	tk.MustExec("grant alter on test.* to 'u1'@'%'")
-	_, err = se.ExecuteInternal(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'")
 	tk.MustExec("grant select on test.* to 'u1'@'%'")
-	_, err = se.ExecuteInternal(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.ExecuteInternal(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
+	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
 	c.Assert(err, IsNil)
 
-	_, err = se.ExecuteInternal(ctx, "use test")
+	_, err = se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.ExecuteInternal(ctx, "alter table t drop stats_extended s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'")
 	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.ExecuteInternal(ctx, "alter table t drop stats_extended s1")
+	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop user 'u1'@'%'")
 }

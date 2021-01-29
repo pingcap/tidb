@@ -660,7 +660,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -732,7 +732,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -746,7 +746,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	var sql string
 	version := txn.StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
-	_, err = exec.ExecuteInternal(ctx, sql)
+	_, err = exec.Execute(ctx, sql)
 	return
 }
 
@@ -848,16 +848,16 @@ func (sr *statsReader) read(sql string) (rows []chunk.Row, fields []*ast.ResultF
 	if sr.history != nil {
 		return sr.history.ExecRestrictedSQLWithSnapshot(sql)
 	}
-	rs, err := sr.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-	if rs != nil {
-		defer terror.Call(rs.Close)
+	rc, err := sr.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if len(rc) > 0 {
+		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	for {
-		req := rs.NewChunk()
-		err := rs.Next(context.TODO(), req)
+		req := rc[0].NewChunk()
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -868,7 +868,7 @@ func (sr *statsReader) read(sql string) (rows []chunk.Row, fields []*ast.ResultF
 			rows = append(rows, req.GetRow(i))
 		}
 	}
-	return rows, rs.Fields(), nil
+	return rows, rc[0].Fields(), nil
 }
 
 func (sr *statsReader) isHistory() bool {
@@ -894,7 +894,7 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *
 		}
 	}()
 	failpoint.Inject("mockGetStatsReaderPanic", nil)
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
 	}
@@ -905,7 +905,7 @@ func (h *Handle) releaseStatsReader(reader *statsReader) error {
 	if reader.history != nil {
 		return nil
 	}
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
+	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "commit")
 	h.mu.Unlock()
 	return err
 }
@@ -930,7 +930,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = exec.Execute(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -943,7 +943,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	}
 	version := txn.StartTS()
 	sql := fmt.Sprintf("INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES ('%s', %d, %d, '%s', %d, %d)", statsName, tp, tableID, strColIDs, version, StatsStatusInited)
-	_, err = exec.ExecuteInternal(ctx, sql)
+	_, err = exec.Execute(ctx, sql)
 	// Key exists, but `if not exists` is specified, so we ignore this error.
 	if kv.ErrKeyExists.Equal(err) && ifNotExists {
 		err = nil
@@ -969,7 +969,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = exec.Execute(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1125,7 +1125,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = exec.Execute(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -116,13 +116,13 @@ func (s *testSuite) Test02Preview(c *C) {
 	c.Assert(jsonParsed.Path("instances.1.instanceType").Data().(string), Equals, "tikv") // mocktikv
 	c.Assert(jsonParsed.ExistsP("hardware"), Equals, true)
 
-	_, err = s.se.ExecuteInternal(context.Background(), "SET @@global.tidb_enable_telemetry = 0")
+	_, err = s.se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 0")
 	c.Assert(err, IsNil)
 	r, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
 	c.Assert(err, IsNil)
 	c.Assert(r, Equals, "")
 
-	_, err = s.se.ExecuteInternal(context.Background(), "SET @@global.tidb_enable_telemetry = 1")
+	_, err = s.se.Execute(context.Background(), "SET @@global.tidb_enable_telemetry = 1")
 	config.GetGlobalConfig().EnableTelemetry = false
 	c.Assert(err, IsNil)
 	r, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())

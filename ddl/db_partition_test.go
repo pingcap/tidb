@@ -3185,7 +3185,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	defer func() {
 		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
-	_, err := tk.Se.ExecuteInternal(context.Background(), "commit")
+	_, err := tk.Se.Execute(context.Background(), "commit")
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	// Cover a bug that schema validator does not prevent transaction commit when
@@ -3203,7 +3203,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into nt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into nt values (7), (9);")
-	_, err = tk.Se.ExecuteInternal(context.Background(), "commit")
+	_, err = tk.Se.Execute(context.Background(), "commit")
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	tk.MustExec("admin check table pt")
@@ -3215,7 +3215,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into pt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into pt values (7), (9);")
-	_, err = tk.Se.ExecuteInternal(context.Background(), "commit")
+	_, err = tk.Se.Execute(context.Background(), "commit")
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	tk.MustExec("admin check table pt")

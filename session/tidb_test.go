@@ -142,9 +142,9 @@ func removeStore(c *C, dbPath string) {
 func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
-		rs, err := se.ExecuteInternal(ctx, sql)
-		if err == nil && rs != nil {
-			return rs, nil
+		rs, err := se.Execute(ctx, sql)
+		if err == nil && len(rs) > 0 {
+			return rs[0], nil
 		}
 		return nil, err
 	}

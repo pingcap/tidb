@@ -90,10 +90,10 @@ func (tk *CTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (
 	var err error
 	tk.c.Assert(getSession(ctx), check.NotNil)
 	if len(args) == 0 {
-		var rs sqlexec.RecordSet
-		rs, err = getSession(ctx).ExecuteInternal(ctx, sql)
-		if err == nil && rs != nil {
-			return rs, nil
+		var rss []sqlexec.RecordSet
+		rss, err = getSession(ctx).Execute(ctx, sql)
+		if err == nil && len(rss) > 0 {
+			return rss[0], nil
 		}
 		return nil, err
 	}
