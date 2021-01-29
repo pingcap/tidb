@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -235,6 +235,10 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
+	// Only consider use percentage on this failpoint, for example, "2%return"
+	failpoint.Inject("invalidateRegionCache", func() {
+		r.invalidate()
+	})
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
 		if ts-lastAccess > RegionCacheTTLSec {
