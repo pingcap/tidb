@@ -105,7 +105,7 @@ type Pair struct {
 
 // Reset deque
 func (d *Deque) Reset() {
-	d.Items = d.Items[0:]
+	d.Items = d.Items[:0]
 }
 
 // Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index

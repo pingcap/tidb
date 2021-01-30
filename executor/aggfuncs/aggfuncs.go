@@ -210,4 +210,9 @@ type MaxMinSlidingWindowAggFunc interface {
 	SetWindowStart(start uint64)
 	// UpdatePartialResult is the same as AggFunc.UpdatePartialResult, providing such function to all MaxMinSlidingWindowAggFunc
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	// ResetPartialResult resets the partial result to the original state for a
+	// specific aggregate function. It converts the input PartialResult to the
+	// specific data structure which stores the partial result and then reset
+	// every field to the proper original state.
+	ResetPartialResult(pr PartialResult)
 }
