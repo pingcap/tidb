@@ -3218,9 +3218,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				var selectErr, insertErr error
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
-					selectErr = ErrTableaccessDenied.GenWithStackByArgs("ADD TIDB_STATS", user.AuthUsername,
+					selectErr = ErrTableaccessDenied.GenWithStackByArgs("ADD STATS_EXTENDED", user.AuthUsername,
 						user.AuthHostname, v.Table.Name.L)
-					insertErr = ErrTableaccessDenied.GenWithStackByArgs("ADD TIDB_STATS", user.AuthUsername,
+					insertErr = ErrTableaccessDenied.GenWithStackByArgs("ADD STATS_EXTENDED", user.AuthUsername,
 						user.AuthHostname, "stats_extended")
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.Table.Schema.L,
@@ -3230,7 +3230,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			} else if spec.Tp == ast.AlterTableDropStatistics {
 				user := b.ctx.GetSessionVars().User
 				if user != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP TIDB_STATS", user.AuthUsername,
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP STATS_EXTENDED", user.AuthUsername,
 						user.AuthHostname, "stats_extended")
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,

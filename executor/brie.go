@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -164,7 +164,7 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return variable.GoTimeToTS(t1), nil
+	return oracle.GoTimeToTS(t1), nil
 }
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
