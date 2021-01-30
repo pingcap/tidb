@@ -32,8 +32,8 @@ func newDeque(isMax bool, cmpFunc func(i, j interface{}) int) *Deque {
 
 // Deque is an array based double end queue
 type Deque struct {
-	Items []Pair
-	IsMax bool
+	Items   []Pair
+	IsMax   bool
 	cmpFunc func(i, j interface{}) int
 }
 
@@ -115,7 +115,7 @@ func (d *Deque) Dequeue(boundary uint64) error {
 		if err != nil {
 			return err
 		}
-		if frontEle.idx < boundary {
+		if frontEle.idx <= boundary {
 			_, err := d.PopFront()
 			if err != nil {
 				return err
@@ -140,7 +140,7 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 			return err
 		}
 
-		bigger := d.cmpFunc(pair.item, item) >= 0
+		bigger := d.cmpFunc(item, pair.item) >= 0
 		// 1. if deque aims for finding max and item is bigger than element at back
 		// 2. if deque aims for finding min and item is smaller than element at back
 		if bigger && d.IsMax || !bigger && !d.IsMax {
@@ -307,7 +307,7 @@ type partialResult4MaxMinUint struct {
 type partialResult4MaxMinDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	deque *Deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinFloat32 struct {
@@ -325,19 +325,19 @@ type partialResult4MaxMinFloat64 struct {
 type partialResult4Time struct {
 	val    types.Time
 	isNull bool
-	heap   *maxMinHeap
+	deque  *Deque
 }
 
 type partialResult4MaxMinDuration struct {
 	val    types.Duration
 	isNull bool
-	heap   *maxMinHeap
+	deque  *Deque
 }
 
 type partialResult4MaxMinString struct {
 	val    string
 	isNull bool
-	deque *Deque
+	deque  *Deque
 }
 
 type partialResult4MaxMinJSON struct {
@@ -357,7 +357,6 @@ type partialResult4MaxMinSet struct {
 
 type baseMaxMinAggFunc struct {
 	baseAggFunc
-
 	isMax bool
 }
 
@@ -430,6 +429,7 @@ func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 
 type maxMin4IntSliding struct {
 	maxMin4Int
+	windowInfo
 }
 
 func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -442,7 +442,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
 		if err != nil {
 			return 0, err
 		}
@@ -556,6 +556,7 @@ func (e *maxMin4Uint) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 
 type maxMin4UintSliding struct {
 	maxMin4Uint
+	windowInfo
 }
 
 func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -568,7 +569,7 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
 	}
 	if val, err := p.deque.Front(); err == nil {
 		p.val = val.item.(uint64)
@@ -589,13 +590,13 @@ func (e *maxMin4UintSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(lastEnd+i, uint64(input))
 		if err != nil {
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
@@ -680,6 +681,7 @@ func (e *maxMin4Float32) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4Float32Sliding struct {
 	maxMin4Float32
+	windowInfo
 }
 
 func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -692,7 +694,7 @@ func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), float32(input))
+		err = p.deque.Enqueue(uint64(i)+e.start, float32(input))
 		if err != nil {
 			return 0, err
 		}
@@ -716,13 +718,13 @@ func (e *maxMin4Float32Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), float32(input))
+		err = p.deque.Enqueue(lastEnd+i, float32(input))
 		if err != nil {
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
@@ -805,6 +807,7 @@ func (e *maxMin4Float64) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4Float64Sliding struct {
 	maxMin4Float64
+	windowInfo
 }
 
 func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -817,7 +820,7 @@ func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, row
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
 		if err != nil {
 			return 0, err
 		}
@@ -846,8 +849,8 @@ func (e *maxMin4Float64Sliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
@@ -937,6 +940,17 @@ func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 
 type maxMin4DecimalSliding struct {
 	maxMin4Decimal
+	windowInfo
+}
+
+// windowInfo is a struct used
+type windowInfo struct {
+	start uint64
+}
+
+// SetWindowStart sets the start position of window
+func (w *windowInfo) SetWindowStart(start uint64) {
+	w.start = start
 }
 
 func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -949,7 +963,7 @@ func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, row
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
 		if err != nil {
 			return 0, err
 		}
@@ -978,8 +992,8 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
@@ -1075,6 +1089,7 @@ func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst Par
 
 type maxMin4StringSliding struct {
 	maxMin4String
+	windowInfo
 }
 
 func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -1087,7 +1102,7 @@ func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rows
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i), input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
 		if err != nil {
 			return 0, err
 		}
@@ -1116,8 +1131,8 @@ func (e *maxMin4StringSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, 
 			return err
 		}
 	}
-	if lastStart + shiftStart >= 1 {
-		err := p.deque.Dequeue(lastStart+shiftStart-1)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
 			return err
 		}
@@ -1138,7 +1153,7 @@ type maxMin4Time struct {
 func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4Time)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+	p.deque = newDeque(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Time)
 		dst := j.(types.Time)
 		return src.Compare(dst)
@@ -1149,7 +1164,7 @@ func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Time)(pr)
 	p.isNull = true
-	p.heap.Reset()
+	p.deque.Reset()
 }
 
 func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1203,11 +1218,12 @@ func (e *maxMin4Time) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 
 type maxMin4TimeSliding struct {
 	maxMin4Time
+	windowInfo
 }
 
 func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Time)(pr)
-	for _, row := range rowsInGroup {
+	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
 			return 0, err
@@ -1215,10 +1231,13 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-		p.heap.Append(input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		if err != nil {
+			return 0, err
+		}
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Time)
+	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+		p.val = val.item.(types.Time)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1236,20 +1255,19 @@ func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, la
 		if isNull {
 			continue
 		}
-		p.heap.Append(input)
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalTime(sctx, rows[lastStart+i])
+		err = p.deque.Enqueue(lastEnd+i, input)
 		if err != nil {
 			return err
 		}
-		if isNull {
-			continue
-		}
-		p.heap.Remove(input)
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Time)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
+		if err != nil {
+			return err
+		}
+	}
+	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+		p.val = val.item.(types.Time)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1264,7 +1282,7 @@ type maxMin4Duration struct {
 func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
+	p.deque = newDeque(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Duration)
 		dst := j.(types.Duration)
 		return src.Compare(dst)
@@ -1275,7 +1293,7 @@ func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64
 func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	p.isNull = true
-	p.heap.Reset()
+	p.deque.Reset()
 }
 
 func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1329,11 +1347,12 @@ func (e *maxMin4Duration) MergePartialResult(sctx sessionctx.Context, src, dst P
 
 type maxMin4DurationSliding struct {
 	maxMin4Duration
+	windowInfo
 }
 
 func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDuration)(pr)
-	for _, row := range rowsInGroup {
+	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
 			return 0, err
@@ -1341,10 +1360,13 @@ func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, ro
 		if isNull {
 			continue
 		}
-		p.heap.Append(input)
+		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		if err != nil {
+			return 0, err
+		}
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Duration)
+	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+		p.val = val.item.(types.Duration)
 		p.isNull = false
 	} else {
 		p.isNull = true
@@ -1362,20 +1384,19 @@ func (e *maxMin4DurationSliding) Slide(sctx sessionctx.Context, rows []chunk.Row
 		if isNull {
 			continue
 		}
-		p.heap.Append(input)
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDuration(sctx, rows[lastStart+i])
+		err = p.deque.Enqueue(lastEnd+i, input)
 		if err != nil {
 			return err
 		}
-		if isNull {
-			continue
-		}
-		p.heap.Remove(input)
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Duration)
+	if lastStart+shiftStart >= 1 {
+		err := p.deque.Dequeue(lastStart + shiftStart - 1)
+		if err != nil {
+			return err
+		}
+	}
+	if val, isEmpty := p.deque.Front(); isEmpty == nil {
+		p.val = val.item.(types.Duration)
 		p.isNull = false
 	} else {
 		p.isNull = true

@@ -203,3 +203,11 @@ type SlidingWindowAggFunc interface {
 	// completely.
 	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
+
+// MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window
+type MaxMinSlidingWindowAggFunc interface {
+	// SetWindowStart sets the start position of window
+	SetWindowStart(start uint64)
+	// UpdatePartialResult is the same as AggFunc.UpdatePartialResult, providing such function to all MaxMinSlidingWindowAggFunc
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+}

@@ -442,21 +442,21 @@ func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal i
 	// build max/min aggFunc for window function using sliding window
 	switch baseAggFunc := base.(type) {
 	case *maxMin4Int:
-		return &maxMin4IntSliding{*baseAggFunc}
+		return &maxMin4IntSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Uint:
-		return &maxMin4UintSliding{*baseAggFunc}
+		return &maxMin4UintSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Float32:
-		return &maxMin4Float32Sliding{*baseAggFunc}
+		return &maxMin4Float32Sliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Float64:
-		return &maxMin4Float64Sliding{*baseAggFunc}
+		return &maxMin4Float64Sliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Decimal:
-		return &maxMin4DecimalSliding{*baseAggFunc}
+		return &maxMin4DecimalSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4String:
-		return &maxMin4StringSliding{*baseAggFunc}
+		return &maxMin4StringSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Time:
-		return &maxMin4TimeSliding{*baseAggFunc}
+		return &maxMin4TimeSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Duration:
-		return &maxMin4DurationSliding{*baseAggFunc}
+		return &maxMin4DurationSliding{*baseAggFunc, windowInfo{}}
 	}
 	return base
 }
