@@ -570,6 +570,9 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		if err != nil {
+			return 0, err
+		}
 	}
 	if val, err := p.deque.Front(); err == nil {
 		p.val = val.item.(uint64)
