@@ -966,7 +966,7 @@ func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, row
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		err = p.deque.Enqueue(uint64(i)+e.start, *input)
 		if err != nil {
 			return 0, err
 		}
@@ -990,7 +990,7 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(lastEnd+i, input)
+		err = p.deque.Enqueue(lastEnd+i, *input)
 		if err != nil {
 			return err
 		}
