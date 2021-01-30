@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -423,9 +423,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer cancel()
 	}
 
-	var connID uint64
-	if v := bo.ctx.Value(sessionctx.ConnID); v != nil {
-		connID = v.(uint64)
+	var sessionID uint64
+	if v := bo.ctx.Value(util.SessionID); v != nil {
+		sessionID = v.(uint64)
 	}
 
 	injectFailOnSend := false
@@ -438,7 +438,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			} else if s == "write" && !req.IsTxnWriteRequest() {
 				inject = false
 			}
-		} else if connID == 0 {
+		} else if sessionID == 0 {
 			inject = false
 		}
 
@@ -475,7 +475,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 				} else if s == "write" && !req.IsTxnWriteRequest() {
 					inject = false
 				}
-			} else if connID == 0 {
+			} else if sessionID == 0 {
 				inject = false
 			}
 
