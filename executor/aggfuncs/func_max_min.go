@@ -442,6 +442,9 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
+		// Deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
+		// To get the absolute position, we need to add offset of e.start, which represents the absolute index of start
+		// of window.
 		err = p.deque.Enqueue(uint64(i)+e.start, input)
 		if err != nil {
 			return 0, err
@@ -471,6 +474,7 @@ func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, las
 			return err
 		}
 	}
+	// check for unsigned underflow
 	if lastStart+shiftStart >= 1 {
 		err := p.deque.Dequeue(lastStart + shiftStart - 1)
 		if err != nil {
@@ -951,7 +955,7 @@ type windowInfo struct {
 	start uint64
 }
 
-// SetWindowStart sets the start position of window
+// SetWindowStart sets absolute start position of window
 func (w *windowInfo) SetWindowStart(start uint64) {
 	w.start = start
 }

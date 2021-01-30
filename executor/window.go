@@ -525,7 +525,7 @@ func (p *rangeFrameWindowProcessor) resetPartialResult() {
 	p.curRowIdx = 0
 	p.lastStartOffset = 0
 	p.lastEndOffset = 0
-
+	// reset all partial result stored, after finishing consuming each group
 	for i, windowFunc := range p.windowFuncs {
 		if maxMinSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
 			maxMinSlidingWindowAggFunc.ResetPartialResult(p.partialResults[i])
