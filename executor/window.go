@@ -189,7 +189,7 @@ type aggWindowProcessor struct {
 	partialResults []aggfuncs.PartialResult
 }
 
-func (p *aggWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int)  (bool, error) {
+func (p *aggWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
 	err := p.consumeGroupRows(ctx, rows)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -294,7 +294,7 @@ func (p *rowFrameWindowProcessor) getEndOffset(numRows uint64) uint64 {
 	return 0
 }
 
-func (p *rowFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int)  (bool, error) {
+func (p *rowFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
 	err := p.appendResult2Chunk(ctx, rows, chk, remained)
 	if err != nil {
 		return false, err
@@ -449,7 +449,7 @@ func (p *rangeFrameWindowProcessor) getEndOffset(ctx sessionctx.Context, rows []
 	return p.lastEndOffset, nil
 }
 
-func (p *rangeFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int)  (bool, error) {
+func (p *rangeFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
 	err := p.appendResult2Chunk(ctx, rows, chk, remained)
 	if err != nil {
 		return false, err
