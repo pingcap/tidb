@@ -132,7 +132,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 
 		finished, err := e.processor.processRows(e.ctx, groupRows, e.resultChunks[i], remained, remainingRowsInGroup)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if finished {
 			return nil
