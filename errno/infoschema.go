@@ -78,7 +78,7 @@ func GlobalStats() map[uint16]*ErrorSummary {
 func UserStats() map[string]map[uint16]*ErrorSummary {
 	stats.Lock()
 	defer stats.Unlock()
-	newMap := make(map[string]map[uint16]*ErrorSummary)
+	newMap := make(map[string]map[uint16]*ErrorSummary, len(stats.users))
 	for k, v := range stats.users {
 		newMap[k] = copyMap(v)
 	}
