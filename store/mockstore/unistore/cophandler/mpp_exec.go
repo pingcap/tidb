@@ -557,6 +557,9 @@ func (e *projExec) next() (*chunk.Chunk, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if chk == nil {
+		return nil, nil
+	}
 	newChunk := chunk.NewChunkWithCapacity(e.fieldTypes, 10)
 	for i := 0; i < chk.NumRows(); i++ {
 		row := chk.GetRow(i)

@@ -180,6 +180,50 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	return e, nil
 }
 
+func (b *mppExecBuilder) buildMPPProj(proj *tipb.Projection) (*projExec, error) {
+	e := &projExec{}
+
+	chExec, err := b.buildMPPExecutor(proj.Child)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e.children = []mppExec{chExec}
+
+	for _, pbExpr := range proj.Exprs {
+		expr, err := expression.PBToExpr(pbExpr, chExec.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.exprs = append(e.exprs, expr)
+		e.fieldTypes = append(e.fieldTypes, expr.GetType())
+	}
+	return e, nil
+}
+
+func (b *mppExecBuilder) buildMPPSel(sel *tipb.Selection) (*selExec, error) {
+	chExec, err := b.buildMPPExecutor(sel.Child)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e := &selExec{
+		baseMPPExec: baseMPPExec{
+			fieldTypes: chExec.getFieldTypes(),
+			sc:         b.sc,
+			mppCtx:     b.mppCtx,
+			children:   []mppExec{chExec},
+		},
+	}
+
+	for _, pbExpr := range sel.Conditions {
+		expr, err := expression.PBToExpr(pbExpr, chExec.getFieldTypes(), b.sc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.conditions = append(e.conditions, expr)
+	}
+	return e, nil
+}
+
 func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	e := &aggExec{
 		groups:     make(map[string]struct{}),
@@ -231,6 +275,10 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypeAggregation:
 		agg := exec.Aggregation
 		return b.buildMPPAgg(agg)
+	case tipb.ExecType_TypeProjection:
+		return b.buildMPPProj(exec.Projection)
+	case tipb.ExecType_TypeSelection:
+		return b.buildMPPSel(exec.Selection)
 	default:
 		return nil, errors.Errorf("Do not support executor %s", exec.Tp.String())
 	}

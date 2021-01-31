@@ -134,6 +134,8 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk.MustExec("insert into t2 values(3,0)")
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
 
-	// test avg and group by
+	// test avg
 	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.0000"))
+	// test proj and selection
+	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
 }
