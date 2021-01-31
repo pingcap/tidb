@@ -179,9 +179,6 @@ func (e *WindowExec) copyChk(src, dst *chunk.Chunk) error {
 type windowProcessor interface {
 	// processRows consumes all the rows in the same group, append result to chunk and reset partial result if necessary
 	processRows(ctx sessionctx.Context, rows []chunk.Row, chu *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error)
-
-	// resetPartialResult resets the partial result to the original state for a specific window function.
-	resetPartialResult()
 }
 
 type aggWindowProcessor struct {
