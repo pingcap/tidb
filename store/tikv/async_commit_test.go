@@ -35,12 +35,12 @@ import (
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
 type testAsyncCommitCommon struct {
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	if *WithTiKV {
-		s.store = NewTestStore(c).(*tikvStore)
+		s.store = NewTestStore(c).(*KVStore)
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
-	s.store = store.(*tikvStore)
+	s.store = store.(*KVStore)
 }
 
 func (s *testAsyncCommitCommon) putAlphabets(c *C, enableAsyncCommit bool) {
