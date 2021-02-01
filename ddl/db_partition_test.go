@@ -1621,8 +1621,6 @@ func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
 func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("drop table if exists e")
 	tk.MustExec("drop table if exists e2")
 	tk.MustExec(`CREATE TABLE e (
@@ -1638,6 +1636,15 @@ func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 		id INT NOT NULL
 	);`)
 	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
+	// test disable exchange partition
+	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
+	tk.MustQuery("select * from e").Check(testkit.Rows("16", "1669", "337", "2005"))
+	tk.MustQuery("select * from e2").Check(testkit.Rows())
+
+	// enable exchange partition
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
@@ -3170,6 +3177,8 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
 			partition by range(a) (
 			    partition p0 values less than (4),

@@ -203,8 +203,6 @@ func (s *TestDDLSuite) execColumnOperations(c *C, workerNum, count int, rowID *i
 }
 
 func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
-	s.mustExec(c, "set @@tidb_enable_exchange_partition=1")
-	defer s.mustExec(c, "set @@tidb_enable_exchange_partition=0")
 	s.mustExec(c, "drop table if exists test_commit")
 	s.mustExec(c, "create table test_commit (a int, b int)")
 	s.mustExec(c, "insert into test_commit values (1, 1)")
