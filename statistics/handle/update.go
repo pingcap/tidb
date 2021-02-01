@@ -654,18 +654,16 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			tbl := ptbl.GetInt64(0)
 			sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
 			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
-			if len(rc) > 0 {
-				defer terror.Call(rc[0].Close)
-			}
 			if err != nil {
 				return errors.Trace(err)
 			}
+			defer terror.Call(rc.Close)
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
-				req := rc[0].NewChunk()
+				req := rc.NewChunk()
 				iter := chunk.NewIterator4Chunk(req)
-				err := rc[0].Next(context.TODO(), req)
+				err := rc.Next(context.TODO(), req)
 				if err != nil {
 					return errors.Trace(err)
 				}
