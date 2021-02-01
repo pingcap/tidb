@@ -374,7 +374,9 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
 	defer func() {
+		tk.MustExec("set @@tidb_enable_exchange_partition = 0")
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("drop table if exists t2")
 		tk.Se.GetSessionVars().EnableAlterPlacement = false

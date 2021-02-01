@@ -2022,6 +2022,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	for i, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
@@ -2035,6 +2036,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {

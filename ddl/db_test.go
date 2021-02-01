@@ -6541,6 +6541,7 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_table_partition = nightly;")
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 1;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t1(id char(10)) partition by list columns(id) (partition p0 values in ('a'), partition p1 values in ('b'));")
@@ -6560,4 +6561,5 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	tk.MustExec("ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1", "2", "3"))
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
+	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
 }
