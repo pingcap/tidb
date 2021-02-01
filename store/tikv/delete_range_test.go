@@ -27,7 +27,7 @@ import (
 type testDeleteRangeSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 }
 
 var _ = Suite(&testDeleteRangeSuite{})
@@ -50,7 +50,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	// )
 	// c.Assert(err, IsNil)
 
-	s.store = store.(*tikvStore)
+	s.store = store.(*KVStore)
 }
 
 func (s *testDeleteRangeSuite) TearDownTest(c *C) {

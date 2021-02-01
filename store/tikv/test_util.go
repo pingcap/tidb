@@ -27,7 +27,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 		client = clientHijack(client)
 	}
 
-	pdCli := pd.Client(&codecPDClient{pdClient})
+	pdCli := pd.Client(&CodecPDClient{pdClient})
 	if pdClientHijack != nil {
 		pdCli = pdClientHijack(pdCli)
 	}
@@ -35,7 +35,7 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	// Make sure the uuid is unique.
 	uid := uuid.New().String()
 	spkv := NewMockSafePointKV()
-	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false, &config.GetGlobalConfig().TiKVClient.CoprCache)
+	tikvStore, err := NewTiKVStore(uid, pdCli, spkv, client, false, &config.GetGlobalConfig().TiKVClient.CoprCache)
 
 	if txnLocalLatches > 0 {
 		tikvStore.EnableTxnLocalLatches(txnLocalLatches)

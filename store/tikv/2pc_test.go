@@ -41,7 +41,7 @@ import (
 type testCommitterSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
@@ -59,9 +59,9 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false, nil)
+	store, err := NewTiKVStore("mocktikv-store", pdCli, spkv, client, false, nil)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 

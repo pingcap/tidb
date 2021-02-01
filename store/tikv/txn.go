@@ -60,7 +60,7 @@ type SchemaAmender interface {
 type tikvTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
+	store     *KVStore // for connection to region.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
@@ -88,7 +88,7 @@ type tikvTxn struct {
 	commitCallback func(info kv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
+func newTiKVTxn(store *KVStore, txnScope string) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
@@ -98,7 +98,7 @@ func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 }
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
-func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	newTiKVTxn := &tikvTxn{
@@ -114,7 +114,7 @@ func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, re
 	return newTiKVTxn, nil
 }
 
-func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
+func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getStalenessTimestamp(bo, txnScope, prevSec)
 	if err != nil {

@@ -29,7 +29,7 @@ import (
 
 type testScanSuite struct {
 	OneByOneSuite
-	store        *tikvStore
+	store        *KVStore
 	recordPrefix []byte
 	rowNums      []int
 	ctx          context.Context
@@ -39,7 +39,7 @@ var _ = SerialSuites(&testScanSuite{})
 
 func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 	// Avoid using async commit logic.
