@@ -187,7 +187,6 @@ func (ut *benchDB) createTable() {
   PRIMARY KEY (id),
   UNIQUE KEY name (name)
 )`
-	fmt.Println("table name", *tableName)
 	ut.mustExec(createSQL, *tableName)
 }
 
