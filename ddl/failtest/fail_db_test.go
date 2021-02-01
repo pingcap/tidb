@@ -105,8 +105,6 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database cancel_job_db")
 	tk.MustExec("use cancel_job_db")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 
 	// test for truncating table
 	tk.MustExec("create table t(a int)")
@@ -162,6 +160,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into pt values(1), (3), (5)")
 	tk.MustExec("create table nt(a int)")
 	tk.MustExec("insert into nt values(7)")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
 	c.Assert(err, NotNil)
 

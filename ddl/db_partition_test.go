@@ -3177,8 +3177,6 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition=1")
-	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
 			partition by range(a) (
 			    partition p0 values less than (4),
@@ -3187,6 +3185,8 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 			)`)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk2.MustExec("set @@tidb_enable_exchange_partition=0")
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into schema_change values (1, '2019-12-25 13:27:42')")
