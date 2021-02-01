@@ -227,10 +227,13 @@ func (h *Handle) UpdateSessionVar() error {
 	if err != nil {
 		return err
 	}
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("set @@session.tidb_analyze_version=%v", verInString))
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
 		return err
 	}
+	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
 	return err
 }
 
