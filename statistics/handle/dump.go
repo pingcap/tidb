@@ -112,8 +112,11 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
-	sctx := historyStatsExec.(sessionctx.Context)
-	snapshot := sctx.GetSessionVars().SnapshotTS
+	var snapshot uint64
+	if historyStatsExec != nil {
+		sctx := historyStatsExec.(sessionctx.Context)
+		snapshot = sctx.GetSessionVars().SnapshotTS
+	}
 	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot)
 }
 

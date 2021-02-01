@@ -106,7 +106,9 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 		return errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID)
+	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
+		return err
+	}
 	for _, col := range info.Columns {
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
 			return err
