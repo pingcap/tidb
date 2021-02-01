@@ -18,8 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
@@ -43,7 +43,7 @@ func (s *testOnePCSuite) SetUpTest(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	k1 := []byte("k1")
 	v1 := []byte("v1")
@@ -59,7 +59,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	// ttlManager is not used for 1PC.
 	c.Assert(txn.committer.ttlManager.state, Equals, stateUninitialized)
 
-	// 1PC doesn't work if connID == 0
+	// 1PC doesn't work if sessionID == 0
 	k2 := []byte("k2")
 	v2 := []byte("v2")
 
@@ -141,7 +141,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCIsolation(c *C) {
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	k := []byte("k")
 	v1 := []byte("v1")
@@ -182,7 +182,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		return
 	}
 
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	txn := s.begin1PC(c)
 
@@ -235,7 +235,7 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	// t2 commits earlier than t1
 	err = t2.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -256,7 +256,7 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(localTxn.committer.isOnePC(), IsFalse)

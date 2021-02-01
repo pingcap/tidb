@@ -13,7 +13,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	tikvmetrics "github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 var (
 	// PanicCounter measures the count of panics.
@@ -117,21 +120,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(GetStoreLimitErrorCounter)
-	prometheus.MustRegister(TiKVBackoffHistogram)
-	prometheus.MustRegister(TiKVCoprocessorHistogram)
-	prometheus.MustRegister(TiKVLoadSafepointCounter)
-	prometheus.MustRegister(TiKVLockResolverCounter)
-	prometheus.MustRegister(TiKVRawkvCmdHistogram)
-	prometheus.MustRegister(TiKVRawkvSizeHistogram)
-	prometheus.MustRegister(TiKVRegionCacheCounter)
-	prometheus.MustRegister(TiKVRegionErrorCounter)
-	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
-	prometheus.MustRegister(TiKVSendReqHistogram)
-	prometheus.MustRegister(TiKVTxnCmdHistogram)
-	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
-	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
-	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
-	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
@@ -151,28 +139,15 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
-	prometheus.MustRegister(TiKVStatusDuration)
-	prometheus.MustRegister(TiKVStatusCounter)
-	prometheus.MustRegister(TiKVBatchPendingRequests)
-	prometheus.MustRegister(TiKVBatchRequests)
-	prometheus.MustRegister(TiKVBatchWaitDuration)
-	prometheus.MustRegister(TiKVBatchSendLatency)
-	prometheus.MustRegister(TiKvBatchWaitOverLoad)
-	prometheus.MustRegister(TiKVBatchClientUnavailable)
-	prometheus.MustRegister(TiKVBatchClientWaitEstablish)
-	prometheus.MustRegister(TiKVRangeTaskStats)
-	prometheus.MustRegister(TiKVRangeTaskPushDuration)
 	prometheus.MustRegister(HandleSchemaValidate)
-	prometheus.MustRegister(TiKVTokenWaitDuration)
-	prometheus.MustRegister(TiKVTxnHeartBeatHistogram)
-	prometheus.MustRegister(TiKVPessimisticLockKeysDuration)
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
-	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
-	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
-	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
-	prometheus.MustRegister(TiKVOnePCTxnCounter)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
 	prometheus.MustRegister(ConnIdleDurationHistogram)
 	prometheus.MustRegister(ServerInfo)
+	prometheus.MustRegister(TokenGauge)
+	prometheus.MustRegister(ConfigStatus)
+
+	tikvmetrics.InitMetrics("tidb", "tikvclient")
+	tikvmetrics.RegisterMetrics()
 }

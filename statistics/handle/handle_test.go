@@ -166,15 +166,18 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 		} else {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
+		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
+		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue)
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		c.Assert(statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false), IsTrue)
-		if a.Columns[i].CMSketch == nil {
-			c.Assert(b.Columns[i].CMSketch, IsNil)
+		if a.Indices[i].CMSketch == nil {
+			c.Assert(b.Indices[i].CMSketch, IsNil)
 		} else {
-			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+			c.Assert(a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch), IsTrue)
 		}
+		c.Assert(a.Indices[i].TopN.Equal(b.Indices[i].TopN), IsTrue)
 	}
 	c.Assert(isSameExtendedStats(a.ExtendedStats, b.ExtendedStats), IsTrue)
 }
@@ -497,6 +500,36 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
 	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
 	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
+	h.Clear()
+	c.Assert(h.Update(is), IsNil)
+	table1 := h.GetTableStats(tbl.Meta())
+	assertTableEqual(c, table0, table1)
+	h.SetLease(0)
+}
+
+func (s *testStatsSuite) TestInitStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	c.Assert(h.InitStats(is), IsNil)
+	table0 := h.GetTableStats(tbl.Meta())
+	cols := table0.Columns
+	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
 	h.Clear()
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())

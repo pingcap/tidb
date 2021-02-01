@@ -35,11 +35,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -256,7 +257,7 @@ func NewTestRPCClient(security config.Security) Client {
 	return newRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -274,7 +275,7 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg 
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *tidbcfg.TiKVClient)) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
@@ -374,7 +375,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	clientConn := connArray.Get()
 	if state := clientConn.GetState(); state == connectivity.TransientFailure {
 		storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-		metrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
+		tidbmetrics.GRPCConnTransientFailureCounter.WithLabelValues(addr, storeID).Inc()
 	}
 
 	if req.IsDebugReq() {
