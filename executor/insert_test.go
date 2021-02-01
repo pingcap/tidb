@@ -1506,6 +1506,13 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("insert into t values ('a7', 'a', 10);")
 		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
 		tk.MustExec("rollback;")
+
+		// Test for large unsigned integer handle.
+		// See https://github.com/pingcap/tidb/issues/12420.
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a bigint unsigned primary key);")
+		tk.MustExec("insert into t values(18446744073709551615);")
+		tk.MustGetErrMsg("insert into t values(18446744073709551615);", "[kv:1062]Duplicate entry '18446744073709551615' for key 'PRIMARY'")
 	}
 }
 

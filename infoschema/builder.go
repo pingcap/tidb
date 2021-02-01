@@ -82,6 +82,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
 			return nil, errors.Trace(err)
 		}
+	case model.ActionExchangeTablePartition:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
@@ -454,6 +458,8 @@ func (b *Builder) applyPlacementUpdate(id string) error {
 
 	if !bundle.IsEmpty() {
 		b.is.SetBundle(bundle)
+	} else {
+		b.applyPlacementDelete(id)
 	}
 	return nil
 }
