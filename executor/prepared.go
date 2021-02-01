@@ -116,6 +116,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err   error
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
+		// FIXME: ok... yet another parse API, may need some api interface clean.
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
 		p := parser.New()
