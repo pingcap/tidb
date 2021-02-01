@@ -25,7 +25,7 @@ import (
 type testSplitSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 	bo      *Backoffer
 }
 
@@ -47,7 +47,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = store.(*KVStore)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
