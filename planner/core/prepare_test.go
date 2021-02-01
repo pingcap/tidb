@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"time"
@@ -920,4 +921,54 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 	tk.MustExec(`prepare stmt from "select * from ta a left join tb b on 1 where ? = 1 or b.s is not null"`)
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("a <nil> <nil>"))
+}
+
+func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
+	store, _, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4)")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("prepare stmt from 'select * from t where id=?'")
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Record the current tso.
+	tk.MustExec("begin")
+	tso := tk.Se.GetSessionVars().TxnCtx.StartTS
+	tk.MustExec("rollback")
+	c.Assert(tso > 0, IsTrue)
+	// Insert one more row with id = 1.
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

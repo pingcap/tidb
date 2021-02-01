@@ -242,15 +242,14 @@ func buildKeyRanges(keys ...string) []kv.KeyRange {
 	return ranges
 }
 
-func buildCopRanges(keys ...string) *copRanges {
-	ranges := buildKeyRanges(keys...)
-	return &copRanges{mid: ranges}
+func buildCopRanges(keys ...string) *KeyRanges {
+	return NewKeyRanges(buildKeyRanges(keys...))
 }
 
 func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, keys ...string) {
 	c.Assert(task.region.id, Equals, regionID)
-	for i := 0; i < task.ranges.len(); i++ {
-		r := task.ranges.at(i)
+	for i := 0; i < task.ranges.Len(); i++ {
+		r := task.ranges.At(i)
 		c.Assert(string(r.StartKey), Equals, keys[2*i])
 		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
 	}
@@ -264,91 +263,18 @@ func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...st
 	}
 }
 
-func (s *testCoprocessorSuite) TestCopRanges(c *C) {
-	ranges := []kv.KeyRange{
-		{StartKey: []byte("a"), EndKey: []byte("b")},
-		{StartKey: []byte("c"), EndKey: []byte("d")},
-		{StartKey: []byte("e"), EndKey: []byte("f")},
-	}
-
-	s.checkEqual(c, &copRanges{mid: ranges}, ranges, true)
-	s.checkEqual(c, &copRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
-	s.checkEqual(c, &copRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
-	s.checkEqual(c, &copRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
-}
-
-func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *copRanges, ranges []kv.KeyRange, slice bool) {
-	c.Assert(copRanges.len(), Equals, len(ranges))
+func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
+	c.Assert(copRanges.Len(), Equals, len(ranges))
 	for i := range ranges {
-		c.Assert(copRanges.at(i), DeepEquals, ranges[i])
+		c.Assert(copRanges.At(i), DeepEquals, ranges[i])
 	}
 	if slice {
-		for i := 0; i <= copRanges.len(); i++ {
-			for j := i; j <= copRanges.len(); j++ {
-				s.checkEqual(c, copRanges.slice(i, j), ranges[i:j], false)
+		for i := 0; i <= copRanges.Len(); i++ {
+			for j := i; j <= copRanges.Len(); j++ {
+				s.checkEqual(c, copRanges.Slice(i, j), ranges[i:j], false)
 			}
 		}
 	}
-}
-
-func (s *testCoprocessorSuite) TestCopRangeSplit(c *C) {
-	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
-	mid := []kv.KeyRange{
-		{StartKey: []byte("c"), EndKey: []byte("d")},
-		{StartKey: []byte("e"), EndKey: []byte("g")},
-		{StartKey: []byte("l"), EndKey: []byte("o")},
-	}
-	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
-	left := true
-	right := false
-
-	// input range:  [c-d) [e-g) [l-o)
-	ranges := &copRanges{mid: mid}
-	s.testSplit(c, ranges, right,
-		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
-		splitCase{"d", buildCopRanges("e", "g", "l", "o")},
-		splitCase{"f", buildCopRanges("f", "g", "l", "o")},
-	)
-
-	// input range:  [a-b) [c-d) [e-g) [l-o)
-	ranges = &copRanges{first: first, mid: mid}
-	s.testSplit(c, ranges, right,
-		splitCase{"a", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
-		splitCase{"m", buildCopRanges("m", "o")},
-	)
-
-	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	ranges = &copRanges{first: first, mid: mid, last: last}
-	s.testSplit(c, ranges, right,
-		splitCase{"f", buildCopRanges("f", "g", "l", "o", "q", "t")},
-		splitCase{"h", buildCopRanges("l", "o", "q", "t")},
-		splitCase{"r", buildCopRanges("r", "t")},
-	)
-
-	// input range:  [c-d) [e-g) [l-o)
-	ranges = &copRanges{mid: mid}
-	s.testSplit(c, ranges, left,
-		splitCase{"m", buildCopRanges("c", "d", "e", "g", "l", "m")},
-		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
-		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
-	)
-
-	// input range:  [a-b) [c-d) [e-g) [l-o)
-	ranges = &copRanges{first: first, mid: mid}
-	s.testSplit(c, ranges, left,
-		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
-		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
-		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-	)
-
-	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	ranges = &copRanges{first: first, mid: mid, last: last}
-	s.testSplit(c, ranges, left,
-		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
-	)
 }
 
 func (s *testCoprocessorSuite) TestRateLimit(c *C) {
@@ -375,21 +301,4 @@ func (s *testCoprocessorSuite) TestRateLimit(c *C) {
 	time.Sleep(200 * time.Millisecond)
 	rl.putToken()
 	<-sig
-}
-
-type splitCase struct {
-	key string
-	*copRanges
-}
-
-func (s *testCoprocessorSuite) testSplit(c *C, ranges *copRanges, checkLeft bool, cases ...splitCase) {
-	for _, t := range cases {
-		left, right := ranges.split([]byte(t.key))
-		expect := t.copRanges
-		if checkLeft {
-			s.checkEqual(c, left, expect.mid, false)
-		} else {
-			s.checkEqual(c, right, expect.mid, false)
-		}
-	}
 }
