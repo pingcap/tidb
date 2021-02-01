@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
@@ -52,11 +52,10 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            60 * 60 * 1000, // 1hour
-		ServerMemoryQuota:    0,
-		TiKVClient:           DefaultTiKVClient(),
-		//Security:{},
+		CommitterConcurrency:  16,
+		MaxTxnTTL:             60 * 60 * 1000, // 1hour
+		ServerMemoryQuota:     0,
+		TiKVClient:            DefaultTiKVClient(),
 		PDClient:              DefaultPDClient(),
 		PessimisticTxn:        DefaultPessimisticTxn(),
 		TxnLocalLatches:       DefaultTxnLocalLatches(),
