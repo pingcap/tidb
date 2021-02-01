@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -75,7 +76,7 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
-	restrictedExec sqlexec.RestrictedSQLExecutor
+	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
@@ -91,6 +92,37 @@ type Handle struct {
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
+}
+
+func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return fn(ctx, exec)
+}
+
+func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		return exec.ExecRestrictedStmt(ctx, stmt)
+	})
+}
+
+func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+	})
 }
 
 // Clear the statsCache, only for test.
@@ -114,20 +146,23 @@ func (h *Handle) Clear() {
 	h.mu.Unlock()
 }
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
+func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*Handle, error) {
 	handle := &Handle{
 		ddlEventCh:       make(chan *util.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		pool:             pool,
 	}
 	handle.lease.Store(lease)
-	// It is safe to use it concurrently because the exec won't touch the ctx.
-	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
-		handle.restrictedExec = exec
-	}
+	handle.pool = pool
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
@@ -178,11 +213,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		lastVersion = 0
 	}
 	ctx := context.Background()
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -731,7 +762,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		}
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
 			return err
 		}
 	}
@@ -829,16 +860,14 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, sta
 
 func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
 	ctx := context.Background()
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
 	var rows []chunk.Row
 	if snapshot == 0 {
-		rows, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+		rows, _, err = h.execRestrictedSQL(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
 	} else {
-		rows, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+		rows, _, err = h.execRestrictedSQLWithSnapshot(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", snapshot, tableID)
+		if err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	if err != nil || len(rows) == 0 {
 		return
@@ -951,11 +980,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	ctx := context.Background()
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1018,11 +1043,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
 	ctx := context.Background()
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -311,11 +311,7 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	mapper := h.sweepIdxUsageList()
 	for id, value := range mapper {
 		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
-		stmt, err := h.restrictedExec.ParseWithParams(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
-		}
-		_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
 		if err != nil {
 			return err
 		}
@@ -329,12 +325,7 @@ func (h *Handle) GCIndexUsage() error {
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	ctx := context.Background()
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
-	if err != nil {
-		return err
-	}
-	_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	_, _, err := h.execRestrictedSQL(context.Background(), sql)
 	return err
 }
 
@@ -501,14 +492,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
-	ctx := context.Background()
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	_, _, err := h.execRestrictedSQL(context.Background(), sql)
 	return errors.Trace(err)
 }
 
@@ -654,11 +640,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	ctx := context.Background()
 	sql := "SELECT distinct table_id from mysql.stats_feedback"
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tables, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	tables, _, err := h.execRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -851,11 +833,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	ctx := context.Background()
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	if err != nil {
-		return map[string]string{}
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -954,15 +932,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
 	startTime := time.Now()
-	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
-	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
-	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
-	stmt, err := h.restrictedExec.ParseWithParams(context.Background(), sql, params...)
-	if err == nil {
-		_, _, err = h.restrictedExec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionIgnoreWarning)
-		dur := time.Since(startTime)
-		metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
-	}
+	_, _, err := h.execRestrictedSQL(context.Background(), sql, params...)
+	dur := time.Since(startTime)
+	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
 		dur := time.Since(startTime)
 		metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())

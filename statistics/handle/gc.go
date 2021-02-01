@@ -38,14 +38,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		return nil
 	}
 	gcVer := h.LastUpdateVersion() - offset
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
-	if err != nil {
-		return err
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	for _, row := range rows {
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
@@ -56,22 +53,14 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
 	ctx := context.Background()
-	stmt, err := h.restrictedExec.ParseWithParams(ctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := h.execRestrictedSQL(ctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// The table has already been deleted in stats and acknowledged to all tidb,
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
-		stmt, err := h.restrictedExec.ParseWithParams(ctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+		_, _, err = h.execRestrictedSQL(ctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -108,11 +97,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		}
 	}
 	// Mark records in mysql.stats_extended as `deleted`.
-	stmt, err = h.restrictedExec.ParseWithParams(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rows, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err = h.execRestrictedSQL(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
 	if err != nil {
 		return errors.Trace(err)
 	}
