@@ -746,8 +746,9 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 				err = rollbackFn()
 			}
 		}()
+		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
 		var partition string
-		if !e.tableID.IsPartitionTable() && e.tblInfo.ID != e.tableID.GetStatisticsID() {
+		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.GetStatisticsID() {
 					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
