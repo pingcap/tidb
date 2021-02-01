@@ -645,6 +645,7 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 					loc.Region.GetID()))
 			continue
 		}
+<<<<<<< HEAD
 		ctx := context.Background()
 		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
 		if *err != nil {
@@ -670,6 +671,22 @@ func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild
 				*sampTasks = append(*sampTasks, task)
 				break
 			}
+=======
+		var rs sqlexec.RecordSet
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		if err != nil {
+			return
+		}
+		if rs == nil {
+			err = errors.Trace(errors.Errorf("empty record set"))
+			return
+		}
+		defer terror.Call(rs.Close)
+		chk := rs.NewChunk()
+		err = rs.Next(context.TODO(), chk)
+		if err != nil {
+			return
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 		}
 	}
 }

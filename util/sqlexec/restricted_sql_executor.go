@@ -49,9 +49,14 @@ type RestrictedSQLExecutor interface {
 // For example, privilege/privileges package need execute SQL, if it use
 // session.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
+	// Execute is only used by plugins. It can be removed soon.
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 	// ExecuteInternal means execute sql as the internal sql.
+<<<<<<< HEAD
 	ExecuteInternal(ctx context.Context, sql string) ([]RecordSet, error)
+=======
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 }
 
 // SQLParser is an interface provides parsing sql statement.

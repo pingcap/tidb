@@ -661,16 +661,23 @@ func (h *BindHandle) CaptureBaselines() {
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	oriVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
+<<<<<<< HEAD
 	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = oriVals
 	if len(recordSets) > 0 {
 		defer terror.Log(recordSets[0].Close())
+=======
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer terror.Call(rs.Close)
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 	}
 	if err != nil {
 		return "", err
 	}
-	chk := recordSets[0].NewChunk()
-	err = recordSets[0].Next(context.TODO(), chk)
+	chk := rs.NewChunk()
+	err = rs.Next(context.TODO(), chk)
 	if err != nil {
 		return "", err
 	}
@@ -873,23 +880,22 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
 		}
 	}()
-	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
-		if len(recordSets) > 0 {
-			terror.Call(recordSets[0].Close)
+		if rs != nil {
+			terror.Call(rs.Close)
 		}
 		resultChan <- err
 		return
 	}
-	recordSet := recordSets[0]
-	chk := recordSets[0].NewChunk()
+	chk := rs.NewChunk()
 	for {
-		err = recordSet.Next(ctx, chk)
+		err = rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			break
 		}
 	}
-	terror.Call(recordSets[0].Close)
+	terror.Call(rs.Close)
 	resultChan <- err
 }
 
