@@ -1621,6 +1621,8 @@ func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
 func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("drop table if exists e")
 	tk.MustExec("drop table if exists e2")
 	tk.MustExec(`CREATE TABLE e (
@@ -2045,6 +2047,8 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("drop table if exists pt1;")
 	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
 	tk.MustExec("alter table pt1 add index idx((a+c));")
