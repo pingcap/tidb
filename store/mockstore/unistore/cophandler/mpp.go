@@ -394,6 +394,8 @@ func (h *MPPTaskHandler) registerTunnel(tunnel *ExchangerTunnel) error {
 
 func (h *MPPTaskHandler) getAndActiveTunnel(req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, *mpp.Error) {
 	targetID := req.ReceiverMeta.TaskId
+	h.tunnelSetLock.Lock()
+	defer h.tunnelSetLock.Unlock()
 	if tunnel, ok := h.TunnelSet[targetID]; ok {
 		close(tunnel.connectedCh)
 		return tunnel, nil
