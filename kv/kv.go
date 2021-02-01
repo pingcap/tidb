@@ -473,7 +473,7 @@ type Storage interface {
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
-	// GetClient gets a mpp client instance.
+	// GetMPPClient gets a mpp client instance.
 	GetMPPClient() MPPClient
 	// Close store
 	Close() error

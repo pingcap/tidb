@@ -399,15 +399,15 @@ func excludeToIncludeForIntPoint(p *point) *point {
 
 // If there exists an interval whose length is large than 0, return nil. Otherwise remove all unsatisfiable intervals
 // and return array of single point intervals.
-func allSinglePoints(sc *stmtctx.StatementContext, points []point) []point {
+func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 	pos := 0
 	for i := 0; i < len(points); i += 2 {
 		// Remove unsatisfiable interval. For example, (MaxInt64, +inf) and (-inf, MinInt64) is unsatisfiable.
-		left := excludeToIncludeForIntPoint(&points[i])
+		left := excludeToIncludeForIntPoint(points[i])
 		if left == nil {
 			continue
 		}
-		right := excludeToIncludeForIntPoint(&points[i+1])
+		right := excludeToIncludeForIntPoint(points[i+1])
 		if right == nil {
 			continue
 		}
@@ -420,8 +420,8 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []point) []point {
 			return nil
 		}
 		// If interval is a single point, add it back to array.
-		points[pos] = *left
-		points[pos+1] = *right
+		points[pos] = left
+		points[pos+1] = right
 		pos += 2
 	}
 	return points[:pos]
@@ -457,7 +457,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	accesses := make([]expression.Expression, len(cols))
-	points := make([][]point, len(cols))
+	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
 	newConditions := make([]expression.Expression, 0, len(conditions))
 	offsets := make([]int, len(conditions))

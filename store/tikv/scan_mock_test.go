@@ -27,7 +27,7 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store := NewTestStore(c).(*tikvStore)
+	store := NewTestStore(c).(*KVStore)
 	defer store.Close()
 
 	txn, err := store.Begin()
@@ -60,7 +60,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 }
 
 func (s *testScanMockSuite) TestReverseScan(c *C) {
-	store := NewTestStore(c).(*tikvStore)
+	store := NewTestStore(c).(*KVStore)
 	defer store.Close()
 
 	txn, err := store.Begin()

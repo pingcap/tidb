@@ -507,6 +507,36 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testStatsSuite) TestInitStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	c.Assert(h.InitStats(is), IsNil)
+	table0 := h.GetTableStats(tbl.Meta())
+	cols := table0.Columns
+	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	h.Clear()
+	c.Assert(h.Update(is), IsNil)
+	table1 := h.GetTableStats(tbl.Meta())
+	assertTableEqual(c, table0, table1)
+	h.SetLease(0)
+}
+
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
