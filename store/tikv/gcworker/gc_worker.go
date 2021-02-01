@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -502,7 +501,7 @@ func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.T
 		return nil, 0, errors.Trace(err)
 	}
 
-	safePointValue := w.calcSafePointByMinStartTS(ctx, variable.GoTimeToTS(now.Add(-*lifeTime)))
+	safePointValue := w.calcSafePointByMinStartTS(ctx, oracle.GoTimeToTS(now.Add(-*lifeTime)))
 	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -1761,14 +1760,14 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	se := createSession(w.store)
 	defer se.Close()
 	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
-	if len(rs) > 0 {
-		defer terror.Call(rs[0].Close)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
