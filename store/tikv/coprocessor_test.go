@@ -263,20 +263,6 @@ func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...st
 	}
 }
 
-func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
-	c.Assert(copRanges.Len(), Equals, len(ranges))
-	for i := range ranges {
-		c.Assert(copRanges.At(i), DeepEquals, ranges[i])
-	}
-	if slice {
-		for i := 0; i <= copRanges.Len(); i++ {
-			for j := i; j <= copRanges.Len(); j++ {
-				s.checkEqual(c, copRanges.Slice(i, j), ranges[i:j], false)
-			}
-		}
-	}
-}
-
 func (s *testCoprocessorSuite) TestRateLimit(c *C) {
 	done := make(chan struct{}, 1)
 	rl := newRateLimit(1)

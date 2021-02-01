@@ -212,8 +212,6 @@ type batchCopIterator struct {
 
 	memTracker *memory.Tracker
 
-	replicaReadSeed uint32
-
 	rpcCancel *RPCCanceller
 
 	wg sync.WaitGroup

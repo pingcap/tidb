@@ -291,10 +291,7 @@ type copResponse struct {
 	respTime time.Duration
 }
 
-const (
-	sizeofExecDetails   = int(unsafe.Sizeof(execdetails.ExecDetails{}))
-	sizeofCommitDetails = int(unsafe.Sizeof(execdetails.CommitDetails{}))
-)
+const sizeofExecDetails = int(unsafe.Sizeof(execdetails.ExecDetails{}))
 
 // GetData implements the kv.ResultSubset GetData interface.
 func (rs *copResponse) GetData() []byte {
@@ -815,7 +812,6 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 const (
 	minLogBackoffTime   = 100
 	minLogKVProcessTime = 100
-	minLogKVWaitTime    = 200
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {

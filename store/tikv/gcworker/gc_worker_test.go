@@ -1201,9 +1201,7 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 
 	makeLockList := func(locks ...*tikv.Lock) []*tikv.Lock {
 		res := make([]*tikv.Lock, 0, len(locks))
-		for _, lock := range locks {
-			res = append(res, lock)
-		}
+		res = append(res, locks...)
 		return res
 	}
 
