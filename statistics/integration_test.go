@@ -65,14 +65,14 @@ func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		c.Assert(idx.StatsVer, Equals, int64(1))
 	}
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -89,14 +89,14 @@ func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		c.Assert(idx.StatsVer, Equals, int64(2))
 	}
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the old one instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -121,6 +121,10 @@ func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	_, err := tk.Exec("analyze table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
 	tk.MustExec("analyze table t")
 	is := s.do.InfoSchema()
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -128,16 +132,6 @@ func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
 	h := s.do.StatsHandle()
 	c.Assert(h.Update(is), IsNil)
 	statsTblT := h.GetTableStats(tblT.Meta())
-	for _, col := range statsTblT.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
-	}
-	for _, idx := range statsTblT.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
-	}
-	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
-	tk.MustExec("analyze table t")
-	c.Assert(h.Update(is), IsNil)
-	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
 		c.Assert(col.StatsVer, Equals, int64(2))
 	}
@@ -147,7 +141,23 @@ func (s *testIntegrationSuite) TestFastAnalyzeOnVer2(c *C) {
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't been GA and is not available for new statistics.")
+	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	_, err = tk.Exec("analyze table t index idx")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+	_, err = tk.Exec("analyze table t index")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+	tk.MustExec("analyze table t")
+	c.Assert(h.Update(is), IsNil)
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTblT.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
 }
 
 func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
