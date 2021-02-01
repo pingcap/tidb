@@ -83,9 +83,6 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		s := r.ChildPf.ExchangeSender
 		s.TargetTasks = tasks
 	}
-	for _, task := range tasks {
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", task.StartTs), zap.Int64("ID", task.ID), zap.String("address", task.Meta.GetAddress()), zap.String("plan", ToString(f.ExchangeSender)))
-	}
 	f.ExchangeSender.Tasks = tasks
 	return tasks, nil
 }
