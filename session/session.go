@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -500,7 +501,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
-	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -1349,10 +1350,14 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 }
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
+// Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	sql, err := EscapeSQL(sql, args...)
-	if err != nil {
-		return nil, err
+	var err error
+	if len(args) > 0 {
+		sql, err = sqlexec.EscapeSQL(sql, args...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	internal := s.isInternal()
