@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -85,7 +84,8 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
+		table, ok := cache.tables[tblID]
 		if !ok {
 			continue
 		}
@@ -114,7 +114,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				CMSketch:  cms,
 				TopN:      topN,
 				Info:      idxInfo,
-				StatsVer:  row.GetInt64(8),
+				StatsVer:  statsVer,
 				Flag:      row.GetInt64(10),
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
@@ -130,15 +130,26 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if colInfo == nil {
 				continue
 			}
+			var topnCount int64
+			// If this is stats of the Version2, we need to consider the topn's count as well.
+			// See the comments of Version2 for more details.
+			if statsVer == statistics.Version2 {
+				var err error
+				topnCount, err = h.initTopNCountSum(tblID, id)
+				if err != nil {
+					terror.Log(err)
+				}
+			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
-				Count:      nullCount,
+				Count:      nullCount + topnCount,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       row.GetInt64(10),
+				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
@@ -218,7 +229,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := cache.tables[tableID]
@@ -246,26 +257,53 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *statsCache, iter *chu
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
 			var err error
-			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			lower, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
+			upper, err = d.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 		}
-		hist.AppendBucket(&lower, &upper, row.GetInt64(3), row.GetInt64(4))
+		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
 	}
 }
 
+func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
+	// Before stats ver 2, histogram represents all data in this column.
+	// In stats ver 2, histogram + TopN represent all data in this column.
+	// So we need to add TopN total count here.
+	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_top_n where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
+	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), selSQL)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
+	if err != nil {
+		return 0, err
+	}
+	req := rs[0].NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rs[0].Next(context.TODO(), req)
+		if err != nil {
+			return 0, err
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		return iter.Begin().GetMyDecimal(0).ToInt()
+	}
+	return 0, nil
+}
+
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -283,7 +321,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		if req.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.mu.ctx, cache, iter)
+		h.initStatsBuckets4Chunk(cache, iter)
 	}
 	lastVersion := uint64(0)
 	for _, table := range cache.tables {
