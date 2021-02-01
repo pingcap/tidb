@@ -14,11 +14,12 @@
 package util
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"go.uber.org/zap"
 )
 
@@ -62,4 +63,14 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 	}()
 	exec()
+}
+
+type sessionIDCtxKey struct{}
+
+// SessionID is the context key type to mark a session.
+var SessionID = sessionIDCtxKey{}
+
+// SetSessionID sets session id into context
+func SetSessionID(ctx context.Context, sessionID uint64) context.Context {
+	return context.WithValue(ctx, SessionID, sessionID)
 }

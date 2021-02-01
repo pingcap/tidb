@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
@@ -93,13 +93,13 @@ type copTaskAndRPCContext struct {
 	ctx  *RPCContext
 }
 
-func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
-	rangesLen := ranges.len()
+	rangesLen := ranges.Len()
 	for {
 		var tasks []*copTask
-		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *KeyRanges) {
 			tasks = append(tasks, &copTask{
 				region:    regionWithRangeInfo.Region,
 				ranges:    ranges,
@@ -108,7 +108,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 			})
 		}
 
-		err := splitRanges(bo, cache, ranges, appendTask)
+		err := SplitKeyRanges(bo, cache, ranges, appendTask)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -171,7 +171,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.StoreType)
+	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, NewKeyRanges(req.KeyRanges), req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -313,13 +313,13 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	ranges := &copRanges{}
+	var ranges []kv.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.do(func(ran *kv.KeyRange) {
-			ranges.mid = append(ranges.mid, *ran)
+		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.RegionCache, ranges, b.req.StoreType)
+	return buildBatchCopTasks(bo, b.RegionCache, NewKeyRanges(ranges), b.req.StoreType)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
@@ -332,7 +332,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 				ConfVer: task.task.region.confVer,
 				Version: task.task.region.ver,
 			},
-			Ranges: task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.ToPBRanges(),
 		})
 	}
 
