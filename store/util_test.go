@@ -39,7 +39,7 @@ func NewTestStore(c *C) kv.Storage {
 	}
 
 	if *WithTiKV {
-		var d tikv.Driver
+		var d TiKVDriver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)

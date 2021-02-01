@@ -77,7 +77,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*KVStore)
+	s.store = store
 
 	s.testRanges = []kv.KeyRange{
 		makeRange("", ""),
