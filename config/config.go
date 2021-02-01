@@ -17,7 +17,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -66,8 +65,6 @@ const (
 	DefMaxOfTableColumnCountLimit = 4096
 	// DefTxnScope is the default value for TxnScope
 	DefTxnScope = "global"
-	// DefStoresRefreshInterval is the default value of StoresRefreshInterval
-	DefStoresRefreshInterval = 60
 )
 
 // Valid config maps
@@ -104,10 +101,10 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64           `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
-	EnableBatchDML   bool            `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
+	TempStorageQuota int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	EnableStreaming  bool                    `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML   bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches  tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -119,7 +116,7 @@ type Config struct {
 	PreparedPlanCache          PreparedPlanCache  `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing        `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol              ProxyProtocol      `toml:"proxy-protocol" json:"proxy-protocol"`
-	PDClient                   PDClient           `toml:"pd-client" json:"pd-client"`
+	PDClient                   tikvcfg.PDClient   `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog             `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
@@ -190,6 +187,22 @@ func (c *Config) UpdateTempStoragePath() {
 		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	} else {
 		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	}
+}
+
+func (c *Config) getTiKVConfig() *tikvcfg.Config {
+	return &tikvcfg.Config{
+		CommitterConcurrency:  c.Performance.CommitterConcurrency,
+		MaxTxnTTL:             c.Performance.MaxTxnTTL,
+		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
+		TiKVClient:            c.TiKVClient,
+		Security:              c.Security.ClusterSecurity(),
+		PDClient:              c.PDClient,
+		PessimisticTxn:        tikvcfg.PessimisticTxn{MaxRetryCount: c.PessimisticTxn.MaxRetryCount},
+		TxnLocalLatches:       c.TxnLocalLatches,
+		StoresRefreshInterval: c.StoresRefreshInterval,
+		OpenTracingEnable:     c.OpenTracing.Enable,
+		Path:                  c.Path,
 	}
 }
 
@@ -413,12 +426,6 @@ type PlanCache struct {
 	Shards   uint `toml:"shards" json:"shards"`
 }
 
-// TxnLocalLatches is the TxnLocalLatches section of the config.
-type TxnLocalLatches struct {
-	Enabled  bool `toml:"-" json:"-"`
-	Capacity uint `toml:"-" json:"-"`
-}
-
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
 	Enabled          bool    `toml:"enabled" json:"enabled"`
@@ -463,12 +470,6 @@ type ProxyProtocol struct {
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
-// PDClient is the config for PD client.
-type PDClient struct {
-	// PDServerTimeout is the max time which PD client will wait for the PD server in seconds.
-	PDServerTimeout uint `toml:"pd-server-timeout" json:"pd-server-timeout"`
-}
-
 // Binlog is the config for binlog.
 type Binlog struct {
 	Enable bool `toml:"enable" json:"enable"`
@@ -482,16 +483,23 @@ type Binlog struct {
 	Strategy string `toml:"strategy" json:"strategy"`
 }
 
-// Plugin is the config for plugin
-type Plugin struct {
-	Dir  string `toml:"dir" json:"dir"`
-	Load string `toml:"load" json:"load"`
-}
-
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+}
+
+// DefaultPessimisticTxn returns the default configuration for PessimisticTxn
+func DefaultPessimisticTxn() PessimisticTxn {
+	return PessimisticTxn{
+		MaxRetryCount: 256,
+	}
+}
+
+// Plugin is the config for plugin
+type Plugin struct {
+	Dir  string `toml:"dir" json:"dir"`
+	Load string `toml:"load" json:"load"`
 }
 
 // StmtSummary is the config for statement summary.
@@ -525,6 +533,7 @@ type Experimental struct {
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
 }
 
+var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
@@ -555,13 +564,10 @@ var defaultConf = Config{
 	RepairMode:                   false,
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,
-	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
-		Capacity: 0,
-	},
-	LowerCaseTableNames:        2,
-	GracefulWaitBeforeShutdown: 0,
-	ServerVersion:              "",
+	TxnLocalLatches:              defTiKVCfg.TxnLocalLatches,
+	LowerCaseTableNames:          2,
+	GracefulWaitBeforeShutdown:   0,
+	ServerVersion:                "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -601,8 +607,8 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
-		CommitterConcurrency:  16,
-		MaxTxnTTL:             60 * 60 * 1000, // 1hour
+		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
@@ -625,17 +631,13 @@ var defaultConf = Config{
 		},
 		Reporter: OpenTracingReporter{},
 	},
-	PDClient: PDClient{
-		PDServerTimeout: 3,
-	},
-	TiKVClient: tikvcfg.DefaultTiKVClient(),
+	PDClient:   defTiKVCfg.PDClient,
+	TiKVClient: defTiKVCfg.TiKVClient,
 	Binlog: Binlog{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
-	PessimisticTxn: PessimisticTxn{
-		MaxRetryCount: 256,
-	},
+	PessimisticTxn: DefaultPessimisticTxn(),
 	StmtSummary: StmtSummary{
 		Enable:              true,
 		EnableInternalQuery: false,
@@ -661,7 +663,7 @@ var defaultConf = Config{
 	DeprecateIntegerDisplayWidth: false,
 	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
-	StoresRefreshInterval:        DefStoresRefreshInterval,
+	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
 }
 
 var (
@@ -684,6 +686,8 @@ func GetGlobalConfig() *Config {
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
 	globalConf.Store(config)
+	cfg := *config.getTiKVConfig()
+	tikvcfg.StoreGlobalConfig(&cfg)
 }
 
 var deprecatedConfig = map[string]struct{}{
@@ -844,8 +848,9 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("lower-case-table-names should be 0 or 1 or 2")
 	}
 
-	if c.TxnLocalLatches.Enabled && c.TxnLocalLatches.Capacity == 0 {
-		return fmt.Errorf("txn-local-latches.capacity can not be 0")
+	// txn-local-latches
+	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
 	}
 
 	// For tikvclient.
@@ -979,28 +984,3 @@ const (
 	OOMActionCancel = "cancel"
 	OOMActionLog    = "log"
 )
-
-// ParsePath parses this path.
-func ParsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
-	var u *url.URL
-	u, err = url.Parse(path)
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-	if strings.ToLower(u.Scheme) != "tikv" {
-		err = errors.Errorf("Uri scheme expected [tikv] but found [%s]", u.Scheme)
-		logutil.BgLogger().Error("parsePath error", zap.Error(err))
-		return
-	}
-	switch strings.ToLower(u.Query().Get("disableGC")) {
-	case "true":
-		disableGC = true
-	case "false", "":
-	default:
-		err = errors.New("disableGC flag should be true/false")
-		return
-	}
-	etcdAddrs = strings.Split(u.Host, ",")
-	return
-}
