@@ -175,7 +175,15 @@ func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *P
 			return nil, err
 		}
 	case *expression.ScalarFunction:
-		newExpr, err := expression.NewFunction(proj.SCtx(), v.FuncName.L, v.RetType, v.GetArgs()...)
+		newArgs := make([]expression.Expression, 0, len(v.GetArgs()))
+		for i := range v.GetArgs() {
+			args, err := ReplaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
+			if err != nil {
+				return nil, err
+			}
+			newArgs = append(newArgs, args)
+		}
+		newExpr, err := expression.NewFunction(v.GetCtx(), v.FuncName.L, v.GetType(), newArgs...)
 		if err != nil {
 			return nil, err
 		}
