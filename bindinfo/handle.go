@@ -446,9 +446,338 @@ func (h *BindHandle) insertBindInfoSQL(record *BindRecord) string {
 func (h *BindHandle) logicalDeleteBindInfoSQL(normdOrigSQL, db string, updateTs types.Time) string {
 	return fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s`,
 		expression.Quote(deleted),
+<<<<<<< HEAD
 		expression.Quote(updateTs.String()),
 		expression.Quote(normdOrigSQL),
 		expression.Quote(db))
+=======
+		expression.Quote(updateTsStr),
+		expression.Quote(originalSQL),
+		expression.Quote(updateTsStr))
+	if bindingSQL == "" {
+		return sql
+	}
+	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindingSQL))
+}
+
+// CaptureBaselines is used to automatically capture plan baselines.
+func (h *BindHandle) CaptureBaselines() {
+	parser4Capture := parser.New()
+	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
+	for _, bindableStmt := range bindableStmts {
+		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+		if err != nil {
+			logutil.BgLogger().Debug("[sql-bind] parse SQL failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			continue
+		}
+		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
+			continue
+		}
+		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
+		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+			continue
+		}
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
+		if bindSQL == "" {
+			continue
+		}
+		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
+		binding := Binding{
+			BindSQL:   bindSQL,
+			Status:    Using,
+			Charset:   charset,
+			Collation: collation,
+			Source:    Capture,
+		}
+		// We don't need to pass the `sctx` because the BindSQL has been validated already.
+		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
+		if err != nil {
+			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+		}
+	}
+}
+
+func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
+	origVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return "", err
+	}
+	chk := rs.NewChunk()
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return "", err
+	}
+	return chk.GetRow(0).GetString(0), nil
+}
+
+// GenerateBindSQL generates binding sqls from stmt node and plan hints.
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool, defaultDB string) string {
+	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
+	if planHint == "" {
+		return ""
+	}
+	if !captured {
+		paramChecker := &paramMarkerChecker{}
+		stmtNode.Accept(paramChecker)
+		// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
+		// so just ignore them now.
+		if paramChecker.hasParamMarker {
+			return ""
+		}
+	}
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	hint.BindHint(stmtNode, &hint.HintsSet{})
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	restoreCtx.DefaultDB = defaultDB
+	err := stmtNode.Restore(restoreCtx)
+	if err != nil {
+		logutil.Logger(ctx).Debug("[sql-bind] restore SQL failed when generating bind SQL", zap.Error(err))
+	}
+	bindSQL := sb.String()
+	switch n := stmtNode.(type) {
+	case *ast.DeleteStmt:
+		deleteIdx := strings.Index(bindSQL, "DELETE")
+		// Remove possible `explain` prefix.
+		bindSQL = bindSQL[deleteIdx:]
+		return strings.Replace(bindSQL, "DELETE", fmt.Sprintf("DELETE /*+ %s*/", planHint), 1)
+	case *ast.UpdateStmt:
+		updateIdx := strings.Index(bindSQL, "UPDATE")
+		// Remove possible `explain` prefix.
+		bindSQL = bindSQL[updateIdx:]
+		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
+	case *ast.SelectStmt:
+		selectIdx := strings.Index(bindSQL, "SELECT")
+		// Remove possible `explain` prefix.
+		bindSQL = bindSQL[selectIdx:]
+		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	case *ast.InsertStmt:
+		insertIdx := int(0)
+		if n.IsReplace {
+			insertIdx = strings.Index(bindSQL, "REPLACE")
+		} else {
+			insertIdx = strings.Index(bindSQL, "INSERT")
+		}
+		// Remove possible `explain` prefix.
+		bindSQL = bindSQL[insertIdx:]
+		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	}
+	logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+	return ""
+}
+
+type paramMarkerChecker struct {
+	hasParamMarker bool
+}
+
+func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParamMarker = true
+		return in, true
+	}
+	return in, false
+}
+
+func (e *paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// AddEvolvePlanTask adds the evolve plan task into memory cache. It would be flushed to store periodically.
+func (h *BindHandle) AddEvolvePlanTask(originalSQL, DB string, binding Binding) {
+	br := &BindRecord{
+		OriginalSQL: originalSQL,
+		Db:          DB,
+		Bindings:    []Binding{binding},
+	}
+	h.pendingVerifyBindRecordMap.Add(br)
+}
+
+// SaveEvolveTasksToStore saves the evolve task into store.
+func (h *BindHandle) SaveEvolveTasksToStore() {
+	h.pendingVerifyBindRecordMap.flushToStore()
+}
+
+func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
+	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
+		variable.TiDBEvolvePlanTaskMaxTime, variable.TiDBEvolvePlanTaskStartTime, variable.TiDBEvolvePlanTaskEndTime)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	maxTime, startTimeStr, endTimeStr := int64(variable.DefTiDBEvolvePlanTaskMaxTime), variable.DefTiDBEvolvePlanTaskStartTime, variable.DefAutoAnalyzeEndTime
+	for _, row := range rows {
+		switch row.GetString(0) {
+		case variable.TiDBEvolvePlanTaskMaxTime:
+			maxTime, err = strconv.ParseInt(row.GetString(1), 10, 64)
+			if err != nil {
+				return 0, time.Time{}, time.Time{}, err
+			}
+		case variable.TiDBEvolvePlanTaskStartTime:
+			startTimeStr = row.GetString(1)
+		case variable.TiDBEvolvePlanTaskEndTime:
+			endTimeStr = row.GetString(1)
+		}
+	}
+	startTime, err := time.ParseInLocation(variable.FullDayTimeFormat, startTimeStr, time.UTC)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+
+	}
+	endTime, err := time.ParseInLocation(variable.FullDayTimeFormat, endTimeStr, time.UTC)
+	if err != nil {
+		return 0, time.Time{}, time.Time{}, err
+	}
+	return time.Duration(maxTime) * time.Second, startTime, endTime, nil
+}
+
+const (
+	// acceptFactor is the factor to decide should we accept the pending verified plan.
+	// A pending verified plan will be accepted if it performs at least `acceptFactor` times better than the accepted plans.
+	acceptFactor = 1.5
+	// verifyTimeoutFactor is how long to wait to verify the pending plan.
+	// For debugging purposes it is useful to wait a few times longer than the current execution time so that
+	// an informative error can be written to the log.
+	verifyTimeoutFactor = 2.0
+	// nextVerifyDuration is the duration that we will retry the rejected plans.
+	nextVerifyDuration = 7 * 24 * time.Hour
+)
+
+func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
+	cache := h.bindInfo.Value.Load().(cache)
+	for _, bindRecords := range cache {
+		for _, bindRecord := range bindRecords {
+			for _, bind := range bindRecord.Bindings {
+				if bind.Status == PendingVerify {
+					return bindRecord.OriginalSQL, bindRecord.Db, bind
+				}
+				if bind.Status != Rejected {
+					continue
+				}
+				dur, err := bind.SinceUpdateTime()
+				// Should not happen.
+				if err != nil {
+					continue
+				}
+				// Rejected and retry it now.
+				if dur > nextVerifyDuration {
+					return bindRecord.OriginalSQL, bindRecord.Db, bind
+				}
+			}
+		}
+	}
+	return "", "", Binding{}
+}
+
+func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
+	ctx := context.TODO()
+	if db != "" {
+		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("use `%s`", db))
+		if err != nil {
+			return 0, err
+		}
+	}
+	ctx, cancelFunc := context.WithCancel(ctx)
+	timer := time.NewTimer(maxTime)
+	resultChan := make(chan error)
+	startTime := time.Now()
+	go runSQL(ctx, sctx, sql, resultChan)
+	select {
+	case err := <-resultChan:
+		cancelFunc()
+		if err != nil {
+			return 0, err
+		}
+		return time.Since(startTime), nil
+	case <-timer.C:
+		cancelFunc()
+		logutil.BgLogger().Debug("[sql-bind] plan verification timed out", zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
+	}
+	<-resultChan
+	return -1, nil
+}
+
+func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan chan<- error) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
+		}
+	}()
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	if err != nil {
+		if rs != nil {
+			terror.Call(rs.Close)
+		}
+		resultChan <- err
+		return
+	}
+	chk := rs.NewChunk()
+	for {
+		err = rs.Next(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			break
+		}
+	}
+	terror.Call(rs.Close)
+	resultChan <- err
+}
+
+// HandleEvolvePlanTask tries to evolve one plan task.
+// It only handle one tasks once because we want each task could use the latest parameters.
+func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
+	originalSQL, db, binding := h.getOnePendingVerifyJob()
+	if originalSQL == "" {
+		return nil
+	}
+	maxTime, startTime, endTime, err := getEvolveParameters(sctx)
+	if err != nil {
+		return err
+	}
+	if maxTime == 0 || (!timeutil.WithinDayTimePeriod(startTime, endTime, time.Now()) && !adminEvolve) {
+		return nil
+	}
+	sctx.GetSessionVars().UsePlanBaselines = true
+	currentPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	// If we just return the error to the caller, this job will be retried again and again and cause endless logs,
+	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
+	// we will hope for that we can capture this evolve task again.
+	if err != nil {
+		return h.DropBindRecord(originalSQL, db, &binding)
+	}
+	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
+	// Currently we simply mark the verify plan as `using` if it could run successfully within maxTime.
+	if currentPlanTime > 0 {
+		maxTime = time.Duration(float64(currentPlanTime) * verifyTimeoutFactor)
+	}
+	sctx.GetSessionVars().UsePlanBaselines = false
+	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	if err != nil {
+		return h.DropBindRecord(originalSQL, db, &binding)
+	}
+	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
+		binding.Status = Rejected
+		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
+		logutil.BgLogger().Debug("[sql-bind] new plan rejected",
+			zap.Duration("currentPlanTime", currentPlanTime),
+			zap.Duration("verifyPlanTime", verifyPlanTime),
+			zap.String("digestText", digestText),
+		)
+	} else {
+		binding.Status = Using
+	}
+	// We don't need to pass the `sctx` because the BindSQL has been validated already.
+	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 }
 
 // Clear resets the bind handle. It is used for test.

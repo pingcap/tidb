@@ -58,9 +58,21 @@ func (txn *wrapTxn) Valid() bool {
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Support.")
+	return nil, errors.Errorf("Not Supported.")
 }
 
+<<<<<<< HEAD
+=======
+// ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
+func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Supported.")
+}
+
+type mockDDLOwnerChecker struct{}
+
+func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
+
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 // DDLOwnerChecker returns owner.DDLOwnerChecker.
 func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
 	return nil

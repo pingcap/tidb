@@ -683,13 +683,19 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 		if !bytes.Equal(e.sampTasks[prefixLen].Location.EndKey, e.sampTasks[prefixLen+1].Location.StartKey) {
 			break
 		}
+<<<<<<< HEAD
 	}
 	// Find the last one that could align with region bound.
 	for ; prefixLen >= 0; prefixLen-- {
 		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].Location.EndKey)
+=======
+		var rs sqlexec.RecordSet
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
 		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) {
 			startKey = loc.StartKey
 			break
@@ -699,6 +705,17 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 	for i := len(e.scanTasks) - 1; i >= 0; i-- {
 		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
 			e.scanTasks = e.scanTasks[:i]
+=======
+		if rs == nil {
+			err = errors.Trace(errors.Errorf("empty record set"))
+			return
+		}
+		defer terror.Call(rs.Close)
+		chk := rs.NewChunk()
+		err = rs.Next(context.TODO(), chk)
+		if err != nil {
+			return
+>>>>>>> 7ca1629d1... *: refactor ExecuteInternal to return single resultset (#22546)
 		}
 	}
 	return startKey, nil
