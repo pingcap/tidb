@@ -160,16 +160,16 @@ type Config struct {
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
-	// label keys. Now we only have `group` as a special label key.
-	// Note that: 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
+	// label keys. Now we have following special keys:
+	// 1. 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
 	// users to set 'group' in labels.
+	// 2. 'zone' is a special key which indicates the dc location of this tidb-server. If it is set, the value for this
+	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 	// EnableGlobalIndex enables creating global index.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// TxnScope indicates the default value for session variable txn_scope
-	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
 	// According to MySQL 8.0 Refman:
 	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
@@ -659,7 +659,6 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
-	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        DefStoresRefreshInterval,
 }

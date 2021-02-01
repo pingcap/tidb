@@ -956,7 +956,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:         DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                     config.GetGlobalConfig().TxnScope,
+		TxnScope:                     config.GetTxnScopeFromConfig(),
 		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
 		Enable1PC:                    DefTiDBEnable1PC,

@@ -154,3 +154,11 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 		flatMap[prefix] = nested
 	}
 }
+
+func GetTxnScopeFromConfig() string {
+	v, ok := GetGlobalConfig().Labels["zone"]
+	if ok {
+		return v
+	}
+	return DefTxnScope
+}

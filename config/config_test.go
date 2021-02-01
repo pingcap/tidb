@@ -193,7 +193,6 @@ index-limit = 70
 table-column-count-limit = 4000
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
-txn-scope = "dc-1"
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 [performance]
@@ -221,6 +220,7 @@ engines = ["tiflash"]
 [labels]
 foo= "bar"
 group= "abc"
+zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
 `)
@@ -272,9 +272,10 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
-	c.Assert(conf.TxnScope, Equals, "dc-1")
+	c.Assert(conf.Labels["zone"], Equals, "dc-1")
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+	c.Assert(GetTxnScopeFromConfig(), Equals, "dc-1")
 
 	_, err = f.WriteString(`
 [log.file]
