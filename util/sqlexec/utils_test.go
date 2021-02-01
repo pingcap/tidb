@@ -11,15 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package sqlexec
 
 import (
 	"encoding/json"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/hack"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testUtilsSuite{})
 
@@ -306,7 +311,7 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			name:   "string slice",
 			input:  "select %?",
 			params: []interface{}{[]string{"33", "44"}},
-			output: "select ('33','44')",
+			output: "select '33','44'",
 		},
 		{
 			name:   "raw json",
