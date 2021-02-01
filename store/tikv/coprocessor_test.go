@@ -33,7 +33,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -150,7 +150,7 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -203,7 +203,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// <-  0  -> <- 1 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 	bo := NewBackofferWithVars(context.Background(), 3000, nil)

@@ -53,7 +53,7 @@ var (
 // CopClient is coprocessor client.
 type CopClient struct {
 	kv.RequestTypeSupportedChecker
-	store           *tikvStore
+	store           *KVStore
 	replicaReadSeed uint32
 }
 
@@ -219,7 +219,7 @@ func reverseTasks(tasks []*copTask) {
 }
 
 type copIterator struct {
-	store       *tikvStore
+	store       *KVStore
 	req         *kv.Request
 	concurrency int
 	finishCh    chan struct{}
@@ -258,7 +258,7 @@ type copIterator struct {
 type copIteratorWorker struct {
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
-	store    *tikvStore
+	store    *KVStore
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
