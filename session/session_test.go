@@ -365,7 +365,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c1 timestamp);")
-	tk.MustExec(`insert t values(1, 0);`)
+	tk.MustExec(`insert t(id) values(1);`)
 	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
 
@@ -1019,8 +1019,10 @@ func (s *testSessionSuite) TestPrepareZero(c *C) {
 	_, rs := tk.Exec("execute s1 using @v1")
 	c.Assert(rs, NotNil)
 	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("execute s1 using @v2")
 	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
@@ -3455,4 +3457,32 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
 	}
+}
+
+// TestDefaultWeekFormat checks for issue #21510.
+func (s *testSessionSerialSuite) TestDefaultWeekFormat(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("set @@global.default_week_format = 4;")
+	defer tk1.MustExec("set @@global.default_week_format = default;")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select week('2020-02-02'), @@default_week_format, week('2020-02-02');").Check(testkit.Rows("6 4 6"))
+}
+
+func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
+		wg.Done()
+	}()
+	time.Sleep(2 * time.Second)
+	pi := tk.Se.ShowProcess()
+	c.Assert(pi, NotNil)
+	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
+	c.Assert(pi.Plan, IsNil)
+	wg.Wait()
 }

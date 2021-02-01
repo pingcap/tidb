@@ -372,6 +372,8 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -384,6 +386,8 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64
@@ -453,6 +457,13 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
+	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
+
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
+	cachedResultSetNodes  map[*ast.Join]LogicalPlan
+	cachedHandleHelperMap map[*ast.Join]map[int64][]*expression.Column
 
 	// isForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
@@ -558,12 +569,15 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:             sctx,
-		is:              is,
-		colMapper:       make(map[*ast.ColumnNameExpr]int),
-		handleHelper:    &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
-		hintProcessor:   processor,
-		isForUpdateRead: sctx.GetSessionVars().IsPessimisticReadConsistency(),
+		ctx:                   sctx,
+		is:                    is,
+		colMapper:             make(map[*ast.ColumnNameExpr]int),
+		handleHelper:          &handleColHelper{id2HandleMapStack: make([]map[int64][]*expression.Column, 0)},
+		hintProcessor:         processor,
+		correlatedAggMapper:   make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cachedResultSetNodes:  make(map[*ast.Join]LogicalPlan),
+		cachedHandleHelperMap: make(map[*ast.Join]map[int64][]*expression.Column),
+		isForUpdateRead:       sctx.GetSessionVars().IsPessimisticReadConsistency(),
 	}, savedBlockNames
 }
 
@@ -732,23 +746,52 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
 		IsGlobal:     v.GlobalScope,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
 	}
 	if v.HintedSel != nil {
-		p.BindSQL = v.HintedSel.Text()
+		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
 }
 
+func checkHintedSQL(sql, charset, collation, db string) error {
+	p := parser.New()
+	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	if err != nil {
+		return err
+	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+
+	// Because we use HintedNode.Restore instead of HintedNode.Text, so we need do some check here
+	// For example, if HintedNode.Text is `select /*+ non_exist_hint() */ * from t` and the current DB is `test`,
+	// the HintedNode.Restore will be `select * from test . t`.
+	// In other words, illegal hints will be deleted during restore. We can't check hinted SQL after restore.
+	// So we need check here.
+	if err := checkHintedSQL(v.HintedSel.Text(), charSet, collation, b.ctx.GetSessionVars().CurrentDB); err != nil {
+		return nil, err
+	}
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:      v.HintedSel.Text(),
+		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB)),
+		BindSQL:      utilparser.RestoreWithDefaultDB(v.HintedSel, b.ctx.GetSessionVars().CurrentDB),
 		IsGlobal:     v.GlobalScope,
 		BindStmt:     v.HintedSel,
 		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),

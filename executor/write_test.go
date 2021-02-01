@@ -569,6 +569,10 @@ commit;`
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
 	testSQL = `select * from badnull`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
+
+	tk.MustExec("create table tp (id int) partition by range (id) (partition p0 values less than (1), partition p1 values less than(2))")
+	tk.MustExec("insert ignore into tp values (1), (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1526 Table has no partition for value 3"))
 }
 
 func (s *testSuite8) TestInsertOnDup(c *C) {
@@ -1417,6 +1421,28 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
+	// test issue21965
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int)
+			PARTITION BY RANGE ( a ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert ignore into t values (1);")
+	tk.MustExec("update ignore t set a=100 where a=1;")
+	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int key)
+			PARTITION BY RANGE ( a ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert ignore into t values (1);")
+	tk.MustExec("update ignore t set a=100 where a=1;")
+	tk.CheckLastMessage("Rows matched: 1  Changed: 0  Warnings: 0")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id))")
 	tk.MustExec("insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10')")
@@ -1448,6 +1474,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 		"`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
 		"KEY `idx` (`ts`)" +
 		");")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("insert into tsup values(1, '0000-00-00 00:00:00');")
 	tk.MustExec("update tsup set a=5;")
 	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
@@ -1456,6 +1483,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	r1.Check(r2.Rows())
 	tk.MustExec("update tsup set ts='2019-01-01';")
 	tk.MustQuery("select ts from tsup;").Check(testkit.Rows("2019-01-01 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	// issue 5532
 	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
@@ -1508,7 +1536,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime not null, b datetime)")
 	tk.MustExec("insert into t value('1999-12-12', '1999-12-13')")
-	tk.MustExec(" set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1999-12-12 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
@@ -1990,6 +2018,38 @@ func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
+}
+
+func (s *testSuite4) TestIssue18681(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	createSQL := `drop table if exists load_data_test;
+		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1));`
+	tk.MustExec(createSQL)
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	ld.SetMaxRowsInBatch(20000)
+
+	sc := ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+	sc.IgnoreTruncate = false
+	tests := []testCase{
+		{nil, []byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+	c.Assert(sc.WarningCount(), Equals, uint16(0))
 }
 
 func (s *testSuite4) TestLoadData(c *C) {

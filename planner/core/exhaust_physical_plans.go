@@ -927,16 +927,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
-	// - estimated row count of outer plan is 0;
-	// - estimated row count of inner "DataSource + filters" is 0;
-	// if it is the first case, it does not matter what row count we set for inner task, since the cost of index join would
-	// always be 0 then;
-	// if it is the second case, HashJoin should always be cheaper than IndexJoin then, so we set row count of inner task
-	// to table size, to simply make it more expensive.
-	if rowCount <= 0 {
-		rowCount = ds.tableStats.RowCount
-	}
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
@@ -1737,6 +1727,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashOnlyProp() { // for convenient, we don't pass through any prop
 		return nil, true
 	}
+	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
@@ -1748,6 +1739,15 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}, true
+}
+
+func disableAggPushDownToCop(p LogicalPlan) {
+	for _, child := range p.Children() {
+		disableAggPushDownToCop(child)
+	}
+	if agg, ok := p.(*LogicalAggregation); ok {
+		agg.noCopPushDown = true
+	}
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
@@ -1783,7 +1783,7 @@ func (la *LogicalAggregation) canPushToCop() bool {
 
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := la.children[0].(*DataSource)
-	return ok
+	return ok && !la.noCopPushDown
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -1876,15 +1876,16 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-			if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 				taskTypes = []property.TaskType{property.RootTaskType}
-			} else {
-				if !la.distinctArgsMeetsProperty() {
-					continue
-				}
+			} else if !la.distinctArgsMeetsProperty() {
+				continue
 			}
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
+		}
+		if !la.canPushToCop() {
+			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
@@ -1911,6 +1912,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if !prop.IsEmpty() {
 		return nil
 	}
+	if prop.IsFlashOnlyProp() && !la.canPushToCop() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
@@ -1919,7 +1923,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.canPushToCop() || !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -1927,6 +1931,9 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	if prop.IsFlashOnlyProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
+	}
+	if !la.canPushToCop() {
+		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
