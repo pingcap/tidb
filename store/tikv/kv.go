@@ -16,10 +16,7 @@ package tikv
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"math/rand"
-	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,24 +32,10 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/keepalive"
 )
-
-type storeCache struct {
-	sync.Mutex
-	cache map[string]*KVStore
-}
-
-var mc storeCache
-
-// Driver implements engine Driver.
-type Driver struct {
-}
 
 func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
@@ -68,67 +51,6 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 		return nil, errors.Trace(err)
 	}
 	return cli, nil
-}
-
-// Open opens or creates an TiKV storage with given path.
-// Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
-func (d Driver) Open(path string) (kv.Storage, error) {
-	mc.Lock()
-	defer mc.Unlock()
-	security := config.GetGlobalConfig().Security
-	pdConfig := config.GetGlobalConfig().PDClient
-	tikvConfig := config.GetGlobalConfig().TiKVClient
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
-	etcdAddrs, disableGC, err := config.ParsePath(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   security.ClusterSSLCA,
-		CertPath: security.ClusterSSLCert,
-		KeyPath:  security.ClusterSSLKey,
-	}, pd.WithGRPCDialOptions(
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-		}),
-	), pd.WithCustomTimeoutOption(time.Duration(pdConfig.PDServerTimeout)*time.Second))
-	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
-
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
-	if store, ok := mc.cache[uuid]; ok {
-		return store, nil
-	}
-
-	tlsConfig, err := security.ToTLSConfig()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), !disableGC, coprCacheConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if txnLocalLatches.Enabled {
-		s.EnableTxnLocalLatches(txnLocalLatches.Capacity)
-	}
-	s.etcdAddrs = etcdAddrs
-	s.tlsConfig = tlsConfig
-
-	mc.cache[uuid] = s
-	return s, nil
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -153,10 +75,9 @@ type KVStore struct {
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
 	gcWorker     GCHandler
-	etcdAddrs    []string
-	tlsConfig    *tls.Config
-	mock         bool
-	enableGC     bool
+
+	mock     bool
+	enableGC bool
 
 	kv        SafePointKV
 	safePoint uint64
@@ -243,58 +164,6 @@ func (s *KVStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
 }
 
-var (
-	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
-)
-
-// EtcdAddrs returns etcd server addresses.
-func (s *KVStore) EtcdAddrs() ([]string, error) {
-	if s.etcdAddrs == nil {
-		return nil, nil
-	}
-
-	if ldflagGetEtcdAddrsFromConfig == "1" {
-		// For automated test purpose.
-		// To manipulate connection to etcd by mandatorily setting path to a proxy.
-		cfg := config.GetGlobalConfig()
-		return strings.Split(cfg.Path, ","), nil
-	}
-
-	ctx := context.Background()
-	bo := NewBackoffer(ctx, GetAllMembersBackoff)
-	etcdAddrs := make([]string, 0)
-	pdClient := s.pdClient
-	if pdClient == nil {
-		return nil, errors.New("Etcd client not found")
-	}
-	for {
-		members, err := pdClient.GetAllMembers(ctx)
-		if err != nil {
-			err := bo.Backoff(BoRegionMiss, err)
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-		for _, member := range members {
-			if len(member.ClientUrls) > 0 {
-				u, err := url.Parse(member.ClientUrls[0])
-				if err != nil {
-					logutil.BgLogger().Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
-					return nil, err
-				}
-				etcdAddrs = append(etcdAddrs, u.Host)
-			}
-		}
-		return etcdAddrs, nil
-	}
-}
-
-// TLSConfig returns the tls config to connect to etcd.
-func (s *KVStore) TLSConfig() *tls.Config {
-	return s.tlsConfig
-}
-
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *KVStore) StartGCWorker() error {
 	if !s.enableGC || NewGCHandlerFunc == nil {
@@ -373,10 +242,6 @@ func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 
 // Close store
 func (s *KVStore) Close() error {
-	mc.Lock()
-	defer mc.Unlock()
-
-	delete(mc.cache, s.uuid)
 	s.oracle.Close()
 	s.pdClient.Close()
 	if s.gcWorker != nil {
@@ -483,6 +348,11 @@ func (s *KVStore) GetOracle() oracle.Oracle {
 	return s.oracle
 }
 
+// GetPDClient returns the PD client.
+func (s *KVStore) GetPDClient() pd.Client {
+	return s.pdClient
+}
+
 // Name gets the name of the storage engine
 func (s *KVStore) Name() string {
 	return "TiKV"
@@ -552,9 +422,4 @@ func (s *KVStore) GetTiKVClient() (client Client) {
 // GetMemCache return memory mamager of the storage
 func (s *KVStore) GetMemCache() kv.MemManager {
 	return s.memCache
-}
-
-func init() {
-	mc.cache = make(map[string]*KVStore)
-	rand.Seed(time.Now().UnixNano())
 }
