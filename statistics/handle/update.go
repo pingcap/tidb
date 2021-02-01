@@ -307,12 +307,15 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
+	ctx := context.Background()
 	mapper := h.sweepIdxUsageList()
 	for id, value := range mapper {
-		sql := fmt.Sprintf(
-			`insert into mysql.SCHEMA_INDEX_USAGE values (%d, %d, %d, %d, "%s") on duplicate key update query_count=query_count+%d, rows_selected=rows_selected+%d, last_used_at=greatest(last_used_at, "%s")`,
-			id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
+		stmt, err := h.restrictedExec.ParseWithParams(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
+		if err != nil {
+			return err
+		}
+		_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
 		if err != nil {
 			return err
 		}
@@ -326,7 +329,12 @@ func (h *Handle) GCIndexUsage() error {
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	ctx := context.Background()
+	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
+	if err != nil {
+		return err
+	}
+	_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
 	return err
 }
 
@@ -453,7 +461,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -466,13 +474,15 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 	}
-	err = execSQLs(context.Background(), exec, []string{sql})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
@@ -491,9 +501,14 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
+	ctx := context.Background()
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, _, err = h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
 	return errors.Trace(err)
 }
 
@@ -540,10 +555,9 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	if fb.Tp == statistics.IndexType {
 		isIndex = 1
 	}
-	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
-		"(%d, %d, %d, X'%X')", fb.PhysicalID, fb.Hist.ID, isIndex, vals)
+	const sql = "insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values (%?, %?, %?, %?)"
 	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
 	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -638,8 +652,13 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
+	ctx := context.Background()
 	sql := "SELECT distinct table_id from mysql.stats_feedback"
-	tables, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tables, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -651,8 +670,8 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		// this func lets `defer` works normally, where `Close()` should be called before any return
 		err = func() error {
 			tbl := ptbl.GetInt64(0)
-			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by hist_id, is_index", tbl)
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+			sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
+			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
 			if len(rc) > 0 {
 				defer terror.Call(rc[0].Close)
 			}
@@ -762,8 +781,8 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	defer h.mu.Unlock()
 	hasData := true
 	for hasData {
-		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		sql := "delete from mysql.stats_feedback where table_id = %? and hist_id = %? and is_index = %? limit 10000"
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tableID, histID, isIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -830,9 +849,13 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
-		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	ctx := context.Background()
+	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
+	stmt, err := h.restrictedExec.ParseWithParams(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	if err != nil {
+		return map[string]string{}
+	}
+	rows, _, err := h.restrictedExec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -884,8 +907,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
 				statsTbl := h.GetTableStats(tblInfo)
-				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				// sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`"
+				sql := "analyze table %n.%n"
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					return
 				}
@@ -893,9 +917,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			}
 			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
 				for _, def := range pi.Definitions {
-					sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition `" + def.Name.O + "`"
+					sql := "analyze table %n.%n partition %n"
 					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 					if analyzed {
 						return
 					}
@@ -907,35 +931,41 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	}
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
-		h.execAutoAnalyze(sql)
+		h.execAutoAnalyze(sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
+			sql = sql + " index %n"
+			params = append(params, idx.Name.O)
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql)
+			h.execAutoAnalyze(sql, params...)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) {
+func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
 	startTime := time.Now()
 	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
 	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
 	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
-	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning)
-	dur := time.Since(startTime)
-	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
+	stmt, err := h.restrictedExec.ParseWithParams(context.Background(), sql, params...)
+	if err == nil {
+		_, _, err = h.restrictedExec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionIgnoreWarning)
+		dur := time.Since(startTime)
+		metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
+	}
 	if err != nil {
+		dur := time.Since(startTime)
+		metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {

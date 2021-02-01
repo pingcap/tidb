@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -111,9 +112,16 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
+	sctx := historyStatsExec.(sessionctx.Context)
+	snapshot := sctx.GetSessionVars().SnapshotTS
+	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot)
+}
+
+// DumpStatsToJSONBySnapshot dumps statistic to json.
+func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil || h.CurrentPruneMode() == variable.DynamicOnly {
-		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
+		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
@@ -121,7 +129,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
-		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, historyStatsExec)
+		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -133,12 +141,12 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 	return jsonTbl, nil
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
-	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, historyStatsExec)
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
 	if err != nil || tbl == nil {
 		return nil, err
 	}
-	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, historyStatsExec)
+	tbl.Version, tbl.ModifyCount, tbl.Count, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
 	if err != nil {
 		return nil, err
 	}
