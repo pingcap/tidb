@@ -35,13 +35,13 @@ import (
 
 type testLockSuite struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {

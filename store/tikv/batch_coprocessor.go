@@ -199,7 +199,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 type batchCopIterator struct {
 	clientHelper
 
-	store    *tikvStore
+	store    *KVStore
 	req      *kv.Request
 	finishCh chan struct{}
 
