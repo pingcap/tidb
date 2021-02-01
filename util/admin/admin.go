@@ -16,12 +16,12 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
@@ -290,13 +290,13 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(sql)
+func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return 0, errors.Errorf("can not get count, sql %s result rows %d", sql, len(rows))
+		return 0, errors.Errorf("can not get count, rows count = %d", len(rows))
 	}
 	return rows[0].GetInt64(0), nil
 }
@@ -317,14 +317,34 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	// Here we need check all indexes, includes invisible index
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
-	tblCnt, err := getCount(ctx, sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	var snapshot uint64
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return 0, 0, err
+	}
+	if txn.Valid() {
+		snapshot = txn.StartTS()
+	}
+	if ctx.GetSessionVars().SnapshotTS != 0 {
+		snapshot = ctx.GetSessionVars().SnapshotTS
+	}
+
+	tblCnt, err := getCount(exec, stmt, snapshot)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
-		idxCnt, err := getCount(ctx, sql)
+		stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
+		if err != nil {
+			return 0, i, errors.Trace(err)
+		}
+		idxCnt, err := getCount(exec, stmt, snapshot)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
