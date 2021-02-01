@@ -75,7 +75,7 @@ func clearStorage(store kv.Storage) error {
 
 type testTiclientSuite struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
 	prefix string
@@ -85,7 +85,7 @@ var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 

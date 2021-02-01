@@ -22,13 +22,13 @@ import (
 
 type testBackoffSuite struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 }
 
 var _ = Suite(&testBackoffSuite{})
 
 func (s *testBackoffSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 }
 
 func (s *testBackoffSuite) TearDownTest(c *C) {
