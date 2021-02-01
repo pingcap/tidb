@@ -118,7 +118,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	}
 
 	coprCacheConfig := &tidbcfg.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := NewTiKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), !disableGC, coprCacheConfig)
+	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -198,8 +198,8 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 	return nil
 }
 
-// NewTiKVStore creates a new TiKV store instance.
-func NewTiKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+// NewKVStore creates a new TiKV store instance.
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
