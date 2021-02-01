@@ -57,7 +57,6 @@ func DefaultConfig() Config {
 		ServerMemoryQuota:     0,
 		TiKVClient:            DefaultTiKVClient(),
 		PDClient:              DefaultPDClient(),
-		PessimisticTxn:        DefaultPessimisticTxn(),
 		TxnLocalLatches:       DefaultTxnLocalLatches(),
 		StoresRefreshInterval: DefStoresRefreshInterval,
 		OpenTracingEnable:     false,
@@ -104,13 +103,6 @@ func (c *TxnLocalLatches) Valid() error {
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
-}
-
-// DefaultPessimisticTxn returns the default configuration for PessimisticTxn
-func DefaultPessimisticTxn() PessimisticTxn {
-	return PessimisticTxn{
-		MaxRetryCount: 256,
-	}
 }
 
 // GetGlobalConfig returns the global configuration for this server.

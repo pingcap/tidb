@@ -107,26 +107,26 @@ type Config struct {
 	TxnLocalLatches  tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames        int                    `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion              string                 `toml:"server-version" json:"server-version"`
-	Log                        Log                    `toml:"log" json:"log"`
-	Security                   Security               `toml:"security" json:"security"`
-	Status                     Status                 `toml:"status" json:"status"`
-	Performance                Performance            `toml:"performance" json:"performance"`
-	PreparedPlanCache          PreparedPlanCache      `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing                OpenTracing            `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol              ProxyProtocol          `toml:"proxy-protocol" json:"proxy-protocol"`
-	PDClient                   tikvcfg.PDClient       `toml:"pd-client" json:"pd-client"`
-	TiKVClient                 tikvcfg.TiKVClient     `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog                 `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery        bool                   `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin                     Plugin                 `toml:"plugin" json:"plugin"`
-	PessimisticTxn             tikvcfg.PessimisticTxn `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        bool                   `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength             int                    `toml:"max-index-length" json:"max-index-length"`
-	IndexLimit                 int                    `toml:"index-limit" json:"index-limit"`
-	TableColumnCountLimit      uint32                 `toml:"table-column-count-limit" json:"table-column-count-limit"`
-	GracefulWaitBeforeShutdown int                    `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion              string             `toml:"server-version" json:"server-version"`
+	Log                        Log                `toml:"log" json:"log"`
+	Security                   Security           `toml:"security" json:"security"`
+	Status                     Status             `toml:"status" json:"status"`
+	Performance                Performance        `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache  `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing        `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol      `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   tikvcfg.PDClient   `toml:"pd-client" json:"pd-client"`
+	TiKVClient                 tikvcfg.TiKVClient `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog             `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin                     Plugin             `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn     `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        bool               `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int                `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
+	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
+	GracefulWaitBeforeShutdown int                `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -198,7 +198,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
-		PessimisticTxn:        c.PessimisticTxn,
+		PessimisticTxn:        tikvcfg.PessimisticTxn{MaxRetryCount: c.PessimisticTxn.MaxRetryCount},
 		TxnLocalLatches:       c.TxnLocalLatches,
 		StoresRefreshInterval: c.StoresRefreshInterval,
 		OpenTracingEnable:     c.OpenTracing.Enable,
@@ -483,6 +483,19 @@ type Binlog struct {
 	Strategy string `toml:"strategy" json:"strategy"`
 }
 
+// PessimisticTxn is the config for pessimistic transaction.
+type PessimisticTxn struct {
+	// The max count of retry for a single statement in a pessimistic transaction.
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+}
+
+// DefaultPessimisticTxn returns the default configuration for PessimisticTxn
+func DefaultPessimisticTxn() PessimisticTxn {
+	return PessimisticTxn{
+		MaxRetryCount: 256,
+	}
+}
+
 // Plugin is the config for plugin
 type Plugin struct {
 	Dir  string `toml:"dir" json:"dir"`
@@ -624,7 +637,7 @@ var defaultConf = Config{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
-	PessimisticTxn: defTiKVCfg.PessimisticTxn,
+	PessimisticTxn: DefaultPessimisticTxn(),
 	StmtSummary: StmtSummary{
 		Enable:              true,
 		EnableInternalQuery: false,
