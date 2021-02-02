@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	storepkg "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
@@ -801,7 +802,7 @@ func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueReg
 
 func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, error) {
 	// check pd server exists.
-	etcd, ok := store.(tikv.EtcdBackend)
+	etcd, ok := store.(storepkg.EtcdBackend)
 	if !ok {
 		return regions, nil
 	}

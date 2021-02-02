@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -118,7 +119,7 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(store.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -639,7 +640,7 @@ func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 
 // request PD API, decode the response body into res
 func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) error {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(store.EtcdBackend)
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
@@ -725,7 +726,7 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(store.EtcdBackend)
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
@@ -760,7 +761,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(store.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}

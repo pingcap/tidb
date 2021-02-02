@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/telemetry"
@@ -700,7 +701,7 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
+	if ebd, ok := do.store.(store.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = ebd.EtcdAddrs(); err != nil {
