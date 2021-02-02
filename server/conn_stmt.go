@@ -44,6 +44,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/metrics"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+>>>>>>> 4e4968c50... metric: record prepare execute fail as "Failed Query OPM" in monitor (#22596)
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -106,6 +113,15 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
+<<<<<<< HEAD
+=======
+	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
+	defer func() {
+		if err != nil {
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		}
+	}()
+>>>>>>> 4e4968c50... metric: record prepare execute fail as "Failed Query OPM" in monitor (#22596)
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
