@@ -69,6 +69,7 @@ const (
 	ExplainFormatJSON    = "json"
 	ExplainFormatHint    = "hint"
 	ExplainFormatVerbose = "verbose"
+	ExplainFormatBrief   = "brief"
 	PumpType             = "PUMP"
 	DrainerType          = "DRAINER"
 )
@@ -87,6 +88,7 @@ var (
 		ExplainFormatJSON,
 		ExplainFormatHint,
 		ExplainFormatVerbose,
+		ExplainFormatBrief,
 	}
 )
 
