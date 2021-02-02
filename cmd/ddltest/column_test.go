@@ -211,15 +211,15 @@ func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
 	s1, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	ctx := goctx.Background()
-	_, err = s1.Execute(ctx, "use test_ddl")
+	_, err = s1.ExecuteInternal(ctx, "use test_ddl")
 	c.Assert(err, IsNil)
-	s1.Execute(ctx, "begin")
-	s1.Execute(ctx, "insert into test_commit values (3, 3)")
+	s1.ExecuteInternal(ctx, "begin")
+	s1.ExecuteInternal(ctx, "insert into test_commit values (3, 3)")
 
 	s.mustExec(c, "alter table test_commit drop column b")
 
 	// When this transaction commit, it will find schema already changed.
-	s1.Execute(ctx, "insert into test_commit values (4, 4)")
-	_, err = s1.Execute(ctx, "commit")
+	s1.ExecuteInternal(ctx, "insert into test_commit values (4, 4)")
+	_, err = s1.ExecuteInternal(ctx, "commit")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
