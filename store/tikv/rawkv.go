@@ -20,10 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/tikv/pd/client"
+	pd "github.com/tikv/pd/client"
 )
 
 var (
@@ -76,7 +76,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.Clien
 		clusterID:   pdCli.GetClusterID(context.TODO()),
 		regionCache: NewRegionCache(pdCli),
 		pdClient:    pdCli,
-		rpcClient:   newRPCClient(security),
+		rpcClient:   NewRPCClient(security),
 	}, nil
 }
 

@@ -1709,7 +1709,9 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
 		return nil
 	}
-
+	if prop.PartitionTp == property.BroadcastType {
+		return nil
+	}
 	lkeys, rkeys, _, nullEQ := p.GetJoinKeys()
 	if nullEQ {
 		return nil
@@ -1895,7 +1897,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
-	newProp := &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: prop.ExpectedCnt}
+	newProp := prop.CloneEssentialFields()
 	newCols := make([]property.SortItem, 0, len(prop.SortItems))
 	for _, col := range prop.SortItems {
 		idx := p.schema.ColumnIndex(col.Col)
@@ -2227,6 +2229,74 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	return streamAggs
 }
 
+// TODO: support more operators and distinct later
+func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
+	for _, agg := range la.AggFuncs {
+		// MPP does not support distinct now
+		if agg.HasDistinct {
+			return false
+		}
+		// MPP does not support AggFuncApproxCountDistinct now
+		if agg.Name == ast.AggFuncApproxCountDistinct {
+			return false
+		}
+	}
+	return CheckAggCanPushCop(la.ctx, la.AggFuncs, la.GroupByItems, kv.TiFlash)
+}
+
+func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
+	if !prop.IsEmpty() {
+		return nil
+	}
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
+		return nil
+	}
+	if prop.PartitionTp == property.BroadcastType {
+		return nil
+	}
+	partitionCols := la.GetGroupByCols()
+	if len(partitionCols) != 0 {
+		if prop.PartitionTp == property.HashType {
+			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
+				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
+			} else {
+				// do not satisfy the property of its parent, so return empty
+				return nil
+			}
+		}
+		// TODO: permute various partition columns from group-by columns
+		// 1-phase agg
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = Mpp1Phase
+		hashAggs = append(hashAggs, agg)
+		// 2-phase agg
+		childProp = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
+		agg = NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = Mpp2Phase
+		agg.MppPartitionCols = partitionCols
+		hashAggs = append(hashAggs, agg)
+		// agg runs on TiDB with a partial agg on TiFlash if possible
+		if prop.TaskTp == property.RootTaskType {
+			childProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64}
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg.SetSchema(la.schema.Clone())
+			agg.MppRunMode = MppTiDB
+			hashAggs = append(hashAggs, agg)
+		}
+	} else {
+		// TODO: support scalar agg in MPP, merge the final result to one node
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg.SetSchema(la.schema.Clone())
+		agg.MppRunMode = MppTiDB
+		hashAggs = append(hashAggs, agg)
+	}
+	return
+}
+
 func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
@@ -2234,13 +2304,15 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() && !la.canPushToCop() {
 		return nil
 	}
+	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
+		return nil
+	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if la.ctx.GetSessionVars().AllowBCJ {
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
-	// TODO: We haven't supported the agg algo with repartition.
-	if la.ctx.GetSessionVars().AllowMPPExecution {
+	if la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() {
 		taskTypes = append(taskTypes, property.MppTaskType)
 	}
 	if la.HasDistinct() {
@@ -2259,9 +2331,16 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = []property.TaskType{property.RootTaskType}
 	}
 	for _, taskTp := range taskTypes {
-		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
-		agg.SetSchema(la.schema.Clone())
-		hashAggs = append(hashAggs, agg)
+		if taskTp == property.MppTaskType {
+			mppAggs := la.tryToGetMppHashAggs(prop)
+			if len(mppAggs) > 0 {
+				hashAggs = append(hashAggs, mppAggs...)
+			}
+		} else {
+			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+			agg.SetSchema(la.schema.Clone())
+			hashAggs = append(hashAggs, agg)
+		}
 	}
 	return hashAggs
 }

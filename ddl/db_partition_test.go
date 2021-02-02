@@ -2106,7 +2106,7 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix kv.Key) bool {
 	hasOldPartitionData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
-		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err := txn.Iter(partitionPrefix, nil)
 			if err != nil {
 				return err
@@ -2914,7 +2914,7 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 	row := rows[0]
 	c.Assert(row.GetString(3), Equals, "drop schema")
 	jobID := row.GetInt64(0)
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(jobID)
 		c.Assert(err, IsNil)

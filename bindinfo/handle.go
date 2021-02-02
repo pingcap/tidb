@@ -651,9 +651,9 @@ func (h *BindHandle) CaptureBaselines() {
 			Source:    Capture,
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
+		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("[sql-bind] add bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			logutil.BgLogger().Debug("[sql-bind] create bind record failed in baseline capture", zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
@@ -661,16 +661,16 @@ func (h *BindHandle) CaptureBaselines() {
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
-	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
-	if len(recordSets) > 0 {
-		defer terror.Log(recordSets[0].Close())
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return "", err
 	}
-	chk := recordSets[0].NewChunk()
-	err = recordSets[0].Next(context.TODO(), chk)
+	chk := rs.NewChunk()
+	err = rs.Next(context.TODO(), chk)
 	if err != nil {
 		return "", err
 	}
@@ -873,23 +873,22 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 			resultChan <- fmt.Errorf("run sql panicked: %v", string(buf))
 		}
 	}()
-	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
-		if len(recordSets) > 0 {
-			terror.Call(recordSets[0].Close)
+		if rs != nil {
+			terror.Call(rs.Close)
 		}
 		resultChan <- err
 		return
 	}
-	recordSet := recordSets[0]
-	chk := recordSets[0].NewChunk()
+	chk := rs.NewChunk()
 	for {
-		err = recordSet.Next(ctx, chk)
+		err = rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			break
 		}
 	}
-	terror.Call(recordSets[0].Close)
+	terror.Call(rs.Close)
 	resultChan <- err
 }
 

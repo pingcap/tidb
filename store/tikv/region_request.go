@@ -33,11 +33,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	tidbmetrics "github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/storeutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/storeutil"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -420,34 +422,85 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
-	start := time.Now()
-	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
-	if s.Stats != nil {
-		recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-		failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
-			if val.(bool) {
-				if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
-					failpoint.Return(&tikvrpc.Response{
-						Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
-					}, false, nil)
+
+	var sessionID uint64
+	if v := bo.ctx.Value(util.SessionID); v != nil {
+		sessionID = v.(uint64)
+	}
+
+	injectFailOnSend := false
+	failpoint.Inject("rpcFailOnSend", func(val failpoint.Value) {
+		inject := true
+		// Optional filters
+		if s, ok := val.(string); ok {
+			if s == "greengc" && !req.IsGreenGCRequest() {
+				inject = false
+			} else if s == "write" && !req.IsTxnWriteRequest() {
+				inject = false
+			}
+		} else if sessionID == 0 {
+			inject = false
+		}
+
+		if inject {
+			logutil.Logger(ctx).Info("[failpoint] injected RPC error on send", zap.Stringer("type", req.Type),
+				zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+			injectFailOnSend = true
+			err = errors.New("injected RPC error on send")
+		}
+	})
+
+	if !injectFailOnSend {
+		start := time.Now()
+		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+		if s.Stats != nil {
+			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+				if val.(bool) {
+					if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
+						failpoint.Return(&tikvrpc.Response{
+							Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
+						}, false, nil)
+					}
 				}
+			})
+		}
+
+		failpoint.Inject("rpcFailOnRecv", func(val failpoint.Value) {
+			inject := true
+			// Optional filters
+			if s, ok := val.(string); ok {
+				if s == "greengc" && !req.IsGreenGCRequest() {
+					inject = false
+				} else if s == "write" && !req.IsTxnWriteRequest() {
+					inject = false
+				}
+			} else if sessionID == 0 {
+				inject = false
+			}
+
+			if inject {
+				logutil.Logger(ctx).Info("[failpoint] injected RPC error on recv", zap.Stringer("type", req.Type),
+					zap.Stringer("req", req.Req.(fmt.Stringer)), zap.Stringer("ctx", &req.Context))
+				err = errors.New("injected RPC error on recv")
+				resp = nil
+			}
+		})
+
+		failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+			if val.(bool) {
+				ctx1, cancel := context.WithCancel(context.Background())
+				cancel()
+				select {
+				case <-ctx1.Done():
+				}
+
+				ctx = ctx1
+				err = ctx.Err()
+				resp = nil
 			}
 		})
 	}
-
-	failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
-		if val.(bool) {
-			ctx1, cancel := context.WithCancel(context.Background())
-			cancel()
-			select {
-			case <-ctx1.Done():
-			}
-
-			ctx = ctx1
-			err = ctx.Err()
-			resp = nil
-		}
-	})
 
 	if err != nil {
 		s.rpcError = err
@@ -480,7 +533,7 @@ func (s *RegionRequestSender) getStoreToken(st *Store, limit int64) error {
 		st.tokenCount.Add(1)
 		return nil
 	}
-	metrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
+	tidbmetrics.GetStoreLimitErrorCounter.WithLabelValues(st.addr, strconv.FormatUint(st.storeID, 10)).Inc()
 	return ErrTokenLimit.GenWithStackByArgs(st.storeID)
 
 }

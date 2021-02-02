@@ -121,7 +121,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 				}
 			}
 			if !found {
-				err = h.MarkExtendedStatsDeleted(statsName, physicalID)
+				err = h.MarkExtendedStatsDeleted(statsName, physicalID, true)
 				if err != nil {
 					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
 					return errors.Trace(err)

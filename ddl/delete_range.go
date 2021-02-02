@@ -196,7 +196,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)

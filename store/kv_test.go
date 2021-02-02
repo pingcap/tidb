@@ -1,8 +1,8 @@
-package tikv
+package store
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 )
 
 type testTiKVDriverSuite struct {
@@ -16,7 +16,7 @@ func (s *testTiKVDriverSuite) TestSetDefaultAndOptions(c *C) {
 	globalConfig := config.GetGlobalConfig()
 	originSec := globalConfig.Security
 
-	d := Driver{}
+	d := TiKVDriver{}
 	security := config.Security{ClusterSSLCA: "test"}
 	d.setDefaultAndOptions(WithSecurity(security))
 

@@ -390,7 +390,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblInfo, _ := is.TableByID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 	}
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is.RuleBundles())
+	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
 	if valid {
 		return nil
 	}
