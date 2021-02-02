@@ -32,12 +32,12 @@ import (
 const (
 	deleteRangesTable            = `gc_delete_range`
 	doneDeleteRangesTable        = `gc_delete_range_done`
-	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
-	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id in (%v)`
-	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
-	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
+	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
+	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (%?)`
+	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = "%?" WHERE job_id = %? AND element_id = %? AND start_key = "%?"`
+	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -62,16 +62,14 @@ func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []De
 }
 
 func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	sql := fmt.Sprintf(loadDeleteRangeSQL, table, safePoint)
-	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rss) > 0 {
-		defer terror.Call(rss[0].Close)
+	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), loadDeleteRangeSQL, table, safePoint)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rs := rss[0]
 	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {
@@ -106,8 +104,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -117,8 +114,7 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
-	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
@@ -131,15 +127,13 @@ func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementID
 		}
 		buf.WriteString(strconv.FormatInt(elementID, 10))
 	}
-	sql := fmt.Sprintf(completeDeleteMultiRangesSQL, jobID, buf.String())
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteMultiRangesSQL, jobID, buf.String())
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
-	sql := fmt.Sprintf(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
@@ -147,8 +141,7 @@ func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
 func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
-	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
 }
 
@@ -164,7 +157,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
 
-const loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%s)"
+const loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%?)"
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
@@ -176,8 +169,11 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			}
 			nameList += fmt.Sprintf("'%s'", name)
 		}
-		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
-		rows, _, err := sctx.ExecRestrictedSQL(sql)
+		stmt, err := sctx.ParseWithParams(context.Background(), loadGlobalVarsSQL, nameList)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, _, err := sctx.ExecRestrictedStmt(context.Background(), stmt)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -115,13 +115,13 @@ func setUpSuite(s *testDBSuite, c *C) {
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(context.Background(), "create database test_db")
+	_, err = s.s.ExecuteInternal(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
-	s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
+	s.s.ExecuteInternal(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
 }
 
 func tearDownSuite(s *testDBSuite, c *C) {
-	s.s.Execute(context.Background(), "drop database if exists test_db")
+	s.s.ExecuteInternal(context.Background(), "drop database if exists test_db")
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -277,12 +277,12 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 		return
 	}
 	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test_db")
+	_, err = se.ExecuteInternal(context.Background(), "use test_db")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
 	}
-	_, err = se.Execute(context.Background(), sql)
+	_, err = se.ExecuteInternal(context.Background(), sql)
 	done <- errors.Trace(err)
 }
 
@@ -2048,9 +2048,9 @@ func (s *testDBSuite1) TestColumn(c *C) {
 func sessionExec(c *C, s kv.Storage, sql string) {
 	se, err := session.CreateSession4Test(s)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test_db")
+	_, err = se.ExecuteInternal(context.Background(), "use test_db")
 	c.Assert(err, IsNil)
-	rs, err := se.Execute(context.Background(), sql)
+	rs, err := se.ExecuteInternal(context.Background(), sql)
 	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	c.Assert(rs, IsNil)
 	se.Close()
@@ -2420,7 +2420,7 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 }
 
 func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
-	_, _ = s.s.Execute(context.Background(), "create database test_db2")
+	_, _ = s.s.ExecuteInternal(context.Background(), "create database test_db2")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("create table t(a int)")
@@ -5770,12 +5770,12 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	}()
 	go func() {
 		defer wg.Done()
-		_, err1 = se1.Execute(context.Background(), sql1)
+		_, err1 = se1.ExecuteInternal(context.Background(), sql1)
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		_, err2 = se2.Execute(context.Background(), sql2)
+		_, err2 = se2.ExecuteInternal(context.Background(), sql2)
 	}()
 
 	wg.Wait()
