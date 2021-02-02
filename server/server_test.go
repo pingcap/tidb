@@ -1565,7 +1565,13 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
 
-		// Default of WARN
+		// Default is now OFF in new installations.
+		// It is still WARN in upgrade installations (for now)
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+
+		// Change to WARN (legacy mode)
+		dbt.mustExec("SET tidb_multi_statement_mode='WARN'")
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
 		count, err := res.RowsAffected()
@@ -1589,11 +1595,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 		} else {
 			dbt.Error("no data")
 		}
-
-		// Change to OFF = Does not work
-		dbt.mustExec("SET tidb_multi_statement_mode='OFF'")
-		_, err = dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 
 		// Change to ON = Fully supported, TiDB legacy. No warnings or Errors.
 		dbt.mustExec("SET tidb_multi_statement_mode='ON';")

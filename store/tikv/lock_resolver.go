@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -110,7 +110,7 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 		return nil, errors.Trace(err)
 	}
 
-	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false, nil)
+	s, err := NewKVStore(uuid, &CodecPDClient{pdCli}, spkv, NewRPCClient(security), false, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
