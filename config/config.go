@@ -163,7 +163,7 @@ type Config struct {
 	// label keys. Now we have following special keys:
 	// 1. 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
 	// users to set 'group' in labels.
-	// 2. 'zone' is a special key which indicates the dc location of this tidb-server. If it is set, the value for this
+	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 	// EnableGlobalIndex enables creating global index.
