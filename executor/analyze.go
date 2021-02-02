@@ -758,22 +758,18 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		if len(partition) > 0 {
 			sql += partition
 		}
-		var recordSets []sqlexec.RecordSet
-		recordSets, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		var rs sqlexec.RecordSet
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil {
 			return
 		}
-		if len(recordSets) == 0 {
+		if rs == nil {
 			err = errors.Trace(errors.Errorf("empty record set"))
 			return
 		}
-		defer func() {
-			for _, r := range recordSets {
-				terror.Call(r.Close)
-			}
-		}()
-		chk := recordSets[0].NewChunk()
-		err = recordSets[0].Next(context.TODO(), chk)
+		defer terror.Call(rs.Close)
+		chk := rs.NewChunk()
+		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return
 		}

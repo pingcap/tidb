@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package sqlexec
 
 import (
 	"encoding/json"
@@ -187,7 +187,6 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 					buf = escapeStringBackslash(buf, v)
 					buf = append(buf, '\'')
 				case []string:
-					buf = append(buf, '(')
 					for i, k := range v {
 						if i > 0 {
 							buf = append(buf, ',')
@@ -196,7 +195,6 @@ func EscapeSQL(sql string, args ...interface{}) (string, error) {
 						buf = escapeStringBackslash(buf, k)
 						buf = append(buf, '\'')
 					}
-					buf = append(buf, ')')
 				default:
 					return "", errors.Errorf("unsupported %d-th argument: %v", argPos, arg)
 				}

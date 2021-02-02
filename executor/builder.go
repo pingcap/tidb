@@ -1384,11 +1384,11 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
 	if snapshotTS == 0 {
+		txn, err := b.ctx.Txn(true)
+		if err != nil {
+			return 0, err
+		}
 		snapshotTS = txn.StartTS()
 	}
 	b.snapshotTS = snapshotTS

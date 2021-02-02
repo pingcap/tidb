@@ -43,14 +43,14 @@ type testStoreSerialSuite struct {
 
 type testStoreSuiteBase struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 }
 
 var _ = Suite(&testStoreSuite{})
 var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 }
 
 func (s *testStoreSuiteBase) TearDownTest(c *C) {

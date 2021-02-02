@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,33 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package config
 
 import (
-	"context"
-	"errors"
-
 	. "github.com/pingcap/check"
 )
 
-type testBackoffSuite struct {
-	OneByOneSuite
-	store *KVStore
-}
+var _ = SerialSuites(&testConfigSuite{})
 
-var _ = Suite(&testBackoffSuite{})
-
-func (s *testBackoffSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*KVStore)
-}
-
-func (s *testBackoffSuite) TearDownTest(c *C) {
-	s.store.Close()
-}
-
-func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackofferWithVars(context.TODO(), 2000, nil)
-	err := b.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
+func (s *testConfigSuite) TestParsePath(c *C) {
+	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
 	c.Assert(err, IsNil)
-	c.Assert(b.totalSleep, Equals, 30)
+	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
+	c.Assert(disableGC, IsFalse)
+
+	_, _, err = ParsePath("tikv://node1:2379")
+	c.Assert(err, IsNil)
+	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
+	c.Assert(err, IsNil)
+	c.Assert(disableGC, IsTrue)
 }
