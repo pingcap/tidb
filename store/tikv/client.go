@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -120,12 +119,12 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 
-	cfg := tidbcfg.GetGlobalConfig()
+	cfg := config.GetGlobalConfig()
 	var (
 		unaryInterceptor  grpc.UnaryClientInterceptor
 		streamInterceptor grpc.StreamClientInterceptor
 	)
-	if cfg.OpenTracing.Enable {
+	if cfg.OpenTracingEnable {
 		unaryInterceptor = grpc_opentracing.UnaryClientInterceptor()
 		streamInterceptor = grpc_opentracing.StreamClientInterceptor()
 	}
@@ -282,7 +281,7 @@ func (c *RPCClient) createConnArray(addr string, enableBatch bool, opts ...func(
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		client := tidbcfg.GetGlobalConfig().TiKVClient
+		client := config.GetGlobalConfig().TiKVClient
 		for _, opt := range opts {
 			opt(&client)
 		}
@@ -366,7 +365,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
 	// request to TiDB is not high frequency.
-	if tidbcfg.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
