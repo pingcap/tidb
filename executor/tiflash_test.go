@@ -169,10 +169,11 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
-	for i := 0; i < 20; i++ {
-		// test if it is stable.
-		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
-	}
+	// test if it is stable.
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
+	// test partition prune
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < -1 and t.a < 2").Check(testkit.Rows("0"))
 	// test multi-way join
 	tk.MustExec("create table t2(a int not null primary key, b int not null) partition by hash(a*2) partitions 4")
 	tk.MustExec("alter table t2 set tiflash replica 1")
