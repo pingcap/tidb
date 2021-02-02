@@ -41,7 +41,7 @@ type testLockSuite struct {
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*KVStore)
+	s.store = NewTestStore(c)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {
