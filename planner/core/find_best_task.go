@@ -1489,6 +1489,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp: property.AnyType,
 			ts:     ts,
 		}
+		ts.PartitionInfo = PartitionInfo{
+			PruningConds:   ds.allConds,
+			PartitionNames: ds.partitionNames,
+			Columns:        ds.TblCols,
+			ColumnNames:    ds.names,
+		}
 		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats)
 		return mppTask, nil
 	}
