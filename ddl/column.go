@@ -1481,7 +1481,7 @@ func adjustColumnInfoInModifyColumn(
 func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
 	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
 	schemaID := job.SchemaID
-	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 
 	// GenAutoRandomID first to prevent concurrent update.
 	_, err := t.GenAutoRandomID(schemaID, tblInfo.ID, 1)
