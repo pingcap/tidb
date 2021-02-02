@@ -46,7 +46,7 @@ type mockStorage struct {
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return []string{"mockstore"}, nil
+	return nil, nil
 }
 
 func (s *mockStorage) TLSConfig() *tls.Config {
