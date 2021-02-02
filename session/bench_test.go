@@ -53,7 +53,7 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	return se, domain, store
 }
 
-func prepareBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareBenchData(se Session, colType string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key auto_increment, col %n, index idx (col))", colType)
 	mustExecute(se, "begin")
@@ -63,7 +63,7 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "commit")
 }
 
-func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareSortBenchData(se Session, colType string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key auto_increment, col %n)", colType)
 	mustExecute(se, "begin")
@@ -382,7 +382,7 @@ func BenchmarkSort(b *testing.B) {
 		st.Close()
 		do.Close()
 	}()
-	prepareSortBenchData(se, "int", "%v", bigCount)
+	prepareSortBenchData(se, "int", bigCount)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.ExecuteInternal(ctx, "select * from t order by col limit 50")

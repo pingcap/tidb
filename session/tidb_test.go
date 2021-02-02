@@ -130,8 +130,8 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
 	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
-	mustExecSQL(c, se, "create database if not exists "+dbName)
-	mustExecSQL(c, se, "use "+dbName)
+	mustExecSQL(c, se, "create database if not exists %n", dbName)
+	mustExecSQL(c, se, "use %n", dbName)
 	return se
 }
 
@@ -139,13 +139,9 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
-	return se.ExecuteInternal(ctx, sql, args...)
-}
-
 func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
-	rs, err := exec(se, sql, args...)
+	ctx := context.Background()
+	rs, err := se.ExecuteInternal(ctx, sql, args...)
 	c.Assert(err, IsNil)
 	return rs
 }
