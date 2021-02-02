@@ -14,7 +14,6 @@
 package store
 
 import (
-	"crypto/tls"
 	"net/url"
 	"strings"
 
@@ -77,11 +76,4 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		logutil.BgLogger().Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
-}
-
-// EtcdBackend is used for judging a storage is a real TiKV.
-type EtcdBackend interface {
-	EtcdAddrs() ([]string, error)
-	TLSConfig() *tls.Config
-	StartGCWorker() error
 }

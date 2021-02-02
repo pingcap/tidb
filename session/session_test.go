@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store"
-	storepkg "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -124,7 +123,7 @@ func clearStorage(store kv.Storage) error {
 	return txn.Commit(context.Background())
 }
 
-func clearETCD(ebd storepkg.EtcdBackend) error {
+func clearETCD(ebd kv.EtcdBackend) error {
 	endpoints, err := ebd.EtcdAddrs()
 	if err != nil {
 		return err
@@ -188,7 +187,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
-		err = clearETCD(store.(storepkg.EtcdBackend))
+		err = clearETCD(store.(kv.EtcdBackend))
 		c.Assert(err, IsNil)
 		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
