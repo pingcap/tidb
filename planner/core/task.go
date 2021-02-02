@@ -1344,7 +1344,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol)
 			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, paramZero)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, avgCountCol)
+			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
 			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, paramNull, divide)
+			funcIf.(*expression.ScalarFunction).RetType = avgSumCol.RetType
 			exprs = append(exprs, funcIf)
 		} else {
 			newAggFuncs = append(newAggFuncs, aggFunc)
