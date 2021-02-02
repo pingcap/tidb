@@ -20,7 +20,7 @@ import (
 )
 
 type testPrewriteSuite struct {
-	store *tikvStore
+	store *KVStore
 }
 
 var _ = Suite(&testPrewriteSuite{})
@@ -31,7 +31,7 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = store.(*KVStore)
 }
 
 func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {

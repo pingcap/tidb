@@ -28,7 +28,7 @@ import (
 type testRangeTaskSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 
 	testRanges     []kv.KeyRange
 	expectedRanges [][]kv.KeyRange
@@ -77,7 +77,7 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = store.(*KVStore)
 
 	s.testRanges = []kv.KeyRange{
 		makeRange("", ""),

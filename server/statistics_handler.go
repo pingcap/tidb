@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -104,7 +104,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	snapshot := variable.GoTimeToTS(t1)
+	snapshot := oracle.GoTimeToTS(t1)
 	err = gcutil.ValidateSnapshot(se, snapshot)
 	if err != nil {
 		writeError(w, err)

@@ -4158,6 +4158,7 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
+	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
 	origin := se.GetSessionVars().InRestrictedSQL
@@ -4165,26 +4166,35 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	defer func() {
 		se.GetSessionVars().InRestrictedSQL = origin
 	}()
-	_, err := se.ParseWithParams(context.Background(), "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmts, err := se.ParseWithParams(context.Background(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
-	c.Assert(stmts, HasLen, 1)
 
 	var sb strings.Builder
 	ctx := format.NewRestoreCtx(0, &sb)
-	err = stmts[0].Restore(ctx)
+	err = stmt.Restore(ctx)
 	c.Assert(err, IsNil)
 	// FIXME: well... so the restore function is vulnerable...
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\xbf' OR 1=1 /* LIMIT 1")
 
 	// test invalid sql
-	_, err = se.ParseWithParams(context.Background(), "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = se.ParseWithParams(context.Background(), "SELECT %?")
+	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
+
+	// test noescape
+	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
+	c.Assert(err, IsNil)
+
+	sb.Reset()
+	ctx = format.NewRestoreCtx(0, &sb)
+	err = stmt.Restore(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(sb.String(), Equals, "SELECT 3")
 }
