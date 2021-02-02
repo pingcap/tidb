@@ -47,7 +47,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	// 	}),
 	// )
 	// c.Assert(err, IsNil)
-	s.store = store.(*KVStore)
+	s.store = store
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 

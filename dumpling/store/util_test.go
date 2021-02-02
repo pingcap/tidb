@@ -39,7 +39,7 @@ func NewTestStore(c *C) kv.Storage {
 	}
 
 	if *WithTiKV {
-		var d tikv.Driver
+		var d TiKVDriver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
@@ -51,7 +51,7 @@ func NewTestStore(c *C) kv.Storage {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	return store
+	return &tikvStore{KVStore: store}
 }
 
 func clearStorage(store kv.Storage) error {
