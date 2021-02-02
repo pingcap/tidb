@@ -1384,11 +1384,11 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
 	if snapshotTS == 0 {
+		txn, err := b.ctx.Txn(true)
+		if err != nil {
+			return 0, err
+		}
 		snapshotTS = txn.StartTS()
 	}
 	b.snapshotTS = snapshotTS
@@ -1963,7 +1963,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 
 func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -2045,7 +2045,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -2185,11 +2185,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastIndex(e, task, v.Opts)
 			} else {
-				if task.TableID.StoreAsCollectID() && len(task.TableID.CollectIDs) > 1 && !task.IndexInfo.Global && !task.IndexInfo.Unique {
-					b.buildAnalyzeFastIndex(e, task, v.Opts)
-				} else {
-					e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
-				}
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {
@@ -3867,6 +3863,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 		} else {
 			for _, value := range plan.IndexValues {
+				if datumsContainNull(value) {
+					continue
+				}
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
 					b.err = err

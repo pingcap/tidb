@@ -4860,8 +4860,8 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
-			colInfo.Dependences[colName.Name.O] = struct{}{}
-			checkDependencies[colName.Name.O] = struct{}{}
+			colInfo.Dependences[colName.Name.L] = struct{}{}
+			checkDependencies[colName.Name.L] = struct{}{}
 		}
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)

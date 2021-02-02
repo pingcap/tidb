@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -182,10 +182,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKvOnly, aidx)
 	// filter label unmatched store
-	if !s.IsLabelsMatch(op.labels) {
-		return false
-	}
-	return true
+	return s.IsLabelsMatch(op.labels)
 }
 
 // init initializes region after constructed.
@@ -235,6 +232,10 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
+	// Only consider use percentage on this failpoint, for example, "2%return"
+	failpoint.Inject("invalidateRegionCache", func() {
+		r.invalidate()
+	})
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
 		if ts-lastAccess > RegionCacheTTLSec {
@@ -1223,7 +1224,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 	needInvalidateOld := true
 	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
 	for _, meta := range currentRegions {
-		if _, ok := c.pdClient.(*codecPDClient); ok {
+		if _, ok := c.pdClient.(*CodecPDClient); ok {
 			var err error
 			if meta, err = decodeRegionMetaKeyWithShallowCopy(meta); err != nil {
 				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
@@ -1666,7 +1667,6 @@ const (
 	unknown livenessState = iota
 	reachable
 	unreachable
-	offline
 )
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {

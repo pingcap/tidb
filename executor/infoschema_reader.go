@@ -703,6 +703,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					nil,                   // PARTITION_COMMENT
 					nil,                   // NODEGROUP
 					nil,                   // TABLESPACE_NAME
+					nil,                   // TIDB_PARTITION_ID
 				)
 				rows = append(rows, record)
 			} else {
@@ -785,6 +786,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						pi.Comment,            // PARTITION_COMMENT
 						nil,                   // NODEGROUP
 						nil,                   // TABLESPACE_NAME
+						pi.ID,                 // TIDB_PARTITION_ID
 					)
 					rows = append(rows, record)
 				}

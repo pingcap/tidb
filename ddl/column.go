@@ -836,11 +836,26 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-		// TODO: Check whether we need to check OriginDefaultValue.
+
 		jobParam.changingCol = jobParam.newCol.Clone()
 		jobParam.changingCol.Name = newColName
 		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-		_, _, _, err := createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
+
+		// Since column type change is implemented as adding a new column then substituting the old one.
+		// Case exists when update-where statement fetch a NULL for not-null column without any default data,
+		// it will errors.
+		// So we set zero original default value here to prevent this error. besides, in insert & update records,
+		// we have already implement using the casted value of relative column to insert rather than the origin
+		// default value.
+		originDefVal, err := generateOriginDefaultValue(jobParam.newCol)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		_, _, _, err = createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)

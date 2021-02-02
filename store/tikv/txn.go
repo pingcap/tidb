@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"runtime/trace"
 	"sort"
 	"sync"
@@ -29,10 +30,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -59,7 +60,7 @@ type SchemaAmender interface {
 type tikvTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
+	store     *KVStore // for connection to region.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
@@ -69,15 +70,7 @@ type tikvTxn struct {
 	committer *twoPhaseCommitter
 	lockedCnt int
 
-	// For data consistency check.
-	// assertions[:confirmed] is the assertion of current transaction.
-	// assertions[confirmed:len(assertions)] is the assertions of current statement.
-	// StmtCommit/StmtRollback may change the confirmed position.
-	assertions []assertionPair
-	confirmed  int
-
 	valid bool
-	dirty bool
 
 	// txnInfoSchema is the infoSchema fetched at startTS.
 	txnInfoSchema SchemaVer
@@ -87,7 +80,7 @@ type tikvTxn struct {
 	commitCallback func(info kv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
+func newTiKVTxn(store *KVStore, txnScope string) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
@@ -97,7 +90,7 @@ func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 }
 
 // newTiKVTxnWithStartTS creates a txn with startTS.
-func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+func newTiKVTxnWithStartTS(store *KVStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	newTiKVTxn := &tikvTxn{
@@ -113,22 +106,13 @@ func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, re
 	return newTiKVTxn, nil
 }
 
-func newTiKVTxnWithExactStaleness(store *tikvStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
+func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint64) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := store.getStalenessTimestamp(bo, txnScope, prevSec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
-}
-
-type assertionPair struct {
-	key       kv.Key
-	assertion kv.AssertionType
-}
-
-func (a assertionPair) String() string {
-	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
 // SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
@@ -236,18 +220,18 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	start := time.Now()
 	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
-	// connID is used for log.
-	var connID uint64
-	val := ctx.Value(sessionctx.ConnID)
+	// sessionID is used for log.
+	var sessionID uint64
+	val := ctx.Value(util.SessionID)
 	if val != nil {
-		connID = val.(uint64)
+		sessionID = val.(uint64)
 	}
 
 	var err error
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, connID)
+		committer, err = newTwoPhaseCommitter(txn, sessionID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -285,7 +269,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
-		if val == nil || connID > 0 {
+		if val == nil || sessionID > 0 {
 			txn.onCommitted(err)
 		}
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
@@ -306,7 +290,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
-	if val == nil || connID > 0 {
+	if val == nil || sessionID > 0 {
 		txn.onCommitted(err)
 	}
 	if err == nil {
@@ -430,14 +414,14 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
-			// connID is used for log.
-			var connID uint64
+			// sessionID is used for log.
+			var sessionID uint64
 			var err error
-			val := ctx.Value(sessionctx.ConnID)
+			val := ctx.Value(util.SessionID)
 			if val != nil {
-				connID = val.(uint64)
+				sessionID = val.(uint64)
 			}
-			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			txn.committer, err = newTwoPhaseCommitter(txn, sessionID)
 			if err != nil {
 				return err
 			}
@@ -534,7 +518,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	// Clone a new committer for execute in background.
 	committer := &twoPhaseCommitter{
 		store:       txn.committer.store,
-		connID:      txn.committer.connID,
+		sessionID:   txn.committer.sessionID,
 		startTS:     txn.committer.startTS,
 		forUpdateTS: txn.committer.forUpdateTS,
 		primaryKey:  txn.committer.primaryKey,
@@ -542,9 +526,22 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
-		failpoint.Inject("AsyncRollBackSleep", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("beforeAsyncPessimisticRollback", func(val failpoint.Value) {
+			if s, ok := val.(string); ok {
+				if s == "skip" {
+					logutil.Logger(ctx).Info("[failpoint] injected skip async pessimistic rollback",
+						zap.Uint64("txnStartTS", txn.startTS))
+					wg.Done()
+					failpoint.Return()
+				} else if s == "delay" {
+					duration := time.Duration(rand.Int63n(int64(time.Second) * 2))
+					logutil.Logger(ctx).Info("[failpoint] injected delay before async pessimistic rollback",
+						zap.Uint64("txnStartTS", txn.startTS), zap.Duration("duration", duration))
+					time.Sleep(duration)
+				}
+			}
 		})
+
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))

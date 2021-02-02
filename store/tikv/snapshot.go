@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -53,7 +53,7 @@ var (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store           *tikvStore
+	store           *KVStore
 	version         kv.Version
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
@@ -84,7 +84,7 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
 	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
@@ -587,12 +587,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
+	if val, err := MockRetryableErrorResp.Eval(); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
 		}
-	})
+	}
 
 	if keyErr.Conflict != nil {
 		return newWriteConflictError(keyErr.Conflict)
