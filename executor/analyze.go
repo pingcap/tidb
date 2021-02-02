@@ -96,6 +96,21 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
+
+	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
+	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
+	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
+	type additionGlobalStatsInfo struct {
+		tableID      int64
+		isIndex      int
+		idxID        int64
+		statsVersion int
+	}
+	// globalStatsMap is a map used to store which partition tables and the corresponding indexes need global-level stats.
+	// The meaning of key in map is the combination of tableID and indexID.
+	// The meaning of value in map is some additional information needed to build global-level stats.
+	globalStatsMap := make(map[string]additionGlobalStatsInfo)
+
 	for panicCnt < concurrency {
 		result, ok := <-resultCh
 		if !ok {
@@ -113,6 +128,17 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		statisticsID := result.TableID.GetStatisticsID()
 		for i, hg := range result.Hist {
+			if result.TableID.IsPartitionTable() && needGlobalStats {
+				// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+				idxID := int64(-1)
+				if result.IsIndex != 0 {
+					idxID = hg.ID
+				}
+				globalStatsKey := fmt.Sprintf("%d_%d", result.TableID.TableID, idxID)
+				if _, ok := globalStatsMap[globalStatsKey]; !ok {
+					globalStatsMap[globalStatsKey] = additionGlobalStatsInfo{result.TableID.TableID, result.IsIndex, hg.ID, result.StatsVer}
+				}
+			}
 			err1 := statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
 			if err1 != nil {
 				err = err1
@@ -134,6 +160,34 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		return err
+	}
+	if needGlobalStats {
+		for _, info := range globalStatsMap {
+			globalStats, succ := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), info.tableID, info.isIndex, info.idxID)
+			if succ {
+				for i := 0; i < globalStats.Num; i++ {
+					hg := globalStats.Hg[i]
+					cms := globalStats.Cms[i]
+					topN := globalStats.TopN[i]
+					if hg == nil || cms == nil || topN == nil {
+						succ = false
+						break
+					}
+					err = statsHandle.SaveStatsToStorage(info.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1)
+					if err != nil {
+						logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+						succ = false
+					}
+				}
+			}
+			if !succ {
+				if info.isIndex != 0 {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d index %d failed", info.tableID, info.idxID))
+				} else {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("build global-level statistics for table %d failed", info.tableID))
+				}
+			}
+		}
 	}
 	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }

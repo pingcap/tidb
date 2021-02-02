@@ -779,7 +779,6 @@ func (h *AnalyzeTableID) GetStatisticsID() int64 {
 }
 
 // IsPartitionTable indicates whether the table is partition table.
-// for new partition implementation is TRUE but FALSE for old partition implementation
 func (h *AnalyzeTableID) IsPartitionTable() bool {
 	return h.PartitionID != -1
 }
