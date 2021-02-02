@@ -297,7 +297,7 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 }
 
 func (h *Handle) initStatsBuckets(cache *statsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)

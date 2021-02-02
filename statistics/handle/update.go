@@ -916,7 +916,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql + " index %n", append(params, idx.Name.O)...)
+			h.execAutoAnalyze(sql+" index %n", append(params, idx.Name.O)...)
 			return true
 		}
 	}
