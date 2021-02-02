@@ -26,7 +26,7 @@ import (
 
 type testSafePointSuite struct {
 	OneByOneSuite
-	store  *tikvStore
+	store  *KVStore
 	prefix string
 }
 
@@ -34,7 +34,7 @@ var _ = Suite(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c).(*KVStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 }
 

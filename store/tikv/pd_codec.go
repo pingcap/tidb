@@ -22,19 +22,22 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-type codecPDClient struct {
+// CodecPDClient wraps a PD Client to decode the encoded keys in region meta.
+type CodecPDClient struct {
 	pd.Client
 }
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+func (c *CodecPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
 	region, err := c.Client.GetRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+// GetPrevRegion encodes the key before send requests to pd-server and decodes the
+// returned StartKey && EndKey from pd-server.
+func (c *CodecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
 	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
@@ -42,12 +45,14 @@ func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Regi
 
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+func (c *CodecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
 	region, err := c.Client.GetRegionByID(ctx, regionID)
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
+// ScanRegions encodes the key before send requests to pd-server and decodes the
+// returned StartKey && EndKey from pd-server.
+func (c *CodecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes([]byte(nil), startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes([]byte(nil), endKey)
