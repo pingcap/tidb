@@ -1479,21 +1479,18 @@ func newBucket4Meging() *bucket4Merging {
 	}
 }
 
-func (hg *Histogram) buildBucket4Merging(buckets []*bucket4Merging) {
+func (hg *Histogram) buildBucket4Merging(buckets *[]*bucket4Merging) {
 	for i := 0; i < hg.Len(); i++ {
-		if i == 0 {
-			b := newBucket4Meging()
-			hg.GetLower(i).Copy(b.lower)
-			hg.GetLower(i).Copy(b.upper)
-			buckets = append(buckets, b)
-		}
 		b := newBucket4Meging()
 		hg.GetLower(i).Copy(b.lower)
 		hg.GetUpper(i).Copy(b.upper)
 		b.repeat = hg.Buckets[i].Repeat
 		b.ndv = hg.Buckets[i].NDV
 		b.count = hg.Buckets[i].Count
-		buckets = append(buckets, b)
+		if i != 0 {
+			b.count -= hg.Buckets[i - 1].Count
+		}
+		*buckets = append(*buckets, b)
 	}
 }
 
@@ -1549,8 +1546,8 @@ func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *buck
 	if lowerCompareUpper >= 0 {
 		b.upper = left.upper.Clone()
 		b.lower = left.lower.Clone()
-		b.disjointNDV += left.ndv
-		b.ndv = 0
+		b.disjointNDV += b.ndv
+		b.ndv = left.ndv
 		return nil
 	}
 	upperRatio := calcFraction4Datums(b.lower, b.upper, left.upper)
@@ -1597,19 +1594,29 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 }
 
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
-	var totCount, totNull, bucketNumber int64
+	var totCount, totNull, bucketNumber, totColSize int64
+	var minValue *types.Datum
 	for _, hist := range hists {
+		totColSize += hist.TotColSize
 		totNull += hist.NullCount
 		bucketNumber += int64(hist.Len()) + 1
 		if hist.Len() > 0 {
 			totCount += hist.Buckets[hist.Len()-1].Count
+			if minValue == nil {
+				minValue = hist.GetLower(0).Clone()
+				continue
+			}
+			res, err := hist.GetLower(0).CompareDatum(sc, minValue)
+			if err != nil && res < 0 {
+				minValue = hist.GetLower(0).Clone()
+			}
 		}
 	}
 	expSize := totCount/expBucketNumber
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 	for _, hist := range hists {
-		hist.buildBucket4Merging(buckets)
+		hist.buildBucket4Merging(&buckets)
 	}
 	sort.Slice(buckets, func(i, j int) bool {
 		// TODO: need handle error
@@ -1640,11 +1647,10 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			globalBuckets = append(globalBuckets, merged)
 			r = i
 			bucketCount++
-			sum = 0
 		}
 	}
 	if sum > 0 {
-		merged := mergePartitionBuckets(sc, buckets, 1, r)
+		merged := mergePartitionBuckets(sc, buckets, 0, r)
 		if merged == nil {
 			return nil, errors.Errorf("merge partition-level hist failed")
 		}
@@ -1653,10 +1659,13 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
 	}
-	globalBuckets[0].lower = buckets[0].upper.Clone()
+	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
 		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
 	}
-	// TODO: need to convert to *Histogram
-	//return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, hists[0].), nil
+	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
+	for _, bucket := range globalBuckets {
+		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.count, bucket.repeat, bucket.ndv)
+	}
+	return globalHist, nil
 }
