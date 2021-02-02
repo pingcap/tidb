@@ -15,16 +15,16 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -49,7 +49,7 @@ type mppTaskGenerator struct {
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, allocTaskID *int64, is infoschema.InfoSchema) ([]*kv.MPPTask, error) {
-	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, allocTaskID: allocTaskID, is : is}
+	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, allocTaskID: allocTaskID, is: is}
 	return g.generateMPPTasks(sender)
 }
 
