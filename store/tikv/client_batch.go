@@ -645,7 +645,7 @@ func sendBatchRequest(
 	}
 }
 
-func (c *rpcClient) recycleIdleConnArray() {
+func (c *RPCClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {
