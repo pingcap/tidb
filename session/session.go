@@ -1364,7 +1364,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
 	}
 	if len(stmts) != 1 {
-		fmt.Println("sql ... == ", sql, args)
 		err = errors.New("run multiple statements internally is not supported")
 	}
 	if err != nil {

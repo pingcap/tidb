@@ -473,7 +473,6 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// err = execSQLs(context.Background(), exec, []string{sql})
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
@@ -639,8 +638,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	ctx := context.Background()
-	sql := "SELECT distinct table_id from mysql.stats_feedback"
-	tables, _, err := h.execRestrictedSQL(ctx, sql)
+	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -652,7 +650,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		// this func lets `defer` works normally, where `Close()` should be called before any return
 		err = func() error {
 			tbl := ptbl.GetInt64(0)
-			sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
 			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
 			if err != nil {
 				return errors.Trace(err)
@@ -883,7 +881,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
 				statsTbl := h.GetTableStats(tblInfo)
-				// sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`"
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
@@ -918,10 +915,8 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sql = sql + " index %n"
-			params = append(params, idx.Name.O)
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql, params...)
+			h.execAutoAnalyze(sql + " index %n", append(params, idx.Name.O)...)
 			return true
 		}
 	}
@@ -934,8 +929,6 @@ func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		dur := time.Since(startTime)
-		metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
