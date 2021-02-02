@@ -973,6 +973,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.Mul,
 		ast.Div,
 		ast.Abs,
+		ast.Mod,
 
 		// math functions.
 		ast.Ceil,
