@@ -762,15 +762,14 @@ type Delete struct {
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
 	TableID int64
-	// PartitionID is used for the construction of partition table statistics in 'dynamic-only' mode.
-	// In other situation, the PartitionID is equal to -1.
+	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
+	// If the table is not the partition table, the PartitionID will be equal to -1.
 	PartitionID int64
 }
 
 // GetStatisticsID is used to obtain the table ID to build statistics.
-// Under normal circumstances('PartitionID == -1'), we directly use the TableID to generate analyze task for the construction of the statistics.
-// But when the 'PartitionID != -1', it means we need to build statistics for the partition table. So we need PartitionId to generate analyze task.
-// And as for the TableID here, it will be used to build the global-level stats of the partition table.
+// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
+// Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
 func (h *AnalyzeTableID) GetStatisticsID() int64 {
 	statisticsID := h.TableID
 	if h.PartitionID != -1 {
