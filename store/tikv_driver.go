@@ -169,15 +169,15 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 }
 
+// TLSConfig returns the tls config to connect to etcd.
+func (s *tikvStore) TLSConfig() *tls.Config {
+	return s.tlsConfig
+}
+
 // Close and unregister the store.
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.cache, s.UUID())
 	return s.KVStore.Close()
-}
-
-// TLSConfig returns the tls config to connect to etcd.
-func (s *tikvStore) TLSConfig() *tls.Config {
-	return s.tlsConfig
 }
