@@ -141,11 +141,11 @@ func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
 }
 
 type bucket4Test struct {
-	lower int64
-	upper int64
-	count int64
+	lower  int64
+	upper  int64
+	count  int64
 	repeat int64
-	ndv int64
+	ndv    int64
 }
 
 func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
@@ -164,32 +164,32 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 	// H(1) = [(1, 0),(4, 2),(9, 3),(12, 3),(15, 3)]
 	h1Buckets := []*bucket4Test{
 		{
-			lower: 1,
-			upper: 4,
-			count: 2,
+			lower:  1,
+			upper:  4,
+			count:  2,
 			repeat: 1,
-			ndv: 2,
+			ndv:    2,
 		},
 		{
-			lower: 6,
-			upper: 9,
-			count: 5,
+			lower:  6,
+			upper:  9,
+			count:  5,
 			repeat: 2,
-			ndv: 2,
+			ndv:    2,
 		},
 		{
-			lower: 12,
-			upper: 12,
-			count: 8,
+			lower:  12,
+			upper:  12,
+			count:  8,
 			repeat: 3,
-			ndv: 1,
+			ndv:    1,
 		},
 		{
-			lower: 13,
-			upper: 15,
-			count: 11,
+			lower:  13,
+			upper:  15,
+			count:  11,
 			repeat: 1,
-			ndv: 3,
+			ndv:    3,
 		},
 	}
 	hists = append(hists, genHist4Test(h1Buckets, 11))
@@ -197,32 +197,32 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 	// H(2) = [(2, 0),(5, 2),(7, 3),(11, 3),(17, 3)]
 	h2Buckets := []*bucket4Test{
 		{
-			lower: 2,
-			upper: 5,
-			count: 2,
+			lower:  2,
+			upper:  5,
+			count:  2,
 			repeat: 1,
-			ndv: 2,
+			ndv:    2,
 		},
 		{
-			lower: 6,
-			upper: 7,
-			count: 5,
+			lower:  6,
+			upper:  7,
+			count:  5,
 			repeat: 2,
-			ndv: 2,
+			ndv:    2,
 		},
 		{
-			lower: 11,
-			upper: 11,
-			count: 8,
+			lower:  11,
+			upper:  11,
+			count:  8,
 			repeat: 3,
-			ndv: 1,
+			ndv:    1,
 		},
 		{
-			lower: 13,
-			upper: 17,
-			count: 11,
+			lower:  13,
+			upper:  17,
+			count:  11,
 			repeat: 1,
-			ndv: 3,
+			ndv:    3,
 		},
 	}
 	hists = append(hists, genHist4Test(h2Buckets, 11))
@@ -232,25 +232,25 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 	c.Assert(err, IsNil)
 	expHist := []*bucket4Test{
 		{
-			lower: 1,
-			upper: 7,
-			count: 7,
+			lower:  1,
+			upper:  7,
+			count:  7,
 			repeat: 2,
-			ndv: 4,
+			ndv:    4,
 		},
 		{
-			lower: 7,
-			upper: 11,
-			count: 6,
+			lower:  7,
+			upper:  11,
+			count:  6,
 			repeat: 3,
-			ndv: 3,
+			ndv:    3,
 		},
 		{
-			lower: 11,
-			upper: 17,
-			count: 9,
+			lower:  11,
+			upper:  17,
+			count:  9,
 			repeat: 1,
-			ndv: 5,
+			ndv:    5,
 		},
 	}
 	for i, b := range expHist {
