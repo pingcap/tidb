@@ -456,7 +456,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	rs, err := tk.Se.Execute(ctx, fmt.Sprintf(`select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
 		item, type, instance,status_address, value, reference, details from %s.inspection_result
 		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance','leader-drop')
-		order by item`,util.InformationSchemaName))
+		order by item`, util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))

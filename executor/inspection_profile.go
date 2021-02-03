@@ -228,7 +228,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 
 	// 2. Get total sum time.
 	if len(n.label) == 0 {
-		query = fmt.Sprintf("select sum(value), '' from `%s`.`%v_total_time` %v", util.MetricSchemaName,n.table, queryCondition)
+		query = fmt.Sprintf("select sum(value), '' from `%s`.`%v_total_time` %v", util.MetricSchemaName, n.table, queryCondition)
 	} else {
 		query = fmt.Sprintf("select sum(value), `%[3]s` from `%s`.`%[1]s_total_time` %[2]s group by `%[3]s` having sum(value) > 0",
 			n.table, util.MetricSchemaName, queryCondition, strings.Join(n.label, "`,`"))
