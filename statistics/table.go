@@ -198,13 +198,13 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch and TopN.
-func (t *Table) GetStatsInfo(ID int64, isIndex int) (*Histogram, *CMSketch, *TopN) {
-	if isIndex == 0 {
-		colStatsInfo := t.Columns[ID]
-		return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy()
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN) {
+	if isIndex {
+		idxStatsInfo := t.Indices[ID]
+		return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
 	}
-	idxStatsInfo := t.Indices[ID]
-	return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
+	colStatsInfo := t.Columns[ID]
+	return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy()
 }
 
 type tableColumnID struct {

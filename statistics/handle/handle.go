@@ -300,7 +300,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex)
+			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
