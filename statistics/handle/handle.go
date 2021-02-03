@@ -20,12 +20,16 @@ import (
 	"sync/atomic"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"github.com/cznic/mathutil"
+	"github.com/ngaut/pools"
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -68,7 +72,7 @@ type Handle struct {
 		atomic.Value
 	}
 
-	restrictedExec sqlexec.RestrictedSQLExecutor
+	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
@@ -81,6 +85,37 @@ type Handle struct {
 	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
+}
+
+func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return fn(ctx, exec)
+}
+
+func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		return exec.ExecRestrictedStmt(ctx, stmt)
+	})
+}
+
+func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		return exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+	})
 }
 
 // Clear the statsCache, only for test.
@@ -101,7 +136,13 @@ func (h *Handle) Clear() {
 	h.mu.Unlock()
 }
 
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
 // NewHandle creates a Handle for update stats.
+<<<<<<< HEAD
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
@@ -114,6 +155,20 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
+=======
+func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*Handle, error) {
+	handle := &Handle{
+		ddlEventCh:       make(chan *util.Event, 100),
+		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		globalMap:        make(tableDeltaMap),
+		feedback:         statistics.NewQueryFeedbackMap(),
+		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		pool:             pool,
+	}
+	handle.lease.Store(lease)
+	handle.pool = pool
+	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -158,8 +213,8 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	} else {
 		lastVersion = 0
 	}
-	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", lastVersion)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	ctx := context.Background()
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -181,7 +236,11 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
+<<<<<<< HEAD
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
+=======
+		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
@@ -281,7 +340,7 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	cols := statistics.HistogramNeededColumns.AllCols()
-	reader, err := h.getStatsReader(nil)
+	reader, err := h.getStatsReader(0)
 	if err != nil {
 		return err
 	}
@@ -309,7 +368,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		cms, err := h.cmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+=======
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -354,14 +421,18 @@ func (h *Handle) FlushStats() {
 	}
 }
 
+<<<<<<< HEAD
 func (h *Handle) cmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, err error) {
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	rows, _, err := reader.read(selSQL)
+=======
+func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+	rows, _, err := reader.read("select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	selSQL = fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
-	topNRows, _, err := reader.read(selSQL)
+	topNRows, _, err := reader.read("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, err
 	}
@@ -496,9 +567,15 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	return nil
 }
 
+<<<<<<< HEAD
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, historyStatsExec sqlexec.RestrictedSQLExecutor) (_ *statistics.Table, err error) {
 	reader, err := h.getStatsReader(historyStatsExec)
+=======
+// TableStatsFromStorage loads table stats info from storage.
+func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error) {
+	reader, err := h.getStatsReader(snapshot)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	if err != nil {
 		return nil, err
 	}
@@ -511,7 +588,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
-	if !ok || historyStatsExec != nil {
+	if !ok || snapshot > 0 {
 		histColl := statistics.HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
@@ -526,8 +603,7 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		table = table.Copy()
 	}
 	table.Pseudo = false
-	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %d", physicalID)
-	rows, _, err := reader.read(selSQL)
+	rows, _, err := reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
@@ -542,6 +618,55 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
+=======
+	return h.extendedStatsFromStorage(reader, table, physicalID, loadAll)
+}
+
+func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	lastVersion := uint64(0)
+	if table.ExtendedStats != nil && !loadAll {
+		lastVersion = table.ExtendedStats.LastUpdateVersion
+	} else {
+		table.ExtendedStats = statistics.NewExtendedStatsColl()
+	}
+	rows, _, err := reader.read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?) and version > %?", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	if err != nil || len(rows) == 0 {
+		return table, nil
+	}
+	for _, row := range rows {
+		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(5))
+		name := row.GetString(0)
+		status := uint8(row.GetInt64(1))
+		if status == StatsStatusDeleted {
+			delete(table.ExtendedStats.Stats, name)
+		} else {
+			item := &statistics.ExtendedStatsItem{
+				Tp: uint8(row.GetInt64(2)),
+			}
+			colIDs := row.GetString(3)
+			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
+			if err != nil {
+				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				return nil, err
+			}
+			statsStr := row.GetString(4)
+			if item.Tp == ast.StatsTypeCardinality || item.Tp == ast.StatsTypeCorrelation {
+				if statsStr != "" {
+					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
+					if err != nil {
+						logutil.BgLogger().Error("[stats] parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
+						return nil, err
+					}
+				}
+			} else {
+				item.StringVals = statsStr
+			}
+			table.ExtendedStats.Stats[name] = item
+		}
+	}
+	table.ExtendedStats.LastUpdateVersion = lastVersion
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	return table, nil
 }
 
@@ -551,7 +676,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -564,29 +689,53 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 
 	version := txn.StartTS()
-	sqls := make([]string, 0, 4)
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count) values (%d, %d, %d)", version, tableID, count))
+		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count) values (%?, %?, %?)", version, tableID, count)
 	} else {
-		sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d", version, tableID))
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
+	}
+	if err != nil {
+		return err
 	}
 	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
-		return
+		return err
 	}
 	// Delete outdated data
+<<<<<<< HEAD
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
 	for _, meta := range cms.TopN() {
 		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
+=======
+	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+		return err
+	}
+	if topN != nil {
+		for _, meta := range topN.TopN {
+			if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
+				return err
+			}
+		}
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
+<<<<<<< HEAD
 	sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d, %f)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statistics.CurStatsVersion, flag, hg.Correlation))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
+=======
+	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+		return err
+	}
+	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+		return err
+	}
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	for i := range hg.Buckets {
@@ -607,12 +756,20 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		if err != nil {
 			return
 		}
+<<<<<<< HEAD
 		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes()))
+=======
+		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[i].NDV); err != nil {
+			return err
+		}
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		sqls = append(sqls, fmt.Sprintf("update mysql.stats_histograms set last_analyze_pos = X'%X' where table_id = %d and is_index = %d and hist_id = %d", lastAnalyzePos, tableID, isIndex, hg.ID))
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
+			return err
+		}
 	}
-	return execSQLs(context.Background(), exec, sqls)
+	return
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
@@ -621,7 +778,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -632,16 +789,18 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var sql string
 	version := txn.StartTS()
-	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
-	_, err = exec.Execute(ctx, sql)
-	return
+	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	return err
 }
 
 func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
+<<<<<<< HEAD
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := reader.read(selSQL)
+=======
+	rows, fields, err := reader.read("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -676,25 +835,57 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 	return hg, nil
 }
 
+<<<<<<< HEAD
 func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
 	rows, _, err := reader.read(selSQL)
+=======
+func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, statsVer int64) (int64, error) {
+	rows, _, err := reader.read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	if rows[0].IsNull(0) {
 		return 0, nil
 	}
+<<<<<<< HEAD
 	return rows[0].GetMyDecimal(0).ToInt()
+=======
+	count, err := rows[0].GetMyDecimal(0).ToInt()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if statsVer == statistics.Version2 {
+		// Before stats ver 2, histogram represents all data in this column.
+		// In stats ver 2, histogram + TopN represent all data in this column.
+		// So we need to add TopN total count here.
+		rows, _, err = reader.read("select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !rows[0].IsNull(0) {
+			topNCount, err := rows[0].GetMyDecimal(0).ToInt()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			count += topNCount
+		}
+	}
+	return count, err
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 }
 
-func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec sqlexec.RestrictedSQLExecutor) (version uint64, modifyCount, count int64, err error) {
-	selSQL := fmt.Sprintf("SELECT version, modify_count, count from mysql.stats_meta where table_id = %d order by version", tableID)
+func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
+	ctx := context.Background()
 	var rows []chunk.Row
-	if historyStatsExec == nil {
-		rows, _, err = h.restrictedExec.ExecRestrictedSQL(selSQL)
+	if snapshot == 0 {
+		rows, _, err = h.execRestrictedSQL(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
 	} else {
-		rows, _, err = historyStatsExec.ExecRestrictedSQLWithSnapshot(selSQL)
+		rows, _, err = h.execRestrictedSQLWithSnapshot(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", snapshot, tableID)
+		if err != nil {
+			return 0, 0, 0, err
+		}
 	}
 	if err != nil || len(rows) == 0 {
 		return
@@ -708,49 +899,34 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, historyStatsExec s
 // statsReader is used for simplify code that needs to read system tables in different sqls
 // but requires the same transactions.
 type statsReader struct {
-	ctx     sessionctx.Context
-	history sqlexec.RestrictedSQLExecutor
+	ctx      sqlexec.RestrictedSQLExecutor
+	snapshot uint64
 }
 
-func (sr *statsReader) read(sql string) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	if sr.history != nil {
-		return sr.history.ExecRestrictedSQLWithSnapshot(sql)
-	}
-	rc, err := sr.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	if len(rc) > 0 {
-		defer terror.Call(rc[0].Close)
-	}
+func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	ctx := context.TODO()
+	stmt, err := sr.ctx.ParseWithParams(ctx, sql, args...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Trace(err)
 	}
-	for {
-		req := rc[0].NewChunk()
-		err := rc[0].Next(context.TODO(), req)
-		if err != nil {
-			return nil, nil, err
-		}
-		if req.NumRows() == 0 {
-			break
-		}
-		for i := 0; i < req.NumRows(); i++ {
-			rows = append(rows, req.GetRow(i))
-		}
+	if sr.snapshot > 0 {
+		return sr.ctx.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(sr.snapshot))
 	}
-	return rows, rc[0].Fields(), nil
+	return sr.ctx.ExecRestrictedStmt(ctx, stmt)
 }
 
 func (sr *statsReader) isHistory() bool {
-	return sr.history != nil
+	return sr.snapshot > 0
 }
 
-func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
+func (h *Handle) getStatsReader(snapshot uint64) (reader *statsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
 		}
 	})
-	if history != nil {
-		return &statsReader{history: history}, nil
+	if snapshot > 0 {
+		return &statsReader{ctx: h.mu.ctx.(sqlexec.RestrictedSQLExecutor), snapshot: snapshot}, nil
 	}
 	h.mu.Lock()
 	defer func() {
@@ -762,18 +938,291 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *
 		}
 	}()
 	failpoint.Inject("mockGetStatsReaderPanic", nil)
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
 	}
-	return &statsReader{ctx: h.mu.ctx}, nil
+	return &statsReader{ctx: h.mu.ctx.(sqlexec.RestrictedSQLExecutor)}, nil
 }
 
 func (h *Handle) releaseStatsReader(reader *statsReader) error {
-	if reader.history != nil {
+	if reader.snapshot > 0 {
 		return nil
 	}
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "commit")
+	_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
 	h.mu.Unlock()
 	return err
 }
+<<<<<<< HEAD
+=======
+
+const (
+	// StatsStatusInited is the status for extended stats which are just registered but have not been analyzed yet.
+	StatsStatusInited uint8 = iota
+	// StatsStatusAnalyzed is the status for extended stats which have been collected in analyze.
+	StatsStatusAnalyzed
+	// StatsStatusDeleted is the status for extended stats which were dropped. These "deleted" records would be removed from storage by GCStats().
+	StatsStatusDeleted
+)
+
+// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	bytes, err := json.Marshal(colIDs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	strColIDs := string(bytes)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
+	_, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited)
+	// Key exists, but `if not exists` is specified, so we ignore this error.
+	if kv.ErrKeyExists.Equal(err) && ifNotExists {
+		err = nil
+	}
+	return
+}
+
+// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
+	ctx := context.Background()
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		if ifExists {
+			return nil
+		}
+		return errors.New(fmt.Sprintf("extended statistics '%s' for the specified table does not exist", statsName))
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
+		return err
+	}
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
+func (h *Handle) ReloadExtendedStatistics() error {
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return err
+	}
+	oldCache := h.statsCache.Load().(statsCache)
+	tables := make([]*statistics.Table, 0, len(oldCache.tables))
+	for physicalID, tbl := range oldCache.tables {
+		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
+		if err != nil {
+			return err
+		}
+		tables = append(tables, t)
+	}
+	err = h.releaseStatsReader(reader)
+	if err != nil {
+		return err
+	}
+	// Note that this update may fail when the statsCache.version has been modified by others.
+	h.updateStatsCache(oldCache.update(tables, nil, oldCache.version))
+	return nil
+}
+
+// BuildExtendedStats build extended stats for column groups if needed based on the column samples.
+func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
+	ctx := context.Background()
+	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
+	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	statsColl := statistics.NewExtendedStatsColl()
+	for _, row := range rows {
+		name := row.GetString(0)
+		item := &statistics.ExtendedStatsItem{Tp: uint8(row.GetInt64(1))}
+		colIDs := row.GetString(2)
+		err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
+		if err != nil {
+			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
+			continue
+		}
+		item = h.fillExtendedStatsItemVals(item, cols, collectors)
+		if item != nil {
+			statsColl.Stats[name] = item
+		}
+	}
+	if len(statsColl.Stats) == 0 {
+		return nil, nil
+	}
+	return statsColl, nil
+}
+
+func (h *Handle) fillExtendedStatsItemVals(item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+	switch item.Tp {
+	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
+		return nil
+	case ast.StatsTypeCorrelation:
+		return h.fillExtStatsCorrVals(item, cols, collectors)
+	}
+	return nil
+}
+
+func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+	colOffsets := make([]int, 0, 2)
+	for _, id := range item.ColIDs {
+		for i, col := range cols {
+			if col.ID == id {
+				colOffsets = append(colOffsets, i)
+				break
+			}
+		}
+	}
+	if len(colOffsets) != 2 {
+		return nil
+	}
+	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
+	samplesX := collectors[colOffsets[0]].Samples
+	if len(samplesX) == 0 {
+		return nil
+	}
+	// We would modify Ordinal of samplesY, so we make a deep copy.
+	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
+	sampleNum := len(samplesX)
+	if sampleNum == 1 {
+		item.ScalarVals = float64(1)
+		return item
+	}
+	h.mu.Lock()
+	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	h.mu.Unlock()
+	var err error
+	samplesX, err = statistics.SortSampleItems(sc, samplesX)
+	if err != nil {
+		return nil
+	}
+	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	for i, itemX := range samplesX {
+		itemY := samplesY[itemX.Ordinal]
+		itemY.Ordinal = i
+		samplesYInXOrder[i] = itemY
+	}
+	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
+	if err != nil {
+		return nil
+	}
+	var corrXYSum float64
+	for i := 1; i < sampleNum; i++ {
+		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
+	}
+	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
+	// sorted sequence, we know that X and Y value sets are both:
+	// 0, 1, ..., sampleNum-1
+	// we can simply compute sum(X) = sum(Y) =
+	//    (sampleNum-1)*sampleNum / 2
+	// and sum(X^2) = sum(Y^2) =
+	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
+	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
+	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
+	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
+	itemsCount := float64(sampleNum)
+	corrXSum := (itemsCount - 1) * itemsCount / 2.0
+	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
+	item.ScalarVals = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
+	return item
+}
+
+// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
+	if extStats == nil || len(extStats.Stats) == 0 {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	for name, item := range extStats.Stats {
+		bytes, err := json.Marshal(item.ColIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		strColIDs := string(bytes)
+		var statsStr string
+		switch item.Tp {
+		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
+			statsStr = fmt.Sprintf("%f", item.ScalarVals)
+		case ast.StatsTypeDependency:
+			statsStr = item.StringVals
+		}
+		// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
+		if _, err := exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, StatsStatusAnalyzed); err != nil {
+			return err
+		}
+	}
+	if !isLoad {
+		if _, err := exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
+func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
+}
+
+// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
+func (h *Handle) RefreshVars() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.mu.ctx.RefreshVars(context.Background())
+}
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)

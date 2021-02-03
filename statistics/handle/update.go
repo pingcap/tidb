@@ -208,6 +208,130 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
+<<<<<<< HEAD
+=======
+// IndexUsageInformation is the data struct to store index usage information.
+type IndexUsageInformation struct {
+	QueryCount   int64
+	RowsSelected int64
+	LastUsedAt   string
+}
+
+// GlobalIndexID is the key type for indexUsageMap.
+type GlobalIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
+type indexUsageMap map[GlobalIndexID]IndexUsageInformation
+
+// SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
+type SessionIndexUsageCollector struct {
+	sync.Mutex
+
+	mapper  indexUsageMap
+	next    *SessionIndexUsageCollector
+	deleted bool
+}
+
+func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
+	item := m[id]
+	item.QueryCount += value.QueryCount
+	item.RowsSelected += value.RowsSelected
+	if item.LastUsedAt < value.LastUsedAt {
+		item.LastUsedAt = value.LastUsedAt
+	}
+	m[id] = item
+}
+
+func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
+	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
+	m.updateByKey(id, value)
+}
+
+func (m indexUsageMap) merge(destMap indexUsageMap) {
+	for id, item := range destMap {
+		m.updateByKey(id, &item)
+	}
+}
+
+// Update updates the mapper in SessionIndexUsageCollector.
+func (s *SessionIndexUsageCollector) Update(tableID int64, indexID int64, value *IndexUsageInformation) {
+	value.LastUsedAt = time.Now().Format(types.TimeFSPFormat)
+	s.Lock()
+	defer s.Unlock()
+	s.mapper.update(tableID, indexID, value)
+}
+
+// Delete will set s.deleted to true which means it can be deleted from linked list.
+func (s *SessionIndexUsageCollector) Delete() {
+	s.Lock()
+	defer s.Unlock()
+	s.deleted = true
+}
+
+// NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
+// idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
+// points to new item. It's helpful to sweepIdxUsageList.
+func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
+	h.idxUsageListHead.Lock()
+	defer h.idxUsageListHead.Unlock()
+	newCollector := &SessionIndexUsageCollector{
+		mapper: make(indexUsageMap),
+		next:   h.idxUsageListHead.next,
+	}
+	h.idxUsageListHead.next = newCollector
+	return newCollector
+}
+
+// sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
+// and remove closed session's collector.
+// For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
+func (h *Handle) sweepIdxUsageList() indexUsageMap {
+	prev := h.idxUsageListHead
+	prev.Lock()
+	mapper := make(indexUsageMap)
+	for curr := prev.next; curr != nil; curr = curr.next {
+		curr.Lock()
+		mapper.merge(curr.mapper)
+		if curr.deleted {
+			prev.next = curr.next
+			curr.Unlock()
+		} else {
+			prev.Unlock()
+			curr.mapper = make(indexUsageMap)
+			prev = curr
+		}
+	}
+	prev.Unlock()
+	return mapper
+}
+
+// DumpIndexUsageToKV will dump in-memory index usage information to KV.
+func (h *Handle) DumpIndexUsageToKV() error {
+	ctx := context.Background()
+	mapper := h.sweepIdxUsageList()
+	for id, value := range mapper {
+		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
+		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GCIndexUsage will delete the usage information of those indexes that do not exist.
+func (h *Handle) GCIndexUsage() error {
+	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
+	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
+	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
+	_, _, err := h.execRestrictedSQL(context.Background(), sql)
+	return err
+}
+
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
@@ -331,7 +455,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -344,13 +468,14 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
+		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 	}
-	err = execSQLs(context.Background(), exec, []string{sql})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
 	return
 }
@@ -371,7 +496,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	_, _, err := h.execRestrictedSQL(context.Background(), sql)
 	return errors.Trace(err)
 }
 
@@ -409,10 +534,9 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	if fb.Tp == statistics.IndexType {
 		isIndex = 1
 	}
-	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
-		"(%d, %d, %d, X'%X')", fb.PhysicalID, fb.Hist.ID, isIndex, vals)
+	const sql = "insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values (%?, %?, %?, %?)"
 	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
 	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -503,8 +627,8 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	sql := "SELECT distinct table_id from mysql.stats_feedback"
-	tables, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	ctx := context.Background()
+	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -516,20 +640,18 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		// this func lets `defer` works normally, where `Close()` should be called before any return
 		err = func() error {
 			tbl := ptbl.GetInt64(0)
-			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by hist_id, is_index", tbl)
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-			if len(rc) > 0 {
-				defer terror.Call(rc[0].Close)
-			}
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
+			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			defer terror.Call(rc.Close)
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
-				req := rc[0].NewChunk()
+				req := rc.NewChunk()
 				iter := chunk.NewIterator4Chunk(req)
-				err := rc[0].Next(context.TODO(), req)
+				err := rc.Next(context.TODO(), req)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -622,8 +744,8 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	defer h.mu.Unlock()
 	hasData := true
 	for hasData {
-		sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d limit 10000", tableID, histID, isIndex)
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		sql := "delete from mysql.stats_feedback where table_id = %? and hist_id = %? and is_index = %? limit 10000"
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tableID, histID, isIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -690,9 +812,9 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
-		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	ctx := context.Background()
+	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
+	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -744,19 +866,36 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
+<<<<<<< HEAD
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+=======
+				sql := "analyze table %n.%n"
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 				if analyzed {
 					return
 				}
 				continue
 			}
+<<<<<<< HEAD
 			for _, def := range pi.Definitions {
 				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
 					return
+=======
+			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+				for _, def := range pi.Definitions {
+					sql := "analyze table %n.%n partition %n"
+					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+					if analyzed {
+						return
+					}
+					continue
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 				}
 				continue
 			}
@@ -764,29 +903,32 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	}
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
-		h.execAutoAnalyze(sql)
+		h.execAutoAnalyze(sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql)
+			h.execAutoAnalyze(sql+" index %n", append(params, idx.Name.O)...)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) {
+func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
 	startTime := time.Now()
+<<<<<<< HEAD
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+=======
+	_, _, err := h.execRestrictedSQL(context.Background(), sql, params...)
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

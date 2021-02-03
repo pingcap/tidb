@@ -1014,8 +1014,18 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
+<<<<<<< HEAD
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
+=======
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	if err != nil {
+		return err
+	}
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	return nil
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -1040,7 +1050,14 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
+<<<<<<< HEAD
 	statsHandle := handle.NewHandle(ctx, do.statsLease)
+=======
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	if err != nil {
+		return err
+	}
+>>>>>>> 17a65ab98... statistics: refactor the statistics package use the RestrictedSQLExecutor API (#22636)
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	// Negative stats lease indicates that it is in test, it does not need update.
