@@ -353,7 +353,7 @@ func (s *testSuite) TestExplainTableStorage(c *C) {
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]")))
 	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]")))
-	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'"), util.InformationSchemaName).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]")))
 }
 
