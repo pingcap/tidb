@@ -45,6 +45,13 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+const clearInterval = 10 * time.Minute
+
+var outdatedDuration = types.Duration{
+	Duration: 30 * time.Minute,
+	Fsp:      types.DefaultFsp,
+}
+
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
 	// current progress of the task.
@@ -75,11 +82,13 @@ func (p *brieTaskProgress) Close() {
 type brieTaskInfo struct {
 	queueTime   types.Time
 	execTime    types.Time
+	finishTime  types.Time
 	kind        ast.BRIEKind
 	storage     string
 	connID      uint64
 	backupTS    uint64
 	archiveSize uint64
+	errStr      string
 }
 
 type brieQueueItem struct {
@@ -91,6 +100,8 @@ type brieQueueItem struct {
 type brieQueue struct {
 	nextID uint64
 	tasks  sync.Map
+
+	lastClearTime time.Time
 
 	workerCh chan struct{}
 }
@@ -150,8 +161,24 @@ func (bq *brieQueue) cancelTask(taskID uint64) {
 	if !ok {
 		return
 	}
-	bq.tasks.Delete(taskID)
 	item.(*brieQueueItem).cancel()
+}
+
+func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
+	if time.Since(bq.lastClearTime) < clearInterval {
+		return
+	}
+
+	bq.lastClearTime = time.Now()
+	currTime := types.CurrentTime(mysql.TypeDatetime)
+
+	bq.tasks.Range(func(key, value interface{}) bool {
+		item := value.(*brieQueueItem)
+		if d := item.info.finishTime.Sub(sc, &currTime); d.Compare(outdatedDuration) > 0 {
+			bq.tasks.Delete(key)
+		}
+		return true
+	})
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
@@ -305,6 +332,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	bq := globalBRIEQueue
+	bq.clearTask(e.ctx.GetSessionVars().StmtCtx)
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
@@ -345,7 +373,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
+	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	if err != nil {
+		e.info.errStr = err.Error()
 		return err
 	}
 
@@ -354,7 +384,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.AppendUint64(2, e.info.backupTS)
 	req.AppendTime(3, e.info.queueTime)
 	req.AppendTime(4, e.info.execTime)
-	e.info = nil
 	return nil
 }
 
@@ -366,6 +395,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
+	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	globalBRIEQueue.tasks.Range(func(key, value interface{}) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
@@ -377,8 +407,13 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 			e.result.AppendFloat64(2, 100.0*float64(current)/float64(item.progress.total))
 			e.result.AppendTime(3, item.info.queueTime)
 			e.result.AppendTime(4, item.info.execTime)
-			e.result.AppendNull(5) // FIXME: fill in finish time after keeping history.
+			e.result.AppendTime(5, item.info.finishTime)
 			e.result.AppendUint64(6, item.info.connID)
+			if len(item.info.errStr) > 0 {
+				e.result.AppendString(7, item.info.errStr)
+			} else {
+				e.result.AppendNull(7)
+			}
 		}
 		return true
 	})
