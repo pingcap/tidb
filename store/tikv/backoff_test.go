@@ -28,7 +28,7 @@ type testBackoffSuite struct {
 var _ = Suite(&testBackoffSuite{})
 
 func (s *testBackoffSuite) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*KVStore)
+	s.store = NewTestStore(c)
 }
 
 func (s *testBackoffSuite) TearDownTest(c *C) {

@@ -345,8 +345,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
 		TableID: core.AnalyzeTableID{
-			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
-			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+			PartitionID: -1,
+			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
 		TblInfo: tblInfo,
 		Opts:    opts,
