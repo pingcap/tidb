@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/util"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -96,7 +98,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 		return fpName == fpname
 	})
 
-	rs, err := tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where rule='query-summary' and metrics_name in ('tidb_qps', 'tidb_query_duration')")
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf("select * from %s.inspection_summary where rule='query-summary' and metrics_name in ('tidb_qps', 'tidb_query_duration')", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -110,7 +112,7 @@ func (s *inspectionSummarySuite) TestInspectionSummary(c *C) {
 	))
 
 	// Test for select * from information_schema.inspection_summary without specify rules.
-	rs, err = tk.Se.Execute(ctx, "select * from information_schema.inspection_summary where metrics_name = 'tidb_qps'")
+	rs, err = tk.Se.Execute(ctx, fmt.Sprintf("select * from %s.inspection_summary where metrics_name = 'tidb_qps'", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))

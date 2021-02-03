@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/util"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
@@ -32,19 +34,19 @@ func (s *inspectionSummarySuite) TestInspectionRules(c *C) {
 		ruleCount int
 	}{
 		{
-			sql:       "select * from information_schema.inspection_rules",
+			sql:       fmt.Sprintf("select * from %s.inspection_rules", util.InformationSchemaName),
 			ruleCount: inspectionCount + summaryCount,
 		},
 		{
-			sql:       "select * from information_schema.inspection_rules where type='inspection'",
+			sql:       fmt.Sprintf("select * from %s.inspection_rules where type='inspection'", util.InformationSchemaName),
 			ruleCount: inspectionCount,
 		},
 		{
-			sql:       "select * from information_schema.inspection_rules where type='summary'",
+			sql:       fmt.Sprintf("select * from %s.inspection_rules where type='summary'", util.InformationSchemaName),
 			ruleCount: summaryCount,
 		},
 		{
-			sql:       "select * from information_schema.inspection_rules where type='inspection' and type='summary'",
+			sql:       fmt.Sprintf("select * from %s.inspection_rules where type='inspection' and type='summary'", util.InformationSchemaName),
 			ruleCount: 0,
 		},
 	}

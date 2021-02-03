@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"io/ioutil"
 	"log"
 	"net"
@@ -176,7 +177,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("select type, `key`, value from information_schema.cluster_config").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("select type, `key`, value from %s.cluster_config", util.InformationSchemaName)).Check(testkit.Rows(
 		"tidb key1 value1",
 		"tidb key2.nest1 n-value1",
 		"tidb key2.nest2 n-value2",
@@ -233,7 +234,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		rows     []string
 	}{
 		{
-			sql:      "select * from information_schema.cluster_config",
+			sql:      fmt.Sprintf("select * from %s.cluster_config", util.InformationSchemaName),
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],
@@ -248,7 +249,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or type='tikv'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd' or type='tikv'", util.InformationSchemaName),
 			reqCount: 6,
 			rows: flatten(
 				rows["tikv"][0],
@@ -260,7 +261,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			),
 		},
 		{
-			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
+			sql:      fmt.Sprintf("select * from %s.cluster_config where type='pd' or instance='", util.InformationSchemaName) + testServers[0].address + "'",
 			reqCount: 9,
 			rows: flatten(
 				rows["tidb"][0],

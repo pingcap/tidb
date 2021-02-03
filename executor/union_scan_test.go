@@ -31,7 +31,7 @@ func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk.MustExec("begin")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3", "4 8", "6 8"))
 	tk.MustExec("insert t values (1, 5), (3, 4), (7, 6)")
-	tk.MustQuery("select * from information_schema.columns")
+	tk.MustQuery(fmt.Sprintf("select * from %s.columns", util.InformationSchemaName))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "2 3", "3 4", "4 8", "6 8", "7 6"))
 	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1 5"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
