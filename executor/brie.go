@@ -395,7 +395,6 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
-	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	globalBRIEQueue.tasks.Range(func(key, value interface{}) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
@@ -417,6 +416,7 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 		}
 		return true
 	})
+	globalBRIEQueue.clearTask(e.ctx.GetSessionVars().StmtCtx)
 	return nil
 }
 
