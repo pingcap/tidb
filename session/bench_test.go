@@ -53,12 +53,12 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	return se, domain, store
 }
 
-func prepareBenchData(se Session, colType string, valueCount int) {
+func prepareBenchData(se Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key auto_increment, col %n, index idx (col))", colType)
 	mustExecute(se, "begin")
 	for i := 0; i < valueCount; i++ {
-		mustExecute(se, "insert t (col) values (%?)", i)
+		mustExecute(se, "insert t (col) values (%?)", fmt.Sprintf(valueFormat, i))
 	}
 	mustExecute(se, "commit")
 }
