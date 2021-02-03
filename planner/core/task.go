@@ -1321,6 +1321,10 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 		Value:   types.NewDatum(0),
 		RetType: ft,
 	}
+	paramOne := &expression.Constant{
+		Value:   types.NewDatum(1),
+		RetType: ft,
+	}
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1341,9 +1345,11 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			newAggFuncs = append(newAggFuncs, &avgSum)
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
-			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol)
+			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol), but because Clickhouse has a bug which evaluates every branch, so
+			// if(avgCountCol = 0, NULL, avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end))
 			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, paramZero)
-			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, avgCountCol)
+			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, paramOne, avgCountCol)
+			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
 			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, paramNull, divide)
 			funcIf.(*expression.ScalarFunction).RetType = avgSumCol.RetType

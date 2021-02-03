@@ -136,6 +136,11 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 
 	// test avg
 	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.0000"))
+
+	tk.MustExec("insert into t2 values(null,1)")
+	tk.MustQuery("select b, avg(a) from t2 group by b").Check(testkit.Rows("0 2.0000", "1 NULL"))
+
+	//tk.MustQuery("desc select avg(t1.a) from t1 group by b").Check(testkit.Rows("2.0000"))
 	// test proj and selection
 	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
 }
