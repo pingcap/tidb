@@ -320,7 +320,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, nil)
+		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, 0)
 		if err != nil {
 			return
 		}
