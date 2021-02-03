@@ -998,13 +998,13 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
 
-func (c *twoPhaseCommitter) needExternalConsistency() bool {
-	guaranteeExternalConsistencyOption := c.txn.us.GetOption(kv.GuaranteeExternalConsistency)
-	if guaranteeExternalConsistencyOption == nil {
+func (c *twoPhaseCommitter) needLinearizability() bool {
+	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
+	if GuaranteeLinearizabilityOption == nil {
 		// by default, guarantee
 		return true
 	}
-	return guaranteeExternalConsistencyOption.(bool)
+	return GuaranteeLinearizabilityOption.(bool)
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
@@ -1118,11 +1118,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}
-	// If we want to use async commit or 1PC and also want external consistency across
+	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
-	if commitTSMayBeCalculated && c.needExternalConsistency() {
+	if commitTSMayBeCalculated && c.needLinearizability() {
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will

@@ -62,8 +62,8 @@ const (
 	EnableAsyncCommit
 	// Enable1PC indicates whether one-phase commit is enabled
 	Enable1PC
-	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
-	GuaranteeExternalConsistency
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction

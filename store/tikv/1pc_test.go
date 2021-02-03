@@ -224,9 +224,9 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	}
 }
 
-// It's just a simple validation of external consistency.
+// It's just a simple validation of linearizability.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
-func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
+func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t2, err := s.store.Begin()

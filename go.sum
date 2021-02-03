@@ -220,8 +220,6 @@ github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/eclipse/paho.mqtt.golang v1.2.0/go.mod h1:H9keYFcgq3Qr5OUJm/JZI/i6U7joQ8SYLhZwfeOo6Ts=
 github.com/edsrzf/mmap-go v1.0.0/go.mod h1:YO35OhQPt3KJa3ryjFM5Bs14WD66h8eGKpfaBNrHW5M=
-github.com/ekexium/parser v0.0.0-20210202083354-07aa34a5ca3c h1:aQkO2+Ua2sxfg8dJ4B7RaEVv/E/6zSD92EoyJom2qwk=
-github.com/ekexium/parser v0.0.0-20210202083354-07aa34a5ca3c/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/ekexium/parser v0.0.0-20210203081914-18a31cd39b53 h1:F+WtCF9ygyJvqIO+ogDh21IHeeZLpc1d2YvEVNy7+wY=
 github.com/ekexium/parser v0.0.0-20210203081914-18a31cd39b53/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385/go.mod h1:0vRUJqYpeSZifjYj7uP3BG/gKcuzL9xWVV/Y+cK33KM=
