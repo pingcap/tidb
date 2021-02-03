@@ -241,7 +241,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
 	h.mu.Unlock()
 	if !ok {
-		err = errors.Errorf("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 		return
 	}
 	globalTableInfo := globalTable.Meta()
@@ -281,18 +281,17 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
 		h.mu.Unlock()
 		if !ok {
-			err = errors.Errorf("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", partitionID))
+			err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 			return
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
 		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, nil)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not use it.
 		if err != nil {
 			return
 		}
 		if partitionStats == nil {
-			err = errors.Errorf("[stats] error occurred when read partition table stats", zap.Int64("ID", partitionID))
+			err = errors.Errorf("[stats] error occurred when read partition-level stats of the table with tableID %d and partitionID %d", physicalID, partitionID)
 			return
 		}
 		globalStats.Count += partitionStats.Count
@@ -327,7 +326,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 
 		// Merge histogram
 
-		// TODO: Merge NDV
 	}
 	return
 }
