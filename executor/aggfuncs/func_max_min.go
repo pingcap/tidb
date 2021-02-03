@@ -14,7 +14,6 @@
 package aggfuncs
 
 import (
-	"container/heap"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -39,14 +38,12 @@ type Deque struct {
 
 // PushFront pushes idx and item(wrapped in Pair) to the front of Deque
 func (d *Deque) PushFront(idx uint64, item interface{}) {
-	p := Pair{item, idx}
-	d.Items = append([]Pair{p}, d.Items...)
+	d.Items = append([]Pair{{item, idx}}, d.Items...)
 }
 
 // PushBack pushes idx and item(wrapped in Pair) to the end of Deque
 func (d *Deque) PushBack(idx uint64, item interface{}) {
-	p := Pair{item, idx}
-	d.Items = append(d.Items, p)
+	d.Items = append(d.Items, Pair{item, idx})
 }
 
 // PopFront pops an item from the front of Deque
@@ -129,11 +126,6 @@ func (d *Deque) Dequeue(boundary uint64) error {
 
 // Enqueue put item at the back of queue, while popping any element that is lesser element in queue
 func (d *Deque) Enqueue(idx uint64, item interface{}) error {
-	if d.IsEmpty() {
-		d.PushBack(idx, item)
-		return nil
-	}
-
 	for !d.IsEmpty() {
 		pair, err := d.Back()
 		if err != nil {
@@ -146,7 +138,7 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 		if bigger && d.IsMax || !bigger && !d.IsMax {
 			_, err := d.PopBack()
 			if err != nil {
-				return nil
+				return err
 			}
 		} else {
 			break
@@ -154,114 +146,6 @@ func (d *Deque) Enqueue(idx uint64, item interface{}) error {
 	}
 	d.PushBack(idx, item)
 	return nil
-}
-
-type maxMinHeap struct {
-	data    []interface{}
-	h       heap.Interface
-	varSet  map[interface{}]int64
-	isMax   bool
-	cmpFunc func(i, j interface{}) int
-}
-
-func newMaxMinHeap(isMax bool, cmpFunc func(i, j interface{}) int) *maxMinHeap {
-	h := &maxMinHeap{
-		data:    make([]interface{}, 0),
-		varSet:  make(map[interface{}]int64),
-		isMax:   isMax,
-		cmpFunc: cmpFunc,
-	}
-	return h
-}
-
-func (h *maxMinHeap) Len() int { return len(h.data) }
-func (h *maxMinHeap) Less(i, j int) bool {
-	if h.isMax {
-		return h.cmpFunc(h.data[i], h.data[j]) > 0
-	}
-	return h.cmpFunc(h.data[i], h.data[j]) < 0
-}
-func (h *maxMinHeap) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }
-
-func (h *maxMinHeap) Push(x interface{}) {
-	h.data = append(h.data, x)
-}
-func (h *maxMinHeap) Pop() interface{} {
-	old := h.data
-	n := len(old)
-	x := old[n-1]
-	h.data = old[0 : n-1]
-	return x
-}
-
-func (h *maxMinHeap) Reset() {
-	h.data = h.data[:0]
-	h.varSet = make(map[interface{}]int64)
-}
-func (h *maxMinHeap) Append(val interface{}) {
-	h.varSet[val]++
-	if h.varSet[val] == 1 {
-		heap.Push(h, val)
-	}
-}
-func (h *maxMinHeap) Remove(val interface{}) {
-	if h.varSet[val] > 0 {
-		h.varSet[val]--
-	} else {
-		panic("remove a not exist value")
-	}
-}
-func (h *maxMinHeap) Top() (val interface{}, isEmpty bool) {
-retry:
-	if h.Len() == 0 {
-		return nil, true
-	}
-	top := h.data[0]
-	if h.varSet[top] == 0 {
-		_ = heap.Pop(h)
-		goto retry
-	}
-	return top, false
-}
-
-func (h *maxMinHeap) AppendMyDecimal(val types.MyDecimal) error {
-	key, err := val.ToHashKey()
-	if err != nil {
-		return err
-	}
-	h.varSet[string(key)]++
-	if h.varSet[string(key)] == 1 {
-		heap.Push(h, val)
-	}
-	return nil
-}
-func (h *maxMinHeap) RemoveMyDecimal(val types.MyDecimal) error {
-	key, err := val.ToHashKey()
-	if err != nil {
-		return err
-	}
-	if h.varSet[string(key)] > 0 {
-		h.varSet[string(key)]--
-	} else {
-		panic("remove a not exist value")
-	}
-	return nil
-}
-func (h *maxMinHeap) TopDecimal() (val types.MyDecimal, isEmpty bool) {
-retry:
-	if h.Len() == 0 {
-		return types.MyDecimal{}, true
-	}
-	top := h.data[0].(types.MyDecimal)
-	key, err := top.ToHashKey()
-	if err != nil {
-		panic(err)
-	}
-	if h.varSet[string(key)] == 0 {
-		_ = heap.Pop(h)
-		goto retry
-	}
-	return top, false
 }
 
 const (
