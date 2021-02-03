@@ -7487,6 +7487,8 @@ func (s *testSuite) TestIssue15563(c *C) {
 }
 
 func (s *testSuite) TestStalenessTransaction(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	testcases := []struct {
 		name             string
 		preSQL           string
@@ -7562,6 +7564,8 @@ func (s *testSuite) TestStalenessTransaction(c *C) {
 }
 
 func (s *testSuite) TestStalenessAndHistoryRead(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
