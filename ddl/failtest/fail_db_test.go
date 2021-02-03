@@ -89,7 +89,7 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testFailDBSuite) TearDownSuite(c *C) {
-	_, err := s.se.ExecuteInternal(context.Background(), "drop database if exists test_db_state")
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
 	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
