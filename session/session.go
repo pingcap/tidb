@@ -2405,11 +2405,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
-<<<<<<< HEAD
-=======
-	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
->>>>>>> 9e3c0649e... ddl, session: add tidb_enable_exchange_partition variable (#22638)
 }
 
 var (
