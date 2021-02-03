@@ -687,7 +687,7 @@ var (
 )
 
 // FeatureSwitchVariables is used to filter result of show variables, these switches should be turn blind to users.
-var FeatureSwitchVariables = []string{TiDBEnableChangeColumnType, TiDBEnablePointGetCache, TiDBEnableAlterPlacement, TiDBEnableChangeMultiSchema}
+var FeatureSwitchVariables = []string{TiDBEnableChangeColumnType, TiDBEnablePointGetCache, TiDBEnableAlterPlacement, TiDBEnableChangeMultiSchema, TiDBEnableAsyncCommit, TiDBEnable1PC, TiDBGuaranteeExternalConsistency}
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
 func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
