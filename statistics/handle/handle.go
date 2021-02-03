@@ -235,13 +235,13 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, succ bool) {
+func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
 	h.mu.Unlock()
 	if !ok {
-		logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+		err = errors.Errorf("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 		return
 	}
 	globalTableInfo := globalTable.Meta()
@@ -263,9 +263,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
 
-	// The first dimension of slice is means the number of stats in the globalStats.
+	// The first dimension of slice is means the number of column or index stats in the globalStats.
 	// The second dimension of slice is means the number of partition tables.
-	// We should store all of the partition-level stats first, and merge them together.
+	// Because all topN and histograms need to be collected before they can be merged.
+	// So we should store all of the partition-level stats first, and merge them together.
 	allHg := make([][]*statistics.Histogram, globalStats.Num)
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
@@ -280,17 +281,18 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
 		h.mu.Unlock()
 		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", partitionID))
+			err = errors.Errorf("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", partitionID))
 			return
 		}
 		tableInfo := partitionTable.Meta()
-		partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionID, false, nil)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+		var partitionStats *statistics.Table
+		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, nil)
+		// Error is not nil may mean that there are some ddl changes on this table, we will not use it.
 		if err != nil {
-			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			return
 		}
 		if partitionStats == nil {
+			err = errors.Errorf("[stats] error occurred when read partition table stats", zap.Int64("ID", partitionID))
 			return
 		}
 		globalStats.Count += partitionStats.Count
@@ -313,9 +315,8 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		// Merge CMSketch
 		globalStats.Cms[i] = allCms[i][0].Copy()
 		for j := uint64(1); j < partitionNum; j++ {
-			err := globalStats.Cms[i].MergeCMSketch(allCms[i][j])
+			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
-				logutil.BgLogger().Debug("failed to merge the CMSketch when we merge the partition-level stats to global-level stats")
 				return
 			}
 		}
@@ -328,8 +329,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 
 		// TODO: Merge NDV
 	}
-	// Build the global-level stats success.
-	succ = true
 	return
 }
 
