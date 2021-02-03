@@ -50,7 +50,7 @@ func (s *testDeleteRangeSuite) SetUpTest(c *C) {
 	// )
 	// c.Assert(err, IsNil)
 
-	s.store = store.(*KVStore)
+	s.store = store
 }
 
 func (s *testDeleteRangeSuite) TearDownTest(c *C) {
