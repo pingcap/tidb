@@ -785,6 +785,9 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1665,6 +1668,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
+<<<<<<< HEAD
+=======
+	case TiDBMultiStatementMode:
+		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableExchangePartition:
+		s.TiDBEnableExchangePartition = TiDBOptOn(val)
+>>>>>>> 9e3c0649e... ddl, session: add tidb_enable_exchange_partition variable (#22638)
 	}
 	s.systems[name] = val
 	return nil
