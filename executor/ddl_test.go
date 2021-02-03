@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"strconv"
 	"strings"
