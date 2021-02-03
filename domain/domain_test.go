@@ -437,16 +437,16 @@ func (*testSuite) TestT(c *C) {
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
-	beforeTS := variable.GoTimeToTS(time.Now())
+	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
-	afterTS := variable.GoTimeToTS(time.Now())
+	afterTS := oracle.GoTimeToTS(time.Now())
 	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
 	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
-	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
+	validTS := oracle.GoTimeToTS(lowerLimit.Add(time.Minute))
 	sm.PS = []*util.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: variable.GoTimeToTS(lowerLimit)},
+		{CurTxnStartTS: oracle.GoTimeToTS(lowerLimit)},
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)

@@ -38,7 +38,7 @@ func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)
 }
 
-func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool, tableID *int64) (*tikvrpc.Response, error) {
+func (s *KVStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter bool, tableID *int64) (*tikvrpc.Response, error) {
 	// equalRegionStartKey is used to filter split keys.
 	// If the split key is equal to the start key of the region, then the key has been split, we need to skip the split key.
 	groups, _, err := s.regionCache.GroupKeysByRegion(bo, keys, equalRegionStartKey)
@@ -106,7 +106,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 	return &tikvrpc.Response{Resp: srResp}, errors.Trace(err)
 }
 
-func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
+func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool, tableID *int64) singleBatchResp {
 	if val, err := MockSplitRegionTimeout.Eval(); err == nil {
 		if val.(bool) {
 			if _, ok := bo.ctx.Deadline(); ok {
@@ -192,7 +192,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 }
 
 // SplitRegions splits regions by splitKeys.
-func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
+func (s *KVStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
 	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter, tableID)
 	regionIDs = make([]uint64, 0, len(splitKeys))
@@ -206,7 +206,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 	return regionIDs, errors.Trace(err)
 }
 
-func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) error {
+func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) error {
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	for {
@@ -235,7 +235,7 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 	return nil
 }
 
-func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
+func (s *KVStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
 	splitKeys := make([][]byte, 0, 4)
 
 	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
@@ -275,7 +275,7 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 // WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
-func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error {
+func (s *KVStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error {
 	if backOff <= 0 {
 		backOff = waitScatterRegionFinishBackoff
 	}
@@ -320,7 +320,7 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 }
 
 // CheckRegionInScattering uses to check whether scatter region finished.
-func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
+func (s *KVStore) CheckRegionInScattering(regionID uint64) (bool, error) {
 	bo := NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)

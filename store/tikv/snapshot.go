@@ -53,7 +53,7 @@ var (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store           *tikvStore
+	store           *KVStore
 	version         kv.Version
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
@@ -84,7 +84,7 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
 	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
