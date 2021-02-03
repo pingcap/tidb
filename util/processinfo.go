@@ -32,6 +32,7 @@ type ProcessInfo struct {
 	ID               uint64
 	User             string
 	Host             string
+	Port             string
 	DB               string
 	Digest           string
 	Plan             interface{}
@@ -67,10 +68,16 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	if len(pi.DB) > 0 {
 		db = pi.DB
 	}
+	var host string
+	if pi.Port != "" {
+		host = fmt.Sprintf("%s:%s", pi.Host, pi.Port)
+	} else {
+		host = pi.Host
+	}
 	return []interface{}{
 		pi.ID,
 		pi.User,
-		pi.Host,
+		host,
 		db,
 		mysql.Command2Str[pi.Command],
 		t,
