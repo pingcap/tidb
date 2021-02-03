@@ -357,9 +357,16 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		// Merge topN. We need to merge TopN before merging the histogram.
 		// Because after merging TopN, some numbers will be left.
 		// These left numbers should be inserted into the histogram.
+		err = errors.Errorf("TODO: The merge function of the topN structure has not been implemented yet")
+		if err != nil {
+			return
+		}
 
 		// Merge histogram
-
+		err = errors.Errorf("TODO: The merge function of the histogram structure has not been implemented yet")
+		if err != nil {
+			return
+		}
 	}
 	return
 }
