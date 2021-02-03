@@ -130,7 +130,8 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 		e.remainingRowsInChunk[i] -= remained
 		remainingRowsInGroup -= remained
 
-		finished, err := e.processor.processRows(e.ctx, groupRows, e.resultChunks[i], remained, remainingRowsInGroup)
+		rows, finished, err := e.processor.processRows(e.ctx, groupRows, e.resultChunks[i], remained, remainingRowsInGroup)
+		groupRows = rows
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -178,7 +179,7 @@ func (e *WindowExec) copyChk(src, dst *chunk.Chunk) error {
 // windowProcessor is the interface for processing different kinds of windows.
 type windowProcessor interface {
 	// processRows consumes all the rows in the same group, append result to chunk and reset partial result if necessary
-	processRows(ctx sessionctx.Context, rows []chunk.Row, chu *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error)
+	processRows(ctx sessionctx.Context, rows []chunk.Row, chu *chunk.Chunk, remained, remainingRowsInGroup int) ([]chunk.Row, bool, error)
 }
 
 type aggWindowProcessor struct {
@@ -186,35 +187,35 @@ type aggWindowProcessor struct {
 	partialResults []aggfuncs.PartialResult
 }
 
-func (p *aggWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
-	err := p.consumeGroupRows(ctx, rows)
+func (p *aggWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) ([]chunk.Row, bool, error) {
+	rows, err := p.consumeGroupRows(ctx, rows)
 	if err != nil {
-		return false, errors.Trace(err)
+		return rows, false, errors.Trace(err)
 	}
 
 	err = p.appendResult2Chunk(ctx, chk, remained)
 	if err != nil {
-		return false, errors.Trace(err)
+		return rows, false, errors.Trace(err)
 	}
 
 	if remainingRowsInGroup == 0 {
 		p.resetPartialResult()
-		return true, nil
+		return rows, true, nil
 	}
 
-	return false, nil
+	return rows, false, nil
 }
 
-func (p *aggWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) error {
+func (p *aggWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	for i, windowFunc := range p.windowFuncs {
 		// @todo Add memory trace
 		_, err := windowFunc.UpdatePartialResult(ctx, rows, p.partialResults[i])
 		if err != nil {
-			return err
+			return rows, err
 		}
 	}
 	rows = rows[:0]
-	return nil
+	return rows, nil
 }
 
 func (p *aggWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, chk *chunk.Chunk, remained int) error {
@@ -291,16 +292,16 @@ func (p *rowFrameWindowProcessor) getEndOffset(numRows uint64) uint64 {
 	return 0
 }
 
-func (p *rowFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
+func (p *rowFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) ([]chunk.Row, bool, error) {
 	err := p.appendResult2Chunk(ctx, rows, chk, remained)
 	if err != nil {
-		return false, err
+		return rows, false, err
 	}
 	if remainingRowsInGroup == 0 {
 		p.resetPartialResult()
-		return true, nil
+		return rows, true, nil
 	}
-	return false, nil
+	return rows, false, nil
 }
 
 func (p *rowFrameWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
@@ -446,16 +447,16 @@ func (p *rangeFrameWindowProcessor) getEndOffset(ctx sessionctx.Context, rows []
 	return p.lastEndOffset, nil
 }
 
-func (p *rangeFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) (bool, error) {
+func (p *rangeFrameWindowProcessor) processRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained, remainingRowsInGroup int) ([]chunk.Row, bool, error) {
 	err := p.appendResult2Chunk(ctx, rows, chk, remained)
 	if err != nil {
-		return false, err
+		return rows, false, err
 	}
 	if remainingRowsInGroup == 0 {
 		p.resetPartialResult()
-		return true, nil
+		return rows, true, nil
 	}
-	return false, nil
+	return rows, false, nil
 }
 
 func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) error {
