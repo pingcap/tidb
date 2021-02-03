@@ -508,7 +508,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
-	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
+	// priorify of the sysvar is lower than `start transaction with causal consistency`
+	if s.txn.GetUnionStore().GetOption(kv.GuaranteeExternalConsistency) == nil {
+		s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
