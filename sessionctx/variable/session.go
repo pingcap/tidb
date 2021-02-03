@@ -1668,13 +1668,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 	case TiDBTrackAggregateMemoryUsage:
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
-<<<<<<< HEAD
-=======
-	case TiDBMultiStatementMode:
-		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableExchangePartition:
 		s.TiDBEnableExchangePartition = TiDBOptOn(val)
->>>>>>> 9e3c0649e... ddl, session: add tidb_enable_exchange_partition variable (#22638)
 	}
 	s.systems[name] = val
 	return nil
