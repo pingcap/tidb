@@ -299,7 +299,9 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 	streamResp.Timeout = timeout
 	first, err := streamResp.Recv()
 	if err != nil {
-		return nil, errors.Trace(err)
+		if errors.Cause(err) != io.EOF {
+			return nil, errors.Trace(err)
+		}
 	}
 	streamResp.MPPDataPacket = first
 	return streamResp, nil
