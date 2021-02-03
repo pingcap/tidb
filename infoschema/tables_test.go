@@ -512,7 +512,7 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		testkit.Rows(
 			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
 			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Quit 9223372036 %s %s", "in transaction", "check port"),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
