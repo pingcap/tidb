@@ -590,7 +590,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		txn.SetOption(kv.Pessimistic, true)
 	}
-	txn.SetOption(kv.GuaranteeExternalConsistency, !s.WithoutExternalConsistency)
+	txn.SetOption(kv.GuaranteeExternalConsistency, !s.CausalConsistencyOnly)
 	return nil
 }
 
