@@ -2356,7 +2356,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	if raw, ok := store.(tikv.EtcdBackend); ok {
+	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
 			return nil, err
