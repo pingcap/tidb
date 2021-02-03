@@ -24,7 +24,7 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
-	// When TiDB is closing and send request to tikv fail, do not retry, return this error.
+	// ErrTiDBShuttingDown is returned when TiDB is closing and send request to tikv fail, do not retry.
 	ErrTiDBShuttingDown = errors.New("tidb server shutting down")
 )
 
