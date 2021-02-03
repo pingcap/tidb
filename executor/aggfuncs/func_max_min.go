@@ -88,10 +88,7 @@ func (d *Deque) Front() (Pair, error) {
 
 // IsEmpty returns if Deque is empty
 func (d *Deque) IsEmpty() bool {
-	if len(d.Items) == 0 {
-		return true
-	}
-	return false
+	return len(d.Items) == 0
 }
 
 // Pair pairs items and their indices in deque
