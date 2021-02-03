@@ -81,7 +81,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
-	mustExecSQL(c, se, "insert t values (%?)", 3)
+	mustExecSQL(c, se, "insert t values (?)", 3)
 	se, err = CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, "USE test;")
@@ -227,7 +227,8 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	mustExecSQL(c, se1, `delete from mysql.global_variables where VARIABLE_NAME= %?`, variable.TiDBDistSQLScanConcurrency)
+	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
+		variable.TiDBDistSQLScanConcurrency))
 	mustExecSQL(c, se1, `commit;`)
 	unsetStoreBootstrapped(store.UUID())
 	// Make sure the version is downgraded.
@@ -262,7 +263,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 
 	// Verify that 'new_collation_enabled' is false.
-	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME= %?;`, tidbNewCollationEnabled)
+	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))
 	req = r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
@@ -540,11 +541,13 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 	defer dom.Close()
 	se := newSession(c, store, s.dbName)
 	for _, bindCase := range bindCases {
-		mustExecSQL(c, se, "insert into mysql.bind_info values(%?, %?, %?, 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
 			bindCase.bindText,
 			bindCase.db,
 		)
+		mustExecSQL(c, se, sql)
+
 		upgradeToVer61(se, version60)
 		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
 		req := r.NewChunk()
@@ -555,7 +558,7 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 		c.Assert(row.GetString(2), Equals, "")
 		c.Assert(row.GetString(3), Equals, "using")
 		c.Assert(r.Close(), IsNil)
-		sql := fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
+		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
 		mustExecSQL(c, se, sql)
 		r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 		c.Assert(r.Next(ctx, req), IsNil)

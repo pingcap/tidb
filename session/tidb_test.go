@@ -130,8 +130,8 @@ func newSession(c *C, store kv.Storage, dbName string) Session {
 	se.SetConnectionID(id)
 	c.Assert(err, IsNil)
 	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
-	mustExecSQL(c, se, "create database if not exists %n", dbName)
-	mustExecSQL(c, se, "use %n", dbName)
+	mustExecSQL(c, se, "create database if not exists "+dbName)
+	mustExecSQL(c, se, "use "+dbName)
 	return se
 }
 
@@ -139,9 +139,32 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
-	rs, err := se.ExecuteInternal(ctx, sql, args...)
+	if len(args) == 0 {
+		rs, err := se.Execute(ctx, sql)
+		if err == nil && len(rs) > 0 {
+			return rs[0], nil
+		}
+		return nil, err
+	}
+	stmtID, _, _, err := se.PrepareStmt(sql)
+	if err != nil {
+		return nil, err
+	}
+	params := make([]types.Datum, len(args))
+	for i := 0; i < len(params); i++ {
+		params[i] = types.NewDatum(args[i])
+	}
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+	if err != nil {
+		return nil, err
+	}
+	return rs, nil
+}
+
+func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
+	rs, err := exec(se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs
 }
