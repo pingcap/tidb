@@ -169,7 +169,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 		Username: "schemata_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil), IsTrue)
-	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("1"))
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
@@ -180,9 +180,9 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON mysql.* TO r_mysql_priv;")
 	tk.MustExec("GRANT r_mysql_priv TO schemata_tester;")
 	schemataTester.MustExec("set role r_mysql_priv")
-	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
+	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("3"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>", "def sys utf8mb4 utf8mb4_bin <nil>"))
 }
 
 func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {

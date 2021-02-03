@@ -1923,6 +1923,52 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 	return errors.Trace(err)
 }
 
+// BuildTableInfoFromCreateViewAST builds model.TableInfo from a CreateViewStmt statement.
+func BuildTableInfoFromCreateViewAST(s *ast.CreateViewStmt) (*model.TableInfo, error) {
+	ctx := mock.NewContext()
+	viewInfo, err := buildViewInfo(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+
+	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
+	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
+	for i, v := range schemaCols {
+		viewInfo.Cols[i] = v.AsName
+	}
+
+	var cols = make([]*table.Column, len(schemaCols))
+	if s.Cols == nil {
+		for i, v := range schemaCols {
+			cols[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v.AsName,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	} else {
+		for i, v := range s.Cols {
+			cols[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	}
+	tblInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, mysql.DefaultCharset, "")
+	if err != nil {
+		return nil, err
+	}
+	tblInfo.View = viewInfo
+
+	if err = checkTableInfoValidExtra(tblInfo); err != nil {
+		return nil, err
+	}
+	return tblInfo, nil
+}
+
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
 	viewInfo, err := buildViewInfo(ctx, s)
 	if err != nil {

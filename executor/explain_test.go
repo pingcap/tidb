@@ -45,7 +45,7 @@ func (s *testSuite1) TestExplainPrivileges(c *C) {
 	tk1.Se = se
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
-	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase", "sys"))
 
 	tk1.MustExec("use explaindatabase")
 	tk1.MustQuery("select * from v")

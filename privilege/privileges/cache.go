@@ -973,6 +973,11 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		return true
 	}
 
+	// `sys` is visible to all users.
+	if strings.EqualFold(db, "sys") {
+		return true
+	}
+
 	if record := p.matchDB(user, host, db); record != nil {
 		if record.Privileges > 0 {
 			return true
