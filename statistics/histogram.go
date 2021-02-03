@@ -1460,12 +1460,14 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
+// bucket4Merging is only used for merging partition hists to global hist.
 type bucket4Merging struct {
-	lower       *types.Datum
-	upper       *types.Datum
-	repeat      int64
-	ndv         int64
-	count       int64
+	lower  *types.Datum
+	upper  *types.Datum
+	repeat int64
+	ndv    int64
+	count  int64
+	// disjointNDV is used for merging bucket NDV, see mergeBucketNDV for more details.
 	disjointNDV int64
 }
 
@@ -1479,6 +1481,8 @@ func newBucket4Meging() *bucket4Merging {
 	}
 }
 
+// buildBucket4Merging builds bucket4Merging from Histogram
+// Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
 func (hg *Histogram) buildBucket4Merging(buckets *[]*bucket4Merging) {
 	for i := 0; i < hg.Len(); i++ {
 		b := newBucket4Meging()
@@ -1504,6 +1508,8 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 	}
 }
 
+// mergeBucketNDV merges bucket NDV from tow bucket `b` & `left`.
+// Before merging, you need to make sure that when using (upper, lower) as the comparison key, `b` is greater than `left`
 func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging) error {
 	if left.ndv == 0 {
 		return nil
@@ -1518,31 +1524,55 @@ func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *buck
 	if err != nil {
 		return err
 	}
+	// ____b____|
+	// -------left----|
+	// illegal order.
 	if upperCompare < 0 {
 		return errors.Errorf("illegal bucket order")
 	}
+	//  _____b___|
+	//  ___left__|
+	// They have the same upper.
 	if upperCompare == 0 {
 		lowerCompare, err := b.lower.CompareDatum(sc, left.lower)
 		if err != nil {
 			return err
 		}
+		//      |______b______|
+		//         |__left____|
+		// illegal order.
 		if lowerCompare < 0 {
 			return errors.Errorf("illegal bucket order")
 		}
+		// |_____b_____|
+		// |____left___|
+		// ndv = max(b.ndv, left.ndv)
 		if lowerCompare == 0 {
 			if left.ndv > b.ndv {
 				b.ndv = left.ndv
 			}
 			return nil
 		}
+		//         |___b___|
+		// |_____left______|
+		// |-ratio-|
+		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, b.ndv)
 		ratio := calcFraction4Datums(left.lower, left.upper, b.lower)
 		b.ndv = int64(ratio*float64(left.ndv) + math.Max((1-ratio)*float64(left.ndv), float64(b.ndv)))
 		return nil
 	}
+	// ______b_____|
+	// ____left__|
+	// b.upper > left.upper
 	lowerCompareUpper, err := b.lower.CompareDatum(sc, left.upper)
 	if err != nil {
 		return err
 	}
+	//                  |___b___|
+	//  |___left____|
+	// `left` and `b` do not intersect
+	// We add b.ndv in `disjointNDV`, and let `b.ndv = left.ndv` be used for subsequent merge.
+	// This is because, for the merging of many buckets, we merge them from back to front.
 	if lowerCompareUpper >= 0 {
 		b.upper = left.upper.Clone()
 		b.lower = left.lower.Clone()
@@ -1555,6 +1585,13 @@ func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *buck
 	if err != nil {
 		return err
 	}
+	//              |-upperRatio-|
+	//              |_________b_______|
+	// |_______left______________|
+	// |-lowerRatio-|
+	// ndv = lowerRatio * left.ndv
+	//		+ max((1-lowerRatio) * left.ndv, upperRatio * b.ndv)
+	//		+ (1-upperRatio) * b.ndv
 	if lowerCompare >= 0 {
 		lowerRatio := calcFraction4Datums(left.lower, left.upper, b.lower)
 		b.ndv = int64(lowerRatio*float64(left.ndv) +
@@ -1562,6 +1599,13 @@ func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *buck
 			(1-upperRatio)*float64(b.ndv))
 		return nil
 	}
+	// |------upperRatio--------|
+	// |-lowerRatio-|
+	// |______________b________________|
+	//              |___left____|
+	// ndv = lowerRatio * b.ndv
+	//		+ max(left.ndv + (upperRatio - lowerRatio) * b.ndv)
+	//		+ (1-upperRatio) * b.ndv
 	lowerRatio := calcFraction4Datums(b.lower, b.upper, left.lower)
 	b.ndv = int64(lowerRatio*float64(b.ndv) +
 		math.Max(float64(left.ndv), (upperRatio-lowerRatio)*float64(b.ndv)) +
@@ -1569,7 +1613,17 @@ func (b *bucket4Merging) mergeBucketNDV(sc *stmtctx.StatementContext, left *buck
 	return nil
 }
 
+// mergeParitionBuckets merges buckets[l...r) to one global bucket.
+// global bucket:
+//		upper = buckets[r-1].upper
+//		count = sum of buckets[l...r).count
+//		repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
+//		ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
+// Notice: lower is not calculated here.
 func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging, l int, r int) *bucket4Merging {
+	if l >= r {
+		return nil
+	}
 	res := bucket4Merging{}
 	res.upper = buckets[r-1].upper.Clone()
 	tmp := buckets[r-1].Clone()
@@ -1593,8 +1647,10 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return &res
 }
 
+// MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
+	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
@@ -1615,26 +1671,37 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	expSize := totCount / expBucketNumber
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
+
+	// init `buckets`.
 	for _, hist := range hists {
 		hist.buildBucket4Merging(&buckets)
 	}
+	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
-		// TODO: need handle error
-		res, _ := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
+		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)
+		if err != nil {
+			sortError = err
+		}
 		if res != 0 {
 			return res < 0
 		}
-		// TODO: need handle error
-		res, _ = buckets[i].lower.CompareDatum(sc, buckets[j].lower)
+		res, err = buckets[i].lower.CompareDatum(sc, buckets[j].lower)
+		if err != nil {
+			sortError = err
+		}
 		return res < 0
 	})
+	if sortError != nil {
+		return nil, sortError
+	}
 	var sum int64
 	r := len(buckets)
 	bucketCount := int64(1)
-	for i := len(buckets) - 1; i >= 1; i-- {
+	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].count
 		if sum > expSize*bucketCount {
-			for ; i > 1; i-- {
+			// if the buckets have the same upper, we merge them into the same new buckets.
+			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
 				if err == nil || res != 0 {
 					break
@@ -1649,15 +1716,21 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			bucketCount++
 		}
 	}
-	if sum > 0 {
+	if r > 0 {
 		merged := mergePartitionBuckets(sc, buckets, 0, r)
 		if merged == nil {
 			return nil, errors.Errorf("merge partition-level hist failed")
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
+	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
+	}
+
+	// Calc the bucket lower.
+	if minValue == nil {
+		return nil, errors.Errorf("merge partition-level hist failed")
 	}
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
