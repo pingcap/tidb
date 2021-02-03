@@ -22,7 +22,7 @@ import (
 )
 
 type testClusteredSuite struct{ *baseTestSuite }
-type testClusteredSerialSuite struct{ *testClusteredSuite }
+type testClusteredSerialSuite struct{ *baseTestSuite }
 
 func (s *testClusteredSuite) SetUpTest(c *C) {
 }
