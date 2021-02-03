@@ -1192,7 +1192,7 @@ func (h *Handle) RefreshVars() error {
 }
 
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) (bool, error) {
+func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
 	// We simply choose one physical id to get its stats.
 	var tbl *statistics.Table
 	for _, pid := range physicalIDs {
@@ -1202,7 +1202,7 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 		}
 	}
 	if tbl == nil || tbl.Pseudo {
-		return true, nil
+		return true
 	}
-	return statistics.CheckAnalyzeVerOnTable(tbl, version), nil
+	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }

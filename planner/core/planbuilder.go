@@ -1756,10 +1756,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if statsHandle == nil {
 		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
 	}
-	versionIsSame, err := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
-	if err != nil {
-		return nil, err
-	}
+	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
 			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
@@ -1824,10 +1821,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if statsHandle == nil {
 		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
 	}
-	versionIsSame, err := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
-	if err != nil {
-		return nil, err
-	}
+	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
 			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
