@@ -318,6 +318,7 @@ import (
 	cache                 "CACHE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
+	causal                "CAUSAL"
 	chain                 "CHAIN"
 	charsetKwd            "CHARSET"
 	checkpoint            "CHECKPOINT"
@@ -339,6 +340,7 @@ import (
 	compression           "COMPRESSION"
 	concurrency           "CONCURRENCY"
 	connection            "CONNECTION"
+	consistency           "CONSISTENCY"
 	consistent            "CONSISTENT"
 	constraints           "CONSTRAINTS"
 	context               "CONTEXT"
@@ -2613,6 +2615,12 @@ BeginTransactionStmt:
 		$$ = &ast.BeginStmt{
 			ReadOnly: true,
 			Bound:    $8.(*ast.TimestampBound),
+		}
+	}
+|	"START" "TRANSACTION" "WITH" "CAUSAL" "CONSISTENCY" "ONLY"
+	{
+		$$ = &ast.BeginStmt{
+			CausalConsistencyOnly: true,
 		}
 	}
 
@@ -5442,6 +5450,7 @@ UnReservedKeyword:
 |	"BTREE"
 |	"BYTE"
 |	"CAPTURE"
+|	"CAUSAL"
 |	"CLEANUP"
 |	"CHAIN"
 |	"CHARSET"
@@ -5451,6 +5460,7 @@ UnReservedKeyword:
 |	"COMMIT"
 |	"COMPACT"
 |	"COMPRESSED"
+|	"CONSISTENCY"
 |	"CONSISTENT"
 |	"CURRENT"
 |	"DATA"
