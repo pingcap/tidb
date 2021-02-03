@@ -40,7 +40,7 @@ type testAsyncCommitCommon struct {
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	if *WithTiKV {
-		s.store = NewTestStore(c).(*KVStore)
+		s.store = NewTestStore(c)
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
-	s.store = store.(*KVStore)
+	s.store = store
 }
 
 func (s *testAsyncCommitCommon) putAlphabets(c *C, enableAsyncCommit bool) {

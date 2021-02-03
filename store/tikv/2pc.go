@@ -90,9 +90,6 @@ type twoPhaseCommitter struct {
 	txnSize             int
 	hasNoNeedCommitKeys bool
 
-	prewriteOnlyKeys int
-	ignoredKeys      int
-
 	primaryKey  []byte
 	forUpdateTS uint64
 
