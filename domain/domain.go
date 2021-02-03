@@ -1063,7 +1063,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
 	if err != nil {
 		return err
 	}
@@ -1093,7 +1093,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
 	if err != nil {
 		return err
 	}
