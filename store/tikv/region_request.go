@@ -299,7 +299,7 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 
 		failpoint.Inject("invalidCacheAndRetry", func() {
-			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
+			// cooperate with github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff
 			if c := bo.ctx.Value("injectedBackoff"); c != nil {
 				resp, err = tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
 				failpoint.Return(resp, nil, err)
