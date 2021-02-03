@@ -300,10 +300,22 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinArithmeticMinusRealSig{base}
 	case tipb.ScalarFuncSig_MinusDecimal:
 		f = &builtinArithmeticMinusDecimalSig{base}
-	case tipb.ScalarFuncSig_MinusInt:
-		f = &builtinArithmeticMinusIntSig{base}
 	case tipb.ScalarFuncSig_MultiplyReal:
 		f = &builtinArithmeticMultiplyRealSig{base}
+	case tipb.ScalarFuncSig_MinusIntSignedSigned:
+		f = &builtinArithmeticMinusIntSignedSignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntSignedUnsigned:
+		f = &builtinArithmeticMinusIntSignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntForcedSignedUnsigned:
+		f = &builtinArithmeticMinusIntForcedSignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntUnsignedUnsigned:
+		f = &builtinArithmeticMinusIntUnsignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntForcedUnsignedUnsigned:
+		f = &builtinArithmeticMinusIntForcedUnsignedUnsignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntUnsignedSigned:
+		f = &builtinArithmeticMinusIntUnsignedSignedSig{base}
+	case tipb.ScalarFuncSig_MinusIntForcedUnsignedSigned:
+		f = &builtinArithmeticMinusIntForcedUnsignedSignedSig{base}
 	case tipb.ScalarFuncSig_MultiplyDecimal:
 		f = &builtinArithmeticMultiplyDecimalSig{base}
 	case tipb.ScalarFuncSig_MultiplyInt:
