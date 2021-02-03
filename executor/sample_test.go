@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	"flag"
+	"fmt"
+	"github.com/pingcap/tidb/util"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"

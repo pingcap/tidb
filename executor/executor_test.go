@@ -3299,10 +3299,10 @@ func (s *testSuite1) TestAlterTableComment(c *C) {
 	tk.MustExec("drop table if exists t_1")
 	tk.MustExec("create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
 	tk.MustExec("alter table `t_1` comment 'this is table comment';")
-	result := tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result := tk.MustQuery(fmt.Sprintf("select table_comment from %s.tables where table_name = 't_1';", util.InformationSchemaName))
 	result.Check(testkit.Rows("this is table comment"))
 	tk.MustExec("alter table `t_1` comment 'table t comment';")
-	result = tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
+	result = tk.MustQuery(fmt.Sprintf("select table_comment from %s.tables where table_name = 't_1';", util.InformationSchemaName))
 	result.Check(testkit.Rows("table t comment"))
 }
 
@@ -3597,7 +3597,7 @@ func (s *testSuite) TestSignedCommonHandle(c *C) {
 func (s *testSuite) TestIssue5666(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@profiling=1")
-	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+	tk.MustQuery(fmt.Sprintf("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM %s.PROFILING GROUP BY QUERY_ID;", util.InformationSchemaName)).Check(testkit.Rows("0 0"))
 }
 
 func (s *testSuite) TestIssue5341(c *C) {
@@ -5238,7 +5238,7 @@ func (s *testSuite) TestSummaryFailedUpdate(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
-	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update t set t . a = t . a - ? where t . a in ( select a from t where a < ? )'").Check(testkit.Rows("Update"))
+	tk.MustQuery(fmt.Sprintf("select stmt_type from %s.statements_summary where digest_text = 'update t set t . a = t . a - ? where t . a in ( select a from t where a < ? )'", util.InformationSchemaName)).Check(testkit.Rows("Update"))
 }
 
 func (s *testSuite) TestOOMPanicAction(c *C) {
@@ -6621,8 +6621,8 @@ func (s *testSlowQuery) TestSlowQueryWithoutSlowLog(c *C) {
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
 	}()
-	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
-	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select query from %s.slow_query", util.InformationSchemaName)).Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select query from %s.slow_query where time > '2020-09-15 12:16:39' and time < now()", util.InformationSchemaName)).Check(testkit.Rows())
 }
 
 func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {

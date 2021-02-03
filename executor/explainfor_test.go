@@ -349,11 +349,11 @@ func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
 
 func (s *testSuite) TestExplainTableStorage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'", util.InformationSchemaName))).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]")))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'", util.InformationSchemaName))).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]")))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'", util.InformationSchemaName))).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'"), util.InformationSchemaName).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]")))
 }
 
@@ -415,21 +415,21 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tiflashInstance := "192.168.1.7:3930"
 	database := "test"
 	table := "t"
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName), tiflashInstance)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName, tiflashInstance)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"]", tiflashInstance)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName), tiflashInstance)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName, tiflashInstance)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"]", tiflashInstance)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_DATABASE = '%s'", util.InformationSchemaName), database)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_DATABASE = '%s'", util.InformationSchemaName, database)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_databases:[\"%s\"]", database)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", util.InformationSchemaName), database)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", util.InformationSchemaName, database)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_databases:[\"%s\"]", database)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_TABLE = '%s'", util.InformationSchemaName), table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_TABLE = '%s'", util.InformationSchemaName, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_tables:[\"%s\"]", table)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", util.InformationSchemaName), table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", util.InformationSchemaName, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_tables:[\"%s\"]", table)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName), tiflashInstance, database, table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName, tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
-	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName), tiflashInstance, database, table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName, tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
 
