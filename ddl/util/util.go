@@ -16,6 +16,7 @@ package util
 import (
 	"context"
 	"encoding/hex"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
