@@ -182,10 +182,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKvOnly, aidx)
 	// filter label unmatched store
-	if !s.IsLabelsMatch(op.labels) {
-		return false
-	}
-	return true
+	return s.IsLabelsMatch(op.labels)
 }
 
 // init initializes region after constructed.
@@ -1670,7 +1667,6 @@ const (
 	unknown livenessState = iota
 	reachable
 	unreachable
-	offline
 )
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {

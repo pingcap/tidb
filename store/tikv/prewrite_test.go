@@ -31,7 +31,7 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 	unistore.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = store.(*KVStore)
+	s.store = store
 }
 
 func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
