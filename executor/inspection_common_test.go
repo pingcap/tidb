@@ -16,11 +16,11 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 

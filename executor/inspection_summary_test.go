@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 )

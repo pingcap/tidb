@@ -16,7 +16,6 @@ package executor_test
 import (
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/util"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
