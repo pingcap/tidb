@@ -1542,8 +1542,12 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 			paramsList = append(paramsList, col.Name.L)
 		}
 	}
-	sql := "select 1 from %n.%n where " + colsStr + " limit 1;"
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), sql, paramsList...)
+	var buf strings.Builder
+	_, err := fmt.Fprintf(&buf, "select 1 from %%n.%%n where %s limit 1", colsStr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

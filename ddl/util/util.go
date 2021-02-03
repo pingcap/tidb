@@ -16,6 +16,8 @@ package util
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -27,15 +29,14 @@ import (
 )
 
 const (
-	deleteRangesTable                  = `gc_delete_range`
-	doneDeleteRangesTable              = `gc_delete_range_done`
-	loadDeleteRangeSQL                 = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
-	recordDoneDeletedRangeSQL          = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteRangeSQL             = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteMultiRangesSQLPrefix = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (`
-	completeDeleteMultiRangesSQLSuffix = `)`
-	updateDeleteRangeSQL               = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
-	deleteDoneRecordSQL                = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
+	deleteRangesTable            = `gc_delete_range`
+	doneDeleteRangesTable        = `gc_delete_range_done`
+	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
+	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %%? AND element_id in (%s)`
+	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
+	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -128,8 +129,12 @@ func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementID
 		idList += "%?"
 		paramIDs = append(paramIDs, elementID)
 	}
-	completeDeleteMultiRangesSQL := completeDeleteMultiRangesSQLPrefix + idList + completeDeleteMultiRangesSQLSuffix
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteMultiRangesSQL, paramIDs...)
+	var buf strings.Builder
+	_, err := fmt.Fprintf(&buf, completeDeleteMultiRangesSQL, idList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
 	return errors.Trace(err)
 }
 
@@ -160,8 +165,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 }
 
 const (
-	loadGlobalVarsSQLPrefix = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in ("
-	loadGlobalVarsSQLSuffix = ")"
+	loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%s)"
 )
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
@@ -176,8 +180,12 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			nameList += "%?"
 			paramNames = append(paramNames, name)
 		}
-		loadGlobalVarsSQL := loadGlobalVarsSQLPrefix + nameList + loadGlobalVarsSQLSuffix
-		stmt, err := sctx.ParseWithParams(context.Background(), loadGlobalVarsSQL, paramNames...)
+		var buf strings.Builder
+		_, err := fmt.Fprintf(&buf, loadGlobalVarsSQL, nameList)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		stmt, err := sctx.ParseWithParams(context.Background(), buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}
