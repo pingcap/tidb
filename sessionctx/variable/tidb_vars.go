@@ -655,7 +655,7 @@ const (
 	DefTiDBEnableRateLimitAction        = true
 	DefTiDBEnableAsyncCommit            = false
 	DefTiDBEnable1PC                    = false
-	DefTiDBGuaranteeExternalConsistency = false
+	DefTiDBGuaranteeExternalConsistency = true
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
