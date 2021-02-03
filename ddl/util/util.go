@@ -177,7 +177,7 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			paramNames = append(paramNames, name)
 		}
 		loadGlobalVarsSQL := loadGlobalVarsSQLPrefix + nameList + loadGlobalVarsSQLSuffix
-		stmt, err := sctx.ParseWithParams(context.Background(), loadGlobalVarsSQL, paramNames)
+		stmt, err := sctx.ParseWithParams(context.Background(), loadGlobalVarsSQL, paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}
