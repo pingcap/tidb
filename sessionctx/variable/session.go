@@ -795,6 +795,7 @@ type SessionVars struct {
 	// Enable1PC indicates whether to enable the one-phase commit feature.
 	Enable1PC bool
 
+	// GuaranteeLinearizability indicates whether to guarantee linearizability
 	GuaranteeLinearizability bool
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
