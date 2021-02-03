@@ -65,7 +65,7 @@ var _ = Suite(&testRegionRequestToThreeStoresSuite{})
 func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -76,7 +76,7 @@ func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
 func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
 	s.bo = NewNoopBackoff(context.Background())
 	s.mvccStore = mocktikv.MustNewMVCCStore()
@@ -507,7 +507,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 		wg.Done()
 	}()
 
-	client := newRPCClient(config.Security{})
+	client := NewRPCClient(config.Security{})
 	sender := NewRegionRequestSender(s.cache, client)
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
 		Key:   []byte("key"),
@@ -524,7 +524,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCa
 
 	// Just for covering error code = codes.Canceled.
 	client1 := &cancelContextClient{
-		Client:       newRPCClient(config.Security{}),
+		Client:       NewRPCClient(config.Security{}),
 		redirectAddr: addr,
 	}
 	sender = NewRegionRequestSender(s.cache, client1)

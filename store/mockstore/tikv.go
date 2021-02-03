@@ -29,5 +29,9 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	}
 	opt.clusterInspector(cluster)
 
-	return tikv.NewTestTiKVStore(client, pdClient, opt.clientHijacker, opt.pdClientHijacker, opt.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, opt.clientHijacker, opt.pdClientHijacker, opt.txnLocalLatches)
+	if err != nil {
+		return nil, err
+	}
+	return &mockStorage{KVStore: kvstore}, nil
 }
