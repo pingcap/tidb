@@ -818,7 +818,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 				rule.component, rule.threshold, rule.configKey, condition, util.MetricSchemaName, util.InformationSchemaName)
 		} else {
 			sql = fmt.Sprintf("select t1.instance, t1.cpu, %[2]f from "+
-				"(select instance, max(value) as cpu from %[4]s.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
+				"(select instance, max(value) as cpu from %[3]s.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1 "+
 				"where t1.cpu > %[2]f;", rule.component, rule.threshold, condition, util.MetricSchemaName)
 		}
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
