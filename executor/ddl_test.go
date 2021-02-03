@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -440,7 +441,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create table t_v2(a int, b int);")
 	tk.MustExec("create view v as select * from t_v1;")
 	tk.MustExec("create or replace view v  as select * from t_v2;")
-	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
+	tk.MustQuery(fmt.Sprintf("select * from %s.views where table_name ='v';", util.InformationSchemaName)).Check(
 		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 

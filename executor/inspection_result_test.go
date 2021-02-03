@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -124,7 +125,7 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 		rows []string
 	}{
 		{
-			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version')",
+			sql: fmt.Sprintf("select rule, item, type, value, reference, severity, details from %s.inspection_result where rule in ('config', 'version')", util.InformationSchemaName),
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
 				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
@@ -132,20 +133,20 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 				"config log.slow-threshold tidb inconsistent consistent warning 192.168.3.24:4000 config value is 0\n192.168.3.25:4000 config value is 1",
 				"config raftstore.sync-log tikv false true warning sync-log should be true to avoid recover region when the machine breaks down",
 				"config transparent_hugepage_enabled tikv [always] madvise never always madvise [never] warning Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
-				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
-				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
-				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				fmt.Sprintf("version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from %s.cluster_info where type='pd'", util.InformationSchemaName),
+				fmt.Sprintf("version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from %s.cluster_info where type='tidb'", util.InformationSchemaName),
+				fmt.Sprintf("version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from %s.cluster_info where type='tikv'", util.InformationSchemaName),
 			},
 		},
 		{
-			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'",
+			sql: fmt.Sprintf("select rule, item, type, value, reference, severity, details from %s.inspection_result where rule in ('config', 'version') and item in ('coprocessor.high', 'git_hash') and type='tikv'", util.InformationSchemaName),
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
-				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
+				fmt.Sprintf("version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from %s.cluster_info where type='tikv'", util.InformationSchemaName),
 			},
 		},
 		{
-			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='config'",
+			sql: fmt.Sprintf("select rule, item, type, value, reference, severity, details from %s.inspection_result where rule='config'", util.InformationSchemaName),
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
 				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
@@ -156,10 +157,10 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			},
 		},
 		{
-			sql: "select rule, item, type, value, reference, severity, details from information_schema.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')",
+			sql: fmt.Sprintf("select rule, item, type, value, reference, severity, details from %s.inspection_result where rule='version' and item='git_hash' and type in ('pd', 'tidb')", util.InformationSchemaName),
 			rows: []string{
-				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
-				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
+				fmt.Sprintf("version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from %s.cluster_info where type='pd'", util.InformationSchemaName),
+				fmt.Sprintf("version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from %s.cluster_info where type='tidb'", util.InformationSchemaName),
 			},
 		},
 	}
@@ -288,7 +289,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf("select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference, details from %s.inspection_result where rule='threshold-check' order by item", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -325,7 +326,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection(c *C) {
 	}
 
 	ctx = context.WithValue(ctx, "__mockMetricsTableData", mockData)
-	rs, err = tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err = tk.Se.Execute(ctx, fmt.Sprintf("select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from %s.inspection_result where rule='threshold-check' order by item", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -392,7 +393,7 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection2(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from information_schema.inspection_result where rule='threshold-check' order by item")
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf("select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance, status_address, value, reference, details from %s.inspection_result where rule='threshold-check' order by item", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -452,10 +453,10 @@ func (s *inspectionResultSuite) TestThresholdCheckInspection3(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
-		item, type, instance,status_address, value, reference, details from information_schema.inspection_result
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf(`select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+		item, type, instance,status_address, value, reference, details from %s.inspection_result
 		where rule='threshold-check' and item in ('leader-score-balance','region-score-balance','region-count','region-health','store-available-balance','leader-drop')
-		order by item`)
+		order by item`, util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -558,7 +559,7 @@ func (s *inspectionResultSuite) TestCriticalErrorInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from information_schema.inspection_result where rule='critical-error'")
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf("select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, instance,status_address, value, details from %s.inspection_result where rule='critical-error'", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -646,9 +647,9 @@ func (s *inspectionResultSuite) TestNodeLoadInspection(c *C) {
 	ctx := s.setupForInspection(c, mockData, nil)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, `select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
-		item, type, instance, value, reference, details from information_schema.inspection_result
-		where rule='node-load' order by item, value`)
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf(`select /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */
+		item, type, instance, value, reference, details from %s.inspection_result
+		where rule='node-load' order by item, value`, util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
@@ -693,7 +694,7 @@ func (s *inspectionResultSuite) TestConfigCheckOfStorageBlockCacheSize(c *C) {
 	ctx := s.setupForInspection(c, mockData, configurations)
 	defer s.tearDownForInspection(c)
 
-	rs, err := tk.Se.Execute(ctx, "select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from information_schema.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value")
+	rs, err := tk.Se.Execute(ctx, fmt.Sprintf("select  /*+ time_range('2020-02-14 04:20:00','2020-02-14 05:23:00') */ * from %s.inspection_result where rule='config' and item='storage.block-cache.capacity' order by value", util.InformationSchemaName))
 	c.Assert(err, IsNil)
 	result := tk.ResultSetToResultWithCtx(ctx, rs[0], Commentf("execute inspect SQL failed"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0), Commentf("unexpected warnings: %+v", tk.Se.GetSessionVars().StmtCtx.GetWarnings()))

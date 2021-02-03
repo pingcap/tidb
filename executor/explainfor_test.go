@@ -154,54 +154,54 @@ func (s *testSerialSuite) TestIssue11124(c *C) {
 
 func (s *testSuite) TestExplainMemTablePredicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ", util.MetricSchemaName)).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
-	tk.MustQuery("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ", util.MetricSchemaName)).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:up PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
-	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'", util.InformationSchemaName)).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
-	tk.MustQuery("desc select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
-	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
-	tk.MustQuery("desc select * from information_schema.slow_query").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.slow_query", util.InformationSchemaName)).Check(testkit.Rows(
 		"MemTableScan_4 10000.00 root table:SLOW_QUERY only search in the current 'tidb-slow.log' file"))
-	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'", util.InformationSchemaName)).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
 	tk.MustExec("set @@time_zone = '+00:00';")
-	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'", util.InformationSchemaName)).Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
 }
 
 func (s *testSuite) TestExplainClusterTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type in ('tikv', 'tidb')")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.cluster_config where type in ('tikv', 'tidb')", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb","tikv"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where instance='192.168.1.7:2379'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.cluster_config where instance='192.168.1.7:2379'", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG instances:["192.168.1.7:2379"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.cluster_config where type='tidb' and instance='192.168.1.7:2379'", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb"], instances:["192.168.1.7:2379"]`))
 }
 
 func (s *testSuite) TestInspectionResultTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("desc select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_result where rule = 'ddl' and rule = 'config'", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT skip_inspection:true`))
-	tk.MustQuery("desc select * from information_schema.inspection_result where rule in ('ddl', 'config')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_result where rule in ('ddl', 'config')", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:[]`))
-	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_result where item in ('ddl.lease', 'raftstore.threadpool')", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:[], items:["ddl.lease","raftstore.threadpool"]`))
-	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config')", util.InformationSchemaName)).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]`))
 }
 
 func (s *testSuite) TestInspectionRuleTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.inspection_rules where type='inspection'", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.inspection_rules where type='inspection' or type='summary'", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection","summary"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf(fmt.Sprintf("desc select * from %s.inspection_rules where type='inspection' and type='summary'", util.InformationSchemaName))).Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
 
@@ -349,62 +349,62 @@ func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
 
 func (s *testSuite) TestExplainTableStorage(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]")))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]")))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'")).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'", util.InformationSchemaName)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]")))
 }
 
 func (s *testSuite) TestInspectionSummaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule='ddl'", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  eq(Column#1, "ddl")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where 'ddl'=rule or rule='config'", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  or(eq("ddl", Column#1), eq(Column#1, "config"))`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl","slow_query"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule in ('ddl', 'slow_query')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name1","metric_name2"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name3"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90)").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90)", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]`,
 	))
-	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3')").Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3')", util.InformationSchemaName)).Check(testkit.Rows(
 		`Selection_5 8000.00 root  in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
 	))
@@ -415,21 +415,21 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tiflashInstance := "192.168.1.7:3930"
 	database := "test"
 	table := "t"
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName, tiflashInstance)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"]", tiflashInstance)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", util.InformationSchemaName, tiflashInstance)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"]", tiflashInstance)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_DATABASE = '%s'", util.InformationSchemaName, database)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_databases:[\"%s\"]", database)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", util.InformationSchemaName, database)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_databases:[\"%s\"]", database)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIDB_TABLE = '%s'", util.InformationSchemaName, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_tables:[\"%s\"]", table)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", util.InformationSchemaName, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_tables:[\"%s\"]", table)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName, tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+	tk.MustQuery(fmt.Sprintf("desc select * from %s.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", util.InformationSchemaName, tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
 

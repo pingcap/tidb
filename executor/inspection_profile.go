@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -205,10 +206,10 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	var query string
 	// 1. Get total count value.
 	if len(n.label) == 0 {
-		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_count` %v", n.table, queryCondition)
+		query = fmt.Sprintf("select sum(value), '' from `%s`.`%v_total_count` %v", util.MetricSchemaName, n.table, queryCondition)
 	} else {
-		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_count` %[2]s group by `%[3]s` having sum(value) > 0",
-			n.table, queryCondition, strings.Join(n.label, "`,`"))
+		query = fmt.Sprintf("select sum(value), `%[3]s` from `%s`.`%[1]s_total_count` %[2]s group by `%[3]s` having sum(value) > 0",
+			n.table, util.MetricSchemaName, queryCondition, strings.Join(n.label, "`,`"))
 	}
 
 	totalCount := 0.0
@@ -227,10 +228,10 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 
 	// 2. Get total sum time.
 	if len(n.label) == 0 {
-		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_time` %v", n.table, queryCondition)
+		query = fmt.Sprintf("select sum(value), '' from `%s`.`%v_total_time` %v", util.MetricSchemaName, n.table, queryCondition)
 	} else {
-		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_time` %[2]s group by `%[3]s` having sum(value) > 0",
-			n.table, queryCondition, strings.Join(n.label, "`,`"))
+		query = fmt.Sprintf("select sum(value), `%[3]s` from `%s`.`%[1]s_total_time` %[2]s group by `%[3]s` having sum(value) > 0",
+			n.table, util.MetricSchemaName, queryCondition, strings.Join(n.label, "`,`"))
 	}
 	totalSum := 0.0
 	err = n.queryRowsByLabel(pb, query, func(label string, v float64) {
@@ -260,10 +261,10 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	for _, quantile := range quantiles {
 		condition := queryCondition + " and " + "quantile=" + strconv.FormatFloat(quantile, 'f', -1, 64)
 		if len(n.label) == 0 {
-			query = fmt.Sprintf("select avg(value), '' from `metrics_schema`.`%v_duration` %v", n.table, condition)
+			query = fmt.Sprintf("select avg(value), '' from `%s`.`%v_duration` %v", util.MetricSchemaName, n.table, condition)
 		} else {
-			query = fmt.Sprintf("select avg(value), `%[3]s` from `metrics_schema`.`%[1]s_duration` %[2]s group by `%[3]s` having sum(value) > 0",
-				n.table, condition, strings.Join(n.label, "`,`"))
+			query = fmt.Sprintf("select avg(value), `%[3]s` from `%s`.`%[1]s_duration` %[2]s group by `%[3]s` having sum(value) > 0",
+				n.table, util.MetricSchemaName, condition, strings.Join(n.label, "`,`"))
 		}
 
 		totalValue := 0.0
