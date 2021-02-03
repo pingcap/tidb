@@ -47,34 +47,83 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// TiKVDriver implements engine TiKV.
-type TiKVDriver struct {
+// DriverOption is a function that changes some config of Driver
+type DriverOption func(*TiKVDriver)
+
+// WithSecurity changes the config.Security used by tikv driver.
+func WithSecurity(s config.Security) DriverOption {
+	return func(c *TiKVDriver) {
+		c.security = s
+	}
 }
 
-// Open opens or creates an TiKV storage with given path.
+// WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
+func WithTiKVClientConfig(client config.TiKVClient) DriverOption {
+	return func(c *TiKVDriver) {
+		c.tikvConfig = client
+	}
+}
+
+// WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
+func WithTxnLocalLatches(t config.TxnLocalLatches) DriverOption {
+	return func(c *TiKVDriver) {
+		c.txnLocalLatches = t
+	}
+}
+
+// WithPDClientConfig changes the config.PDClient used by tikv driver.
+func WithPDClientConfig(client config.PDClient) DriverOption {
+	return func(c *TiKVDriver) {
+		c.pdConfig = client
+	}
+}
+
+// TiKVDriver implements engine TiKV.
+type TiKVDriver struct {
+	pdConfig        config.PDClient
+	security        config.Security
+	tikvConfig      config.TiKVClient
+	txnLocalLatches config.TxnLocalLatches
+}
+
+// Open opens or creates an TiKV storage with given path using global config.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
 func (d TiKVDriver) Open(path string) (kv.Storage, error) {
+	return d.OpenWithOptions(path)
+}
+
+func (d *TiKVDriver) setDefaultAndOptions(options ...DriverOption) {
+	tidbCfg := config.GetGlobalConfig()
+	d.pdConfig = tidbCfg.PDClient
+	d.security = tidbCfg.Security
+	d.tikvConfig = tidbCfg.TiKVClient
+	d.txnLocalLatches = tidbCfg.TxnLocalLatches
+	for _, f := range options {
+		f(d)
+	}
+}
+
+// OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
+// unspecified options will be set to global config
+func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.Storage, error) {
 	mc.Lock()
 	defer mc.Unlock()
-	security := config.GetGlobalConfig().Security
-	pdConfig := config.GetGlobalConfig().PDClient
-	tikvConfig := config.GetGlobalConfig().TiKVClient
-	txnLocalLatches := config.GetGlobalConfig().TxnLocalLatches
+	d.setDefaultAndOptions(options...)
 	etcdAddrs, disableGC, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   security.ClusterSSLCA,
-		CertPath: security.ClusterSSLCert,
-		KeyPath:  security.ClusterSSLKey,
+		CAPath:   d.security.ClusterSSLCA,
+		CertPath: d.security.ClusterSSLCert,
+		KeyPath:  d.security.ClusterSSLKey,
 	}, pd.WithGRPCDialOptions(
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
-	), pd.WithCustomTimeoutOption(time.Duration(pdConfig.PDServerTimeout)*time.Second))
+	), pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second))
 	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	if err != nil {
@@ -87,7 +136,7 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 		return store, nil
 	}
 
-	tlsConfig, err := security.ToTLSConfig()
+	tlsConfig, err := d.security.ToTLSConfig()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -98,12 +147,12 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 	}
 
 	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := tikv.NewKVStore(uuid, &tikv.CodecPDClient{Client: pdCli}, spkv, tikv.NewRPCClient(security), !disableGC, coprCacheConfig)
+	s, err := tikv.NewKVStore(uuid, &tikv.CodecPDClient{Client: pdCli}, spkv, tikv.NewRPCClient(d.security), !disableGC, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if txnLocalLatches.Enabled {
-		s.EnableTxnLocalLatches(txnLocalLatches.Capacity)
+	if d.txnLocalLatches.Enabled {
+		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
 
 	store := &tikvStore{
