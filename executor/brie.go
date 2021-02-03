@@ -174,7 +174,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 	bq.tasks.Range(func(key, value interface{}) bool {
 		item := value.(*brieQueueItem)
-		if d := item.info.finishTime.Sub(sc, &currTime); d.Compare(outdatedDuration) > 0 {
+		if d := currTime.Sub(sc, &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
 		}
 		return true
@@ -384,6 +384,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.AppendUint64(2, e.info.backupTS)
 	req.AppendTime(3, e.info.queueTime)
 	req.AppendTime(4, e.info.execTime)
+	e.info = nil
 	return nil
 }
 
