@@ -700,7 +700,7 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
-	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
+	if ebd, ok := do.store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = ebd.EtcdAddrs(); err != nil {
