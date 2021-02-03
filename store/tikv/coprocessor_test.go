@@ -33,7 +33,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -150,7 +150,7 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -203,7 +203,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// <-  0  -> <- 1 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 	bo := NewBackofferWithVars(context.Background(), 3000, nil)
@@ -260,20 +260,6 @@ func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...st
 		r := ranges[i]
 		c.Assert(string(r.StartKey), Equals, keys[2*i])
 		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
-	}
-}
-
-func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
-	c.Assert(copRanges.Len(), Equals, len(ranges))
-	for i := range ranges {
-		c.Assert(copRanges.At(i), DeepEquals, ranges[i])
-	}
-	if slice {
-		for i := 0; i <= copRanges.Len(); i++ {
-			for j := i; j <= copRanges.Len(); j++ {
-				s.checkEqual(c, copRanges.Slice(i, j), ranges[i:j], false)
-			}
-		}
 	}
 }
 

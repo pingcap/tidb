@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -122,7 +123,7 @@ func clearStorage(store kv.Storage) error {
 	return txn.Commit(context.Background())
 }
 
-func clearETCD(ebd tikv.EtcdBackend) error {
+func clearETCD(ebd kv.EtcdBackend) error {
 	endpoints, err := ebd.EtcdAddrs()
 	if err != nil {
 		return err
@@ -178,7 +179,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
-		var d tikv.Driver
+		var d store.TiKVDriver
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
@@ -186,7 +187,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
-		err = clearETCD(store.(tikv.EtcdBackend))
+		err = clearETCD(store.(kv.EtcdBackend))
 		c.Assert(err, IsNil)
 		session.ResetStoreForWithTiKVTest(store)
 		s.store = store
