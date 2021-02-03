@@ -17,11 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -55,13 +56,11 @@ const (
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
 	// list of privileges from mysql.Priv2UserCol
-	sqlLoadUserTable = `SELECT HIGH_PRIORITY Host,User,authentication_string,
-	Create_priv, Select_priv, Insert_priv, Update_priv, Delete_priv, Show_db_priv, Super_priv,
-	Create_user_priv,Create_tablespace_priv,Trigger_priv,Drop_priv,Process_priv,Grant_priv,
-	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
-	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
-	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked FROM mysql.user`
+	sqlLoadUserTable = `SELECT HIGH_PRIORITY Host,User,Password,Create_priv,Select_priv,Insert_priv,Update_priv,Delete_priv,
+	Show_db_priv,Super_priv,Create_user_priv,Create_tablespace_priv,Trigger_priv,Drop_priv,Process_priv,Grant_priv,References_priv,
+	Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,Create_role_priv,Drop_role_priv,Create_tmp_table_priv,
+	Lock_tables_priv,Create_routine_priv,Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,
+	Repl_client_priv,Repl_slave_priv account_locked FROM mysql.user`
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
@@ -348,16 +347,7 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-<<<<<<< HEAD
-	userPrivCols := make([]string, 0, len(mysql.Priv2UserCol))
-	for _, v := range mysql.Priv2UserCol {
-		userPrivCols = append(userPrivCols, v)
-	}
-	query := fmt.Sprintf("select HIGH_PRIORITY Host,User,Password,%s,account_locked from mysql.user;", strings.Join(userPrivCols, ", "))
-	err := p.loadTable(ctx, query, p.decodeUserTableRow)
-=======
 	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow)
->>>>>>> 26086b297... privilege: remove any string concat (#22523)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -459,46 +449,12 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-<<<<<<< HEAD
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
-=======
-	err := p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
-	if err != nil {
-		return err
-	}
-	p.buildDBMap()
-	return nil
-}
-
-func (p *MySQLPrivilege) buildDBMap() {
-	dbMap := make(map[string][]dbRecord, len(p.DB))
-	for _, record := range p.DB {
-		dbMap[record.User] = append(dbMap[record.User], record)
-	}
-	p.DBMap = dbMap
->>>>>>> 26086b297... privilege: remove any string concat (#22523)
+	return p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sessionctx.Context) error {
-<<<<<<< HEAD
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv from mysql.tables_priv", p.decodeTablesPrivTableRow)
-=======
-	err := p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
-	if err != nil {
-		return err
-	}
-	p.buildTablesPrivMap()
-	return nil
-}
-
-func (p *MySQLPrivilege) buildTablesPrivMap() {
-	tablesPrivMap := make(map[string][]tablesPrivRecord, len(p.TablesPriv))
-	for _, record := range p.TablesPriv {
-		tablesPrivMap[record.User] = append(tablesPrivMap[record.User], record)
-	}
-	p.TablesPrivMap = tablesPrivMap
->>>>>>> 26086b297... privilege: remove any string concat (#22523)
+	return p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
