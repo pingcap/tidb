@@ -91,7 +91,7 @@ func (s *testPointGetSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
-	c.Check(result.Close(), IsNil)
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
@@ -507,7 +507,7 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, re)
 		c.Assert(err, NotNil)
 		c.Assert(expectErr.Equal(err), IsTrue)
-		c.Check(re.Close(), IsNil)
+		c.Assert(re.Close(), IsNil)
 	}
 	// Test point get.
 	checkSelectResultError("select * from t where a='1'", tikv.ErrGCTooEarly)

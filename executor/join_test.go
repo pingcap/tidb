@@ -1109,7 +1109,7 @@ func (s *testSuiteJoin1) TestJoinLeak(c *C) {
 	err = result.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
-	c.Check(result.Close(), IsNil)
+	c.Assert(result.Close(), IsNil)
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
@@ -2293,7 +2293,7 @@ func (s *testSuite9) TestIssue18572_1(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
-	c.Check(rs.Close(), IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestIssue18572_2(c *C) {
@@ -2312,7 +2312,7 @@ func (s *testSuite9) TestIssue18572_2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
-	c.Check(rs.Close(), IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestIssue18572_3(c *C) {
@@ -2331,7 +2331,7 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
-	c.Check(rs.Close(), IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
@@ -2557,7 +2557,7 @@ func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(err.Error(), Matches, "testIssue20779")
-	c.Check(rs.Close(), IsNil)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
