@@ -1943,7 +1943,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	topNSize := new(int32)
 	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
 	statsVersion := new(int32)
-	*statsVersion = int32(b.ctx.GetSessionVars().AnalyzeVersion)
+	*statsVersion = int32(task.StatsVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
@@ -1963,7 +1963,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 
 func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -1988,9 +1988,14 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		}
 		oldHist = idx.TruncateHistogram(bktID)
 	}
+	var oldTopN *statistics.TopN
+	if analyzeTask.idxExec.analyzePB.IdxReq.GetVersion() == statistics.Version2 {
+		oldTopN = idx.TopN.Copy()
+		oldTopN.RemoveVal(oldHist.Bounds.GetRow(len(oldHist.Buckets)*2 - 1).GetBytes(0))
+	}
 	oldHist = oldHist.RemoveUpperBound()
 	analyzeTask.taskType = idxIncrementalTask
-	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch}
+	analyzeTask.idxIncrementalExec = &analyzeIndexIncrementalExec{AnalyzeIndexExec: *analyzeTask.idxExec, oldHist: oldHist, oldCMS: idx.CMSketch, oldTopN: oldTopN}
 	analyzeTask.job = &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "analyze incremental index " + task.IndexInfo.Name.O}
 	return analyzeTask
 }
@@ -2023,7 +2028,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			TimeZoneOffset: offset,
 		},
 		opts:       opts,
-		analyzeVer: b.ctx.GetSessionVars().AnalyzeVersion,
+		analyzeVer: task.StatsVersion,
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
@@ -2045,7 +2050,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -2185,11 +2190,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastIndex(e, task, v.Opts)
 			} else {
-				if task.TableID.StoreAsCollectID() && len(task.TableID.CollectIDs) > 1 && !task.IndexInfo.Global && !task.IndexInfo.Unique {
-					b.buildAnalyzeFastIndex(e, task, v.Opts)
-				} else {
-					e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
-				}
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {

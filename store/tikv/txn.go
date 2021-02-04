@@ -70,15 +70,7 @@ type tikvTxn struct {
 	committer *twoPhaseCommitter
 	lockedCnt int
 
-	// For data consistency check.
-	// assertions[:confirmed] is the assertion of current transaction.
-	// assertions[confirmed:len(assertions)] is the assertions of current statement.
-	// StmtCommit/StmtRollback may change the confirmed position.
-	assertions []assertionPair
-	confirmed  int
-
 	valid bool
-	dirty bool
 
 	// txnInfoSchema is the infoSchema fetched at startTS.
 	txnInfoSchema SchemaVer
@@ -121,15 +113,6 @@ func newTiKVTxnWithExactStaleness(store *KVStore, txnScope string, prevSec uint6
 		return nil, errors.Trace(err)
 	}
 	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
-}
-
-type assertionPair struct {
-	key       kv.Key
-	assertion kv.AssertionType
-}
-
-func (a assertionPair) String() string {
-	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
 // SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
@@ -204,6 +187,10 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	case kv.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
+}
+
+func (txn *tikvTxn) GetOption(opt kv.Option) interface{} {
+	return txn.us.GetOption(opt)
 }
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
