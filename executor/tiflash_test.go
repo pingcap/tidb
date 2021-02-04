@@ -15,9 +15,9 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
