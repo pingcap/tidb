@@ -24,86 +24,84 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// newDeque inits a new Deque
-func newDeque(isMax bool, cmpFunc func(i, j interface{}) int) *Deque {
-	return &Deque{[]Pair{}, isMax, cmpFunc}
+// newDeque inits a new deque
+func newDeque(isMax bool, cmpFunc func(i, j interface{}) int) *deque {
+	return &deque{[]pair{}, isMax, cmpFunc}
 }
 
-// Deque is an array based double end queue
-type Deque struct {
-	Items   []Pair
+// deque is an array based double end queue
+type deque struct {
+	Items   []pair
 	IsMax   bool
 	cmpFunc func(i, j interface{}) int
 }
 
-// PushFront pushes idx and item(wrapped in Pair) to the front of Deque
-func (d *Deque) PushFront(idx uint64, item interface{}) {
-	d.Items = append([]Pair{{item, idx}}, d.Items...)
+// PushFront pushes idx and item(wrapped in pair) to the front of deque
+func (d *deque) PushFront(idx uint64, item interface{}) {
+	d.Items = append([]pair{{item, idx}}, d.Items...)
 }
 
-// PushBack pushes idx and item(wrapped in Pair) to the end of Deque
-func (d *Deque) PushBack(idx uint64, item interface{}) {
-	d.Items = append(d.Items, Pair{item, idx})
+// PushBack pushes idx and item(wrapped in pair) to the end of deque
+func (d *deque) PushBack(idx uint64, item interface{}) {
+	d.Items = append(d.Items, pair{item, idx})
 }
 
-// PopFront pops an item from the front of Deque
-func (d *Deque) PopFront() (interface{}, error) {
+// PopFront pops an item from the front of deque
+func (d *deque) PopFront() (interface{}, error) {
 	if len(d.Items) <= 0 {
 		return nil, errors.New("Pop front when deque is empty")
 	}
-	defer func() {
-		d.Items = d.Items[1:]
-	}()
-	return d.Items[0], nil
+	res := d.Items[0]
+	d.Items = d.Items[1:]
+	return res, nil
 }
 
-// PopBack pops an item from the end of Deque
-func (d *Deque) PopBack() (interface{}, error) {
+// PopBack pops an item from the end of deque
+func (d *deque) PopBack() (interface{}, error) {
 	i := len(d.Items) - 1
 	if i < 0 {
 		return nil, errors.New("Pop back when deque is empty")
 	}
-	defer func() {
-		d.Items = d.Items[:i]
-	}()
-	return d.Items[i], nil
+	res := d.Items[i]
+	d.Items = d.Items[:i]
+	return res, nil
 }
 
-// Back returns the element at the end of Deque
-func (d *Deque) Back() (Pair, error) {
+// Back returns the element at the end of deque
+func (d *deque) Back() (pair, error) {
 	i := len(d.Items) - 1
 	if i < 0 {
-		return Pair{}, errors.New("Cannot get back when deque is empty")
+		return pair{}, errors.New("Cannot get back when deque is empty")
 	}
 	return d.Items[i], nil
 }
 
-// Front returns the element at the front of Deque
-func (d *Deque) Front() (Pair, error) {
+// Front returns the element at the front of deque
+func (d *deque) Front() (pair, error) {
 	if len(d.Items) <= 0 {
-		return Pair{}, errors.New("Cannot get back when deque is empty")
+		return pair{}, errors.New("Cannot get back when deque is empty")
 	}
 	return d.Items[0], nil
 }
 
-// IsEmpty returns if Deque is empty
-func (d *Deque) IsEmpty() bool {
+// IsEmpty returns if deque is empty
+func (d *deque) IsEmpty() bool {
 	return len(d.Items) == 0
 }
 
-// Pair pairs items and their indices in deque
-type Pair struct {
+// pair pairs items and their indices in deque
+type pair struct {
 	item interface{}
 	idx  uint64
 }
 
 // Reset deque
-func (d *Deque) Reset() {
+func (d *deque) Reset() {
 	d.Items = d.Items[:0]
 }
 
 // Dequeue pops out element from the front, if element's index is out of boundary, i.e. the leftmost element index
-func (d *Deque) Dequeue(boundary uint64) error {
+func (d *deque) Dequeue(boundary uint64) error {
 	for !d.IsEmpty() {
 		frontEle, err := d.Front()
 		if err != nil {
@@ -122,7 +120,7 @@ func (d *Deque) Dequeue(boundary uint64) error {
 }
 
 // Enqueue put item at the back of queue, while popping any element that is lesser element in queue
-func (d *Deque) Enqueue(idx uint64, item interface{}) error {
+func (d *deque) Enqueue(idx uint64, item interface{}) error {
 	for !d.IsEmpty() {
 		pair, err := d.Back()
 		if err != nil {
@@ -176,49 +174,49 @@ type partialResult4MaxMinInt struct {
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinUint struct {
 	val    uint64
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinFloat32 struct {
 	val    float32
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinFloat64 struct {
 	val    float64
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4Time struct {
 	val    types.Time
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinDuration struct {
 	val    types.Duration
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinString struct {
 	val    string
 	isNull bool
-	deque  *Deque
+	deque  *deque
 }
 
 type partialResult4MaxMinJSON struct {
@@ -323,7 +321,7 @@ func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if isNull {
 			continue
 		}
-		// Deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
+		// deque needs the absolute position of each element, here i only denotes the relative position in rowsInGroup.
 		// To get the absolute position, we need to add offset of e.start, which represents the absolute index of start
 		// of window.
 		err = p.deque.Enqueue(uint64(i)+e.start, input)
