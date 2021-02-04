@@ -363,7 +363,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	req := r.NewChunk()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Check(r.Close(), IsNil)
 	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
@@ -374,7 +373,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	req = r.NewChunk()
 	err = r.Next(ctx, req)
-	c.Check(r.Close(), IsNil)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 6)
@@ -404,7 +402,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	req = r.NewChunk()
 	err = r.Next(ctx, req)
-	c.Check(r.Close(), IsNil)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 11)
@@ -421,7 +418,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	req = r.NewChunk()
 	err = r.Next(ctx, req)
-	c.Check(r.Close(), IsNil)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 11)
@@ -447,7 +443,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test, admin_test1")
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
-	c.Check(r.Close(), IsNil)
 	// error table name
 	err = tk.ExecToErr("admin check table admin_test_error")
 	c.Assert(err, NotNil)
@@ -480,7 +475,6 @@ func (s *testSuite3) TestAdmin(c *C) {
 	r, err = tk.Exec("admin checksum table checksum_with_index, checksum_without_index")
 	c.Assert(err, IsNil)
 	res := tk.ResultSetToResult(r, Commentf("admin checksum table"))
-	c.Check(r.Close(), IsNil)
 	// Mocktikv returns 1 for every table/index scan, then we will xor the checksums of a table.
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
@@ -4260,7 +4254,6 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	r, err := tk.Exec(`do 1 in (select * from t)`)
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
-	c.Check(r.Close(), IsNil)
 }
 
 func (s *testSuite3) TestSubqueryTableAlias(c *C) {
