@@ -79,17 +79,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
-	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
-	// engine in not read only stmt.
-	_, isDDL := node.(ast.DDLNode)
-	_, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]
-	if isolationReadContainTiFlash && !IsReadOnly(node, sessVars) && !isDDL {
-		delete(sessVars.IsolationReadEngines, kv.TiFlash)
-		defer func() {
-			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		}()
-	}
-
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
