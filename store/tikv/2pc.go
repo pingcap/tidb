@@ -1000,11 +1000,8 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 
 func (c *twoPhaseCommitter) needLinearizability() bool {
 	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
-	if GuaranteeLinearizabilityOption == nil {
-		// by default, guarantee
-		return true
-	}
-	return GuaranteeLinearizabilityOption.(bool)
+	// by default, guarantee
+	return GuaranteeLinearizabilityOption == nil || GuaranteeLinearizabilityOption.(bool)
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
