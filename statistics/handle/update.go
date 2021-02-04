@@ -557,9 +557,13 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // it takes 10 minutes for a feedback to take effect. However, we can use the
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
+	logutil.BgLogger().Error("=============UpdateStatsByLocalFeedback")
 	h.sweepList()
+OUTER:
 	for _, fbs := range h.feedback.Feedbacks {
+		logutil.BgLogger().Error("=============for each h.feedback.Feedbacks")
 		for _, fb := range fbs {
+			logutil.BgLogger().Error("=============for each QueryFeedback")
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
 			h.mu.Unlock()
@@ -575,9 +579,13 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 				if idx.StatsVer >= statistics.Version2 {
-					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					logutil.BgLogger().Warn("[stats] Feedback is not used because statistics on this table is version 2, which is incompatible with feedback. "+
+						"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+						zap.Int64("table_id", fb.PhysicalID), zap.Int64("hist_id", fb.Hist.ID), zap.Int64("is_index", 1))
+					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
@@ -588,6 +596,14 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				col, ok := tblStats.Columns[fb.Hist.ID]
 				if !ok || col.Histogram.Len() == 0 {
 					continue
+				}
+				if col.StatsVer >= statistics.Version2 {
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					logutil.BgLogger().Warn("[stats] Feedback is not used because statistics on this table is version 2, which is incompatible with feedback. "+
+						"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+						zap.Int64("table_id", fb.PhysicalID), zap.Int64("hist_id", fb.Hist.ID), zap.Int64("is_index", 0))
+					continue OUTER
 				}
 				newCol := *col
 				// only use the range query to update primary key
@@ -725,6 +741,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
+		if statsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && idx.Histogram.Len() > 0 {
 			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
@@ -734,6 +756,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
+		if ok && col.StatsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
@@ -741,13 +769,13 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	// The column or index has been deleted.
 	if hist == nil {
-		return nil
+		return err
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
 		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
-			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
