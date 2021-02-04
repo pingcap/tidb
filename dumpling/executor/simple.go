@@ -22,6 +22,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -629,6 +630,27 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 	if err != nil {
 		return err
 	}
+	dom := domain.GetDomain(e.ctx)
+	m, err := dom.GetSnapshotMeta(e.ctx.GetSessionVars().TxnCtx.StartTS)
+	if err != nil {
+		return err
+	}
+	staleVer, err := m.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("mockStalenessTxnSchemaVer", func(val failpoint.Value) {
+		if val.(bool) {
+			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion - 1
+		} else {
+			staleVer = e.ctx.GetSessionVars().TxnCtx.SchemaVersion
+		}
+	})
+	// TODO: currently we directly check the schema version. In future, we can cache the stale infoschema instead.
+	if e.ctx.GetSessionVars().TxnCtx.SchemaVersion > staleVer {
+		return errors.New("schema version changed after the staleness startTS")
+	}
+
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
