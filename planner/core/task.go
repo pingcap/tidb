@@ -1233,7 +1233,7 @@ func BuildFinalModeAggregation(
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
 					// For MPP Task, the final count() is changed to sum().
-					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count()),
+					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count() end),
 					// so we do not process it here.
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
@@ -1296,9 +1296,9 @@ func BuildFinalModeAggregation(
 	return
 }
 
-// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg)), in detail:
+// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
 // 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
-// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg)) and reuse the original schema of the final aggregation.
+// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
 // If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
