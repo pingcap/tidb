@@ -939,7 +939,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}
 
 	span := opentracing.StartSpan("server.dispatch")
-	ctx = opentracing.ContextWithSpan(ctx, span)
+	if config.GetGlobalConfig().OpenTracing.Enable {
+		ctx = opentracing.ContextWithSpan(ctx, span)
+	}
 
 	var cancelFunc context.CancelFunc
 	ctx, cancelFunc = context.WithCancel(ctx)

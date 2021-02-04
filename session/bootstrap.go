@@ -432,7 +432,7 @@ const (
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
-	version51 = 51
+	// version51 will be redone in version63 so it's skipped here.
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
@@ -446,12 +446,16 @@ const (
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
-	version58 = 58
+	// version58 will be redone in version64 so it's skipped here.
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
+	version60 = 60
+	// version61 is redone upgradeToVer58 after upgradeToVer61, this is to preserve the order of the columns in mysql.user
+	version61 = 61
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version61
 )
 
 var (
@@ -506,15 +510,17 @@ var (
 		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
 		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
-		upgradeToVer51,
+		// We will redo upgradeToVer51 in upgradeToVer63, it is skipped here.
 		upgradeToVer52,
 		upgradeToVer53,
 		upgradeToVer54,
 		upgradeToVer55,
 		upgradeToVer56,
 		upgradeToVer57,
-		upgradeToVer58,
+		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
 	}
 )
 
@@ -1143,14 +1149,6 @@ func upgradeToVer50(s Session, ver int64) {
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
 }
 
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
-}
-
 func upgradeToVer52(s Session, ver int64) {
 	if ver >= version52 {
 		return
@@ -1264,15 +1262,6 @@ func insertBuiltinBindInfoRow(s Session) {
 	mustExecute(s, sql)
 }
 
-func upgradeToVer58(s Session, ver int64) {
-	if ver >= version58 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
-}
-
 func upgradeToVer59(s Session, ver int64) {
 	if ver >= version59 {
 		return
@@ -1293,6 +1282,23 @@ func writeMemoryQuotaQuery(s Session) {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
+}
+
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
 func writeOOMAction(s Session) {
