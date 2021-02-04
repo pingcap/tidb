@@ -90,9 +90,6 @@ type twoPhaseCommitter struct {
 	txnSize             int
 	hasNoNeedCommitKeys bool
 
-	prewriteOnlyKeys int
-	ignoredKeys      int
-
 	primaryKey  []byte
 	forUpdateTS uint64
 
@@ -1045,7 +1042,7 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 			failpoint.Return()
 		})
 
-		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+		cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
 		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
 		if err != nil {
 			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
