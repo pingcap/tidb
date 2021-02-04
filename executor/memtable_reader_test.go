@@ -909,6 +909,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	c.Check(rs.Close(), IsNil)
 
 	// Test without end time error.
 	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
@@ -916,6 +917,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	c.Check(rs.Close(), IsNil)
 
 	// Test without specified message error.
 	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
@@ -923,4 +925,5 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+	c.Check(rs.Close(), IsNil)
 }

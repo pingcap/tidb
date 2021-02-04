@@ -55,5 +55,6 @@ func (s *inspectionSummarySuite) TestInspectionRules(c *C) {
 		rules, err := session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 		c.Assert(err, IsNil)
 		c.Assert(len(rules), Equals, ca.ruleCount)
+		c.Check(rs.Close(), IsNil)
 	}
 }
