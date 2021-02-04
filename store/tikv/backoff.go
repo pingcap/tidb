@@ -45,36 +45,25 @@ const (
 	DecorrJitter
 )
 
-var (
-	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD         = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
-)
-
 func (t BackoffType) metric() prometheus.Observer {
 	switch t {
 	// TODO: distinguish tikv and tiflash in metrics
 	case BoTiKVRPC, BoTiFlashRPC:
-		return tikvBackoffHistogramRPC
+		return metrics.BackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffHistogramLock
+		return metrics.BackoffHistogramLock
 	case BoTxnLockFast:
-		return tikvBackoffHistogramLockFast
+		return metrics.BackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffHistogramPD
+		return metrics.BackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffHistogramRegionMiss
+		return metrics.BackoffHistogramRegionMiss
 	case boTiKVServerBusy, boTiFlashServerBusy:
-		return tikvBackoffHistogramServerBusy
+		return metrics.BackoffHistogramServerBusy
 	case boStaleCmd:
-		return tikvBackoffHistogramStaleCmd
+		return metrics.BackoffHistogramStaleCmd
 	}
-	return tikvBackoffHistogramEmpty
+	return metrics.BackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
