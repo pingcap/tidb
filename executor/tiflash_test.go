@@ -140,19 +140,3 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	// test proj and selection
 	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
 }
-
-func (s *tiflashTestSuite) TestMppAvgDecimal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t3(a decimal(5,0) , b int not null)")
-	tk.MustExec("alter table t3 set tiflash replica 1")
-	tb1 := testGetTableByName(c, tk.Se, "test", "t3")
-	err1 := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb1.Meta().ID, true)
-	c.Assert(err1, IsNil)
-	tk.MustExec("insert into t3 values(1,0)")
-	tk.MustExec("insert into t3 values(2,0)")
-	tk.MustExec("insert into t3 values(3,0)")
-	tk.MustExec("insert into t3 values(null,1)")
-	// the precision and null are ok
-	tk.MustQuery("select b, avg(a) from t3 group by b order by 1, 2").Check(testkit.Rows("0 2.0000", "1 <nil>"))
-}
