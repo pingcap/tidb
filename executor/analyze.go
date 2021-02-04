@@ -170,8 +170,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for globalStatsID, info := range globalStatsMap {
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
-				logutil.Logger(ctx).Error("merge partition-level stats to global-level stats failed", zap.Error(err))
-				continue
+				return err
 			}
 			for i := 0; i < globalStats.Num; i++ {
 				hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
