@@ -329,7 +329,8 @@ func (lr *LockResolver) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	return lr.resolveLocks(bo, callerStartTS, locks, false, false)
 }
 
-func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
+// ResolveLocksLite resolves locks while preventing scan whole region.
+func (lr *LockResolver) ResolveLocksLite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, []uint64 /*pushed*/, error) {
 	return lr.resolveLocks(bo, callerStartTS, locks, false, true)
 }
 
