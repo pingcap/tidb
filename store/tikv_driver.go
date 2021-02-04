@@ -230,11 +230,6 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 	return s.tlsConfig
 }
 
-// GetGCHandler returns the GC worker instance.
-func (s *tikvStore) GetGCHandler() *gcworker.GCWorker {
-	return s.gcWorker
-}
-
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
 	if !s.enableGC {
