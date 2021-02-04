@@ -181,6 +181,10 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	}
 }
 
+func (txn *tikvTxn) GetOption(opt kv.Option) interface{} {
+	return txn.us.GetOption(opt)
+}
+
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
