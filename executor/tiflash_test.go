@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/failpoint"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -169,13 +170,15 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
-	// test if it is stable.
+	// test if it is really work.
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(8)`)
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
 	// test partition prune
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < -1 and t.a < 2").Check(testkit.Rows("0"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 	// test multi-way join
-	tk.MustExec("create table t2(a int not null primary key, b int not null) partition by hash(a*2) partitions 4")
+	tk.MustExec("create table t2(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t2 set tiflash replica 1")
 	tb = testGetTableByName(c, tk.Se, "test", "t2")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
@@ -185,10 +188,32 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk.MustExec("insert into t2 values(2,0)")
 	tk.MustExec("insert into t2 values(3,0)")
 	tk.MustExec("insert into t2 values(4,0)")
+	// test with no partition table
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(9)`)
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("4"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 
-	// test avg
-	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.5000"))
-	// test proj and selection
-	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("4"))
+	tk.MustExec(`create table t3(a int not null, b int not null) PARTITION BY RANGE (b) (
+		PARTITION p0 VALUES LESS THAN (1),
+		PARTITION p1 VALUES LESS THAN (3),
+		PARTITION p2 VALUES LESS THAN (5),
+		PARTITION p3 VALUES LESS THAN (7)
+	);`)
+	tk.MustExec("alter table t3 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t3")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into t3 values(1,0)")
+	tk.MustExec("insert into t3 values(2,2)")
+	tk.MustExec("insert into t3 values(3,4)")
+	tk.MustExec("insert into t3 values(4,6)")
+
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(7)`)
+	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b <= 4").Check(testkit.Rows("3"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(5)`)
+	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+
 }

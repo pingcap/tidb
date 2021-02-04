@@ -170,5 +170,4 @@ func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.
 		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: *e.allocTaskID, StartTs: e.startTS, TableID: tableID})
 	}
 	return tasks, nil
-
 }
