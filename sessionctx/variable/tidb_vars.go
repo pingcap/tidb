@@ -521,6 +521,9 @@ const (
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
 
+  // TiDBEnableExchangePartition indicates whether to enable exchange partition.
+	TiDBEnableExchangePartition = "tidb_enable_exchange_partition"
+  
 	// TiDBEnableTiFlashFallbackTiKV indicates whether to fallback to TiKV when TiFlash is unavailable.
 	TiDBEnableTiFlashFallbackTiKV = "tidb_enable_tiflash_fallback_tikv"
 )
@@ -662,6 +665,7 @@ const (
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
+	DefTiDBEnableExchangePartition      = false
 	DefTiDBEnableTiFlashFallbackTiKV    = false
 )
 
