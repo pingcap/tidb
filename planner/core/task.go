@@ -1307,24 +1307,6 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
-	nullTp := types.NewFieldType(mysql.TypeNull)
-	nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
-	// TODO: TiFlash dose not accept precision of 0
-	if nullTp.Flen < 1 {
-		nullTp.Flen = 1
-	}
-	paramNull := &expression.Constant{
-		Value:   types.NewDatum(nil),
-		RetType: nullTp,
-	}
-	paramZero := &expression.Constant{
-		Value:   types.NewDatum(0),
-		RetType: ft,
-	}
-	paramOne := &expression.Constant{
-		Value:   types.NewDatum(1),
-		RetType: ft,
-	}
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1347,11 +1329,11 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			avgSumCol := p.schema.Columns[i]
 			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol), but because Clickhouse has a bug which evaluates every branch, so
 			// if(avgCountCol = 0, NULL, avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end))
-			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, paramZero)
-			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, paramOne, avgCountCol)
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
-			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, paramNull, divide)
+			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, expression.NewNull(), divide)
 			funcIf.(*expression.ScalarFunction).RetType = avgSumCol.RetType
 			exprs = append(exprs, funcIf)
 		} else {
