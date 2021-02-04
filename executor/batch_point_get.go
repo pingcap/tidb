@@ -438,7 +438,7 @@ type cacheBatchGetter struct {
 }
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	cacheDB := b.ctx.GetStore().GetMemCache()
+	cacheDB := b.ctx.GetStore().(kv.Store).GetMemCache()
 	vals := make(map[string][]byte)
 	for _, key := range keys {
 		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)

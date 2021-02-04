@@ -159,6 +159,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		memCache:  kv.NewCacheDB(),
 	}
 
 	mc.cache[uuid] = store
@@ -169,6 +170,7 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	memCache  kv.MemManager // this is used to query from memory
 }
 
 var (
@@ -229,4 +231,9 @@ func (s *tikvStore) Close() error {
 	defer mc.Unlock()
 	delete(mc.cache, s.UUID())
 	return s.KVStore.Close()
+}
+
+// GetMemCache return memory mamager of the storage
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }

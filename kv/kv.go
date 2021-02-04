@@ -492,6 +492,9 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
+}
+
+type Store interface {
 	// GetMemCache return memory mamager of the storage
 	GetMemCache() MemManager
 }
