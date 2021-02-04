@@ -871,6 +871,14 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 		}()
 	}
 
+	if execOption.AnalyzeVer != 0 {
+		oldStatsVer := se.GetSessionVars().AnalyzeVersion
+		se.GetSessionVars().AnalyzeVersion = execOption.AnalyzeVer
+		defer func() {
+			se.GetSessionVars().AnalyzeVersion = oldStatsVer
+		}()
+	}
+
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
@@ -1441,6 +1449,14 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
 			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
+	if execOption.AnalyzeVer != 0 {
+		prevStatsVer := se.sessionVars.AnalyzeVersion
+		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
+		defer func() {
+			se.sessionVars.AnalyzeVersion = prevStatsVer
 		}()
 	}
 
