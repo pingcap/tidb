@@ -16,7 +16,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/errno"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2105,7 +2105,7 @@ func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
 		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
 	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
-		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+		"[planner:1140]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
@@ -2628,13 +2628,13 @@ func (s *testIntegrationSerialSuite) TestMppAggWithJoin(c *C) {
 func (s *testIntegrationSuite) TestIssue22694(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists table_5_utf8_6")
-	tk.MustExec("create table table_5_utf8_6 (" +
-		"`pk` int primary key," +
-		"`col_double_key_signed` double  ," +
-		"key (`col_double_key_signed`)" +
-		") character set utf8" +
-		"partition by hash(pk)" +
+	tk.MustExec("create table table_5_utf8_6 (\n" +
+		"`pk` int primary key,\n" +
+		"`col_double_key_signed` double,\n" +
+		"key (`col_double_key_signed`)\n" +
+		") character set utf8\n" +
+		"partition by hash(pk)\n" +
 		"partitions 6")
-	err := tk.ExecToErr("SELECT ALL `col_double_key_signed` FROM table_5_utf8_6 HAVING ( CAST( ( COUNT( BINARY -3688098003402515037 ) ) AS TIME ) )  FOR UPDATE");
-	c.Assert(int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code), Equals, mysql.ErrMixOfGroupFuncAndFields)
+	err := tk.ExecToErr("SELECT ALL `col_double_key_signed` FROM table_5_utf8_6 HAVING ( CAST( ( COUNT( BINARY -3688098003402515037 ) ) AS TIME ) )  FOR UPDATE")
+	c.Assert(int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code), Equals, errno.ErrMixOfGroupFuncAndFields)
 }
