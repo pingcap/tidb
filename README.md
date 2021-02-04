@@ -13,7 +13,7 @@
 - [**Slack Channel**](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - [**Reddit**](https://www.reddit.com/r/TiDB/)
-- **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
+- **Mailing list**: [lists.tidb.io](https://lists.tidb.io/g/main/subgroups)
 - [**For support, please contact PingCAP**](http://bit.ly/contact_us_via_github)
 
 ## What is TiDB?
