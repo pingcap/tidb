@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -1983,7 +1984,7 @@ type tiflashInstanceInfo struct {
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
-	if etcd, ok := store.(tikv.EtcdBackend); ok {
+	if etcd, ok := store.(kv.EtcdBackend); ok {
 		var addrs []string
 		var err error
 		if addrs, err = etcd.EtcdAddrs(); err != nil {

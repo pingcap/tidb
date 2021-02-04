@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/store/tikv/util/codec"
 	pd "github.com/tikv/pd/client"
 )
 
