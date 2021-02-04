@@ -1233,7 +1233,7 @@ func BuildFinalModeAggregation(
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
 					// For MPP Task, the final count() is changed to sum().
-					// Note: MPP mode does not run avg() directly, instead, avg() -> if(count()==0, null, sum(count()/sum()),
+					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count()),
 					// so we do not process it here.
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
@@ -1296,9 +1296,9 @@ func BuildFinalModeAggregation(
 	return
 }
 
-// convertAvgForMPP converts avg() to if(count(arg)=0, null, sum(arg)/count(arg)), in detail:
+// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg)), in detail:
 // 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
-// 2.replace avg() with if(count(arg)=0, null, sum(arg)/count(arg)) and reuse the original schema of the final aggregation.
+// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg)) and reuse the original schema of the final aggregation.
 // If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
@@ -1327,15 +1327,12 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			newAggFuncs = append(newAggFuncs, &avgSum)
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
-			// if(avgCountCol = 0, NULL, avgSumCol/avgCountCol), but because Clickhouse has a bug which evaluates every branch, so
-			// if(avgCountCol = 0, NULL, avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end))
+			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
 			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
-			funcIf := expression.NewFunctionInternal(p.ctx, ast.If, avgSumCol.RetType, eq, expression.NewNull(), divide)
-			funcIf.(*expression.ScalarFunction).RetType = avgSumCol.RetType
-			exprs = append(exprs, funcIf)
+			exprs = append(exprs, divide)
 		} else {
 			newAggFuncs = append(newAggFuncs, aggFunc)
 			newSchema.Append(p.schema.Columns[i])
