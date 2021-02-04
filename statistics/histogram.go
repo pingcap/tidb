@@ -1464,9 +1464,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 type bucket4Merging struct {
 	lower  *types.Datum
 	upper  *types.Datum
-	repeat int64
-	ndv    int64
-	count  int64
+	Bucket
 	// disjointNDV is used for merging bucket NDV, see mergeBucketNDV for more details.
 	disjointNDV int64
 }
