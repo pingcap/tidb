@@ -561,6 +561,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.ReadOnly && s.Bound != nil {
 		return e.executeStartTransactionReadOnlyWithTimestampBound(ctx, s)
 	}
+
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
@@ -590,6 +591,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	}
 	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		txn.SetOption(kv.Pessimistic, true)
+	}
+	if s.CausalConsistencyOnly {
+		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 	return nil
 }
