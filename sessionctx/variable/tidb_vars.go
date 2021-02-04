@@ -666,7 +666,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = false
 	DefTiDBEnableExchangePartition     = false
-  DefTiDBEnableTiFlashFallbackTiKV   = false
+	DefTiDBEnableTiFlashFallbackTiKV   = false
 )
 
 // Process global variables.

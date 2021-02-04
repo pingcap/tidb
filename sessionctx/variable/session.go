@@ -970,7 +970,7 @@ func NewSessionVars() *SessionVars {
 		GuaranteeLinearizability:    DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:              DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
-    EnableTiFlashFallbackTiKV:   DefTiDBEnableTiFlashFallbackTiKV,
+		EnableTiFlashFallbackTiKV:   DefTiDBEnableTiFlashFallbackTiKV,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
