@@ -118,7 +118,7 @@ type Session interface {
 	// This function only saves you from processing potentially unsafe parameters.
 	ParseWithParams(ctx context.Context, sql string, args ...interface{}) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
-	ExecuteInternal(context.Context, string, ...interface{}) ([]sqlexec.RecordSet, error)
+	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
@@ -885,37 +885,21 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
-	recordSets, err := se.ExecuteInternal(ctx, sql)
-	defer func() {
-		for _, rs := range recordSets {
-			closeErr := rs.Close()
-			if closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}
-	}()
-	if err != nil {
+	rs, err := se.ExecuteInternal(ctx, sql)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil || rs == nil {
 		return nil, nil, err
 	}
 
-	var (
-		rows   []chunk.Row
-		fields []*ast.ResultField
-	)
 	// Execute all recordset, take out the first one as result.
-	for i, rs := range recordSets {
-		tmp, err := drainRecordSet(ctx, se, rs)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if i == 0 {
-			rows = tmp
-			fields = rs.Fields()
-		}
+	rows, err := drainRecordSet(ctx, se, rs)
+	if err != nil {
+		return nil, nil, err
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, fields, err
+	return rows, rs.Fields(), err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -1150,7 +1134,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (recordSets []sqlexec.RecordSet, err error) {
+func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1172,7 +1156,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		return nil, errors.New("Executing multiple statements internally is not supported")
 	}
 
-	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
+	rs, err = s.ExecuteStmt(ctx, stmtNodes[0])
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -1180,7 +1164,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		return nil, err
 	}
 
-	return []sqlexec.RecordSet{rs}, err
+	return rs, err
 }
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
@@ -1999,18 +1983,18 @@ var (
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
 	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
-	rss, errLoad := se.Execute(context.Background(), sql)
+	rs, errLoad := se.ExecuteInternal(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
 	}
 	// the record of mysql.tidb under where condition: variable_name = $name should shall only be one.
 	defer func() {
-		if err := rss[0].Close(); err != nil {
+		if err := rs.Close(); err != nil {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
-	req := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), req); err != nil {
+	req := rs.NewChunk()
+	if err := rs.Next(context.Background(), req); err != nil {
 		return "", err
 	}
 	if req.NumRows() == 0 {
