@@ -53,12 +53,13 @@ type baseHashAggWorker struct {
 	stats        *AggWorkerStat
 
 	memTracker *memory.Tracker
-	BInMap     *int // indicate there are 2^BInMap buckets in Golang Map.
+	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
 }
 
 const (
 	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
+	// The bucket size may be changed by golang implement in the future.
 	defBucketMemoryUsage = 8*(1+16+24) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
 	// Represent as loadFactorNum/loadFactDen, to allow integer math.
@@ -74,7 +75,7 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 		aggFuncs:     aggFuncs,
 		maxChunkSize: maxChunkSize,
 		memTracker:   memTrack,
-		BInMap:       new(int),
+		BInMap:       0,
 	}
 	return baseWorker
 }
@@ -323,7 +324,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, w.stats)
@@ -352,7 +353,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKeys:           make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
+		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -519,7 +520,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	return groupKey, nil
 }
 
-func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
+func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupKey [][]byte, mapper aggPartialResultMapper) [][]aggfuncs.PartialResult {
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	for i := 0; i < n; i++ {
@@ -535,9 +536,9 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		mapper[string(groupKey[i])] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
-			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
-			*w.BInMap++
+		if len(mapper) > (1<<w.BInMap)*loadFactorNum/loadFactorDen {
+			w.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
+			w.BInMap++
 		}
 	}
 	return partialResults
