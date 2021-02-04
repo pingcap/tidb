@@ -501,19 +501,6 @@ func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
-func (s *testConfigSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = ParsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
-}
-
 func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 	tests := []struct {
 		host       string
