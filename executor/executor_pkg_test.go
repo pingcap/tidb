@@ -451,6 +451,8 @@ func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
 	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
 }
 
+// Test whether the actual buckets in Golang Map is same with the estimated number.
+// The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
 func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
 	if runtime.Version() < `go1.13` {
 		c.Skip("Unsupported version")

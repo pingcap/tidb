@@ -2022,50 +2022,41 @@ func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
 func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 	b.ReportAllocs()
 	type testCase struct {
-		rowNum          int
-		expectedB       int
-		expectedGrowing bool
+		rowNum    int
+		expectedB int
 	}
 	cases := []testCase{
 		{
-			rowNum:          0,
-			expectedB:       0,
-			expectedGrowing: false,
+			rowNum:    0,
+			expectedB: 0,
 		},
 		{
-			rowNum:          100,
-			expectedB:       4,
-			expectedGrowing: false,
+			rowNum:    100,
+			expectedB: 4,
 		},
 		{
-			rowNum:          10000,
-			expectedB:       11,
-			expectedGrowing: false,
+			rowNum:    10000,
+			expectedB: 11,
 		},
 		{
-			rowNum:          1000000,
-			expectedB:       18,
-			expectedGrowing: false,
+			rowNum:    1000000,
+			expectedB: 18,
 		},
 		{
-			rowNum:          851968, // 6.5 * (1 << 17)
-			expectedB:       17,
-			expectedGrowing: false,
+			rowNum:    851968, // 6.5 * (1 << 17)
+			expectedB: 17,
 		},
 		{
-			rowNum:          851969, // 6.5 * (1 << 17) + 1
-			expectedB:       18,
-			expectedGrowing: true,
+			rowNum:    851969, // 6.5 * (1 << 17) + 1
+			expectedB: 18,
 		},
 		{
-			rowNum:          425984, // 6.5 * (1 << 16)
-			expectedB:       16,
-			expectedGrowing: false,
+			rowNum:    425984, // 6.5 * (1 << 16)
+			expectedB: 16,
 		},
 		{
-			rowNum:          425985, // 6.5 * (1 << 16) + 1
-			expectedB:       17,
-			expectedGrowing: true,
+			rowNum:    425985, // 6.5 * (1 << 16) + 1
+			expectedB: 17,
 		},
 	}
 

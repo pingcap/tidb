@@ -53,7 +53,7 @@ type baseHashAggWorker struct {
 	stats        *AggWorkerStat
 
 	memTracker *memory.Tracker
-	BInMap     *int // incident B in Go map
+	BInMap     *int // indicate there are 2^BInMap buckets in Golang Map.
 }
 
 const (
@@ -61,9 +61,7 @@ const (
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	defBucketMemoryUsage = 8*(1+16+24) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
-	// Represent as loadFactorNum/loadFactorDen, to allow integer math.
-	loadFactorNum = 13
-	loadFactorDen = 2
+	loadFactor = 6.5
 )
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -322,6 +320,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			chk:               newFirstChunk(e.children[0]),
 			groupKey:          make([][]byte, 0, 8),
 		}
+		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -350,6 +349,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
 		}
+		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -530,11 +530,10 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 			partialResults[i] = append(partialResults[i], partialResult)
 			w.memTracker.Consume(memDelta)
 		}
-		str := string(groupKey[i])
-		mapper[str] = partialResults[i]
+		mapper[string(groupKey[i])] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
-		// map will expand when count > bucketNum * loadFactor.
-		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		if len(mapper) > (1<<*w.BInMap)*loadFactor {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 			*w.BInMap++
 		}
