@@ -16,7 +16,6 @@ package util
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -34,9 +33,10 @@ const (
 	loadDeleteRangeSQL           = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%n WHERE ts < %?`
 	recordDoneDeletedRangeSQL    = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
 	completeDeleteRangeSQL       = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id = %?`
-	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %%? AND element_id in (%s)`
+	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %? AND element_id in (` // + idList + ")"
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
+	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + append ")"
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -119,22 +119,19 @@ func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) err
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementIDs []int64) error {
-	idList := ""
+	var buf strings.Builder
+	buf.WriteString(completeDeleteMultiRangesSQL)
 	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
 	paramIDs = append(paramIDs, jobID)
 	for i, elementID := range elementIDs {
 		if i > 0 {
-			idList += ", "
+			buf.WriteString(", ")
 		}
-		idList += "%?"
+		buf.WriteString("%?")
 		paramIDs = append(paramIDs, elementID)
 	}
-	var buf strings.Builder
-	_, err := fmt.Fprintf(&buf, completeDeleteMultiRangesSQL, idList)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
+	buf.WriteString(")")
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
 	return errors.Trace(err)
 }
 
@@ -164,27 +161,20 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
 
-const (
-	loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%s)"
-)
-
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
-		nameList := ""
+		var buf strings.Builder
+		buf.WriteString(loadGlobalVars)
 		paramNames := make([]interface{}, 0, len(varNames))
 		for i, name := range varNames {
 			if i > 0 {
-				nameList += ", "
+				buf.WriteString(", ")
 			}
-			nameList += "%?"
+			buf.WriteString("%?")
 			paramNames = append(paramNames, name)
 		}
-		var buf strings.Builder
-		_, err := fmt.Fprintf(&buf, loadGlobalVarsSQL, nameList)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		buf.WriteString(")")
 		stmt, err := sctx.ParseWithParams(context.Background(), buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)

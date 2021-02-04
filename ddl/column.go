@@ -1530,23 +1530,20 @@ func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
-	colsStr := ""
+	var buf strings.Builder
+	buf.WriteString("select 1 from %n.%n where ")
 	paramsList := make([]interface{}, 0, 2+len(oldCols))
 	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
-			colsStr += "%n is null"
+			buf.WriteString("%n is null")
 			paramsList = append(paramsList, col.Name.L)
 		} else {
-			colsStr += " or %n is null"
+			buf.WriteString(" or %n is null")
 			paramsList = append(paramsList, col.Name.L)
 		}
 	}
-	var buf strings.Builder
-	_, err := fmt.Fprintf(&buf, "select 1 from %%n.%%n where %s limit 1", colsStr)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	buf.WriteString(" limit 1")
 	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
