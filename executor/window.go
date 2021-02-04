@@ -342,10 +342,8 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 				if minMaxSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
 					// Store start inside MaxMinSlidingWindowAggFunc.windowInfo
 					minMaxSlidingWindowAggFunc.SetWindowStart(start)
-					_, err = minMaxSlidingWindowAggFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
-				} else {
-					_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 				}
+				_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err
@@ -491,10 +489,8 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 			} else {
 				if minMaxSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
 					minMaxSlidingWindowAggFunc.SetWindowStart(start)
-					_, err = minMaxSlidingWindowAggFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
-				} else {
-					_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 				}
+				_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err
@@ -525,10 +521,4 @@ func (p *rangeFrameWindowProcessor) resetPartialResult() {
 	p.curRowIdx = 0
 	p.lastStartOffset = 0
 	p.lastEndOffset = 0
-	// reset all partial result stored, after finishing consuming each group
-	for i, windowFunc := range p.windowFuncs {
-		if maxMinSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
-			maxMinSlidingWindowAggFunc.ResetPartialResult(p.partialResults[i])
-		}
-	}
 }

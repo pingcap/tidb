@@ -831,7 +831,7 @@ type maxMin4DecimalSliding struct {
 	windowInfo
 }
 
-// windowInfo is a struct used
+// windowInfo is a struct used to store window related info
 type windowInfo struct {
 	start uint64
 }
