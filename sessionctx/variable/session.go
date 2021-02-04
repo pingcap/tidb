@@ -805,6 +805,9 @@ type SessionVars struct {
 
 	// TrackAggregateMemoryUsage indicates whether to track the memory usage of aggregate function.
 	TrackAggregateMemoryUsage bool
+
+	// TiDBEnableExchangePartition indicates whether to enable exchange partition
+	TiDBEnableExchangePartition bool
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -956,7 +959,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:         DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                     config.GetGlobalConfig().TxnScope,
+		TxnScope:                     config.GetTxnScopeFromConfig(),
 		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
 		Enable1PC:                    DefTiDBEnable1PC,
@@ -1691,6 +1694,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 	case TiDBMultiStatementMode:
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableExchangePartition:
+		s.TiDBEnableExchangePartition = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

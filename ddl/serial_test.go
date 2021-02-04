@@ -1169,6 +1169,9 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 
 	tk.MustExec("use auto_random_db")
 
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
 	tk.MustExec("drop table if exists e1, e2, e3, e4;")
 
 	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
