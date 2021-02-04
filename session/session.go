@@ -2620,7 +2620,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
 	variable.TiDBMultiStatementMode,
-  variable.TiDBEnableExchangePartition,
+	variable.TiDBEnableExchangePartition,
 	variable.TiDBEnableTiFlashFallbackTiKV,
 }
 
