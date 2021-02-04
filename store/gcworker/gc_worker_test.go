@@ -564,9 +564,9 @@ const (
 )
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"), IsNil)
 	}()
 
 	// Put some delete range tasks.
@@ -853,10 +853,10 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 
 func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"), IsNil)
 	}()
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
 	c.Assert(err, NotNil)
@@ -1387,11 +1387,11 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 		locks := []*kvrpcpb.LockInfo{{Key: []byte{0}}}
 		return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: locks, Error: ""}}, nil
 	}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(100)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(100)"), IsNil)
 	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
 	c.Assert(physicalUsed, IsFalse)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
 
 	// Shouldn't fall back when fails to scan locks less than 3 times.
 	reset()
@@ -1434,7 +1434,7 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 	reset()
 	var wg sync.WaitGroup
 	wg.Add(1)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
@@ -1453,13 +1453,13 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 		}
 		return alwaysSucceedHanlder(addr, req)
 	}
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Shouldn't fall back when a store is removed.
 	reset()
 	wg.Add(1)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
@@ -1469,13 +1469,13 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 	// Sleep to let the goroutine pause.
 	time.Sleep(500 * time.Millisecond)
 	s.cluster.RemoveStore(100)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Should fall back when a cleaned store becomes dirty.
 	reset()
 	wg.Add(1)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers", "pause"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers", "pause"), IsNil)
 	go func() {
 		defer wg.Done()
 		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
@@ -1506,7 +1506,7 @@ func (s *testGCWorkerSuite) TestResolveLocksPhysical(c *C) {
 			return alwaysSucceedHanlder(addr, req)
 		}
 	}
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/beforeCheckLockObservers"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/beforeCheckLockObservers"), IsNil)
 	wg.Wait()
 
 	// Shouldn't fall back when fails to remove lock observers.
@@ -1541,9 +1541,9 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 
 	// Sleep 1000ms to let the main goroutine block on sending tasks.
 	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/resolveLocksAcrossRegionsErr"), IsNil)
 	}()
 
 	done := make(chan interface{})
@@ -1562,9 +1562,9 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"), IsNil)
 	}()
 
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
