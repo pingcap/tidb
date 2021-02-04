@@ -102,7 +102,7 @@ func (t *topNHeap) Less(i, j int) bool {
 		var ret int
 		var err error
 		if expression.FieldTypeFromPB(by.GetExpr().GetFieldType()).Tp == mysql.TypeEnum {
-			ret = types.CompareInt64(int64(v1.GetMysqlEnum().Value), int64(v2.GetMysqlEnum().Value))
+			ret = types.CompareUint64(v1.GetUint64(), v2.GetUint64())
 		} else {
 			ret, err = v1.CompareDatum(t.sc, &v2)
 			if err != nil {
