@@ -61,7 +61,9 @@ const (
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	defBucketMemoryUsage = 8*(1+16+24) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
-	loadFactor = 6.5
+	// Represent as loadFactorNum/loadFactDen, to allow integer math.
+	loadFactorNum = 13
+	loadFactorDen = 2
 )
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -533,7 +535,7 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		mapper[string(groupKey[i])] = partialResults[i]
 		w.memTracker.Consume(int64(len(groupKey[i])))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
-		if len(mapper) > (1<<*w.BInMap)*loadFactor {
+		if len(mapper) > (1<<*w.BInMap)*loadFactorNum/loadFactorDen {
 			w.memTracker.Consume(defBucketMemoryUsage * (1 << *w.BInMap))
 			*w.BInMap++
 		}
