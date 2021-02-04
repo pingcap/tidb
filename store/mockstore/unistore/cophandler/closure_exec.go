@@ -849,16 +849,9 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 		if d.IsNull() {
 			gotRow = false
 		} else {
-			var isTrue int64
-			switch expr.GetType().Tp {
-			case mysql.TypeEnum:
-				if len(d.GetBytes()) == 0 {
-					isTrue = 0
-				} else {
-					isTrue = 1
-				}
-			default:
-				isTrue, err = d.ToBool(e.sc)
+			isTrue, err := d.ToBool(e.sc)
+			if err != nil {
+				return false, errors.Trace(err)
 			}
 			isTrue, err = expression.HandleOverflowOnSelection(e.sc, isTrue, err)
 			if err != nil {
