@@ -509,7 +509,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if s.txn.GetUnionStore().GetOption(kv.GuaranteeLinearizability) == nil {
+	if s.txn.GetOption(kv.GuaranteeLinearizability) == nil {
 		s.txn.SetOption(kv.GuaranteeLinearizability, s.GetSessionVars().GuaranteeLinearizability)
 	}
 

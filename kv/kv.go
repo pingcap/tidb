@@ -265,6 +265,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
