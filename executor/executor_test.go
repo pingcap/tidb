@@ -4012,7 +4012,7 @@ func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
 	for _, t := range tests {
 		res, err := tk.Exec("insert into t values (?)", t.input)
 		if res != nil {
-			defer c.Assert(res.Close(), IsNil)
+			defer res.Close()
 		}
 		if t.hasErr {
 			c.Assert(err, NotNil)

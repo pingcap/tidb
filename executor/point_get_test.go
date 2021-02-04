@@ -507,7 +507,6 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, re)
 		c.Assert(err, NotNil)
 		c.Assert(expectErr.Equal(err), IsTrue)
-		c.Assert(re.Close(), IsNil)
 	}
 	// Test point get.
 	checkSelectResultError("select * from t where a='1'", tikv.ErrGCTooEarly)
