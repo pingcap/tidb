@@ -26,7 +26,7 @@ record=0
 record_case=""
 create=0
 create_case=""
-stats="."
+stats="s"
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
@@ -97,9 +97,9 @@ function build_explain_test()
 
 function extract_stats()
 {
-    echo "extracting statistics"
+    echo "extracting statistics: $stats"
     rm -rf $stats
-    unzip s.zip
+    unzip -qq s.zip
 }
 
 while getopts "t:s:r:b:c:i:h:p" opt; do
