@@ -565,7 +565,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeSession, Name: TiDBTxnScope, Value: config.GetGlobalConfig().TxnScope},
+	{Scope: ScopeSession, Name: TiDBTxnScope, Value: config.GetTxnScopeFromConfig()},
 	/* TiDB specific variables */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBCJThresholdCount, Value: strconv.Itoa(DefBroadcastJoinThresholdCount), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64},
