@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -170,7 +171,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, st
 				zap.Int("range len", rangesLen),
 				zap.Int("task len", len(batchTasks)))
 		}
-		tikvTxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
 	}
 }
