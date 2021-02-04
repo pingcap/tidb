@@ -141,6 +141,23 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 		// the underlying memory formats of int64 and uint64 are the same in Golang,
 		// so we can do a no-op here.
 		// }
+		if ft.Tp == mysql.TypeEnum {
+			n := input.NumRows()
+			buf := chunk.NewColumn(ft, n)
+			buf.ReserveEnum(n)
+			for i := 0; i < n; i++ {
+				if result.IsNull(i) {
+					buf.AppendNull()
+				} else {
+					e, err := types.ParseEnumValue(ft.Elems, result.GetUint64(i))
+					if err != nil {
+						return err
+					}
+					buf.AppendEnum(e)
+				}
+			}
+			output.SetCol(colIdx, buf)
+		}
 	case types.ETReal:
 		if err := expr.VecEvalReal(ctx, input, result); err != nil {
 			return err
@@ -266,6 +283,14 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 	}
 	if fieldType.Tp == mysql.TypeBit {
 		output.AppendBytes(colID, strconv.AppendUint(make([]byte, 0, 8), uint64(res), 10))
+		return nil
+	}
+	if fieldType.Tp == mysql.TypeEnum {
+		e, err := types.ParseEnumValue(fieldType.Elems, uint64(res))
+		if err != nil {
+			return err
+		}
+		output.AppendEnum(colID, e)
 		return nil
 	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {
