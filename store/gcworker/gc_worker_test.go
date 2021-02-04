@@ -69,8 +69,6 @@ type testGCWorkerSuite struct {
 var _ = SerialSuites(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
-	NewGCHandlerFunc = NewGCWorker
-
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &testGCWorkerClient{
 			Client: client,
@@ -104,7 +102,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
-	s.gcWorker = gcWorker.(*GCWorker)
+	s.gcWorker = gcWorker
 }
 
 func (s *testGCWorkerSuite) TearDownTest(c *C) {
