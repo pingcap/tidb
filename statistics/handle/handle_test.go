@@ -716,9 +716,8 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 15)
 
 	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][5], Equals, "3")
-	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][5], Equals, "5")
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
