@@ -520,6 +520,44 @@ func (cli *testServerClient) prepareLoadDataFile(c *C, path string, rows ...stri
 	c.Assert(err, IsNil)
 }
 
+func (cli *testServerClient) runTestLoadDataBatchDML(c *C) {
+	path := "/tmp/load_data_txn_error.csv"
+
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	defer func() {
+		_ = os.Remove(path)
+	}()
+
+	for i := 0; i < 50000; i++ {
+		str1 := strconv.Itoa(rand.Intn(1000))
+		str2 := strconv.Itoa(rand.Intn(1000))
+		row := str1 + "\t" + str2
+		_, err := fp.WriteString(row)
+		c.Assert(err, IsNil)
+		_, err = fp.WriteString("\n")
+		c.Assert(err, IsNil)
+	}
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_batch_dml", func(dbt *DBTest) {
+		// Set batch size, and check if load data got a invalid txn error.
+		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
+		dbt.mustExec("drop table if exists t")
+		dbt.mustExec("create table t(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
+		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (c2, c3)", path))
+		rows := dbt.mustQuery("select count(*) from t")
+		cli.checkRows(c, rows, "50000")
+	})
+}
+
 func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
 	path := "/tmp/load_data_list_partition.csv"
 	defer func() {

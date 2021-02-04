@@ -162,6 +162,10 @@ func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
+func (ts *tidbTestSerialSuite) TestLoadDataBatchDML(c *C) {
+	ts.runTestLoadDataBatchDML(c)
+}
+
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
 	ts.runTestExplainForConn(c)
 }
