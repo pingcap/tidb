@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -475,7 +476,7 @@ type Storage interface {
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
-	// GetClient gets a mpp client instance.
+	// GetMPPClient gets a mpp client instance.
 	GetMPPClient() MPPClient
 	// Close store
 	Close() error
@@ -495,6 +496,13 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory mamager of the storage
 	GetMemCache() MemManager
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() ([]string, error)
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // FnKeyCmp is the function for iterator the keys

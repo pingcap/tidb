@@ -24,14 +24,14 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 type testSnapshotSuite struct {
 	OneByOneSuite
-	store   *tikvStore
+	store   *KVStore
 	prefix  string
 	rowNums []int
 }
@@ -40,7 +40,7 @@ var _ = Suite(&testSnapshotSuite{})
 
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c)
 	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }

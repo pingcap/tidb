@@ -408,39 +408,73 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
 	lineTermLen := len(lineTerm)
-	length := len(bs)
+	type termType int
+	const (
+		notTerm termType = iota
+		fieldTermType
+		lineTermType
+	)
+	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
+	cmpTerm := func(restLen int, bs []byte) (typ termType) {
+		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+			typ = fieldTermType
+			return
+		}
+		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+			typ = lineTermType
+			return
+		}
+		return
+	}
+	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
+		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
+		cmpTerm = func(restLen int, bs []byte) (typ termType) {
+			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+				typ = lineTermType
+				return
+			}
+			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+				typ = fieldTermType
+				return
+			}
+			return
+		}
+	}
 	atFieldStart := true
 	inQuoter := false
-	for i := 0; i < length; i++ {
+loop:
+	for i := 0; i < len(bs); i++ {
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
 			inQuoter = true
 			atFieldStart = false
 			continue
 		}
-		restLen := length - i - 1
+		restLen := len(bs) - i - 1
 		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
-			// look ahead to see if it is end of field. if the next is field terminator, then it is.
-			if restLen >= fieldTermLen && bytes.Equal(bs[i+1:i+fieldTermLen+1], fieldTerm) {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen, bs[i+1:]) {
+			case lineTermType:
+				return i + 1
+			case fieldTermType:
 				i += fieldTermLen
 				inQuoter = false
 				atFieldStart = true
-				continue
-			}
-			// look ahead to see if it is end of line. if the next is line terminator, then return.
-			if restLen >= lineTermLen && bytes.Equal(bs[i+1:i+lineTermLen+1], lineTerm) {
-				return i + 1
+				continue loop
+			default:
 			}
 		}
-		// look ahead to see if it is end of field. if the next is field terminator, then it is.
-		if !inQuoter && restLen >= fieldTermLen-1 && bytes.Equal(bs[i:i+fieldTermLen], fieldTerm) {
-			i += fieldTermLen - 1
-			inQuoter = false
-			atFieldStart = true
-			continue
-		}
-		// look ahead to see if it is end of line. if the next is line terminator, then return.
-		if !inQuoter && restLen >= lineTermLen-1 && bytes.Equal(bs[i:i+lineTermLen], lineTerm) {
-			return i
+		if !inQuoter {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen+1, bs[i:]) {
+			case lineTermType:
+				return i
+			case fieldTermType:
+				i += fieldTermLen - 1
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
 		}
 		// if it is escaped char, skip next char.
 		if bs[i] == e.FieldsInfo.Escaped {
