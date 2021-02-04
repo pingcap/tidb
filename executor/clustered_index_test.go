@@ -21,13 +21,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-type testClusteredSuite struct{ *baseTestSuite }
-type testClusteredSerialSuite struct{ *baseTestSuite }
+type testClusteredSuiteBase struct{ baseTestSuite }
+type testClusteredSuite struct{ testClusteredSuiteBase }
+type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
-func (s *testClusteredSuite) SetUpTest(c *C) {
-}
-
-func (s *testClusteredSuite) newTK(c *C) *testkit.TestKit {
+func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	return tk
