@@ -1109,6 +1109,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
 	case tipb.ExprType_MysqlJson:
 		return convertJSON(expr.Val)
+	case tipb.ExprType_MysqlEnum:
+		return convertEnum(expr.Val, expr.FieldType)
 	}
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		panic("should be a tipb.ExprType_ScalarFunc")
@@ -1250,4 +1252,14 @@ func convertJSON(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
 	}
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
+}
+
+func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
+	_, iVal, err := codec.DecodeUint(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid enum % x", val)
+	}
+	e, _ := types.ParseEnumValue(tp.Elems, uint64(iVal))
+	d := types.NewMysqlEnumDatum(e)
+	return &Constant{Value: d, RetType: FieldTypeFromPB(tp)}, nil
 }

@@ -146,7 +146,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		return tp, nil, false
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
-		val = codec.EncodeInt(nil, d.GetInt64())
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
 		return tp, nil, false
 	}
