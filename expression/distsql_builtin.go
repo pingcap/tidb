@@ -1255,11 +1255,14 @@ func convertJSON(val []byte) (*Constant, error) {
 }
 
 func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
-	_, iVal, err := codec.DecodeUint(val)
+	_, uVal, err := codec.DecodeUint(val)
 	if err != nil {
 		return nil, errors.Errorf("invalid enum % x", val)
 	}
-	e, _ := types.ParseEnumValue(tp.Elems, uint64(iVal))
+	e, err := types.ParseEnumValue(tp.Elems, uVal)
+	if err != nil {
+		return nil, err
+	}
 	d := types.NewMysqlEnumDatum(e)
 	return &Constant{Value: d, RetType: FieldTypeFromPB(tp)}, nil
 }
