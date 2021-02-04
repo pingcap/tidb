@@ -865,6 +865,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+	err := h.UpdateSessionVar()
+	if err != nil {
+		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
+		return
+	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -910,22 +915,32 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
-		h.execAutoAnalyze(sql, params...)
+		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql+" index %n", append(params, idx.Name.O)...)
+			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
+var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
+	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+}
+
+func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQL(context.Background(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
