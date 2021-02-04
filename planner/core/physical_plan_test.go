@@ -991,7 +991,7 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
 			if len(warnings) > 0 {
-				output[i].Warning = make([]string, 2, 2)
+				output[i].Warning = make([]string, len(warnings), len(warnings))
 				for j, warning := range warnings {
 					output[i].Warning[j] = warning.Err.Error()
 				}
