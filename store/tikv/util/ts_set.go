@@ -22,7 +22,7 @@ type TSSet struct {
 	m        map[uint64]struct{}
 }
 
-// NetTSSet creates a set to store timestamps.
+// NewTSSet creates a set to store timestamps.
 func NewTSSet(capacity int) *TSSet {
 	return &TSSet{
 		capacity: capacity,
