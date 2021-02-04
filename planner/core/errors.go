@@ -72,7 +72,7 @@ var (
 	ErrUnsupportedOnGeneratedColumn    = dbterror.ClassOptimizer.NewStd(mysql.ErrUnsupportedOnGeneratedColumn)
 	ErrPrivilegeCheckFail              = dbterror.ClassOptimizer.NewStd(mysql.ErrPrivilegeCheckFail)
 	ErrInvalidWildCard                 = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidWildCard)
-	ErrMixOfGroupFuncAndFields         = dbterror.ClassOptimizer.NewStd(mysql.ErrMixOfGroupFuncAndFieldsIncompatible)
+	ErrMixOfGroupFuncAndFields         = dbterror.ClassOptimizer.NewStd(mysql.ErrMixOfGroupFuncAndFields)
 	errTooBigPrecision                 = dbterror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)
 	ErrDBaccessDenied                  = dbterror.ClassOptimizer.NewStd(mysql.ErrDBaccessDenied)
 	ErrTableaccessDenied               = dbterror.ClassOptimizer.NewStd(mysql.ErrTableaccessDenied)

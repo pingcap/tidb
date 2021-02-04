@@ -16,6 +16,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/errno"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -2622,4 +2623,18 @@ func (s *testIntegrationSerialSuite) TestMppAggWithJoin(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIssue22694(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists table_5_utf8_6")
+	tk.MustExec("create table table_5_utf8_6 (" +
+		"`pk` int primary key," +
+		"`col_double_key_signed` double  ," +
+		"key (`col_double_key_signed`)" +
+		") character set utf8" +
+		"partition by hash(pk)" +
+		"partitions 6")
+	err := tk.ExecToErr("SELECT ALL `col_double_key_signed` FROM table_5_utf8_6 HAVING ( CAST( ( COUNT( BINARY -3688098003402515037 ) ) AS TIME ) )  FOR UPDATE");
+	c.Assert(int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code), Equals, mysql.ErrMixOfGroupFuncAndFields)
 }

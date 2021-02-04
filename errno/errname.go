@@ -160,7 +160,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCantReopenTable:                          mysql.Message("Can't reopen table: '%-.192s'", nil),
 	ErrInvalidUseOfNull:                         mysql.Message("Invalid use of NULL value", nil),
 	ErrRegexp:                                   mysql.Message("Got error '%-.64s' from regexp", nil),
-	ErrMixOfGroupFuncAndFields:                  mysql.Message("Mixing of GROUP columns (MIN(),MAX(),COUNT(),...) with no GROUP columns is illegal if there is no GROUP BY clause", nil),
+	ErrMixOfGroupFuncAndFields:                  mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrNonexistingGrant:                         mysql.Message("There is no such grant defined for user '%-.48s' on host '%-.64s'", nil),
 	ErrTableaccessDenied:                        mysql.Message("%-.128s command denied to user '%-.48s'@'%-.64s' for table '%-.64s'", nil),
 	ErrColumnaccessDenied:                       mysql.Message("%-.16s command denied to user '%-.48s'@'%-.64s' for column '%-.192s' in table '%-.192s'", nil),
@@ -1019,7 +1019,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGetStartTS:                          mysql.Message("Can not get start ts", nil),
 	ErrPrivilegeCheckFail:                  mysql.Message("privilege check fail", nil), // this error message should begin lowercased to be compatible with the test
 	ErrInvalidWildCard:                     mysql.Message("Wildcard fields without any table name appears in wrong place", nil),
-	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),
 	ErrLockExpire:                          mysql.Message("TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction", nil),
 	ErrTableOptionUnionUnsupported:         mysql.Message("CREATE/ALTER table with union option is not supported", nil),
