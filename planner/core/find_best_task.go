@@ -1480,7 +1480,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
 	if prop.TaskTp == property.MppTaskType {
-		if prop.PartitionTp != property.AnyType {
+		if prop.PartitionTp != property.AnyType || ts.isPartition {
+			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
 			return &mppTask{}, nil
 		}
 		mppTask := &mppTask{

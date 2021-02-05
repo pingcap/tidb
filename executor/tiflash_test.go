@@ -156,6 +156,17 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	tk.MustExec("insert into t values(2,0)")
 	tk.MustExec("insert into t values(3,0)")
 	tk.MustExec("insert into t values(4,0)")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(4)`)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+	tk.MustExec("set @@session.tidb_partition_prune_mode='static-only'")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(false)`)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	tk.MustExec("set @@session.tidb_partition_prune_mode='dynamic-only'")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkUseMPP", `return(true)`)
 
 	tk.MustExec("create table t1(a int not null primary key, b int not null) partition by hash(a) partitions 4")
 	tk.MustExec("alter table t1 set tiflash replica 1")
@@ -215,5 +226,5 @@ func (s *tiflashTestSuite) TestPartitionTable(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(5)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
-
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkUseMPP")
 }
