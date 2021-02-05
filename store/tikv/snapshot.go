@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -47,13 +47,9 @@ const (
 	batchGetSize  = 5120
 )
 
-var (
-	tikvTxnRegionsNumHistogramWithSnapshot = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
-)
-
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store           *tikvStore
+	store           *KVStore
 	version         kv.Version
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
@@ -84,7 +80,7 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
 	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
@@ -145,7 +141,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
+	ctx = context.WithValue(ctx, TxnStartKey, s.version.Ver)
 	bo := NewBackofferWithVars(ctx, batchGetMaxBackoff, s.vars)
 
 	// Create a map to collect key-values from region servers.
@@ -222,14 +218,14 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	defer func(start time.Time) {
-		tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+		metrics.TxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
+	metrics.TxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	for id, g := range groups {
@@ -348,7 +344,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				return errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
+				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.Errorf("batchGet lockedKeys: %d", len(lockedKeys)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -368,10 +364,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 	defer func(start time.Time) {
-		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
+		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 
-	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
+	ctx = context.WithValue(ctx, TxnStartKey, s.version.Ver)
 	bo := NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
 	val, err := s.get(ctx, bo, k)
 	s.recordBackoffInfo(bo)
@@ -473,7 +469,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 			if msBeforeExpired > 0 {
-				err = bo.BackoffWithMaxSleep(boTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
+				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.New(keyErr.String()))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -587,12 +583,12 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 }
 
 func extractKeyErr(keyErr *pb.KeyError) error {
-	failpoint.Inject("ErrMockRetryableOnly", func(val failpoint.Value) {
+	if val, err := MockRetryableErrorResp.Eval(); err == nil {
 		if val.(bool) {
 			keyErr.Conflict = nil
 			keyErr.Retryable = "mock retryable error"
 		}
-	})
+	}
 
 	if keyErr.Conflict != nil {
 		return newWriteConflictError(keyErr.Conflict)
@@ -740,8 +736,8 @@ func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRun
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
-	backoffSleepMS map[backoffType]int
-	backoffTimes   map[backoffType]int
+	backoffSleepMS map[BackoffType]int
+	backoffTimes   map[BackoffType]int
 	scanDetail     *execdetails.ScanDetail
 	timeDetail     *execdetails.TimeDetail
 }
@@ -760,8 +756,8 @@ func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 		}
 	}
 	if len(rs.backoffSleepMS) > 0 {
-		newRs.backoffSleepMS = make(map[backoffType]int)
-		newRs.backoffTimes = make(map[backoffType]int)
+		newRs.backoffSleepMS = make(map[BackoffType]int)
+		newRs.backoffTimes = make(map[BackoffType]int)
 		for k, v := range rs.backoffSleepMS {
 			newRs.backoffSleepMS[k] += v
 		}
@@ -786,10 +782,10 @@ func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	if len(tmp.backoffSleepMS) > 0 {
 		if rs.backoffSleepMS == nil {
-			rs.backoffSleepMS = make(map[backoffType]int)
+			rs.backoffSleepMS = make(map[BackoffType]int)
 		}
 		if rs.backoffTimes == nil {
-			rs.backoffTimes = make(map[backoffType]int)
+			rs.backoffTimes = make(map[BackoffType]int)
 		}
 		for k, v := range tmp.backoffSleepMS {
 			rs.backoffSleepMS[k] += v

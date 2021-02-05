@@ -355,6 +355,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")

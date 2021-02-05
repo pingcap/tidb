@@ -884,3 +884,36 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 		c.Assert(err, IsNil)
 	}
 }
+
+func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
+	// Fix issue https://github.com/pingcap/tidb/issues/22436
+	// Point get should not use math.MaxUint64 when variable @@tidb_snapshot is set.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists xx")
+	tk.MustExec(`create table xx (id int key)`)
+	tk.MustExec(`insert into xx values (1), (7)`)
+
+	// Unrelated code, to make this test pass in the unit test.
+	// The `tikv_gc_safe_point` global variable must be there, otherwise the 'set @@tidb_snapshot' operation fails.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	// Record the current tso.
+	tk.MustExec("begin")
+	tso := tk.Se.GetSessionVars().TxnCtx.StartTS
+	tk.MustExec("rollback")
+	c.Assert(tso > 0, IsTrue)
+
+	// Insert data.
+	tk.MustExec("insert into xx values (8)")
+
+	// Change the snapshot before the tso, the inserted data should not be seen.
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
+
+	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}

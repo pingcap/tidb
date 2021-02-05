@@ -281,8 +281,8 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // constants for stats version. These const can be used for solving compatibility issue.
-// If the version number is 0, it means the most original statistics.
 const (
+	// Version0 is the state that no statistics is actually collected, only the meta info.(the total count and the average col size)
 	Version0 = 0
 	// In Version1
 	// Column stats: CM Sketch is built in TiKV using full data. Histogram is built from samples. TopN is extracted from CM Sketch.
@@ -371,6 +371,37 @@ func (hg *Histogram) RemoveIdxVals(idxValCntPairs []TopNMeta) {
 		if hg.Buckets[bktIdx].Count < 0 {
 			hg.Buckets[bktIdx].Count = 0
 		}
+	}
+}
+
+// AddIdxVals adds the given values to the histogram.
+func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
+	totalAddCnt := int64(0)
+	sort.Slice(idxValCntPairs, func(i, j int) bool {
+		return bytes.Compare(idxValCntPairs[i].Encoded, idxValCntPairs[j].Encoded) < 0
+	})
+	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
+		for pairIdx < len(idxValCntPairs) {
+			// If the current val smaller than current bucket's lower bound, skip it.
+			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
+			if cmpResult > 0 {
+				continue
+			}
+			// If the current val bigger than current bucket's upper bound, break.
+			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
+			if cmpResult < 0 {
+				break
+			}
+			totalAddCnt += int64(idxValCntPairs[pairIdx].Count)
+			hg.Buckets[bktIdx].NDV++
+			if cmpResult == 0 {
+				hg.Buckets[bktIdx].Repeat = int64(idxValCntPairs[pairIdx].Count)
+				pairIdx++
+				break
+			}
+			pairIdx++
+		}
+		hg.Buckets[bktIdx].Count += totalAddCnt
 	}
 }
 
@@ -744,8 +775,10 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	offset := int64(0)
 	if cmp == 0 {
 		lh.NDV--
-		if rh.Buckets[0].NDV > 0 {
-			lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV - 1
+		lh.Buckets[lLen-1].NDV += rh.Buckets[0].NDV
+		// There's an overlapped one. So we need to subtract it if needed.
+		if rh.Buckets[0].NDV > 0 && lh.Buckets[lLen-1].Repeat > 0 {
+			lh.Buckets[lLen-1].NDV--
 		}
 		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat, false)
 		offset = rh.Buckets[0].Count
@@ -816,6 +849,9 @@ func (hg *Histogram) Copy() *Histogram {
 func (hg *Histogram) RemoveUpperBound() *Histogram {
 	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
 	hg.Buckets[hg.Len()-1].Repeat = 0
+	if hg.NDV > 0 {
+		hg.NDV--
+	}
 	return hg
 }
 

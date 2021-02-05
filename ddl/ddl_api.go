@@ -3158,6 +3158,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errExchangePartitionDisabled)
+		return nil
+	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -4860,8 +4864,8 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
-			colInfo.Dependences[colName.Name.O] = struct{}{}
-			checkDependencies[colName.Name.O] = struct{}{}
+			colInfo.Dependences[colName.Name.L] = struct{}{}
+			checkDependencies[colName.Name.L] = struct{}{}
 		}
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
