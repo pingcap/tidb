@@ -1387,6 +1387,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 
+	if len(stmts) == 0 {
+		return cc.writeOK(ctx)
+	}
+
 	var appendMultiStmtWarning bool
 
 	if len(stmts) > 1 {
