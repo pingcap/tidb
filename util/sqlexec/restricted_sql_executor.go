@@ -60,6 +60,27 @@ type RestrictedSQLExecutor interface {
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 }
 
+// ExecOption is a struct defined for ExecRestrictedSQLWithContext option.
+type ExecOption struct {
+	IgnoreWarning bool
+	SnapshotTS    uint64
+}
+
+// OptionFuncAlias is defined for the optional paramater of ExecRestrictedSQLWithContext.
+type OptionFuncAlias = func(option *ExecOption)
+
+// ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to ignore the warnings.
+var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
+	option.IgnoreWarning = true
+}
+
+// ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.
+func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.SnapshotTS = snapshot
+	}
+}
+
 // SQLExecutor is an interface provides executing normal sql statement.
 // Why we need this interface? To break circle dependence of packages.
 // For example, privilege/privileges package need execute SQL, if it use

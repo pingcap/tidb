@@ -3484,8 +3484,6 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	c.Assert(pi.Plan, IsNil)
 	wg.Wait()
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3520,4 +3518,3 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	_, err = exec.ParseWithParams(context.Background(), "SELECT %?")
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 }
->>>>>>> ea6ccf82e... *: refactor the RestrictedSQLExecutor interface (#22579)
