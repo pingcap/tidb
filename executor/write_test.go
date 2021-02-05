@@ -2243,6 +2243,25 @@ func (s *testSuite4) TestLoadData(c *C) {
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), nil, []string{"1|1|2\n|3", "4|4|5\n5|6"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
+	ld.LinesInfo.Terminated = "#\n"
+	ld.FieldsInfo.Terminated = "#"
+	tests = []testCase{
+		{[]byte("xxx1#\nxxx2#\n"), nil, []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), nil, []string{"1|2|3|4", "2|3|4|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), nil, []string{"1|2|3#|4", "2|3|#4#\n|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+
+	ld.LinesInfo.Terminated = "#"
+	ld.FieldsInfo.Terminated = "##"
+	ld.LinesInfo.Starting = ""
+	tests = []testCase{
+		{[]byte("1#2#"), nil, []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("1##2##3##4#2##3##4##5#"), nil, []string{"1|2|3|4", "2|3|4|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("1##2##\"3##\"##\"4\n\"#2##3##\"##4#\"##5#"), nil, []string{"1|2|3##|4", "2|3|##4#|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func (s *testSuite4) TestLoadDataEscape(c *C) {

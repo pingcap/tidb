@@ -166,15 +166,18 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 		} else {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
+		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
+		c.Assert(a.Columns[i].TopN.Equal(b.Columns[i].TopN), IsTrue)
 	}
 	c.Assert(len(a.Indices), Equals, len(b.Indices))
 	for i := range a.Indices {
 		c.Assert(statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false), IsTrue)
-		if a.Columns[i].CMSketch == nil {
-			c.Assert(b.Columns[i].CMSketch, IsNil)
+		if a.Indices[i].CMSketch == nil {
+			c.Assert(b.Indices[i].CMSketch, IsNil)
 		} else {
-			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
+			c.Assert(a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch), IsTrue)
 		}
+		c.Assert(a.Indices[i].TopN.Equal(b.Indices[i].TopN), IsTrue)
 	}
 	c.Assert(isSameExtendedStats(a.ExtendedStats, b.ExtendedStats), IsTrue)
 }
@@ -350,7 +353,7 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Se, time.Millisecond)
+	h, err := handle.NewHandle(testKit.Se, time.Millisecond, do.SysSessionPool())
 	c.Assert(err, IsNil)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -504,6 +507,36 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testStatsSuite) TestInitStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	c.Assert(h.InitStats(is), IsNil)
+	table0 := h.GetTableStats(tbl.Meta())
+	cols := table0.Columns
+	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	h.Clear()
+	c.Assert(h.Update(is), IsNil)
+	table1 := h.GetTableStats(tbl.Meta())
+	assertTableEqual(c, table0, table1)
+	h.SetLease(0)
+}
+
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -586,7 +619,7 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][9], Equals, "0")
-	c.Assert(result.Rows()[1][9], Equals, "0.828571")
+	c.Assert(result.Rows()[1][9], Equals, "0.8285714285714286")
 
 	testKit.MustExec("truncate table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
@@ -602,7 +635,7 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][9], Equals, "0")
-	c.Assert(result.Rows()[1][9], Equals, "-0.942857")
+	c.Assert(result.Rows()[1][9], Equals, "-0.9428571428571428")
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1),(11,1),(12,1),(13,1),(14,1),(15,1),(16,1),(17,1),(18,1),(19,1),(20,2),(21,2),(22,2),(23,2),(24,2),(25,2)")
@@ -619,14 +652,14 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][9], Equals, "1")
-	c.Assert(result.Rows()[1][9], Equals, "0.828571")
+	c.Assert(result.Rows()[1][9], Equals, "0.8285714285714286")
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values(1,1),(2,7),(3,12),(8,18),(4,20),(5,21)")
 	testKit.MustExec("analyze table t")
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][9], Equals, "0.828571")
+	c.Assert(result.Rows()[0][9], Equals, "0.8285714285714286")
 	c.Assert(result.Rows()[1][9], Equals, "1")
 
 	testKit.MustExec("drop table t")
@@ -641,6 +674,62 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 1").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][9], Equals, "0")
+}
+
+func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1;")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
+	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
+	testKit.MustExec("create table t1(a int);")
+	testKit.MustExec("insert into t values(1,1,1),(3,12,3),(4,20,4),(2,7,2),(5,21,5);")
+	testKit.MustExec("insert into t1 values(1),(3),(4),(2),(5);")
+	testKit.MustExec("create index idx_t_ab on t(a, b);")
+	testKit.MustExec("create index idx_t_b on t(b);")
+	testKit.MustExec("analyze table t, t1;")
+	result := testKit.MustQuery("show stats_meta where table_name = 't';").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "1")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
+	c.Assert(len(result.Rows()), Equals, 15)
+
+	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	// Test the 'dynamic-only' mode
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only';")
+	err := testKit.ExecToErr("analyze table t, t1;")
+	c.Assert(err.Error(), Equals, "TODO: The merge function of the topN structure has not been implemented yet")
+	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "1")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
+	c.Assert(len(result.Rows()), Equals, 15)
+
+	result = testKit.MustQuery("show stats_meta where table_name = 't1';").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][5], Equals, "5")
+	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+
+	err = testKit.ExecToErr("analyze table t index idx_t_ab, idx_t_b;")
+	c.Assert(err.Error(), Equals, "TODO: The merge function of the topN structure has not been implemented yet")
+	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 3)
+	c.Assert(result.Rows()[0][5], Equals, "1")
+	c.Assert(result.Rows()[1][5], Equals, "2")
+	c.Assert(result.Rows()[2][5], Equals, "2")
+	result = testKit.MustQuery("show stats_histograms where table_name = 't';").Sort()
+	c.Assert(len(result.Rows()), Equals, 15)
 }
 
 func (s *testStatsSuite) TestExtendedStatsDefaultSwitch(c *C) {
@@ -807,10 +896,10 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-var _ = SerialSuites(&statsSerialSuite{&testStatsSuite{}})
+var _ = SerialSuites(&statsSerialSuite{})
 
 type statsSerialSuite struct {
-	*testStatsSuite
+	testSuiteBase
 }
 
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {

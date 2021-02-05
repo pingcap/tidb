@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -34,15 +34,13 @@ import (
 type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
-var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
-var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
 func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPrewrite
+	return metrics.TxnRegionsNumHistogramPrewrite
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
@@ -75,7 +73,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 
 	ttl := c.lockTTL
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("twoPCShortLockTTL", func() {
 			ttl = 1
 			keys := make([]string, 0, len(mutations))
@@ -126,12 +124,26 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("prewritePrimaryFail", func() {
 			if batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting primary batch"))
+			}
+		})
+	}
+
+	if c.sessionID > 0 {
+		failpoint.Inject("prewriteSecondaryFail", func() {
+			if !batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
 			}
 		})
 	}
@@ -194,7 +206,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
-					tikvOnePCTxnCounterFallback.Inc()
+					metrics.OnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
 					c.setAsyncCommit(false)
 				} else {
@@ -246,7 +258,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
-				zap.Uint64("conn", c.connID),
+				zap.Uint64("session", c.sessionID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
