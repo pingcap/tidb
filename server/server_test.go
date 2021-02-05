@@ -1122,7 +1122,7 @@ func (cli *testServerClient) runTestIssue22646(c *C) {
 			c1 <- "success"
 		}()
 		select {
-		case <-time.After(4 * time.Second):
+		case <-time.After(30 * time.Second):
 			panic("read empty query statement timed out.")
 		}
 	})
