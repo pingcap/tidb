@@ -24,9 +24,6 @@ import (
 
 const lengthLimit = 1048576
 
-// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
-const hardcodedS3ChunkSize = 5 * 1024 * 1024
-
 var pool = sync.Pool{New: func() interface{} {
 	return &bytes.Buffer{}
 }}
@@ -44,10 +41,10 @@ type writerPipe struct {
 	fileSizeLimit      uint64
 	statementSizeLimit uint64
 
-	w storage.Writer
+	w storage.ExternalFileWriter
 }
 
-func newWriterPipe(w storage.Writer, fileSizeLimit, statementSizeLimit uint64, labels prometheus.Labels) *writerPipe {
+func newWriterPipe(w storage.ExternalFileWriter, fileSizeLimit, statementSizeLimit uint64, labels prometheus.Labels) *writerPipe {
 	return &writerPipe{
 		input:  make(chan *bytes.Buffer, 8),
 		closed: make(chan struct{}),
@@ -117,8 +114,8 @@ func (b *writerPipe) ShouldSwitchStatement() bool {
 		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
 }
 
-// WriteMeta writes MetaIR to a storage.Writer
-func WriteMeta(ctx context.Context, meta MetaIR, w storage.Writer) error {
+// WriteMeta writes MetaIR to a storage.ExternalFileWriter
+func WriteMeta(ctx context.Context, meta MetaIR, w storage.ExternalFileWriter) error {
 	log.Debug("start dumping meta data", zap.String("target", meta.TargetName()))
 
 	specCmtIter := meta.SpecialComments()
@@ -136,8 +133,8 @@ func WriteMeta(ctx context.Context, meta MetaIR, w storage.Writer) error {
 	return nil
 }
 
-// WriteInsert writes TableDataIR to a storage.Writer in sql type
-func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.Writer) error {
+// WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql type
+func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -261,8 +258,8 @@ func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableD
 	return wp.Error()
 }
 
-// WriteInsertInCsv writes TableDataIR to a storage.Writer in csv type
-func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.Writer) error {
+// WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
+func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -367,7 +364,7 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 	return wp.Error()
 }
 
-func write(ctx context.Context, writer storage.Writer, str string) error {
+func write(ctx context.Context, writer storage.ExternalFileWriter, str string) error {
 	_, err := writer.Write(ctx, []byte(str))
 	if err != nil {
 		// str might be very long, only output the first 200 chars
@@ -382,7 +379,7 @@ func write(ctx context.Context, writer storage.Writer, str string) error {
 	return errors.Trace(err)
 }
 
-func writeBytes(ctx context.Context, writer storage.Writer, p []byte) error {
+func writeBytes(ctx context.Context, writer storage.ExternalFileWriter, p []byte) error {
 	_, err := writer.Write(ctx, p)
 	if err != nil {
 		// str might be very long, only output the first 200 chars
@@ -398,17 +395,16 @@ func writeBytes(ctx context.Context, writer storage.Writer, p []byte) error {
 	return errors.Trace(err)
 }
 
-func buildFileWriter(ctx context.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.Writer, func(ctx context.Context), error) {
+func buildFileWriter(ctx context.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(ctx context.Context), error) {
 	fileName += compressFileSuffix(compressType)
 	fullPath := path.Join(s.URI(), fileName)
-	uploader, err := s.CreateUploader(ctx, fileName)
+	writer, err := storage.WithCompression(s, compressType).Create(ctx, fileName)
 	if err != nil {
 		log.Error("open file failed",
 			zap.String("path", fullPath),
 			zap.Error(err))
 		return nil, nil, errors.Trace(err)
 	}
-	writer := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize, compressType)
 	log.Debug("opened file", zap.String("path", fullPath))
 	tearDownRoutine := func(ctx context.Context) {
 		err := writer.Close(ctx)
@@ -423,23 +419,22 @@ func buildFileWriter(ctx context.Context, s storage.ExternalStorage, fileName st
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.Writer, func(context.Context)) {
+func buildInterceptFileWriter(s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(context.Context)) {
 	fileName += compressFileSuffix(compressType)
-	var writer storage.Writer
+	var writer storage.ExternalFileWriter
 	fullPath := path.Join(s.URI(), fileName)
 	fileWriter := &InterceptFileWriter{}
 	initRoutine := func(ctx context.Context) error {
-		uploader, err := s.CreateUploader(ctx, fileName)
+		w, err := storage.WithCompression(s, compressType).Create(ctx, fileName)
 		if err != nil {
 			log.Error("open file failed",
 				zap.String("path", fullPath),
 				zap.Error(err))
 			return newWriterError(err)
 		}
-		w := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize, compressType)
 		writer = w
 		log.Debug("opened file", zap.String("path", fullPath))
-		fileWriter.Writer = writer
+		fileWriter.ExternalFileWriter = writer
 		return nil
 	}
 	fileWriter.initRoutine = initRoutine
@@ -493,7 +488,7 @@ func newWriterError(err error) error {
 // InterceptFileWriter is an interceptor of os.File,
 // tracking whether a StringWriter has written something.
 type InterceptFileWriter struct {
-	storage.Writer
+	storage.ExternalFileWriter
 	sync.Once
 	SomethingIsWritten bool
 
@@ -501,7 +496,7 @@ type InterceptFileWriter struct {
 	err         error
 }
 
-// Write implements storage.Writer.Write. It check whether writer has written something and init a file at first time
+// Write implements storage.ExternalFileWriter.Write. It check whether writer has written something and init a file at first time
 func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	w.Do(func() { w.err = w.initRoutine(ctx) })
 	if len(p) > 0 {
@@ -510,13 +505,13 @@ func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) 
 	if w.err != nil {
 		return 0, errors.Annotate(w.err, "open file error")
 	}
-	n, err := w.Writer.Write(ctx, p)
+	n, err := w.ExternalFileWriter.Write(ctx, p)
 	return n, newWriterError(err)
 }
 
 // Close closes the InterceptFileWriter
 func (w *InterceptFileWriter) Close(ctx context.Context) error {
-	return w.Writer.Close(ctx)
+	return w.ExternalFileWriter.Close(ctx)
 }
 
 func wrapBackTicks(identifier string) string {
@@ -586,8 +581,8 @@ func (f FileFormat) Extension() string {
 	}
 }
 
-// WriteInsert writes TableDataIR to a storage.Writer in sql/csv type
-func (f FileFormat) WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.Writer) error {
+// WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql/csv type
+func (f FileFormat) WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableDataIR, w storage.ExternalFileWriter) error {
 	switch f {
 	case FileFormatSQLText:
 		return WriteInsert(pCtx, cfg, meta, tblIR, w)
