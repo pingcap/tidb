@@ -34,6 +34,11 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					}
+				}
 			} else {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
@@ -67,6 +72,11 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					}
+				}
 			} else {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
@@ -124,6 +134,13 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
 					return err
 				}
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+							return err
+						}
+					}
+				}
 			} else {
 				for _, def := range pi.Definitions {
 					if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
@@ -171,6 +188,13 @@ func (e *ShowExec) fetchShowStatsTopN() error {
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
 					return err
+				}
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+							return err
+						}
+					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
@@ -291,6 +315,11 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					}
+				}
 			} else {
 				for _, def := range pi.Definitions {
 					e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
