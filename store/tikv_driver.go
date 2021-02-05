@@ -175,7 +175,7 @@ type tikvStore struct {
 	tlsConfig *tls.Config
 	pdClient  pd.Client
 	enableGC  bool
-	gcWorker  *gcworker.GCWorker
+	gcWorker  gcworker.GCHandler
 }
 
 var (
