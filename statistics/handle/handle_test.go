@@ -896,10 +896,10 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-var _ = SerialSuites(&statsSerialSuite{&testStatsSuite{}})
+var _ = SerialSuites(&statsSerialSuite{})
 
 type statsSerialSuite struct {
-	*testStatsSuite
+	testSuiteBase
 }
 
 func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
