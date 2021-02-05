@@ -1446,38 +1446,29 @@ func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaNam
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
 	buf.WriteString(pi.Expr)
-	buf.WriteString(" not in (")
-	inValues := getInValues(&buf, pi, index)
-	buf.WriteString(") limit 1")
+	buf.WriteString(" not in (%?) limit 1")
+	inValues := getInValues(pi, index)
 
-	paramList := make([]interface{}, 0, 2+len(inValues))
-	paramList = append(paramList, schemaName.L, tableName.L)
-	paramList = append(paramList, inValues...)
+	paramList := make([]interface{}, 0, 3)
+	paramList = append(paramList, schemaName.L, tableName.L, inValues)
 	return buf.String(), paramList
 }
 
 func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	colName := pi.Columns[0].L
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where %n not in (")
-	inValues := getInValues(&buf, pi, index)
-	buf.WriteString(") limit 1")
+	buf.WriteString("select 1 from %n.%n where %n not in (%?) limit 1")
+	inValues := getInValues(pi, index)
 
-	paramList := make([]interface{}, 0, 3+len(inValues))
-	paramList = append(paramList, schemaName.L, tableName.L, colName)
-	paramList = append(paramList, inValues...)
+	paramList := make([]interface{}, 0, 4)
+	paramList = append(paramList, schemaName.L, tableName.L, colName, inValues)
 	return buf.String(), paramList
 }
 
-func getInValues(buf *strings.Builder, pi *model.PartitionInfo, index int) []interface{} {
-	inValues := make([]interface{}, 0, len(pi.Definitions[index].InValues))
+func getInValues(pi *model.PartitionInfo, index int) []string {
+	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
 	for _, inValue := range pi.Definitions[index].InValues {
 		for _, one := range inValue {
-			if len(inValues) == 0 {
-				buf.WriteString("%?")
-			} else {
-				buf.WriteString(", %?")
-			}
 			inValues = append(inValues, one)
 		}
 	}
