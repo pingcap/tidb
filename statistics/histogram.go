@@ -1462,8 +1462,8 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 
 // bucket4Merging is only used for merging partition hists to global hist.
 type bucket4Merging struct {
-	lower  *types.Datum
-	upper  *types.Datum
+	lower *types.Datum
+	upper *types.Datum
 	Bucket
 	// disjointNDV is used for merging bucket NDV, see mergeBucketNDV for more details.
 	disjointNDV int64
@@ -1471,8 +1471,8 @@ type bucket4Merging struct {
 
 func newBucket4Meging() *bucket4Merging {
 	return &bucket4Merging{
-		lower:  new(types.Datum),
-		upper:  new(types.Datum),
+		lower: new(types.Datum),
+		upper: new(types.Datum),
 		Bucket: Bucket{
 			Repeat: 0,
 			NDV:    0,
@@ -1503,8 +1503,8 @@ func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 
 func (b *bucket4Merging) Clone() bucket4Merging {
 	return bucket4Merging{
-		lower:  b.lower.Clone(),
-		upper:  b.upper.Clone(),
+		lower: b.lower.Clone(),
+		upper: b.upper.Clone(),
 		Bucket: Bucket{
 			Repeat: b.Repeat,
 			NDV:    b.NDV,
@@ -1634,8 +1634,8 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		return nil
 	}
 	res := bucket4Merging{}
-	res.upper = buckets[len(buckets) - 1].upper.Clone()
-	right := buckets[len(buckets) - 1].Clone()
+	res.upper = buckets[len(buckets)-1].upper.Clone()
+	right := buckets[len(buckets)-1].Clone()
 	for i := len(buckets) - 1; i >= 0; i-- {
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
@@ -1645,7 +1645,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		if compare == 0 {
 			res.Repeat += buckets[i].Repeat
 		}
-		if i != len(buckets) - 1 {
+		if i != len(buckets)-1 {
 			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
 			if err != nil {
 				return nil
@@ -1708,7 +1708,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	bucketCount := int64(1)
 	for i := len(buckets) - 1; i >= 0; i-- {
 		sum += buckets[i].Count
-		if sum >= totCount * bucketCount / expBucketNumber {
+		if sum >= totCount*bucketCount/expBucketNumber {
 			// if the buckets have the same upper, we merge them into the same new buckets.
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.CompareDatum(sc, buckets[i].upper)
