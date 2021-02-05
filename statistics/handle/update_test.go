@@ -65,13 +65,17 @@ func (s *testSerialStatsSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-type testStatsSuite struct {
+type testSuiteBase struct {
 	store kv.Storage
 	do    *domain.Domain
 	hook  *logHook
 }
 
-func (s *testStatsSuite) SetUpSuite(c *C) {
+type testStatsSuite struct {
+	testSuiteBase
+}
+
+func (s *testSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
 	s.registerHook()
@@ -80,13 +84,13 @@ func (s *testStatsSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStatsSuite) TearDownSuite(c *C) {
+func (s *testSuiteBase) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testStatsSuite) registerHook() {
+func (s *testSuiteBase) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
