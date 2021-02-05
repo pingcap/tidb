@@ -159,6 +159,69 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
+<<<<<<< HEAD
+=======
+	return nil
+}
+
+func (w *worker) mergeWarningsIntoJob(job *model.Job) {
+	w.reorgCtx.mu.Lock()
+	partWarnings := w.reorgCtx.mu.warnings
+	partWarningsCount := w.reorgCtx.mu.warningsCount
+	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	w.reorgCtx.mu.Unlock()
+}
+
+func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+	addedRowCount int64) {
+	if tblInfo == nil || addedRowCount == 0 {
+		return
+	}
+	totalCount := getTableTotalCount(w, tblInfo)
+	progress := float64(0)
+	if totalCount > 0 {
+		progress = float64(addedRowCount) / float64(totalCount)
+	} else {
+		progress = 1
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	switch reorgInfo.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+	case model.ActionModifyColumn:
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+	}
+}
+
+func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	defer w.sessPool.put(ctx)
+
+	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
+	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
+	if !ok {
+		return statistics.PseudoRowCount
+	}
+	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
+	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return statistics.PseudoRowCount
+	}
+	if len(rows) != 1 {
+		return statistics.PseudoRowCount
+	}
+	return rows[0].GetInt64(0)
+>>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {

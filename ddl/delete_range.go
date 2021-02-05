@@ -16,8 +16,8 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -34,7 +34,13 @@ import (
 )
 
 const (
+<<<<<<< HEAD
 	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
+=======
+	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
+	insertDeleteRangeSQLValue  = `(%?, %?, %?, %?, %?)`
+	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
+>>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 
 	delBatchSize = 65536
 	delBackLog   = 128
@@ -333,15 +339,60 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func doBatchDeleteIndiceRange(s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64) error {
+	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", indexIDs))
+	paramsList := make([]interface{}, 0, len(indexIDs)*5)
+	var buf strings.Builder
+	buf.WriteString(insertDeleteRangeSQLPrefix)
+	for i, indexID := range indexIDs {
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		startKeyEncoded := hex.EncodeToString(startKey)
+		endKeyEncoded := hex.EncodeToString(endKey)
+		buf.WriteString(insertDeleteRangeSQLValue)
+		if i != len(indexIDs)-1 {
+			buf.WriteString(",")
+		}
+		paramsList = append(paramsList, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
+	}
+	_, err := s.ExecuteInternal(context.Background(), buf.String(), paramsList...)
+	return errors.Trace(err)
+}
+
+>>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
 	logutil.Logger(ddlLogCtx).Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
-	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64) error {
+	logutil.BgLogger().Info("[ddl] batch insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", tableIDs))
+	var buf strings.Builder
+	buf.WriteString(insertDeleteRangeSQLPrefix)
+	paramsList := make([]interface{}, 0, len(tableIDs)*5)
+	for i, tableID := range tableIDs {
+		startKey := tablecodec.EncodeTablePrefix(tableID)
+		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+		startKeyEncoded := hex.EncodeToString(startKey)
+		endKeyEncoded := hex.EncodeToString(endKey)
+		buf.WriteString(insertDeleteRangeSQLValue)
+		if i != len(tableIDs)-1 {
+			buf.WriteString(",")
+		}
+		paramsList = append(paramsList, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
+	}
+	_, err := s.ExecuteInternal(context.Background(), buf.String(), paramsList...)
+	return errors.Trace(err)
+}
+
+>>>>>>> dedaabb80... ddl: migrate part of ddl package code from Execute/ExecRestricted to safe API (2) (#22729)
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
