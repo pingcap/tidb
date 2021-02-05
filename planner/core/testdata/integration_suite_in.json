@@ -272,5 +272,12 @@
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
     ]
+  },
+  {
+    "name": "TestMultiColMaxOneRow",
+    "cases": [
+      "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
+      "select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1"
+    ]
   }
 ]

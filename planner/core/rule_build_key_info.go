@@ -65,33 +65,52 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
-	col, ok := unique.(*expression.Column)
-	if !ok {
+func (p *LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+	if len(eqColIDs) == 0 {
 		return false
 	}
-	if !childSchema.IsUniqueKey(col) && !childSchema.IsUnique(col) {
-		return false
+	// We check `UniqueKeys` as well since the condition is `col = con | corr`, not `col <=> con | corr`.
+	keys := make([]expression.KeyInfo, 0, len(childSchema.Keys)+len(childSchema.UniqueKeys))
+	keys = append(keys, childSchema.Keys...)
+	keys = append(keys, childSchema.UniqueKeys...)
+	var maxOneRow bool
+	for _, cols := range keys {
+		maxOneRow = true
+		for _, c := range cols {
+			if _, ok := eqColIDs[c.UniqueID]; !ok {
+				maxOneRow = false
+				break
+			}
+		}
+		if maxOneRow {
+			return true
+		}
 	}
-	_, okCon := constOrCorCol.(*expression.Constant)
-	if okCon {
-		return true
-	}
-	_, okCorCol := constOrCorCol.(*expression.CorrelatedColumn)
-	return okCorCol
+	return false
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.maxOneRow {
+		return
+	}
+	eqCols := make(map[int64]struct{}, len(childSchema[0].Columns))
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
-				p.maxOneRow = true
-				break
+			for i, arg := range sf.GetArgs() {
+				if col, isCol := arg.(*expression.Column); isCol {
+					_, isCon := sf.GetArgs()[1-i].(*expression.Constant)
+					_, isCorCol := sf.GetArgs()[1-i].(*expression.CorrelatedColumn)
+					if isCon || isCorCol {
+						eqCols[col.UniqueID] = struct{}{}
+					}
+					break
+				}
 			}
 		}
 	}
+	p.maxOneRow = p.checkMaxOneRowCond(eqCols, childSchema[0])
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

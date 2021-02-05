@@ -1481,5 +1481,35 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMultiColMaxOneRow",
+    "Cases": [
+      {
+        "SQL": "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
+        "Plan": [
+          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.b, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1",
+        "Plan": [
+          "Projection 10000.00 root  test.t2.c",
+          "└─Apply 10000.00 root  CARTESIAN left outer join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─IndexLookUp 0.02 root  ",
+          "      ├─Selection(Build) 0.02 cop[tikv]  or(eq(test.t2.b, 1), eq(test.t2.b, 2))",
+          "      │ └─IndexRangeScan 10.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "      └─TableRowIDScan(Probe) 0.02 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
