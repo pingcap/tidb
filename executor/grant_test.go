@@ -384,3 +384,10 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	c.Assert(err, IsNil)
 }
+
+func (s *testSuite3) TestIssue22721(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';")
+	tk.MustExec("GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';")
+}
