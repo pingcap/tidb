@@ -41,14 +41,6 @@ var (
 	_ kv.Transaction = (*tikvTxn)(nil)
 )
 
-var (
-	tikvTxnCmdHistogramWithCommit   = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblCommit)
-	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
-	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
-	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
-	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblLockKeys)
-)
-
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
 type SchemaAmender interface {
 	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
@@ -189,6 +181,10 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	}
 }
 
+func (txn *tikvTxn) GetOption(opt kv.Option) interface{} {
+	return txn.us.GetOption(opt)
+}
+
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
@@ -218,7 +214,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	})
 
 	start := time.Now()
-	defer func() { tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.TxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds()) }()
 
 	// sessionID is used for log.
 	var sessionID uint64
@@ -319,7 +315,7 @@ func (txn *tikvTxn) Rollback() error {
 	}
 	txn.close()
 	logutil.BgLogger().Debug("[kv] rollback txn", zap.Uint64("txnStartTS", txn.StartTS()))
-	tikvTxnCmdHistogramWithRollback.Observe(time.Since(start).Seconds())
+	metrics.TxnCmdHistogramWithRollback.Observe(time.Since(start).Seconds())
 	return nil
 }
 
@@ -364,7 +360,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	defer func() {
-		tikvTxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
+		metrics.TxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
