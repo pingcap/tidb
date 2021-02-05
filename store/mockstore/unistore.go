@@ -52,3 +52,7 @@ func (s *mockStorage) EtcdAddrs() ([]string, error) {
 func (s *mockStorage) TLSConfig() *tls.Config {
 	return nil
 }
+
+func (s *mockStorage) StartGCWorker() error {
+	return nil
+}
