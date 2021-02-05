@@ -2264,8 +2264,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se.initLoadCommonGlobalVarsSQL()
-
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
@@ -2631,28 +2629,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableExchangePartition,
 }
 
-var (
-	loadCommonGlobalVarsSQLOnce sync.Once
-	loadCommonGlobalVarsStmt    ast.StmtNode
-)
-
-func (s *session) initLoadCommonGlobalVarsSQL() {
-	loadCommonGlobalVarsSQLOnce.Do(func() {
-		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-		if len(variable.PluginVarNames) > 0 {
-			vars = append(vars, variable.PluginVarNames...)
-		}
-		var err error
-		loadCommonGlobalVarsStmt, err = s.ParseWithParams(context.TODO(), "SELECT HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
-		if err != nil {
-			loadCommonGlobalVarsStmt = nil
-		}
-	})
-}
-
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
-	s.initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
@@ -2667,7 +2645,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
-		return s.ExecRestrictedStmt(context.TODO(), loadCommonGlobalVarsStmt)
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+
+		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		return s.ExecRestrictedStmt(context.TODO(), stmt)
 	}
 	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
 	if err != nil {
