@@ -16,12 +16,12 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -720,9 +720,14 @@ type AnalyzeFastExec struct {
 }
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
-	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.tableID.GetStatisticsID())
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	var stmt ast.StmtNode
+	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	if err != nil {
+		return
+	}
 	var rows []chunk.Row
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return
 	}
@@ -746,22 +751,20 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 				err = rollbackFn()
 			}
 		}()
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
+
 		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
-		var partition string
 		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.GetStatisticsID() {
-					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
+					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
 					break
 				}
 			}
 		}
-		sql := fmt.Sprintf("select count(*) from %s.%s", dbInfo.Name.L, e.tblInfo.Name.L)
-		if len(partition) > 0 {
-			sql += partition
-		}
 		var rs sqlexec.RecordSet
-		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
 		if err != nil {
 			return
 		}
@@ -1232,9 +1235,14 @@ type analyzeIndexIncrementalExec struct {
 	AnalyzeIndexExec
 	oldHist *statistics.Histogram
 	oldCMS  *statistics.CMSketch
+	oldTopN *statistics.TopN
 }
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
+	var statsVer = statistics.Version1
+	if idxExec.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
 	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil, nil)
 	if err != nil {
@@ -1245,7 +1253,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]), statsVer)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1256,9 +1264,9 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		}
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
-	var statsVer = statistics.Version1
-	if idxExec.analyzePB.IdxReq.Version != nil {
-		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	if statsVer == statistics.Version2 {
+		poped := statistics.MergeTopN(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]), false)
+		hist.AddIdxVals(poped)
 	}
 	result := analyzeResult{
 		TableID:  idxExec.tableID,

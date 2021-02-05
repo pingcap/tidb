@@ -132,24 +132,21 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 }
 
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
-	recordSets, err := se.Execute(ctx, e.stmtNode.Text())
-	if len(recordSets) == 0 {
-		if err != nil {
-			var errCode uint16
-			if te, ok := err.(*terror.Error); ok {
-				errCode = terror.ToSQLError(te).Code
-			}
-			logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
-		} else {
-			logutil.Eventf(ctx, "execute done, modify row: %d", e.ctx.GetSessionVars().StmtCtx.AffectedRows())
+	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
+	if err != nil {
+		var errCode uint16
+		if te, ok := err.(*terror.Error); ok {
+			errCode = terror.ToSQLError(te).Code
 		}
+		logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
 	}
-	for _, rs := range recordSets {
+	if rs != nil {
 		drainRecordSet(ctx, e.ctx, rs)
 		if err = rs.Close(); err != nil {
 			logutil.Logger(ctx).Error("run trace close result with error", zap.Error(err))
 		}
 	}
+	logutil.Eventf(ctx, "execute done, modify row: %d", e.ctx.GetSessionVars().StmtCtx.AffectedRows())
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {
