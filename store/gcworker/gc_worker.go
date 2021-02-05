@@ -2192,3 +2192,7 @@ type GCHandler interface {
 	// Close closes the GCHandler.
 	Close()
 }
+
+// NewGCHandlerFunc creates a new GCHandler.
+// To enable real GC, we should assign the function to `gcworker.NewGCWorker`.
+var NewGCHandlerFunc func(storage tikv.Storage, pdClient pd.Client) (GCHandler, error)

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/storeutil"
@@ -248,6 +249,7 @@ func setHeapProfileTracker() {
 func registerStores() {
 	err := kvstore.Register("tikv", kvstore.TiKVDriver{})
 	terror.MustNil(err)
+	gcworker.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})

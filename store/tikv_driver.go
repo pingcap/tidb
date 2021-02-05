@@ -232,11 +232,11 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	if !s.enableGC {
+	if !s.enableGC || gcworker.NewGCHandlerFunc == nil {
 		return nil
 	}
 
-	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
+	gcWorker, err := gcworker.NewGCHandlerFunc(s, s.pdClient)
 	if err != nil {
 		return errors.Trace(err)
 	}
