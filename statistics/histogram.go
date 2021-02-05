@@ -1694,9 +1694,14 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
+// Notice: If expBucketNumber == 0, we will let expBucketNumber = max(hists.Len())
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	// minValue is used to calc the bucket lower.
+	needBucketNumber := false
+	if expBucketNumber == 0 {
+		needBucketNumber = true
+	}
 	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
@@ -1711,6 +1716,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			res, err := hist.GetLower(0).CompareDatum(sc, minValue)
 			if err != nil && res < 0 {
 				minValue = hist.GetLower(0).Clone()
+			}
+			if !needBucketNumber {
+				continue
+			}
+			if int64(hist.Len()) > expBucketNumber {
+				expBucketNumber = int64(hist.Len())
 			}
 		}
 	}
