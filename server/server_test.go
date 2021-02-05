@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,6 +51,12 @@ var (
 )
 
 func TestT(t *testing.T) {
+	defaultConfig := config.NewConfig()
+	globalConfig := config.GetGlobalConfig()
+	// Test for issue 22162. the global config shouldn't be changed by other pkg init function.
+	if !reflect.DeepEqual(defaultConfig, globalConfig) {
+		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
+	}
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))

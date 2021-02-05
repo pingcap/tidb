@@ -233,5 +233,11 @@
       "select approx_percentile(a, 10*10) from t",
       "select approx_percentile(a, 50) from t group by b order by b"
     ]
+  },
+  {
+    "name": "TestIssue22105",
+    "cases": [
+      "explain SELECT /*+ use_index_merge(t1)*/ COUNT(*) FROM t1 WHERE (key4=42 AND key6 IS NOT NULL) OR (key1=4 AND key3=6)"
+    ]
   }
 ]
