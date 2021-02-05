@@ -124,9 +124,6 @@ enable-telemetry = true
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
 
-# txn-scope indicates the default value for the `txn_scope` session variable.
-txn-scope = "global"
-
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
 # The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
