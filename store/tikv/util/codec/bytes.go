@@ -14,6 +14,7 @@
 package codec
 
 import (
+	"encoding/binary"
 	"runtime"
 	"unsafe"
 
@@ -120,6 +121,42 @@ func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
 // `buf` is used to buffer data to avoid the cost of makeslice in decodeBytes when DecodeBytes is called by Decoder.DecodeOne.
 func DecodeBytes(b []byte, buf []byte) ([]byte, []byte, error) {
 	return decodeBytes(b, buf, false)
+}
+
+// EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
+// encoded value to guarantee the encoded value is in descending order for comparison.
+func EncodeBytesDesc(b []byte, data []byte) []byte {
+	n := len(b)
+	b = EncodeBytes(b, data)
+	reverseBytes(b[n:])
+	return b
+}
+
+// DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
+// returns the leftover bytes and decoded value if no error.
+func DecodeBytesDesc(b []byte, buf []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, buf, true)
+}
+
+// EncodeCompactBytes joins bytes with its length into a byte slice. It is more
+// efficient in both space and time compare to EncodeBytes. Note that the encoded
+// result is not memcomparable.
+func EncodeCompactBytes(b []byte, data []byte) []byte {
+	b = reallocBytes(b, binary.MaxVarintLen64+len(data))
+	b = EncodeVarint(b, int64(len(data)))
+	return append(b, data...)
+}
+
+// DecodeCompactBytes decodes bytes which is encoded by EncodeCompactBytes before.
+func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
+	b, n, err := DecodeVarint(b)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if int64(len(b)) < n {
+		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	return b[n:], b[:n], nil
 }
 
 // See https://golang.org/src/crypto/cipher/xor.go

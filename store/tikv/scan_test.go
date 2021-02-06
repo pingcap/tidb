@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/util"
+	"github.com/pingcap/tidb/store/tikv/util/rowcodec"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
 
