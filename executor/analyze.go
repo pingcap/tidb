@@ -471,7 +471,8 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, true)
+	collExtStats := colExec.ctx.GetSessionVars().EnableExtendedStats
+	hists, cms, topNs, fms, extStats, err := colExec.buildStats(ranges, collExtStats)
 	if err != nil {
 		return []analyzeResult{{Err: err, job: colExec.job}}
 	}
