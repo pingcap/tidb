@@ -3507,25 +3507,6 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 
-	//IntDiv overflow test
-	rs, err = tk.Exec("select -3 div cast(3 as unsigned);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-3, 3)'")
-	c.Assert(rs.Close(), IsNil)
-
-	rs, err = tk.Exec("select cast(3 as unsigned) div -3;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(3, -3)'")
-	c.Assert(rs.Close(), IsNil)
-
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));")
 	tk.MustExec("INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');")

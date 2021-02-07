@@ -360,6 +360,14 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 			args:   []interface{}{nil, nil},
 			expect: nil,
 		},
+		{
+			args:   []interface{}{uint64(3), -3},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{-3, uint64(3)},
+			expect: nil,
+		},
 	}
 
 	for _, tc := range testCases {
