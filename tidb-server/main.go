@@ -249,7 +249,7 @@ func setHeapProfileTracker() {
 func registerStores() {
 	err := kvstore.Register("tikv", kvstore.TiKVDriver{})
 	terror.MustNil(err)
-	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
+	gcworker.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})

@@ -154,7 +154,7 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	start := time.Now()
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil {
-		recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+		RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
 		cancel()
@@ -169,7 +169,8 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+// RecordRegionRequestRuntimeStats records request runtime stats.
+func RecordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
 	stat, ok := stats[cmd]
 	if !ok {
 		stats[cmd] = &RPCRuntimeStats{
@@ -187,13 +188,13 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return errTiDBShuttingDown
+		return ErrTiDBShuttingDown
 	}
 
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+			ss.regionCache.OnSendFail(bo, ctx, ss.NeedReloadRegion(ctx), err)
 		}
 	}
 
@@ -201,7 +202,7 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
+	err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }
 
@@ -211,6 +212,16 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 		regionCache: regionCache,
 		client:      client,
 	}
+}
+
+// SetStoreAddr specifies the dest store address.
+func (s *RegionRequestSender) SetStoreAddr(addr string) {
+	s.storeAddr = addr
+}
+
+// GetStoreAddr returns the dest store address.
+func (s *RegionRequestSender) GetStoreAddr() string {
+	return s.storeAddr
 }
 
 // SendReq sends a request to tikv server.
@@ -454,7 +465,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		start := time.Now()
 		resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 		if s.Stats != nil {
-			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+			RecordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 			failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
 				if val.(bool) {
 					if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
@@ -559,7 +570,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
 	} else if atomic.LoadUint32(&ShuttingDown) > 0 {
-		return errTiDBShuttingDown
+		return ErrTiDBShuttingDown
 	}
 	if status.Code(errors.Cause(err)) == codes.Canceled {
 		select {
@@ -574,7 +585,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	}
 
 	if ctx.Meta != nil {
-		s.regionCache.OnSendFail(bo, ctx, s.needReloadRegion(ctx), err)
+		s.regionCache.OnSendFail(bo, ctx, s.NeedReloadRegion(ctx), err)
 	}
 
 	// Retry on send request failure when it's not canceled.
@@ -582,15 +593,15 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	if ctx.Store != nil && ctx.Store.storeType == kv.TiFlash {
-		err = bo.Backoff(boTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.Backoff(BoTiFlashRPC, errors.Errorf("send tiflash request error: %v, ctx: %v, try next peer later", err, ctx))
 	} else {
-		err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+		err = bo.Backoff(BoTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
 	}
 	return errors.Trace(err)
 }
 
-// needReloadRegion checks is all peers has sent failed, if so need reload.
-func (s *RegionRequestSender) needReloadRegion(ctx *RPCContext) (need bool) {
+// NeedReloadRegion checks is all peers has sent failed, if so need reload.
+func (s *RegionRequestSender) NeedReloadRegion(ctx *RPCContext) (need bool) {
 	if s.failStoreIDs == nil {
 		s.failStoreIDs = make(map[uint64]struct{})
 	}

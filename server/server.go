@@ -170,15 +170,11 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		if s.cfg.Performance.TCPKeepAlive {
-			if err := tcpConn.SetKeepAlive(true); err != nil {
-				logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
-			}
+		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
+			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
 		}
-		if !s.cfg.Performance.TCPNoDelay {
-			if err := tcpConn.SetNoDelay(false); err != nil {
-				logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
-			}
+		if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
+			logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
 		}
 	}
 	cc.setConn(conn)
@@ -308,7 +304,7 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
+	variable.SetSysVar("txn_scope", config.GetTxnScopeFromConfig())
 }
 
 // Export config-related metrics

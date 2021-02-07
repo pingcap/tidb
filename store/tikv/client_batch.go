@@ -405,7 +405,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 			break
 		}
 
-		err2 := b.Backoff(boTiKVRPC, err1)
+		err2 := b.Backoff(BoTiKVRPC, err1)
 		// As timeout is set to math.MaxUint32, err2 should always be nil.
 		// This line is added to make the 'make errcheck' pass.
 		terror.Log(err2)
