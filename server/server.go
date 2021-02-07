@@ -169,10 +169,15 @@ func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
-	if s.cfg.Performance.TCPKeepAlive {
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		if s.cfg.Performance.TCPKeepAlive {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
 				logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
+			}
+		}
+		if !s.cfg.Performance.TCPNoDelay {
+			if err := tcpConn.SetNoDelay(false); err != nil {
+				logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
 			}
 		}
 	}
