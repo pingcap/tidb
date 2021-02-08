@@ -362,11 +362,11 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		},
 		{
 			args:   []interface{}{uint64(3), -3},
-			expect: nil,
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-3, 3\\)'"},
 		},
 		{
 			args:   []interface{}{-3, uint64(3)},
-			expect: nil,
+			expect: []interface{}{nil, "*BIGINT UNSIGNED value is out of range in '\\(3, -3\\)'"},
 		},
 	}
 
