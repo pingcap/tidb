@@ -50,7 +50,7 @@ var _ = Suite(&testStoreSuite{})
 var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
-	s.store = NewTestStore(c).(*KVStore)
+	s.store = NewTestStore(c)
 }
 
 func (s *testStoreSuiteBase) TearDownTest(c *C) {

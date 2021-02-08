@@ -34,15 +34,13 @@ import (
 type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
-var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
-var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
 func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPrewrite
+	return metrics.TxnRegionsNumHistogramPrewrite
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
@@ -208,7 +206,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
-					tikvOnePCTxnCounterFallback.Inc()
+					metrics.OnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
 					c.setAsyncCommit(false)
 				} else {
