@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -147,7 +148,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 	}
 
 	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	s, err := tikv.NewKVStore(uuid, &tikv.CodecPDClient{Client: pdCli}, spkv, tikv.NewRPCClient(d.security), !disableGC, coprCacheConfig)
+	pdClient := tikv.CodecPDClient{Client: pdCli}
+	s, err := tikv.NewKVStore(uuid, &pdClient, spkv, tikv.NewRPCClient(d.security), coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -159,6 +161,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...DriverOption) (kv.St
 		KVStore:   s,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
+		pdClient:  &pdClient,
+		enableGC:  !disableGC,
 	}
 
 	mc.cache[uuid] = store
@@ -169,6 +173,9 @@ type tikvStore struct {
 	*tikv.KVStore
 	etcdAddrs []string
 	tlsConfig *tls.Config
+	pdClient  pd.Client
+	enableGC  bool
+	gcWorker  gcworker.GCHandler
 }
 
 var (
@@ -223,10 +230,28 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 	return s.tlsConfig
 }
 
+// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
+func (s *tikvStore) StartGCWorker() error {
+	if !s.enableGC || gcworker.NewGCHandlerFunc == nil {
+		return nil
+	}
+
+	gcWorker, err := gcworker.NewGCHandlerFunc(s, s.pdClient)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gcWorker.Start()
+	s.gcWorker = gcWorker
+	return nil
+}
+
 // Close and unregister the store.
 func (s *tikvStore) Close() error {
 	mc.Lock()
 	defer mc.Unlock()
 	delete(mc.cache, s.UUID())
+	if s.gcWorker != nil {
+		s.gcWorker.Close()
+	}
 	return s.KVStore.Close()
 }
