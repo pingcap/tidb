@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -727,6 +728,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if job.ErrorCount > variable.GetDDLErrorCountLimit() && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) {
 			logutil.Logger(w.logCtx).Warn("[ddl] DDL job error count exceed the limit, cancelling it now", zap.Int64("jobID", job.ID), zap.Int64("errorCountLimit", variable.GetDDLErrorCountLimit()))
 			job.State = model.JobStateCancelling
+		}
+
+		// Some kind of ddl jobs should not retry if failed
+		if err!= nil && errors.ErrorEqual(err,table.ErrUnknownPartition)  {
+			job.State = model.JobStateCancelled
+			return ver, nil
 		}
 	}
 	return
