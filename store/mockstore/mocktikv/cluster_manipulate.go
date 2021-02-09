@@ -13,7 +13,11 @@
 
 package mocktikv
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pingcap/kvproto/pkg/metapb"
+)
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.
 func BootstrapWithSingleStore(cluster *Cluster) (storeID, peerID, regionID uint64) {
@@ -31,7 +35,13 @@ func BootstrapWithMultiStores(cluster *Cluster, n int) (storeIDs, peerIDs []uint
 	leaderPeer = peerIDs[0]
 	regionID = cluster.AllocID()
 	for _, storeID := range storeIDs {
-		cluster.AddStore(storeID, fmt.Sprintf("store%d", storeID))
+		labels := []*metapb.StoreLabel{
+			{
+				Key:   "id",
+				Value: fmt.Sprintf("%v", storeID),
+			},
+		}
+		cluster.AddStore(storeID, fmt.Sprintf("store%d", storeID), labels...)
 	}
 	cluster.Bootstrap(regionID, storeIDs, peerIDs, leaderPeer)
 	return

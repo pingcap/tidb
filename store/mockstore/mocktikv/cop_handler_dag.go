@@ -925,6 +925,6 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
+		Collate: collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(col.GetCollation())),
 	}
 }

@@ -752,6 +752,10 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
+	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
 }
@@ -1356,7 +1360,7 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		en := d.GetMysqlEnum()
-		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
+		if e.isMax && en.Name > p.val.Name || !e.isMax && en.Name < p.val.Name {
 			oldMem := len(p.val.Name)
 			newMem := len(en.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1375,7 +1379,7 @@ func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
@@ -1423,7 +1427,7 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		s := d.GetMysqlSet()
-		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
+		if e.isMax && s.Name > p.val.Name || !e.isMax && s.Name < p.val.Name {
 			oldMem := len(p.val.Name)
 			newMem := len(s.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1442,7 +1446,7 @@ func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil

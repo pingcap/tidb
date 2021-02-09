@@ -51,6 +51,7 @@ func interestingGoroutines() (gs []string) {
 		"interestingGoroutines",
 		"runtime.MHeap_Scavenger",
 		"created by os/signal.init",
+		"gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun",
 		// these go routines are async terminated, so they may still alive after test end, thus cause
 		// false positive leak failures
 		"google.golang.org/grpc.(*addrConn).resetTransport",

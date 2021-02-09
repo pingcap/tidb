@@ -111,6 +111,31 @@ func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	exprs, err := expression.ExpressionsToPBList(sc, p.Exprs, client)
+	if err != nil {
+		return nil, err
+	}
+	projExec := &tipb.Projection{
+		Exprs: exprs,
+	}
+	executorID := ""
+	if storeType == kv.TiFlash {
+		var err error
+		projExec.Child, err = p.children[0].ToPB(ctx, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		executorID = p.ExplainID().String()
+	} else {
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTopN) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
@@ -159,7 +184,10 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	executorID := ""
 	if storeType == kv.TiFlash && p.IsGlobalRead {
 		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		ranges := distsql.TableRangesToKVRanges(tsExec.TableId, p.Ranges, nil)
+		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, p.Ranges, nil)
+		if err != nil {
+			return nil, err
+		}
 		for _, keyRange := range ranges {
 			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
 		}
@@ -195,6 +223,73 @@ func findColumnInfoByID(infos []*model.ColumnInfo, id int64) *model.ColumnInfo {
 	return nil
 }
 
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	encodedTask := make([][]byte, 0, len(e.TargetTasks))
+
+	for _, task := range e.TargetTasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	hashCols := make([]expression.Expression, 0, len(e.HashCols))
+	for _, col := range e.HashCols {
+		hashCols = append(hashCols, col)
+	}
+	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ecExec := &tipb.ExchangeSender{
+		Tp:              e.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		PartitionKeys:   hashColPb,
+		Child:           child,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:             tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: ecExec,
+		ExecutorId:     &executorID,
+	}, nil
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
+	for _, column := range e.Schema().Columns {
+		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
+	}
+	ecExec := &tipb.ExchangeReceiver{
+		EncodedTaskMeta: encodedTask,
+		FieldTypes:      fieldTypes,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:               tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: ecExec,
+		ExecutorId:       &executorID,
+	}, nil
+}
+
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
@@ -228,7 +323,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	leftJoinKeys := make([]expression.Expression, 0, len(p.LeftJoinKeys))
@@ -256,20 +351,57 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	if err != nil {
 		return nil, err
 	}
+
+	leftConditions, err := expression.ExpressionsToPBList(sc, p.LeftConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	rightConditions, err := expression.ExpressionsToPBList(sc, p.RightConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	otherConditions, err := expression.ExpressionsToPBList(sc, p.OtherConditions, client)
+	if err != nil {
+		return nil, err
+	}
+
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {
 	case LeftOuterJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case SemiJoin:
+		pbJoinType = tipb.JoinType_TypeSemiJoin
+	case AntiSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiSemiJoin
+	case LeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeLeftOuterSemiJoin
+	case AntiLeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
+	}
+	probeFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	for _, equalCondition := range p.EqualConditions {
+		retType := equalCondition.RetType.Clone()
+		chs, coll := equalCondition.CharsetAndCollation(ctx)
+		retType.Charset = chs
+		retType.Collate = coll
+		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))
+		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
 	}
 	join := &tipb.Join{
-		JoinType:      pbJoinType,
-		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
-		InnerIdx:      int64(p.InnerChildIdx),
-		LeftJoinKeys:  left,
-		RightJoinKeys: right,
-		Children:      []*tipb.Executor{lChildren, rChildren},
+		JoinType:        pbJoinType,
+		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:        int64(p.InnerChildIdx),
+		LeftJoinKeys:    left,
+		RightJoinKeys:   right,
+		ProbeTypes:      probeFiledTypes,
+		BuildTypes:      buildFiledTypes,
+		LeftConditions:  leftConditions,
+		RightConditions: rightConditions,
+		OtherConditions: otherConditions,
+		Children:        []*tipb.Executor{lChildren, rChildren},
 	}
 
 	executorID := p.ExplainID().String()

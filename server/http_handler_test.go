@@ -279,6 +279,25 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 	}
 }
 
+func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/ranges")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+
+	var data TableRanges
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.TableName, Equals, "t")
+	c.Assert(len(data.Indices), Equals, 1)
+	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
+}
+
 func (ts *HTTPHandlerTestSuite) regionContainsTable(c *C, regionID uint64, tableID int64) bool {
 	resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", regionID))
 	c.Assert(err, IsNil)
@@ -318,6 +337,30 @@ func (ts *HTTPHandlerTestSuite) TestListTableRegions(c *C) {
 	region := data[1]
 	_, err = ts.fetchStatus(fmt.Sprintf("/regions/%d", region.TableID))
 	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestListTableRanges(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	// Test list table regions with error
+	resp, err := ts.fetchStatus("/tables/fdsfds/aaa/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
+
+	resp, err = ts.fetchStatus("/tables/tidb/pt/ranges")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+
+	var data []*TableRanges
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data), Equals, 3)
+	for i, partition := range data {
+		c.Assert(partition.TableName, Equals, fmt.Sprintf("p%d", i))
+	}
 }
 
 func (ts *HTTPHandlerTestSuite) TestGetRegionByIDWithError(c *C) {
@@ -498,10 +541,8 @@ partition by range (a)
 	txn2.Exec("insert into tidb.pt values (666, 'def')")
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
-
-	dbt.mustExec("set @@tidb_enable_clustered_index = 1")
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b))")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
@@ -1054,14 +1095,14 @@ func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
-	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
+	c.Assert(variable.ProcessGeneralLog.Load(), IsTrue)
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
 	form.Set("tidb_general_log", "0")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
+	c.Assert(variable.ProcessGeneralLog.Load(), IsFalse)
 	c.Assert(log.GetLevel(), Equals, log.FatalLevel)
 	c.Assert(zaplog.GetLevel(), Equals, zap.FatalLevel)
 	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "fatal")

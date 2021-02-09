@@ -780,10 +780,10 @@ func (g *dateStrGener) gen() interface{} {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
 	if g.Month == 0 {
-		g.Month = g.randGen.Intn(10) + 1
+		g.Month = g.randGen.Intn(10)
 	}
 	if g.Day == 0 {
-		g.Day = g.randGen.Intn(20) + 1
+		g.Day = g.randGen.Intn(20)
 	}
 
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
@@ -1242,6 +1242,20 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
 			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		}
+		baseFunc, err = fc.getFunction(ctx, cols)
+	} else if funcName == ast.GetVar {
+		var fc functionClass
+		tp := eType2FieldType(testCase.retEvalType)
+		switch testCase.retEvalType {
+		case types.ETInt:
+			fc = &getIntVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETDecimal:
+			fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		case types.ETReal:
+			fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
+		default:
+			fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, tp}}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else {

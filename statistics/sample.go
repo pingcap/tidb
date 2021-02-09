@@ -98,6 +98,7 @@ type SampleCollector struct {
 	MaxSampleSize int64
 	FMSketch      *FMSketch
 	CMSketch      *CMSketch
+	TopN          *TopN
 	TotalSize     int64 // TotalSize is the total size of column.
 }
 
@@ -108,7 +109,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 	c.TotalSize += rc.TotalSize
 	c.FMSketch.mergeFMSketch(rc.FMSketch)
 	if rc.CMSketch != nil {
-		err := c.CMSketch.MergeCMSketch(rc.CMSketch, 0)
+		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
@@ -126,7 +127,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
-		collector.CmSketch = CMSketchToProto(c.CMSketch)
+		collector.CmSketch = CMSketchToProto(c.CMSketch, nil)
 	}
 	for _, item := range c.Samples {
 		collector.Samples = append(collector.Samples, item.Value.GetBytes())
@@ -146,7 +147,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	if collector.TotalSize != nil {
 		s.TotalSize = *collector.TotalSize
 	}
-	s.CMSketch = CMSketchFromProto(collector.CmSketch)
+	s.CMSketch, s.TopN = CMSketchAndTopNFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= maxSampleValueLength {
@@ -302,7 +303,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	}
 	helper := newTopNHelper(values, numTop)
 	cms := c.CMSketch
-	cms.topN = make(map[uint64][]*TopNMeta, helper.actualNumTop)
+	c.TopN = NewTopN(int(helper.actualNumTop))
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
 	for i := uint32(0); i < helper.actualNumTop; i++ {
@@ -318,8 +319,9 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		if err != nil {
 			return err
 		}
-		cms.subValue(h1, h2, realCnt)
-		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})
+		cms.SubValue(h1, h2, realCnt)
+		c.TopN.AppendTopN(data, realCnt)
 	}
+	c.TopN.Sort()
 	return nil
 }

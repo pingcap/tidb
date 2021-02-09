@@ -53,7 +53,7 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TIDBMemQuotaTopn, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
 		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
-		{variable.TIDBMemQuotaNestedLoopApply, "1024", false},
+		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, t := range tests {
@@ -136,13 +136,15 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		ProcessTime:  time.Second * time.Duration(2),
-		WaitTime:     time.Minute,
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		CopDetail: &execdetails.CopDetails{
+		ScanDetail: &execdetails.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
+		},
+		TimeDetail: execdetails.TimeDetail{
+			ProcessTime: time.Second * time.Duration(2),
+			WaitTime:    time.Minute,
 		},
 	}
 	statsInfos := make(map[string]uint64)
@@ -203,6 +205,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
+# Plan_from_binding: true
 # Has_more_results: true
 # KV_total: 10
 # PD_total: 11
@@ -228,6 +231,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		DiskMax:           diskMax,
 		Prepared:          true,
 		PlanFromCache:     true,
+		PlanFromBinding:   true,
 		HasMoreResults:    true,
 		KVTotal:           10 * time.Second,
 		PDTotal:           11 * time.Second,

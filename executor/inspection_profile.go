@@ -165,7 +165,13 @@ func (n *metricNode) getLabelValue(label string) *metricValue {
 }
 
 func (n *metricNode) queryRowsByLabel(pb *profileBuilder, query string, handleRowFn func(label string, v float64)) error {
-	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
+	exec := pb.sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), query)
+	if err != nil {
+		return err
+	}
+
+	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return err
 	}
@@ -526,9 +532,12 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 }
 
 func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeight, colorWeight float64) {
-	baseFontSize, maxFontGrowth := 5, 18.0
+	baseFontSize, maxFontSize, maxFontGrowth := 5, 64, 18.0
 	fontSize := baseFontSize
 	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
+	if fontSize > maxFontSize {
+		fontSize = maxFontSize
+	}
 
 	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
 		pb.getNameID(name), labelValue, comment, fontSize,
@@ -654,6 +663,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		children: []*metricNode{
 			{
 				table: "tidb_batch_client_wait",
+				unit:  int64(10e8),
 			},
 			{
 				table: "tidb_batch_client_wait_conn",

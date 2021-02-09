@@ -41,7 +41,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		Name: model.NewCIStr("test_index_change"),
 		ID:   1,
 	}
-	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})

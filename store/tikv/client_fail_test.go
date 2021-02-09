@@ -21,7 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -47,7 +47,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	defer server.Stop()
 
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	rpcClient := newRPCClient(config.Security{}, func(c *rpcClient) {
+	rpcClient := NewRPCClient(config.Security{}, func(c *RPCClient) {
 		c.dialTimeout = time.Second / 3
 	})
 
