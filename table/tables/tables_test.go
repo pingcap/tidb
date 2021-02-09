@@ -21,7 +21,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -468,7 +470,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
@@ -570,7 +572,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
@@ -669,4 +671,35 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	tk1.Exec("commit")
 	// The data in channel is 1 means tk2 is blocked, that's the expected behavior.
 	c.Assert(<-ch, Equals, 1)
+}
+
+func (ts *testSuite) TestViewColumns(c *C) {
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("drop view if exists v")
+	tk.MustExec("create view v as select * from t")
+	tk.MustExec("drop view if exists va")
+	tk.MustExec("create view va as select count(a) from t")
+	testCases := []struct {
+		query    string
+		expected []string
+	}{
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", []string{types.TypeToStr(mysql.TypeLong, ""), types.TypeToStr(mysql.TypeVarchar, "")}},
+		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
+	}
+	for _, testCase := range testCases {
+		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+	}
+	tk.MustExec("drop table if exists t")
+	for _, testCase := range testCases {
+		c.Assert(tk.MustQuery(testCase.query).Rows(), HasLen, 0)
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
+			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
+	}
 }

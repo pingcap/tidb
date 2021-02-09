@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -997,7 +998,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	}
 	var lockKeyStats *execdetails.LockKeysDetails
 	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
-	err = txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
@@ -1152,17 +1153,16 @@ func init() {
 			return nil, err
 		}
 		chk := newFirstChunk(exec)
-		for {
-			err = Next(ctx, exec, chk)
-			if err != nil {
-				return nil, err
-			}
-			if chk.NumRows() == 0 {
-				return nil, nil
-			}
-			row := chk.GetRow(0).GetDatumRow(retTypes(exec))
-			return row, err
+
+		err = Next(ctx, exec, chk)
+		if err != nil {
+			return nil, err
 		}
+		if chk.NumRows() == 0 {
+			return nil, nil
+		}
+		row := chk.GetRow(0).GetDatumRow(retTypes(exec))
+		return row, err
 	}
 }
 
@@ -1393,7 +1393,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	} else if num != 1 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	childChunk := newFirstChunk(e.children[0])
@@ -1402,7 +1402,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if childChunk.NumRows() != 0 {
-		return errors.New("subquery returns more than 1 row")
+		return ErrSubqueryMoreThan1Row
 	}
 
 	return nil

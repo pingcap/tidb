@@ -2038,3 +2038,14 @@ func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from test . t")
 }
+
+func (s *testSuite) TestExplainTableStmts(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, value decimal(5,2))")
+	tk.MustExec("table t")
+	tk.MustExec("explain table t")
+	tk.MustExec("desc table t")
+}

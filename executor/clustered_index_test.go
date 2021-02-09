@@ -15,21 +15,20 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-type testClusteredSuite struct{ *baseTestSuite }
-type testClusteredSerialSuite struct{ *testClusteredSuite }
+type testClusteredSuiteBase struct{ baseTestSuite }
+type testClusteredSuite struct{ testClusteredSuiteBase }
+type testClusteredSerialSuite struct{ testClusteredSuiteBase }
 
-func (s *testClusteredSuite) SetUpTest(c *C) {
-}
-
-func (s *testClusteredSuite) newTK(c *C) *testkit.TestKit {
+func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	return tk
 }
 
@@ -237,6 +236,18 @@ func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
 	tk.MustExec("insert into t values (11, 'abc', null, null);")
 	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
 	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/22193
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
+	tk.MustExec("insert into t values('aaa', 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set col_0 = 'ccc';")
+	tk.MustExec("update t set col_0 = 'ddd';")
+	tk.MustExec("commit;")
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
+	tk.MustExec("admin check table t")
 }
 
 func (s *testClusteredSuite) TestIssue20002(c *C) {
@@ -261,4 +272,64 @@ func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
 	tk.MustExec("create index idx on t (b);")
 	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+}
+
+// https://github.com/pingcap/tidb/issues/22453
+func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b enum('Alice'), c int, primary key (c, b));")
+	tk.MustExec("insert into t values (-1,'Alice',100);")
+	tk.MustExec("insert into t values (-1,'Alice',7000);")
+	tk.MustQuery("split table t between (0,'Alice') and (10000,'Alice') regions 2;").Check(testkit.Rows("1 1"))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3;")
+	tk.MustExec("alter table t add index idx (c);")
+	tk.MustExec("admin check table t;")
+}
+
+func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
+}
+
+func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
+	const nonClustered, clustered = `NON-CLUSTERED`, `CLUSTERED`
+	assertPkType := func(sql string, pkType string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(sql)
+		tk.MustQuery(showPKType).Check(testkit.Rows(pkType))
+	}
+
+	defer config.RestoreFunc()
+	for _, allowAlterPK := range []bool{true, false} {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.AlterPrimaryKey = allowAlterPK
+		})
+		// Test single integer column as the primary key.
+		clusteredDefault := clustered
+		if allowAlterPK {
+			clusteredDefault = nonClustered
+		}
+		assertPkType("create table t (a int primary key, b int);", clusteredDefault)
+		assertPkType("create table t (a int, b int, primary key(a) clustered);", clustered)
+		assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] clustered */);", clustered)
+		assertPkType("create table t (a int, b int, primary key(a) nonclustered);", nonClustered)
+		assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);", nonClustered)
+
+		// Test for clustered index.
+		tk.Se.GetSessionVars().EnableClusteredIndex = false
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
+		tk.Se.GetSessionVars().EnableClusteredIndex = true
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a));", clusteredDefault)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
+		assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] clustered */);", clustered)
+	}
 }

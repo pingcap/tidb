@@ -1259,7 +1259,7 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = false
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
@@ -1379,7 +1379,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = true
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1413,7 +1413,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = true
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1483,6 +1483,8 @@ func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test;")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
+	testKit.MustExec("set @@tidb_executor_concurrency = 1;")
 	testKit.MustExec("drop table if exists t;")
 	testKit.MustExec("CREATE TABLE `t` (" +
 		"a bit(1) DEFAULT NULL," +
