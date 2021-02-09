@@ -14,6 +14,7 @@
 package telemetry
 
 import (
+	"context"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,7 +29,7 @@ var (
 	// Explicitly list all allowed field names to avoid potential leaking sensitive info when new fields are added later.
 	sortedCPUAllowedFieldNames    = []string{"cpu-logical-cores", "cpu-physical-cores", "cpu-frequency", "cache", "cpu-vendor-id", "l1-cache-size", "l1-cache-line-size", "l2-cache-size", "l2-cache-line-size", "l3-cache-size", "l3-cache-line-size"}
 	sortedDiskAllowedFieldNames   = []string{"fstype", "opts", "total", "free", "used", "free-percent", "used-percent"} // path is not included
-	regexDiskAllowedNames         = regexp.MustCompile(`^(disk\d+s\d+|rootfs|devtmpfs|sd[a-z]\d*|vd[a-z]\d*|hd[a-z]\d*|nvme\d+(n\d+(p\d)?)?)$`)
+	regexDiskAllowedNames         = regexp.MustCompile(`^(disk\d+s\d+|rootfs|devtmpfs|sd[a-z]\d*|vd[a-z]\d*|hd[a-z]\d*|nvme\d+(n\d+(p\d)?)?|md[\da-z]+)$`)
 	sortedDiskAllowedPaths        = []string{"/", "/boot", "/dev", "/private/var/vm", "/System/Volumes/Data"}
 	sortedMemoryAllowedFieldNames = []string{"capacity"}
 )
@@ -66,7 +67,12 @@ func normalizeFieldName(name string) string {
 }
 
 func getClusterHardware(ctx sessionctx.Context) ([]*clusterHardwareItem, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

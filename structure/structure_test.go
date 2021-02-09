@@ -385,7 +385,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := structure.NewStructure(txn, txn, []byte{0x00})
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)
@@ -406,7 +406,7 @@ func (*testTxStructureSuite) TestError(c *C) {
 		structure.ErrWriteOnSnapshot,
 	}
 	for _, err := range kvErrs {
-		code := err.ToSQLError().Code
+		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

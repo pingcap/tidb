@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -42,6 +43,9 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
+	// GetClient gets a kv.Client.
+	GetMPPClient() kv.MPPClient
+
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
@@ -60,9 +64,16 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
+	// RefreshVars refreshes modified global variable to current session.
+	// only used to daemon session like `statsHandle` to detect global variable change.
+	RefreshVars(context.Context) error
+
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
+
+	// NewTxnWithStalenessOption initializes a transaction with StalenessTxnOption
+	NewTxnWithStalenessOption(ctx context.Context, option StalenessTxnOption) error
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
@@ -82,8 +93,6 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
@@ -102,6 +111,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
+	// StoreIndexUsage stores the index usage information.
+	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 }
 
 type basicCtxType int
@@ -128,12 +139,9 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-type connIDCtxKeyType struct{}
-
-// ConnID is the key in context.
-var ConnID = connIDCtxKeyType{}
-
-// SetCommitCtx sets connection id into context
-func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
-	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
+// StalenessTxnOption represents available options for the InitTxnWithStaleness
+type StalenessTxnOption struct {
+	Mode    ast.TimestampBoundMode
+	PrevSec uint64
+	StartTS uint64
 }

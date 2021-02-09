@@ -10,13 +10,13 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !windows
 
 package util_test
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +44,9 @@ func TestT(t *testing.T) {
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	testLease := 5 * time.Millisecond
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0

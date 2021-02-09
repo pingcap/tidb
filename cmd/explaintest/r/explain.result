@@ -39,3 +39,8 @@ StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column
   └─TableReader_15	10000.00	root		data:TableFullScan_14
     └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 drop table t;
+drop view if exists v;
+create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;
+desc v;
+Field	Type	Null	Key	Default	Extra
+event_id	varchar(32)	YES		NULL	

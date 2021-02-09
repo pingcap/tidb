@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -82,7 +83,7 @@ type hashStatistic struct {
 }
 
 func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe collision:%v, build:%v", s.probeCollision, s.buildTableElapse)
+	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
 // hashRowContainer handles the rows and the hash map of a table.

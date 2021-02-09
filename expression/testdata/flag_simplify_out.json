@@ -1,0 +1,134 @@
+[
+  {
+    "Name": "TestSimplifyExpressionByFlag",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a is null",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a is not null",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a > -1",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a <= -1",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a < 0",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a >= 0",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a = -1",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a <=> -1",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a != -1",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where 0 > a",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where 0 <= a",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where -1 < a",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where -1 >= a",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where -1 = a",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where -1 <=> a",
+        "Plan": [
+          "TableDual_6 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where -1 != a",
+        "Plan": [
+          "TableReader_6 10000.00 root  data:TableFullScan_5",
+          "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b >= 0",
+        "Plan": [
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  ge(test.t.b, 0)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b != -1",
+        "Plan": [
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  ne(test.t.b, -1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a = 0xFFFFFFFFFFFFFFFF",
+        "Plan": [
+          "TableReader_7 10.00 root  data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 18446744073709551615)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

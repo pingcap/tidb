@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -66,14 +66,16 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
+	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease))
+			zap.Stringer("stats lease", statisticLease),
+			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -115,6 +117,11 @@ var (
 
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
+
+	// indexUsageSyncLease is the time for index usage synchronization.
+	// Because we have not completed GC and other functions, we set it to 0.
+	// TODO: Set indexUsageSyncLease to 60s.
+	indexUsageSyncLease = int64(0 * time.Second)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -150,6 +157,11 @@ func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
+// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
+func SetIndexUsageSyncLease(lease time.Duration) {
+	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
+}
+
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
 	SetStatsLease(-1)
@@ -160,7 +172,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
-	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
@@ -175,13 +187,6 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-// Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
-	compiler := executor.Compiler{Ctx: sctx}
-	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, err
-}
-
 func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
@@ -192,6 +197,22 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
+	if !sql.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
+		}
+
+		// Handle the stmt commit/rollback.
+		if se.txn.Valid() {
+			if meetsErr != nil {
+				se.StmtRollback()
+			} else {
+				se.StmtCommit()
+			}
+		}
+	}
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
@@ -327,5 +348,5 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = terror.ClassSession.New(errno.ErrForUpdateCantRetry, errno.MySQLErrName[errno.ErrForUpdateCantRetry])
+	ErrForUpdateCantRetry = dbterror.ClassSession.NewStd(errno.ErrForUpdateCantRetry)
 )

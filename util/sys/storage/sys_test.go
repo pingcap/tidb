@@ -27,7 +27,7 @@ func TestT(t *testing.T) {
 func TestGetTargetDirectoryCapacity(t *testing.T) {
 	r, err := storage.GetTargetDirectoryCapacity(".")
 	if err != nil {
-		t.Fatal(t)
+		t.Fatal(err.Error())
 	}
 	if r < 1 {
 		t.Fatalf("couldn't get capacity")

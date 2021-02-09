@@ -76,6 +76,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
+	if err := e.Close(); err != nil {
+		return h.buildErrorResponse(err)
+	}
 	return h.buildUnaryResponse(totalChunks)
 }
 
@@ -158,11 +161,12 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	h.dagReq = dagReq
 	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is)
+	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	plan = core.InjectExtraProjection(plan)
 	// Build executor.
 	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil

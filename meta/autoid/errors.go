@@ -14,18 +14,18 @@
 package autoid
 
 import (
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	errInvalidTableID            = terror.ClassAutoid.New(mysql.ErrInvalidTableID, mysql.MySQLErrName[mysql.ErrInvalidTableID])
-	errInvalidIncrementAndOffset = terror.ClassAutoid.New(mysql.ErrInvalidIncrementAndOffset, mysql.MySQLErrName[mysql.ErrInvalidIncrementAndOffset])
-	ErrAutoincReadFailed         = terror.ClassAutoid.New(mysql.ErrAutoincReadFailed, mysql.MySQLErrName[mysql.ErrAutoincReadFailed])
-	ErrWrongAutoKey              = terror.ClassAutoid.New(mysql.ErrWrongAutoKey, mysql.MySQLErrName[mysql.ErrWrongAutoKey])
-	ErrInvalidAllocatorType      = terror.ClassAutoid.New(mysql.ErrUnknownAllocatorType, mysql.MySQLErrName[mysql.ErrUnknownAllocatorType])
-	ErrAutoRandReadFailed        = terror.ClassAutoid.New(mysql.ErrAutoRandReadFailed, mysql.MySQLErrName[mysql.ErrAutoRandReadFailed])
+	errInvalidTableID            = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidTableID)
+	errInvalidIncrementAndOffset = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidIncrementAndOffset)
+	ErrAutoincReadFailed         = dbterror.ClassAutoid.NewStd(mysql.ErrAutoincReadFailed)
+	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
+	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
+	ErrAutoRandReadFailed        = dbterror.ClassAutoid.NewStd(mysql.ErrAutoRandReadFailed)
 )
 
 const (
@@ -55,4 +55,6 @@ const (
 	AutoRandomRebaseNotApplicable = "alter auto_random_base of a non auto_random table"
 	// AutoRandomRebaseOverflow is reported when alter auto_random_base to a value that overflows the incremental bits.
 	AutoRandomRebaseOverflow = "alter auto_random_base to %d overflows the incremental bits, max allowed base is %d"
+	// AutoRandomAlterAddColumn is reported when adding an auto_random column.
+	AutoRandomAlterAddColumn = "unsupported add column '%s' constraint AUTO_RANDOM when altering '%s.%s'"
 )

@@ -23,8 +23,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -41,7 +41,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(&ConnTestSuite{})
+var _ = SerialSuites(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -161,6 +161,32 @@ func (ts *ConnTestSuite) TestIssue1768(c *C) {
 	c.Assert(len(p.Auth) > 0, IsTrue)
 }
 
+func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
+	c.Parallel()
+	// this data is from a MySQL 8.0 client
+	data := []byte{
+		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x72, 0x6f,
+		0x6f, 0x74, 0x0, 0x0, 0x63, 0x61, 0x63, 0x68, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x68, 0x61,
+		0x32, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x0, 0x79, 0x4, 0x5f, 0x70,
+		0x69, 0x64, 0x5, 0x37, 0x37, 0x30, 0x38, 0x36, 0x9, 0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66,
+		0x6f, 0x72, 0x6d, 0x6, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x3, 0x5f, 0x6f, 0x73, 0x5,
+		0x4c, 0x69, 0x6e, 0x75, 0x78, 0xc, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x6e,
+		0x61, 0x6d, 0x65, 0x8, 0x6c, 0x69, 0x62, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x7, 0x6f, 0x73,
+		0x5f, 0x75, 0x73, 0x65, 0x72, 0xa, 0x6e, 0x75, 0x6c, 0x6c, 0x6e, 0x6f, 0x74, 0x6e, 0x69,
+		0x6c, 0xf, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69,
+		0x6f, 0x6e, 0x6, 0x38, 0x2e, 0x30, 0x2e, 0x32, 0x31, 0xc, 0x70, 0x72, 0x6f, 0x67, 0x72,
+		0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x5, 0x6d, 0x79, 0x73, 0x71, 0x6c,
+	}
+
+	var resp handshakeResponse41
+	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
+	c.Assert(err, IsNil)
+	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
+	c.Assert(err, IsNil)
+	c.Assert(resp.AuthPlugin == "caching_sha2_password", IsTrue)
+}
+
 func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
@@ -174,7 +200,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -298,6 +324,24 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 			err: nil,
 			out: []byte{0x3, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0},
 		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0},
+		},
 	}
 
 	ts.testDispatch(c, inputs, 0)
@@ -401,6 +445,24 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 			err: nil,
 			out: []byte{0x7, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
 		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
 	}
 
 	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
@@ -427,10 +489,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
-	cfg.Port, cfg.Status.StatusPort = genPorts()
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
 	defer server.Close()
 
@@ -452,11 +515,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}
@@ -495,21 +558,21 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	//There is no underlying netCon, use failpoint to avoid panic
+	// There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
-	connID := 1
-	se.SetConnectionID(uint64(connID))
+	connID := uint64(1)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: uint32(connID),
+		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
@@ -517,8 +580,8 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
-		clients: map[uint32]*clientConn{
-			uint32(connID): cc,
+		clients: map[uint64]*clientConn{
+			connID: cc,
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
@@ -613,10 +676,16 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
@@ -641,4 +710,50 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+}
+
+func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout", "return(true)"), IsNil)
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (3, 4), (6, 7), (9, 10)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustQuery("explain select sum(a) from t").Check(testkit.Rows(
+		"StreamAgg_20 1.00 root  funcs:sum(Column#6)->Column#4",
+		"└─TableReader_21 1.00 root  data:StreamAgg_8",
+		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
+		"    └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	ctx := context.Background()
+	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout"), IsNil)
 }
