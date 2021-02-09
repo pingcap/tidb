@@ -731,7 +731,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		}
 
 		// Some kind of ddl jobs should not retry if failed
-		if err!= nil && errors.ErrorEqual(err,table.ErrUnknownPartition)  {
+		if err != nil && errors.ErrorEqual(err, table.ErrUnknownPartition) {
 			job.State = model.JobStateCancelled
 			return ver, nil
 		}
