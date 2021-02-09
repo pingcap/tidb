@@ -18,8 +18,8 @@ import (
 	"container/heap"
 	"sort"
 	"sync/atomic"
+	"unsafe"
 
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
@@ -27,8 +27,20 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+)
+
+const (
+	// DefPartialResult4GroupConcatSize is the size of partialResult4GroupConcat
+	DefPartialResult4GroupConcatSize = int64(unsafe.Sizeof(partialResult4GroupConcat{}))
+	// DefPartialResult4GroupConcatDistinctSize is the size of partialResult4GroupConcatDistinct
+	DefPartialResult4GroupConcatDistinctSize = int64(unsafe.Sizeof(partialResult4GroupConcatDistinct{}))
+	// DefPartialResult4GroupConcatOrderSize is the size of partialResult4GroupConcatOrder
+	DefPartialResult4GroupConcatOrderSize = int64(unsafe.Sizeof(partialResult4GroupConcatOrder{}))
+	// DefPartialResult4GroupConcatOrderDistinctSize is the size of partialResult4GroupConcatOrderDistinct
+	DefPartialResult4GroupConcatOrderDistinctSize = int64(unsafe.Sizeof(partialResult4GroupConcatOrderDistinct{}))
 )
 
 type baseGroupConcat4String struct {
@@ -87,7 +99,7 @@ type groupConcat struct {
 func (e *groupConcat) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcat)
 	p.valsBuf = &bytes.Buffer{}
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4GroupConcatSize
 }
 
 func (e *groupConcat) ResetPartialResult(pr PartialResult) {
@@ -103,7 +115,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -113,17 +125,21 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
+		var oldMem int
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
+			oldMem = p.buffer.Cap()
 			p.buffer.WriteString(e.sep)
 		}
 		p.buffer.WriteString(p.valsBuf.String())
+		newMem := p.buffer.Cap()
+		memDelta += int64(newMem - oldMem)
 	}
 	if p.buffer != nil {
-		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -164,7 +180,7 @@ func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
@@ -181,7 +197,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -197,19 +213,24 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
+		var oldMem int
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
+			oldMem = p.buffer.Cap()
 			p.buffer.WriteString(e.sep)
 		}
 		// write values
 		p.buffer.WriteString(p.valsBuf.String())
+		newMem := p.buffer.Cap()
+		memDelta += int64(newMem - oldMem)
 	}
 	if p.buffer != nil {
-		return 0, e.truncatePartialResultIfNeed(sctx, p.buffer)
+		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -278,14 +299,19 @@ func (h *topNRows) Pop() interface{} {
 	return x
 }
 
-func (h *topNRows) tryToAdd(row sortRow) (truncated bool) {
+func (h *topNRows) tryToAdd(row sortRow) (truncated bool, sortRowMemSize int64) {
+	oldSize := h.currSize
 	h.currSize += uint64(row.buffer.Len())
 	if len(h.rows) > 0 {
 		h.currSize += h.sepSize
 	}
 	heap.Push(h, row)
+	for _, dt := range row.byItems {
+		sortRowMemSize += GetDatumMemSize(dt)
+	}
 	if h.currSize <= h.limitSize {
-		return false
+		sortRowMemSize += int64(h.currSize - oldSize)
+		return false, sortRowMemSize
 	}
 
 	for h.currSize > h.limitSize {
@@ -295,10 +321,14 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool) {
 			h.rows[0].buffer.Truncate(h.rows[0].buffer.Len() - int(debt))
 		} else {
 			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
+			for _, dt := range h.rows[0].byItems {
+				sortRowMemSize -= GetDatumMemSize(dt)
+			}
 			heap.Pop(h)
 		}
 	}
-	return true
+	sortRowMemSize += int64(h.currSize - oldSize)
+	return true, sortRowMemSize
 }
 
 func (h *topNRows) reset() {
@@ -355,7 +385,7 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 			sepSize:   uint64(len(e.sep)),
 		},
 	}
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4GroupConcatOrderSize
 }
 
 func (e *groupConcatOrder) ResetPartialResult(pr PartialResult) {
@@ -372,7 +402,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -389,27 +419,28 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
-		truncated := p.topN.tryToAdd(sortRow)
+		truncated, sortRowMemSize := p.topN.tryToAdd(sortRow)
+		memDelta += sortRowMemSize
 		if p.topN.err != nil {
-			return 0, p.topN.err
+			return memDelta, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return 0, err
+				return memDelta, err
 			}
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -456,7 +487,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 		},
 		valSet: set.NewStringSet(),
 	}
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4GroupConcatOrderDistinctSize
 }
 
 func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
@@ -475,7 +506,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -498,25 +529,38 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
-		truncated := p.topN.tryToAdd(sortRow)
+		truncated, sortRowMemSize := p.topN.tryToAdd(sortRow)
+		memDelta += sortRowMemSize
+		memDelta += int64(len(joinedVal))
 		if p.topN.err != nil {
-			return 0, p.topN.err
+			return memDelta, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return 0, err
+				return memDelta, err
 			}
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+}
+
+// GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.
+// types.Datum memory size = variable type's memory size + variable value's memory size.
+func GetDatumMemSize(d *types.Datum) int64 {
+	var datumMemSize int64
+	datumMemSize += int64(unsafe.Sizeof(*d))
+	datumMemSize += int64(len(d.Collation()))
+	datumMemSize += int64(len(d.GetBytes()))
+	datumMemSize += getValMemDelta(d.GetInterface()) - DefInterfaceSize
+	return datumMemSize
 }

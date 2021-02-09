@@ -16,10 +16,12 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -52,7 +54,13 @@ type InfoSchema interface {
 	TableIsView(schema, table model.CIStr) bool
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// BundleByName is used to get a rule bundle.
+	BundleByName(name string) (*placement.Bundle, bool)
+	// SetBundle is used internally to update rule bundles or mock tests.
+	SetBundle(*placement.Bundle)
+	// RuleBundles will return a copy of all rule bundles.
+	RuleBundles() []*placement.Bundle
 }
 
 type sortedTables []table.Table
@@ -87,6 +95,10 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
+	// ruleBundleMap stores all placement rules
+	ruleBundleMutex sync.RWMutex
+	ruleBundleMap   map[string]*placement.Bundle
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -100,6 +112,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
@@ -123,6 +136,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
@@ -265,7 +279,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
-func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	for _, v := range is.schemaMap {
 		for _, tbl := range v.tables {
 			pi := tbl.Meta().GetPartitionInfo()
@@ -274,12 +288,12 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 			}
 			for _, p := range pi.Definitions {
 				if p.ID == partitionID {
-					return tbl, v.dbInfo
+					return tbl, v.dbInfo, &p
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
@@ -386,7 +400,68 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = snap.(InfoSchema)
 		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", sessVar.ConnectionID), zap.Int64("schemaVersion", is.SchemaMetaVersion()))
 	} else {
+		if sessVar.TxnCtx == nil || sessVar.TxnCtx.InfoSchema == nil {
+			return nil
+		}
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
+}
+
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	t, r := is.ruleBundleMap[name]
+	return t, r
+}
+
+func (is *infoSchema) RuleBundles() []*placement.Bundle {
+	is.ruleBundleMutex.RLock()
+	defer is.ruleBundleMutex.RUnlock()
+	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
+	for _, bundle := range is.ruleBundleMap {
+		bundles = append(bundles, bundle)
+	}
+	return bundles
+}
+
+func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	is.ruleBundleMap[bundle.ID] = bundle
+}
+
+func (is *infoSchema) deleteBundle(id string) {
+	is.ruleBundleMutex.Lock()
+	defer is.ruleBundleMutex.Unlock()
+	delete(is.ruleBundleMap, id)
+}
+
+// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
+// If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
+func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
+	for _, id := range ids {
+		b, ok := h.BundleByName(placement.GroupID(id))
+		if ok {
+			return b.Clone()
+		}
+	}
+
+	newRules := []*placement.Rule{}
+
+	b, ok := h.BundleByName(placement.PDBundleID)
+	if ok {
+		for _, rule := range b.Rules {
+			if rule.StartKeyHex == "" && rule.EndKeyHex == "" {
+				newRules = append(newRules, rule.Clone())
+			}
+		}
+	}
+
+	id := int64(-1)
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
 }

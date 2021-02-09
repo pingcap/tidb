@@ -92,6 +92,9 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 
 // Start marks status of the analyze job as running and update the start time.
 func (job *AnalyzeJob) Start() {
+	if job == nil {
+		return
+	}
 	job.Mutex.Lock()
 	job.State = running
 	now := time.Now()
@@ -102,6 +105,9 @@ func (job *AnalyzeJob) Start() {
 
 // Update updates the row count of analyze job.
 func (job *AnalyzeJob) Update(rowCount int64) {
+	if job == nil {
+		return
+	}
 	job.Mutex.Lock()
 	job.RowCount += rowCount
 	job.updateTime = time.Now()
@@ -110,6 +116,9 @@ func (job *AnalyzeJob) Update(rowCount int64) {
 
 // Finish update the status of analyze job to finished or failed according to `meetError`.
 func (job *AnalyzeJob) Finish(meetError bool) {
+	if job == nil {
+		return
+	}
 	job.Mutex.Lock()
 	if meetError {
 		job.State = failed
@@ -121,6 +130,9 @@ func (job *AnalyzeJob) Finish(meetError bool) {
 }
 
 func (job *AnalyzeJob) getUpdateTime() time.Time {
+	if job == nil {
+		return time.Time{}
+	}
 	job.Mutex.Lock()
 	defer job.Mutex.Unlock()
 	return job.updateTime

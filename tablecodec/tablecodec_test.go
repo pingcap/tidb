@@ -35,7 +35,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testTableCodecSuite{})
+var _ = SerialSuites(&testTableCodecSuite{})
 
 type testTableCodecSuite struct{}
 
@@ -108,7 +108,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// colMap may contains more columns than encoded row.
-	//colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	// colMap[4] = types.NewFieldType(mysql.TypeFloat)
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
@@ -556,7 +556,7 @@ func (s *testTableCodecSuite) TestError(c *C) {
 		errInvalidIndexKey,
 	}
 	for _, err := range kvErrs {
-		code := err.ToSQLError().Code
+		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

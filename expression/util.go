@@ -373,21 +373,21 @@ func timeZone2Duration(tz string) time.Duration {
 }
 
 var logicalOps = map[string]struct{}{
-	ast.LT:        {},
-	ast.GE:        {},
-	ast.GT:        {},
-	ast.LE:        {},
-	ast.EQ:        {},
-	ast.NE:        {},
-	ast.UnaryNot:  {},
-	ast.LogicAnd:  {},
-	ast.LogicOr:   {},
-	ast.LogicXor:  {},
-	ast.In:        {},
-	ast.IsNull:    {},
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
-	ast.Like:      {},
+	ast.LT:                 {},
+	ast.GE:                 {},
+	ast.GT:                 {},
+	ast.LE:                 {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.UnaryNot:           {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.In:                 {},
+	ast.IsNull:             {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.Like:               {},
 }
 
 var oppositeOp = map[string]string{
@@ -890,6 +890,21 @@ func ContainVirtualColumn(exprs []Expression) bool {
 			}
 		case *ScalarFunction:
 			if ContainVirtualColumn(v.GetArgs()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ContainCorrelatedColumn checks if the expressions contain a correlated column
+func ContainCorrelatedColumn(exprs []Expression) bool {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *CorrelatedColumn:
+			return true
+		case *ScalarFunction:
+			if ContainCorrelatedColumn(v.GetArgs()) {
 				return true
 			}
 		}

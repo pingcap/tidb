@@ -26,6 +26,7 @@ import (
 	"sync"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -273,6 +274,14 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+	if bf.tp.Decimal != types.UnspecifiedLength {
+		if argFieldTp.Decimal != types.UnspecifiedLength {
+			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
+		} else {
+			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+		}
+	}
 
 	var sig builtinFunc
 	if len(args) > 1 {
@@ -634,9 +643,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 	retTp, argTp = types.ETInt, fieldTp.EvalType()
 	switch argTp {
 	case types.ETInt:
-		if fieldTp.Tp == mysql.TypeLonglong {
-			retTp = types.ETDecimal
-		}
+		retTp = types.ETInt
 	case types.ETDecimal:
 		if fieldTp.Flen-fieldTp.Decimal > mysql.MaxIntWidth-2 { // len(math.MaxInt64) - 1
 			retTp = types.ETDecimal
@@ -650,7 +657,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
 func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
 	fieldTp := arg.GetType()
-	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
+	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
 	// TODO: when argument type is timestamp, add not null flag.
@@ -868,6 +875,7 @@ func (b *builtinLog1ArgSig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log(val), false, nil
@@ -897,6 +905,7 @@ func (b *builtinLog2ArgsSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 
 	if val1 <= 0 || val1 == 1 || val2 <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 
@@ -938,6 +947,7 @@ func (b *builtinLog2Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log2(val), false, nil
@@ -978,6 +988,7 @@ func (b *builtinLog10Sig) evalReal(row chunk.Row) (float64, bool, error) {
 		return 0, isNull, err
 	}
 	if val <= 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log10(val), false, nil
@@ -1159,11 +1170,25 @@ func (b *builtinConvSig) Clone() builtinFunc {
 // evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
 func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return res, isNull, err
+	var str string
+	switch x := b.args[0].(type) {
+	case *Constant:
+		if x.Value.Kind() == types.KindBinaryLiteral {
+			str = x.Value.GetBinaryLiteral().ToBitLiteralString(true)
+		}
+	case *ScalarFunction:
+		if x.FuncName.L == ast.Cast {
+			arg0 := x.GetArgs()[0]
+			if arg0.GetType().Hybrid() || IsBinaryLiteral(arg0) {
+				str, isNull, err = arg0.EvalString(b.ctx, row)
+				if isNull || err != nil {
+					return str, isNull, err
+				}
+				d := types.NewStringDatum(str)
+				str = d.GetBinaryLiteral().ToBitLiteralString(true)
+			}
+		}
 	}
-
 	fromBase, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1172,6 +1197,17 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 	toBase, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
+	}
+	if len(str) == 0 {
+		str, isNull, err = b.args[0].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, err
+		}
+	} else {
+		str, isNull, err = b.conv(str[2:], 2, fromBase)
+		if err != nil {
+			return str, isNull, err
+		}
 	}
 	return b.conv(str, fromBase, toBase)
 }
@@ -1962,6 +1998,9 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -1970,6 +2009,10 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
@@ -1992,6 +2035,9 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -2000,6 +2046,10 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil

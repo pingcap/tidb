@@ -194,7 +194,7 @@ func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	g := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)), s.schema)
 	emptyProp := &property.PhysicalProperty{}
-	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
+	orderProp := &property.PhysicalProperty{SortItems: []property.SortItem{{Col: &expression.Column{}}}}
 
 	impl := g.GetImpl(emptyProp)
 	c.Assert(impl, IsNil)

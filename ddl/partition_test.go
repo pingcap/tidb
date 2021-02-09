@@ -65,7 +65,7 @@ func buildTableInfoWithPartition(c *C, d *ddl) (*model.TableInfo, []int64) {
 	}
 	col := &model.ColumnInfo{
 		Name:      model.NewCIStr("c"),
-		Offset:    1,
+		Offset:    0,
 		State:     model.StatePublic,
 		FieldType: *types.NewFieldType(mysql.TypeLong),
 		ID:        allocateColumnID(tbl),

@@ -22,8 +22,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -63,28 +63,6 @@ func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
 }
 
-// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
-// It only starts the original workers.
-func (d *ddl) restartWorkers(ctx context.Context) {
-	d.ctx, d.cancel = context.WithCancel(ctx)
-
-	d.wg.Add(1)
-	go d.limitDDLJobs()
-	if !RunWorker {
-		return
-	}
-
-	err := d.ownerManager.CampaignOwner()
-	terror.Log(err)
-	for _, worker := range d.workers {
-		worker.wg.Add(1)
-		worker.ctx = d.ctx
-		w := worker
-		go w.start(d.ddlCtx)
-		asyncNotify(worker.ddlJobCh)
-	}
-}
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -100,7 +78,14 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 10000
 		// Test for add/drop primary key.
 		conf.AlterPrimaryKey = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	testleak.BeforeTest()
 	TestingT(t)
@@ -275,4 +260,31 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBaseID},
 	}
+}
+
+func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
+	policy := []time.Duration{
+		1 * time.Second,
+		2 * time.Second,
+	}
+	var (
+		val     time.Duration
+		changed bool
+	)
+
+	val, changed = getIntervalFromPolicy(policy, 0)
+	c.Assert(val, Equals, 1*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 1)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 2)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
+
+	val, changed = getIntervalFromPolicy(policy, 3)
+	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
 }

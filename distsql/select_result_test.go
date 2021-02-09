@@ -15,9 +15,9 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -28,9 +28,9 @@ import (
 func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
-	sr := selectResult{ctx: ctx}
+	sr := selectResult{ctx: ctx, storeType: kv.TiKV}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
-	sr.rootPlanID = copPlan{}
+	sr.rootPlanID = 1234
 	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
@@ -42,17 +42,11 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
 	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats("callee"), IsFalse)
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234), IsFalse)
 
-	sr.copPlanIDs = []fmt.Stringer{copPlan{}}
+	sr.copPlanIDs = []int{sr.rootPlanID}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
 	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1")
-}
-
-type copPlan struct{}
-
-func (p copPlan) String() string {
-	return "callee"
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, "tikv").String(), Equals, "tikv_task:{time:1ns, loops:1}, scan_detail: {total_process_keys: 0, total_keys: 0, rocksdb: {delete_skipped_count: 0, key_skipped_count: 0, block: {cache_hit_count: 0, read_count: 0, read_byte: 0 Bytes}}}")
 }

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,8 +29,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/v4/client"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	pd "github.com/tikv/pd/client"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -40,11 +39,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -166,14 +164,12 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return variable.GoTimeToTS(t1), nil
+	return oracle.GoTimeToTS(t1), nil
 }
-
-var brieStmtLabel fmt.Stringer = stringutil.StringerStr("BRIEStmt")
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, brieStmtLabel),
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},
@@ -407,6 +403,7 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 
 // Execute implements glue.Session
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	// FIXME: br relies on a deprecated API, it may be unsafe
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	return err
 }

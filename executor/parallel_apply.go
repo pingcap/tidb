@@ -15,10 +15,12 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -81,7 +82,6 @@ type ParallelNestedLoopApplyExec struct {
 	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
-	cacheLock          sync.RWMutex
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -96,7 +96,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.outerList = chunk.NewList(retTypes(e.outerExec), e.initCap, e.maxChunkSize)
-	e.outerList.GetMemTracker().SetLabel(stringutil.StringerStr("outerList"))
+	e.outerList.GetMemTracker().SetLabel(memory.LabelForOuterList)
 	e.outerList.GetMemTracker().AttachTo(e.memTracker)
 
 	e.innerList = make([]*chunk.List, e.concurrency)
@@ -109,7 +109,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	for i := 0; i < e.concurrency; i++ {
 		e.innerChunk[i] = newFirstChunk(e.innerExecs[i])
 		e.innerList[i] = chunk.NewList(retTypes(e.innerExecs[i]), e.initCap, e.maxChunkSize)
-		e.innerList[i].GetMemTracker().SetLabel(innerListLabel)
+		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
 		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
 	}
 
@@ -167,8 +167,8 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -192,10 +192,12 @@ func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ParallelApplyOuterWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
 	for {
+		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := newFirstChunk(e.outerExec)
 		if err := Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
@@ -224,6 +226,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
+	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	for {
 		var chk *chunk.Chunk
@@ -232,6 +235,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		case <-e.exit:
 			return
 		}
+		failpoint.Inject("parallelApplyInnerWorkerPanic", nil)
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
 			return
@@ -275,9 +279,8 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
-		e.cacheLock.RLock()
+		failpoint.Inject("parallelApplyGetCachePanic", nil)
 		value, err := e.cache.Get(key)
-		e.cacheLock.RUnlock()
 		if err != nil {
 			return err
 		}
@@ -323,8 +326,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
-		e.cacheLock.Lock()
-		defer e.cacheLock.Unlock()
+		failpoint.Inject("parallelApplySetCachePanic", nil)
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}

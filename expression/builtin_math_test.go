@@ -238,21 +238,23 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	tests := []struct {
-		args       []interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         []interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{[]interface{}{nil}, 0, true, false},
-		{[]interface{}{nil, nil}, 0, true, false},
-		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{int64(10), int64(100)}, 2, false, false},
-		{[]interface{}{float64(10), float64(100)}, 2, false, false},
-		{[]interface{}{float64(-1)}, 0, true, false},
-		{[]interface{}{float64(1), float64(2)}, 0, true, false},
-		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
-		{[]interface{}{"abc"}, 0, false, true},
+		{[]interface{}{nil}, 0, true, 0},
+		{[]interface{}{nil, nil}, 0, true, 0},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{int64(10), int64(100)}, 2, false, 0},
+		{[]interface{}{float64(10), float64(100)}, 2, false, 0},
+		{[]interface{}{float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(2), float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(-1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, 0},
+		{[]interface{}{"abc"}, 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -261,16 +263,14 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
-			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -280,17 +280,18 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
 	tests := []struct {
-		args       interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(16), 4, false, false},
-		{float64(16), 4, false, false},
-		{int64(5), 2.321928094887362, false, false},
-		{int64(-1), 0, true, false},
-		{"4abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(16), 4, false, 0},
+		{float64(16), 4, false, 0},
+		{int64(5), 2.321928094887362, false, 0},
+		{int64(-1), 0, true, 1},
+		{"4abc", 2, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -299,16 +300,14 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
-			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -318,17 +317,18 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
 	tests := []struct {
-		args       interface{}
-		expect     float64
-		isNil      bool
-		getWarning bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(100), 2, false, false},
-		{float64(100), 2, false, false},
-		{int64(101), 2.0043213737826426, false, false},
-		{int64(-1), 0, true, false},
-		{"100abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(100), 2, false, 0},
+		{float64(100), 2, false, 0},
+		{int64(101), 2.0043213737826426, false, 0},
+		{int64(-1), 0, true, 1},
+		{"100abc", 2, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
@@ -337,16 +337,14 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
-			c.Assert(err, IsNil)
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -433,6 +431,8 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 		{[]interface{}{1.298, 1}, 1.3},
 		{[]interface{}{1.298}, 1},
 		{[]interface{}{1.298, 0}, 1},
+		{[]interface{}{-1.5, 0}, -2},
+		{[]interface{}{1.5, 0}, 2},
 		{[]interface{}{23.298, -1}, 20},
 		{[]interface{}{newDec("-1.23")}, newDec("-1")},
 		{[]interface{}{newDec("-1.23"), 1}, newDec("-1.2")},
@@ -951,7 +951,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 		{int64(0), float64(0), false, false},
 		{math.Pi / 4, float64(1), false, false},
 		{-math.Pi / 4, float64(-1), false, false},
-		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, //in mysql and golang, it equals -1.0000000000000002, not -1
+		{math.Pi * 3 / 4, math.Tan(math.Pi * 3 / 4), false, false}, // in mysql and golang, it equals -1.0000000000000002, not -1
 		{"0.000", float64(0), false, false},
 		{"sdfgsdfg", 0, false, true},
 	}

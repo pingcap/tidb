@@ -90,7 +90,7 @@ func TestTopology(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, cli, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, cli, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,9 @@ func TestTopology(t *testing.T) {
 
 	if topo.StartTimestamp != 1282967700000 {
 		t.Fatal("start_timestamp of topology info does not match")
+	}
+	if v, ok := topo.Labels["foo"]; !ok || v != "bar" {
+		t.Fatal("labels of topology info does not match")
 	}
 
 	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {

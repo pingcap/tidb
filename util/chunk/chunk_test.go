@@ -560,11 +560,11 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
 
-	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
+	// cap(c.nullBitmap) + cap(c.offsets)*8 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
 	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
-	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[2] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + initCap*8 + 0
+	colUsage[2] = (initCap+7)>>3 + (initCap+1)*8 + initCap*8 + 0
 	colUsage[3] = (initCap+7)>>3 + 0 + initCap*sizeTime + sizeTime
 	colUsage[4] = (initCap+7)>>3 + 0 + initCap*8 + 8
 
@@ -596,7 +596,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
@@ -784,6 +784,30 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 
 	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)
+}
+
+func (s *testChunkSuite) TestToString(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDouble})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeString})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDate})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+
+	chk := NewChunkWithCapacity(fieldTypes, 2)
+	chk.AppendFloat32(0, float32(1))
+	chk.AppendFloat64(1, 1.0)
+	chk.AppendString(2, "1")
+	chk.AppendTime(3, types.ZeroDate)
+	chk.AppendInt64(4, 1)
+
+	chk.AppendFloat32(0, float32(2))
+	chk.AppendFloat64(1, 2.0)
+	chk.AppendString(2, "2")
+	chk.AppendTime(3, types.ZeroDatetime)
+	chk.AppendInt64(4, 2)
+
+	c.Assert(chk.ToString(fieldTypes), check.Equals, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n")
 }
 
 func BenchmarkAppendInt(b *testing.B) {
@@ -1057,5 +1081,93 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 				}
 			}
 		}
+	}
+}
+
+func (s *testChunkSuite) TestAppendRows(c *check.C) {
+	numCols := 6
+	numRows := 10
+	chk := newChunk(8, 8, 0, 0, 40, 0)
+	strFmt := "%d.12345"
+	for i := 0; i < numRows; i++ {
+		chk.AppendNull(0)
+		chk.AppendInt64(1, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		chk.AppendString(2, str)
+		chk.AppendBytes(3, []byte(str))
+		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
+		chk.AppendJSON(5, json.CreateBinary(str))
+	}
+	c.Assert(chk.NumCols(), check.Equals, numCols)
+	c.Assert(chk.NumRows(), check.Equals, numRows)
+
+	chk2 := newChunk(8, 8, 0, 0, 40, 0)
+	c.Assert(chk.NumCols(), check.Equals, numCols)
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = chk.GetRow(i)
+	}
+	chk2.AppendRows(rows)
+	for i := 0; i < numRows; i++ {
+		row := chk2.GetRow(i)
+		c.Assert(row.GetInt64(0), check.Equals, int64(0))
+		c.Assert(row.IsNull(0), check.IsTrue)
+		c.Assert(row.GetInt64(1), check.Equals, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		c.Assert(row.IsNull(2), check.IsFalse)
+		c.Assert(row.GetString(2), check.Equals, str)
+		c.Assert(row.IsNull(3), check.IsFalse)
+		c.Assert(row.GetBytes(3), check.BytesEquals, []byte(str))
+		c.Assert(row.IsNull(4), check.IsFalse)
+		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
+		c.Assert(row.IsNull(5), check.IsFalse)
+		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
+	}
+}
+
+func BenchmarkBatchAppendRows(b *testing.B) {
+	b.ReportAllocs()
+	numRows := 4096
+	rowChk := newChunk(8, 8, 0, 0)
+	for i := 0; i < numRows; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
+	}
+	chk := newChunk(8, 8, 0, 0)
+	type testCaseConf struct {
+		batchSize int
+	}
+	testCaseConfs := []testCaseConf{
+		{batchSize: 10},
+		{batchSize: 100},
+		{batchSize: 500},
+		{batchSize: 1000},
+		{batchSize: 1500},
+		{batchSize: 2000},
+		{batchSize: 3000},
+		{batchSize: 4000},
+	}
+	for _, conf := range testCaseConfs {
+		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				for j := 0; j < conf.batchSize; j++ {
+					chk.AppendRow(rowChk.GetRow(j))
+				}
+			}
+		})
+		b.ResetTimer()
+		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
+			rows := make([]Row, conf.batchSize)
+			for i := 0; i < conf.batchSize; i++ {
+				rows[i] = rowChk.GetRow(i)
+			}
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				chk.AppendRows(rows)
+			}
+		})
 	}
 }

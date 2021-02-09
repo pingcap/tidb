@@ -16,8 +16,8 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -35,7 +36,7 @@ import (
 
 const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
-	insertDeleteRangeSQLValue  = `("%d", "%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQLValue  = `(%?, %?, %?, %?, %?)`
 	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
 
 	delBatchSize = 65536
@@ -195,7 +196,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)
@@ -379,24 +380,44 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
 			}
 		}
+	case model.ActionModifyColumn:
+		var indexIDs []int64
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(indexIDs) == 0 {
+			return nil
+		}
+		if len(partitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+		}
+		for _, pid := range partitionIDs {
+			if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }
 
 func doBatchDeleteIndiceRange(s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64) error {
 	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", indexIDs))
-	sql := insertDeleteRangeSQLPrefix
+	paramsList := make([]interface{}, 0, len(indexIDs)*5)
+	var buf strings.Builder
+	buf.WriteString(insertDeleteRangeSQLPrefix)
 	for i, indexID := range indexIDs {
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 		startKeyEncoded := hex.EncodeToString(startKey)
 		endKeyEncoded := hex.EncodeToString(endKey)
-		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
+		buf.WriteString(insertDeleteRangeSQLValue)
 		if i != len(indexIDs)-1 {
-			sql += ","
+			buf.WriteString(",")
 		}
+		paramsList = append(paramsList, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
 	}
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), buf.String(), paramsList...)
 	return errors.Trace(err)
 }
 
@@ -404,31 +425,33 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	logutil.BgLogger().Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
-	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
 	return errors.Trace(err)
 }
 
 func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64) error {
 	logutil.BgLogger().Info("[ddl] batch insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", tableIDs))
-	sql := insertDeleteRangeSQLPrefix
+	var buf strings.Builder
+	buf.WriteString(insertDeleteRangeSQLPrefix)
+	paramsList := make([]interface{}, 0, len(tableIDs)*5)
 	for i, tableID := range tableIDs {
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		startKeyEncoded := hex.EncodeToString(startKey)
 		endKeyEncoded := hex.EncodeToString(endKey)
-		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
+		buf.WriteString(insertDeleteRangeSQLValue)
 		if i != len(tableIDs)-1 {
-			sql += ","
+			buf.WriteString(",")
 		}
+		paramsList = append(paramsList, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
 	}
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), buf.String(), paramsList...)
 	return errors.Trace(err)
 }
 
 // getNowTS gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
-	currVer, err := ctx.GetStore().CurrentVersion()
+	currVer, err := ctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

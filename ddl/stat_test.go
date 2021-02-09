@@ -15,13 +15,10 @@ package ddl
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testStatSuite{})
@@ -44,61 +41,6 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 	c.Assert(err, IsNil)
 	v := m[ddlSchemaVersion]
 	return v.(int64)
-}
-
-func (s *testStatSuite) TestStat(c *C) {
-	store := testCreateStore(c, "test_stat")
-	defer store.Close()
-
-	d := testNewDDLAndStart(
-		context.Background(),
-		c,
-		WithStore(store),
-		WithLease(testLease),
-	)
-	defer d.Stop()
-
-	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
-
-	// TODO: Get this information from etcd.
-	//	m, err := d.Stats(nil)
-	//	c.Assert(err, IsNil)
-	//	c.Assert(m[ddlOwnerID], Equals, d.uuid)
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo.Name},
-	}
-
-	ctx := mock.NewContext()
-	ctx.Store = store
-	done := make(chan error, 1)
-	go func() {
-		done <- d.doDDLJob(ctx, job)
-	}()
-
-	ticker := time.NewTicker(d.lease * 1)
-	defer ticker.Stop()
-	ver := s.getDDLSchemaVer(c, d)
-LOOP:
-	for {
-		select {
-		case <-ticker.C:
-			d.Stop()
-			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.restartWorkers(context.Background())
-			time.Sleep(time.Millisecond * 20)
-		case err := <-done:
-			c.Assert(err, IsNil)
-			// TODO: Get this information from etcd.
-			// m, err := d.Stats(nil)
-			// c.Assert(err, IsNil)
-			break LOOP
-		}
-	}
 }
 
 func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
@@ -134,9 +76,9 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
 	}()
 
 	done := make(chan error, 1)

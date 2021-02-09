@@ -110,6 +110,7 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
+		{`___Հ`, `䇇Հ`, '\\', false},
 		// We may reopen these test when like function go back to case insensitive.
 		/*
 			{"_ab", "AAB", '\\', true},
@@ -181,6 +182,40 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	}
 }
 
+func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
+	defer testleak.AfterTest(c)()
+	testcases := []struct {
+		name     string
+		labels   map[string]string
+		expected string
+	}{
+		{
+			name:     "nil map",
+			labels:   nil,
+			expected: "",
+		},
+		{
+			name: "one label",
+			labels: map[string]string{
+				"aaa": "bbb",
+			},
+			expected: "aaa=bbb",
+		},
+		{
+			name: "two labels",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"ccc": "ddd",
+			},
+			expected: "aaa=bbb,ccc=ddd",
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		c.Assert(BuildStringFromLabels(testcase.labels), Equals, testcase.expected)
+	}
+}
+
 func BenchmarkDoMatch(b *testing.B) {
 	escape := byte('\\')
 	tbl := []struct {
@@ -225,6 +260,28 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 					b.Fatal("Unmatch expected.")
 				}
 			}
+		})
+	}
+}
+
+func BenchmarkBuildStringFromLabels(b *testing.B) {
+	cases := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "normal case",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"foo": "bar",
+			},
+		},
+	}
+
+	for _, testcase := range cases {
+		b.Run(testcase.name, func(b *testing.B) {
+			b.ResetTimer()
+			BuildStringFromLabels(testcase.labels)
 		})
 	}
 }

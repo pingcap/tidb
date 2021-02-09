@@ -2281,6 +2281,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	if idxTo != 0 {
 		copy(to.wordBuf[:], to.wordBuf[idxTo:])
 	}
+
+	if to.IsZero() {
+		to.negative = false
+	}
 	return err
 }
 

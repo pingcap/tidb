@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
@@ -159,6 +160,15 @@ type rpcHandler struct {
 	resolvedLocks  []uint64
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if l.GetKey() == placement.EngineLabelKey && l.GetValue() == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
@@ -204,8 +214,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	// The Peer on the Store is not leader.
-	if storePeer.GetId() != leaderPeer.GetId() {
+	// The Peer on the Store is not leader. If it's tiflash store , we pass this check.
+	if storePeer.GetId() != leaderPeer.GetId() && !isTiFlashStore(h.cluster.GetStore(storePeer.GetStoreId())) {
 		return &errorpb.Error{
 			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
@@ -387,7 +397,7 @@ func (h *rpcHandler) handleKvCheckTxnStatus(req *kvrpcpb.CheckTxnStatusRequest) 
 		panic("KvCheckTxnStatus: key not in region")
 	}
 	var resp kvrpcpb.CheckTxnStatusResponse
-	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist())
+	ttl, commitTS, action, err := h.mvccStore.CheckTxnStatus(req.GetPrimaryKey(), req.GetLockTs(), req.GetCallerStartTs(), req.GetCurrentTs(), req.GetRollbackIfNotExist(), req.ResolvingPessimisticLock)
 	if err != nil {
 		resp.Error = convertToKeyError(err)
 	} else {
@@ -689,7 +699,7 @@ func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor
 			StartTs: req.StartTs,
 			Ranges:  ri.Ranges,
 		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop, true)
+		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1061,6 +1071,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 					OtherError: err.Message,
 				},
 			}
+			return resp, nil
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		batchCopStream, err := handler.handleBatchCopRequest(ctx1, r)

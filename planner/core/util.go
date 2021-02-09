@@ -28,9 +28,11 @@ import (
 )
 
 // AggregateFuncExtractor visits Expr tree.
-// It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
+// It collects AggregateFuncExpr from AST Node.
 type AggregateFuncExtractor struct {
-	inAggregateFuncExpr bool
+	// skipAggMap stores correlated aggregate functions which have been built in outer query,
+	// so extractor in sub-query will skip these aggregate functions.
+	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 	// AggFuncs is the collected AggregateFuncExprs.
 	AggFuncs []*ast.AggregateFuncExpr
 }
@@ -38,8 +40,6 @@ type AggregateFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = true
 	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
@@ -50,8 +50,9 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
-		a.inAggregateFuncExpr = false
-		a.AggFuncs = append(a.AggFuncs, v)
+		if _, ok := a.skipAggMap[v]; !ok {
+			a.AggFuncs = append(a.AggFuncs, v)
+		}
 	}
 	return n, true
 }
@@ -91,12 +92,23 @@ type logicalSchemaProducer struct {
 // Schema implements the Plan.Schema interface.
 func (s *logicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		s.schema = expression.NewSchema()
+		if len(s.Children()) == 1 {
+			// default implementation for plans has only one child: proprgate child schema.
+			// multi-children plans are likely to have particular implementation.
+			s.schema = s.Children()[0].Schema().Clone()
+		} else {
+			s.schema = expression.NewSchema()
+		}
 	}
 	return s.schema
 }
 
 func (s *logicalSchemaProducer) OutputNames() types.NameSlice {
+	if s.names == nil && len(s.Children()) == 1 {
+		// default implementation for plans has only one child: proprgate child `OutputNames`.
+		// multi-children plans are likely to have particular implementation.
+		s.names = s.Children()[0].OutputNames()
+	}
 	return s.names
 }
 
@@ -116,10 +128,10 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column) {
-	used := expression.GetUsedList(parentUsedCols, s.schema)
+	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
-			s.schema.Columns = append(s.schema.Columns[:i], s.schema.Columns[i+1:]...)
+			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
 }
@@ -137,14 +149,20 @@ func (s *physicalSchemaProducer) cloneWithSelf(newSelf PhysicalPlan) (*physicalS
 	}
 	return &physicalSchemaProducer{
 		basePhysicalPlan: *base,
-		schema:           s.schema.Clone(),
+		schema:           s.Schema().Clone(),
 	}, nil
 }
 
 // Schema implements the Plan.Schema interface.
 func (s *physicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		s.schema = expression.NewSchema()
+		if len(s.Children()) == 1 {
+			// default implementation for plans has only one child: proprgate child schema.
+			// multi-children plans are likely to have particular implementation.
+			s.schema = s.Children()[0].Schema().Clone()
+		} else {
+			s.schema = expression.NewSchema()
+		}
 	}
 	return s.schema
 }
@@ -229,6 +247,11 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
 	p := i.(Plan)
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {
