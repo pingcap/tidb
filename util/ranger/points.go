@@ -370,7 +370,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if val.Kind() == types.KindUint64 && val.GetUint64() > math.MaxInt64 {
 			switch op {
-			case ast.GT, ast.GE, ast.EQ, ast.NullEQ:
+			case ast.GT, ast.GE:
 				return val, op, false
 			case ast.NE, ast.LE, ast.LT:
 				op = ast.LE
