@@ -34,7 +34,7 @@ func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 
 	for _, col := range nullCols {
 		col.Flag |= mysql.NotNullFlag
-		col.Flag = col.Flag &^ mysql.PreventNullInsertFlag
+		col.Flag &^= mysql.PreventNullInsertFlag
 	}
 	return nil
 }
@@ -49,7 +49,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 		}
 		for _, col := range nullCols {
 			// Field PreventNullInsertFlag flag reset.
-			col.Flag = col.Flag &^ mysql.PreventNullInsertFlag
+			col.Flag &^= mysql.PreventNullInsertFlag
 		}
 	}
 

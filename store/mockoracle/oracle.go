@@ -71,6 +71,13 @@ func (o *MockOracle) GetTimestamp(ctx context.Context, _ *oracle.Option) (uint64
 	return ts, nil
 }
 
+// GetStaleTimestamp implements oracle.Oracle interface.
+func (o *MockOracle) GetStaleTimestamp(ctx context.Context, txnScope string, prevSecond uint64) (ts uint64, err error) {
+	physical := oracle.GetPhysical(time.Now().Add(-time.Second * time.Duration(prevSecond)))
+	ts = oracle.ComposeTS(physical, 0)
+	return ts, nil
+}
+
 type mockOracleFuture struct {
 	o   *MockOracle
 	ctx context.Context

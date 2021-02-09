@@ -18,8 +18,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
@@ -43,7 +43,7 @@ func (s *testOnePCSuite) SetUpTest(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	k1 := []byte("k1")
 	v1 := []byte("v1")
@@ -59,7 +59,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	// ttlManager is not used for 1PC.
 	c.Assert(txn.committer.ttlManager.state, Equals, stateUninitialized)
 
-	// 1PC doesn't work if connID == 0
+	// 1PC doesn't work if sessionID == 0
 	k2 := []byte("k2")
 	v2 := []byte("v2")
 
@@ -130,7 +130,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	// Check all keys
 	keys := [][]byte{k1, k2, k3, k4, k5, k6}
 	values := [][]byte{v1, v2, v3, v4, v5, v6New}
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
@@ -141,7 +141,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCIsolation(c *C) {
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	k := []byte("k")
 	v1 := []byte("v1")
@@ -182,7 +182,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		return
 	}
 
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 
 	txn := s.begin1PC(c)
 
@@ -214,7 +214,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
@@ -224,9 +224,9 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	}
 }
 
-// It's just a simple validation of external consistency.
+// It's just a simple validation of linearizability.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
-func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
+func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t2, err := s.store.Begin()
@@ -235,7 +235,7 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	// t2 commits earlier than t1
 	err = t2.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -244,4 +244,28 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	commitTS1 := t1.(*tikvTxn).committer.commitTS
 	commitTS2 := t2.(*tikvTxn).committer.commitTS
 	c.Assert(commitTS2, Less, commitTS1)
+}
+
+func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
+	// It requires setting placement rules to run with TiKV
+	if *WithTiKV {
+		return
+	}
+
+	localTxn := s.begin1PC(c)
+	err := localTxn.Set([]byte("a"), []byte("a1"))
+	localTxn.SetOption(kv.TxnScope, "bj")
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
+	err = localTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(localTxn.committer.isOnePC(), IsFalse)
+
+	globalTxn := s.begin1PC(c)
+	err = globalTxn.Set([]byte("b"), []byte("b1"))
+	globalTxn.SetOption(kv.TxnScope, oracle.GlobalTxnScope)
+	c.Assert(err, IsNil)
+	err = globalTxn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(globalTxn.committer.isOnePC(), IsTrue)
 }

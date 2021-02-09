@@ -17,6 +17,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -72,6 +73,8 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		pkCols = tables.TryGetCommonPkColumnIds(tbl.Meta())
 	case tblInfo.PKIsHandle:
 		pkCols = []int64{tblInfo.GetPkColInfo().ID}
+	default: // support decoding _tidb_rowid.
+		pkCols = []int64{model.ExtraHandleID}
 	}
 	return &RowDecoder{
 		tbl:         tbl,
@@ -117,8 +120,8 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	keys := make([]int, 0)
-	ids := make(map[int]int)
+	keys := make([]int, 0, len(rd.colMap))
+	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {
 		keys = append(keys, col.Col.Offset)
 		ids[col.Col.Offset] = int(k)
@@ -166,4 +169,10 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 		}
 	}
 	return decodeColMap
+}
+
+// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
+// Please make sure calling DecodeAndEvalRowWithMap first.
+func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
+	return rd.mutRow.ToRow()
 }
