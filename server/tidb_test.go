@@ -140,6 +140,13 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 	ts.runTestPreparedTimestamp(c)
 }
 
+func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
+	ts.runTestsOnNewDB(c, nil, "config", func(dbt *DBTest) {
+		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
+		ts.checkRows(c, rows, "300")
+	})
+}
+
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
@@ -153,6 +160,12 @@ func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListPartition2(c)
 	ts.runTestLoadDataForListColumnPartition(c)
 	ts.runTestLoadDataForListColumnPartition2(c)
+}
+
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
+	ts.runTestLoadDataAutoRandom(c)
 }
 
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {

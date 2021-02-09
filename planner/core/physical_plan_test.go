@@ -559,6 +559,48 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestMergeJoinUnionScan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (11, 'keen williamson'), (10, 'gracious hermann')")
+	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (10, 'gracious hermann')")
+
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		tk.MustExec("begin")
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+		tk.MustExec("rollback")
+	}
+}
+
 func (s *testPlanSuite) TestDoSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // A plan is dataAccesser means it can access underlying data.
@@ -57,11 +59,16 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isFullScan() {
-			return "IndexFullScan_" + strconv.Itoa(p.id)
-		}
-		return "IndexRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalIndexScan) TP() string {
+	if p.isFullScan() {
+		return plancodec.TypeIndexFullScan
+	}
+	return plancodec.TypeIndexRangeScan
 }
 
 // ExplainInfo implements Plan interface.
@@ -165,13 +172,18 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isChildOfIndexLookUp {
-			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if p.isFullScan() {
-			return "TableFullScan_" + strconv.Itoa(p.id)
-		}
-		return "TableRangeScan_" + strconv.Itoa(p.id)
+		return p.TP() + "_" + strconv.Itoa(p.id)
 	})
+}
+
+// TP overrides the TP in order to match different range.
+func (p *PhysicalTableScan) TP() string {
+	if p.isChildOfIndexLookUp {
+		return plancodec.TypeTableRowIDScan
+	} else if p.isFullScan() {
+		return plancodec.TypeTableFullScan
+	}
+	return plancodec.TypeTableRangeScan
 }
 
 // ExplainInfo implements Plan interface.
@@ -647,52 +659,6 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo(false)
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
-func (p *PhysicalBroadCastJoin) explainInfo(normalized bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
-	}
-
-	buffer := new(bytes.Buffer)
-
-	buffer.WriteString(p.JoinType.String())
-
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.RightJoinKeys))
-	}
-	if len(p.LeftConditions) > 0 {
-		if normalized {
-			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
-		} else {
-			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
-		}
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
@@ -882,6 +848,31 @@ func (p *DataSource) ExplainInfo() string {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
+	}
+	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExchangeSender) ExplainInfo() string {
+	buffer := bytes.NewBufferString("ExchangeType: ")
+	switch p.ExchangeType {
+	case tipb.ExchangeType_PassThrough:
+		fmt.Fprintf(buffer, "PassThrough")
+	case tipb.ExchangeType_Broadcast:
+		fmt.Fprintf(buffer, "Broadcast")
+	case tipb.ExchangeType_Hash:
+		fmt.Fprintf(buffer, "HashPartition")
+		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
+	}
+	if len(p.Tasks) > 0 {
+		fmt.Fprintf(buffer, ", tasks: [")
+		for idx, task := range p.Tasks {
+			if idx != 0 {
+				fmt.Fprintf(buffer, ", ")
+			}
+			fmt.Fprintf(buffer, "%v", task.ID)
+		}
+		fmt.Fprintf(buffer, "]")
 	}
 	return buffer.String()
 }

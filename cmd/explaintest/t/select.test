@@ -229,3 +229,18 @@ CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
     PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
+
+# for issue 21692
+create table precise_types (
+    a BIGINT UNSIGNED NOT NULL,
+    b BIGINT NOT NULL,
+    c DECIMAL(21,1) NOT NULL,
+    d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+    18446744073709551614,
+    -9223372036854775806,
+    99999999999999999999,
+    18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;

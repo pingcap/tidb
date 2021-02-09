@@ -514,6 +514,17 @@
     ]
   },
   {
+    "name": "TestMergeJoinUnionScan",
+    "cases": [
+      [
+        "insert into t2 values (11, 'amazing merkle')",
+        "insert into t2 values (12, 'amazing merkle')",
+        // Test Merge Join + UnionScan + TableScan.
+        "explain select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
+      ]
+    ]
+  },
+  {
     "name": "TestSemiJoinToInner",
     "cases": [
       "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"

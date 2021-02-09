@@ -408,11 +408,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_change_column_type = 1")
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_change_column_type = off")
-	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	// test tidb_enable_change_column_type in session scope.
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@session.tidb_enable_change_column_type;").Check(testkit.Rows("0"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
@@ -510,6 +516,21 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
 	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
 	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET SESSION tidb_enable_tiflash_fallback_tikv = on")
+	tk.MustQuery("select @@session.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("1"))
+	tk.MustExec("SET SESSION tidb_enable_tiflash_fallback_tikv = off")
+	tk.MustQuery("select @@session.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_enable_tiflash_fallback_tikv = on")
+	tk.MustQuery("select @@global.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("1"))
+	tk.MustExec("SET GLOBAL tidb_enable_tiflash_fallback_tikv = off")
+	tk.MustQuery("select @@global.tidb_enable_tiflash_fallback_tikv").Check(testkit.Rows("0"))
+	c.Assert(tk.ExecToErr("SET SESSION tidb_enable_tiflash_fallback_tikv = 123"), NotNil)
+	c.Assert(tk.ExecToErr("SET GLOBAL tidb_enable_tiflash_fallback_tikv = 321"), NotNil)
+
+	// Test issue #22145
+	tk.MustExec(`set global sync_relay_log = "'"`)
+
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -755,10 +776,10 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("7"))
 
 	_, err = tk.Exec("set @@error_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@warning_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set time_zone='SySTeM'")
 	result = tk.MustQuery("select @@time_zone;")

@@ -25,14 +25,16 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -47,23 +49,6 @@ const (
 
 // RegionCacheTTLSec is the max idle time for regions in the region cache.
 var RegionCacheTTLSec int64 = 600
-
-var (
-	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_region_from_cache", "ok")
-	tikvRegionCacheCounterWithSendFail                    = metrics.TiKVRegionCacheCounter.WithLabelValues("send_fail", "ok")
-	tikvRegionCacheCounterWithGetRegionByIDOK             = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "ok")
-	tikvRegionCacheCounterWithGetRegionByIDError          = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region_by_id", "err")
-	tikvRegionCacheCounterWithGetRegionOK                 = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "ok")
-	tikvRegionCacheCounterWithGetRegionError              = metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", "err")
-	tikvRegionCacheCounterWithScanRegionsOK               = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "ok")
-	tikvRegionCacheCounterWithScanRegionsError            = metrics.TiKVRegionCacheCounter.WithLabelValues("scan_regions", "err")
-	tikvRegionCacheCounterWithGetStoreOK                  = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "ok")
-	tikvRegionCacheCounterWithGetStoreError               = metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", "err")
-	tikvRegionCacheCounterWithInvalidateStoreRegionsOK    = metrics.TiKVRegionCacheCounter.WithLabelValues("invalidate_store_regions", "ok")
-
-	tikvStatusCountWithOK    = metrics.TiKVStatusCounter.WithLabelValues("ok")
-	tikvStatusCountWithError = metrics.TiKVStatusCounter.WithLabelValues("err")
-)
 
 const (
 	updated  int32 = iota // region is updated and no need to reload.
@@ -180,10 +165,7 @@ func (r *RegionStore) kvPeer(seed uint32, op *storeSelectorOp) AccessIndex {
 func (r *RegionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp) bool {
 	_, s := r.accessStore(TiKvOnly, aidx)
 	// filter label unmatched store
-	if !s.IsLabelsMatch(op.labels) {
-		return false
-	}
-	return true
+	return s.IsLabelsMatch(op.labels)
 }
 
 // init initializes region after constructed.
@@ -233,6 +215,10 @@ func (r *Region) compareAndSwapStore(oldStore, newStore *RegionStore) bool {
 }
 
 func (r *Region) checkRegionCacheTTL(ts int64) bool {
+	// Only consider use percentage on this failpoint, for example, "2%return"
+	failpoint.Inject("invalidateRegionCache", func() {
+		r.invalidate()
+	})
 	for {
 		lastAccess := atomic.LoadInt64(&r.lastAccess)
 		if ts-lastAccess > RegionCacheTTLSec {
@@ -246,7 +232,7 @@ func (r *Region) checkRegionCacheTTL(ts int64) bool {
 
 // invalidate invalidates a region, next time it will got null result.
 func (r *Region) invalidate() {
-	tikvRegionCacheCounterWithInvalidateRegionFromCacheOK.Inc()
+	metrics.RegionCacheCounterWithInvalidateRegionFromCacheOK.Inc()
 	atomic.StoreInt64(&r.lastAccess, invalidatedLastAccessTime)
 }
 
@@ -593,7 +579,7 @@ func (c *RegionCache) findRegionByKey(bo *Backoffer, key []byte, isEndKey bool) 
 
 // OnSendFail handles send request fail logic.
 func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload bool, err error) {
-	tikvRegionCacheCounterWithSendFail.Inc()
+	metrics.RegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
 		peersNum := len(r.meta.Peers)
@@ -621,7 +607,7 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 			epoch := rs.storeEpochs[storeIdx]
 			if atomic.CompareAndSwapUint32(&s.epoch, epoch, epoch+1) {
 				logutil.BgLogger().Info("mark store's regions need be refill", zap.String("store", s.addr))
-				tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+				metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 			}
 
 			// schedule a store addr resolve.
@@ -967,6 +953,13 @@ func filterUnavailablePeers(region *pd.Region) {
 // If the given key is the end key of the region that you want, you may set the second argument to true. This is useful
 // when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("loadRegion", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
 	var backoffErr error
 	searchPrev := false
 	for {
@@ -979,14 +972,14 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 		var reg *pd.Region
 		var err error
 		if searchPrev {
-			reg, err = c.pdClient.GetPrevRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetPrevRegion(ctx, key)
 		} else {
-			reg, err = c.pdClient.GetRegion(bo.ctx, key)
+			reg, err = c.pdClient.GetRegion(ctx, key)
 		}
 		if err != nil {
-			tikvRegionCacheCounterWithGetRegionError.Inc()
+			metrics.RegionCacheCounterWithGetRegionError.Inc()
 		} else {
-			tikvRegionCacheCounterWithGetRegionOK.Inc()
+			metrics.RegionCacheCounterWithGetRegionOK.Inc()
 		}
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
@@ -1018,6 +1011,12 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 
 // loadRegionByID loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, error) {
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("loadRegionByID", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	var backoffErr error
 	for {
 		if backoffErr != nil {
@@ -1026,11 +1025,11 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 				return nil, errors.Trace(err)
 			}
 		}
-		reg, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
+		reg, err := c.pdClient.GetRegionByID(ctx, regionID)
 		if err != nil {
-			tikvRegionCacheCounterWithGetRegionByIDError.Inc()
+			metrics.RegionCacheCounterWithGetRegionByIDError.Inc()
 		} else {
-			tikvRegionCacheCounterWithGetRegionByIDOK.Inc()
+			metrics.RegionCacheCounterWithGetRegionByIDOK.Inc()
 		}
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
@@ -1061,6 +1060,12 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 	if limit == 0 {
 		return nil, nil
 	}
+	ctx := bo.ctx
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("scanRegions", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 
 	var backoffErr error
 	for {
@@ -1070,9 +1075,9 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		regionsInfo, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		regionsInfo, err := c.pdClient.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
-			tikvRegionCacheCounterWithScanRegionsError.Inc()
+			metrics.RegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
 				"scanRegion from PD failed, startKey: %q, limit: %q, err: %v",
 				startKey,
@@ -1081,7 +1086,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 			continue
 		}
 
-		tikvRegionCacheCounterWithScanRegionsOK.Inc()
+		metrics.RegionCacheCounterWithScanRegionsOK.Inc()
 
 		if len(regionsInfo) == 0 {
 			return nil, errors.New("PD returned no region")
@@ -1202,7 +1207,7 @@ func (c *RegionCache) OnRegionEpochNotMatch(bo *Backoffer, ctx *RPCContext, curr
 	needInvalidateOld := true
 	// If the region epoch is not ahead of TiKV's, replace region meta in region cache.
 	for _, meta := range currentRegions {
-		if _, ok := c.pdClient.(*codecPDClient); ok {
+		if _, ok := c.pdClient.(*CodecPDClient); ok {
 			var err error
 			if meta, err = decodeRegionMetaKeyWithShallowCopy(meta); err != nil {
 				return errors.Errorf("newRegion's range key is not encoded: %v, %v", meta, err)
@@ -1472,9 +1477,9 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 	for {
 		store, err = c.pdClient.GetStore(bo.ctx, s.storeID)
 		if err != nil {
-			tikvRegionCacheCounterWithGetStoreError.Inc()
+			metrics.RegionCacheCounterWithGetStoreError.Inc()
 		} else {
-			tikvRegionCacheCounterWithGetStoreOK.Inc()
+			metrics.RegionCacheCounterWithGetStoreOK.Inc()
 		}
 		if err != nil {
 			// TODO: more refine PD error status handle.
@@ -1512,8 +1517,8 @@ func (s *Store) initResolve(bo *Backoffer, c *RegionCache) (addr string, err err
 func GetStoreTypeByMeta(store *metapb.Store) kv.StoreType {
 	tp := kv.TiKV
 	for _, label := range store.Labels {
-		if label.Key == "engine" {
-			if label.Value == kv.TiFlash.Name() {
+		if label.Key == placement.EngineLabelKey {
+			if label.Value == placement.EngineLabelTiFlash {
 				tp = kv.TiFlash
 			}
 			break
@@ -1527,9 +1532,9 @@ func (s *Store) reResolve(c *RegionCache) {
 	var addr string
 	store, err := c.pdClient.GetStore(context.Background(), s.storeID)
 	if err != nil {
-		tikvRegionCacheCounterWithGetStoreError.Inc()
+		metrics.RegionCacheCounterWithGetStoreError.Inc()
 	} else {
-		tikvRegionCacheCounterWithGetStoreOK.Inc()
+		metrics.RegionCacheCounterWithGetStoreOK.Inc()
 	}
 	if err != nil {
 		logutil.BgLogger().Error("loadStore from PD failed", zap.Uint64("id", s.storeID), zap.Error(err))
@@ -1541,7 +1546,7 @@ func (s *Store) reResolve(c *RegionCache) {
 		logutil.BgLogger().Info("invalidate regions in removed store",
 			zap.Uint64("store", s.storeID), zap.String("add", s.addr))
 		atomic.AddUint32(&s.epoch, 1)
-		tikvRegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
+		metrics.RegionCacheCounterWithInvalidateStoreRegionsOK.Inc()
 		return
 	}
 
@@ -1645,7 +1650,6 @@ const (
 	unknown livenessState = iota
 	reachable
 	unreachable
-	offline
 )
 
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
@@ -1681,9 +1685,9 @@ func invokeKVStatusAPI(saddr string, timeout time.Duration) (l livenessState) {
 	start := time.Now()
 	defer func() {
 		if l == reachable {
-			tikvStatusCountWithOK.Inc()
+			metrics.StatusCountWithOK.Inc()
 		} else {
-			tikvStatusCountWithError.Inc()
+			metrics.StatusCountWithError.Inc()
 		}
 		metrics.TiKVStatusDuration.WithLabelValues(saddr).Observe(time.Since(start).Seconds())
 	}()

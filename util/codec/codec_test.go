@@ -927,6 +927,15 @@ func (s *testCodecSuite) TestCut(c *C) {
 	c.Assert(n, Equals, int64(42))
 }
 
+func (s *testCodecSuite) TestCutOneError(c *C) {
+	var b []byte
+	_, _, err := CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key")
+	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
+	_, _, err = CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key.*")
+}
+
 func (s *testCodecSuite) TestSetRawValues(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
