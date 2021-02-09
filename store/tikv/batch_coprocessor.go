@@ -21,12 +21,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
@@ -93,13 +95,13 @@ type copTaskAndRPCContext struct {
 	ctx  *RPCContext
 }
 
-func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
-	rangesLen := ranges.len()
+	rangesLen := ranges.Len()
 	for {
 		var tasks []*copTask
-		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *KeyRanges) {
 			tasks = append(tasks, &copTask{
 				region:    regionWithRangeInfo.Region,
 				ranges:    ranges,
@@ -108,7 +110,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 			})
 		}
 
-		err := splitRanges(bo, cache, ranges, appendTask)
+		err := SplitKeyRanges(bo, cache, ranges, appendTask)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -126,12 +128,10 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 			// of date and already be cleaned up. We should retry and generate new tasks.
 			if rpcCtx == nil {
 				needRetry = true
-				err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region or TiFlash peer"))
-				logutil.BgLogger().Info("retry for TiFlash peer or region missing", zap.Uint64("region id", task.region.GetID()))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				break
+				logutil.BgLogger().Info("retry for TiFlash peer with region missing", zap.Uint64("region id", task.region.GetID()))
+				// Probably all the regions are invalid. Make the loop continue and mark all the regions invalid.
+				// Then `splitRegion` will reloads these regions.
+				continue
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
 				batchCop.copTasks = append(batchCop.copTasks, copTaskAndRPCContext{task: task, ctx: rpcCtx})
@@ -145,6 +145,20 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 			}
 		}
 		if needRetry {
+			// Backoff once for each retry.
+			err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// Actually ErrRegionUnavailable would be thrown out rather than ErrTiFlashServerTimeout. However, since currently
+			// we don't have MockTiFlash, we inject ErrTiFlashServerTimeout to simulate the situation that TiFlash is down.
+			if storeType == kv.TiFlash {
+				failpoint.Inject("errorMockTiFlashServerTimeout", func(val failpoint.Value) {
+					if val.(bool) {
+						failpoint.Return(nil, errors.Trace(ErrTiFlashServerTimeout))
+					}
+				})
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 		for _, task := range storeTaskMap {
@@ -157,7 +171,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, st
 				zap.Int("range len", rangesLen),
 				zap.Int("task len", len(batchTasks)))
 		}
-		tikvTxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
 	}
 }
@@ -166,9 +180,9 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
-	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
+	ctx = context.WithValue(ctx, TxnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.StoreType)
+	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), NewKeyRanges(req.KeyRanges), req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -179,9 +193,9 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		vars:       vars,
 		memTracker: req.MemTracker,
 		clientHelper: clientHelper{
-			LockResolver:      c.store.lockResolver,
-			RegionCache:       c.store.regionCache,
-			Client:            c.store.client,
+			LockResolver:      c.store.GetLockResolver(),
+			RegionCache:       c.store.GetRegionCache(),
+			Client:            c.store.GetTiKVClient(),
 			minCommitTSPushed: &minCommitTSPushed{data: make(map[uint64]struct{}, 5)},
 		},
 		rpcCancel: NewRPCanceller(),
@@ -196,7 +210,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 type batchCopIterator struct {
 	clientHelper
 
-	store    *tikvStore
+	store    *KVStore
 	req      *kv.Request
 	finishCh chan struct{}
 
@@ -208,8 +222,6 @@ type batchCopIterator struct {
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
-
-	replicaReadSeed uint32
 
 	rpcCancel *RPCCanceller
 
@@ -310,26 +322,26 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	ranges := &copRanges{}
+	var ranges []kv.KeyRange
 	for _, taskCtx := range batchTask.copTasks {
-		taskCtx.task.ranges.do(func(ran *kv.KeyRange) {
-			ranges.mid = append(ranges.mid, *ran)
+		taskCtx.task.ranges.Do(func(ran *kv.KeyRange) {
+			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.RegionCache, ranges, b.req.StoreType)
+	return buildBatchCopTasks(bo, b.RegionCache, NewKeyRanges(ranges), b.req.StoreType)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.regionCache, b.store.client)
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos []*coprocessor.RegionInfo
 	for _, task := range task.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.id,
+			RegionId: task.task.region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.confVer,
-				Version: task.task.region.ver,
+				ConfVer: task.task.region.GetConfVer(),
+				Version: task.task.region.GetVer(),
 			},
-			Ranges: task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.ToPBRanges(),
 		})
 	}
 
@@ -382,7 +394,7 @@ func (b *batchCopIterator) handleStreamedBatchCopResponse(ctx context.Context, b
 				return nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
+			if err1 := bo.Backoff(BoTiKVRPC, errors.Errorf("recv stream response error: %v, task store addr: %s", err, task.storeAddr)); err1 != nil {
 				return errors.Trace(err)
 			}
 
@@ -412,13 +424,14 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 		detail: new(CopRuntimeStats),
 	}
 
-	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
-	for backoff := range bo.backoffTimes {
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
 		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = task.storeAddr
 

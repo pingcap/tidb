@@ -61,6 +61,7 @@ var (
 		"CheckMb4ValueInUTF8":             {},
 		"EnableStreaming":                 {},
 		"TxnLocalLatches.Capacity":        {},
+		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
 		"OpenTracing.Enable":              {},
 		"PreparedPlanCache.Enabled":       {},
@@ -152,4 +153,13 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	default: // don't flatten arrays
 		flatMap[prefix] = nested
 	}
+}
+
+// GetTxnScopeFromConfig extract txn_scope default value from config
+func GetTxnScopeFromConfig() string {
+	v, ok := GetGlobalConfig().Labels["zone"]
+	if ok {
+		return v
+	}
+	return DefTxnScope
 }

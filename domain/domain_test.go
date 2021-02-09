@@ -341,7 +341,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -354,7 +354,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
@@ -437,16 +437,16 @@ func (*testSuite) TestT(c *C) {
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
-	beforeTS := variable.GoTimeToTS(time.Now())
+	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
-	afterTS := variable.GoTimeToTS(time.Now())
+	afterTS := oracle.GoTimeToTS(time.Now())
 	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
 	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
-	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
+	validTS := oracle.GoTimeToTS(lowerLimit.Add(time.Minute))
 	sm.PS = []*util.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
-		{CurTxnStartTS: variable.GoTimeToTS(lowerLimit)},
+		{CurTxnStartTS: oracle.GoTimeToTS(lowerLimit)},
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)

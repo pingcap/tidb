@@ -36,9 +36,6 @@ function help_message()
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
                                Defaults to "8000".
 
-    --pd <pd-client-path>: PD client path, ip:port list seperated by comma.
-                           Defaults to "127.0.0.1:2379".
-
     --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
                             Defaults to "3379".
 
@@ -55,6 +52,24 @@ function help_message()
 '
 }
 
+function start_cluster()
+{
+   ${PD} --name=pd --data-dir=pd &>pd.log &
+   sleep 10
+   
+   ${TIKV} --pd=127.0.0.1:2379 -s tikv --addr=0.0.0.0:20160 --advertise-addr=127.0.0.1:20160 &>tikv.log  &
+   sleep 10
+}
+
+function clean_cluster()
+{
+    set +e
+    killall -9 -r tidb-server
+    killall -9 -r tikv-server
+    killall -9 -r pd-server
+    set -e
+}
+
 function go_tests()
 {
     go test -args $*
@@ -69,5 +84,12 @@ while getopts "h" opt; do
     esac
 done
 
+clean_cluster
+
+start_cluster
+
 go_tests
+
+clean_cluster
+
 echo "globalkilltest end"

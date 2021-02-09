@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -590,12 +590,9 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 					rt.Frames = append(rt.Frames, f)
 				}
 			}
-		} else {
-			if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
-				rt.Frames = append(rt.Frames, f)
-			}
+		} else if f := r.GetIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
-
 	}
 
 	if pi != nil {
@@ -604,10 +601,8 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 				rt.Frames = append(rt.Frames, f)
 			}
 		}
-	} else {
-		if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
-			rt.Frames = append(rt.Frames, f)
-		}
+	} else if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
@@ -1115,7 +1110,7 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
-	etcd, ok := h.Store.(tikv.EtcdBackend)
+	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}

@@ -127,7 +127,7 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 		TotalSize: &c.TotalSize,
 	}
 	if c.CMSketch != nil {
-		collector.CmSketch = CMSketchToProto(c.CMSketch)
+		collector.CmSketch = CMSketchToProto(c.CMSketch, nil)
 	}
 	for _, item := range c.Samples {
 		collector.Samples = append(collector.Samples, item.Value.GetBytes())
@@ -319,7 +319,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		if err != nil {
 			return err
 		}
-		cms.subValue(h1, h2, realCnt)
+		cms.SubValue(h1, h2, realCnt)
 		c.TopN.AppendTopN(data, realCnt)
 	}
 	c.TopN.Sort()

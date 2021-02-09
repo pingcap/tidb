@@ -576,13 +576,13 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	case mysql.TypeJSON:
 		return func(i int) types.Datum { return types.NewDatum(json.CreateBinary(int64(i))) }
 	case mysql.TypeEnum:
-		elems := []string{"a", "b", "c", "d", "e"}
+		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseEnumValue(elems, uint64(i+1))
 			return types.NewCollateMysqlEnumDatum(e, ft.Collate)
 		}
 	case mysql.TypeSet:
-		elems := []string{"a", "b", "c", "d", "e"}
+		elems := []string{"e", "d", "c", "b", "a"}
 		return func(i int) types.Datum {
 			e, _ := types.ParseSetValue(elems, uint64(i+1))
 			return types.NewMysqlSetDatum(e, ft.Collate)
