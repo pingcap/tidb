@@ -193,7 +193,7 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		need bool
 	}{
 		{rowKey, rowVal, true},
-		{rowKey, deleteVal, false},
+		{rowKey, deleteVal, true},
 		{indexKey, nonUniqueVal, false},
 		{indexKey, nonUniqueUntouched, false},
 		{indexKey, uniqueValue, true},

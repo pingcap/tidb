@@ -52,5 +52,5 @@ var (
 // this method is not goroutine-safe and
 // usually be used in global variable initializer
 func (ec ErrClass) NewStd(code terror.ErrCode) *terror.Error {
-	return ec.NewStdErr(code, errno.MySQLErrName[uint16(code)], "", "")
+	return ec.NewStdErr(code, errno.MySQLErrName[uint16(code)])
 }
