@@ -372,7 +372,7 @@ func (s *testEvaluatorSuite) TestArithmeticDivide(c *C) {
 		case *builtinArithmeticDivideDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_DivideDecimal)
 		default:
-			panic("Wrong type of signature tested")
+			c.Fatal("Wrong type of signature tested")
 		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -503,7 +503,7 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 		case *builtinArithmeticIntDivideDecimalSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
 		default:
-			panic("Wrong type of signature tested")
+			c.Fatal("Wrong type of signature tested")
 		}
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
 		if tc.expect[1] == nil {
