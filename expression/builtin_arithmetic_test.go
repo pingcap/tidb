@@ -500,6 +500,8 @@ func (s *testEvaluatorSuite) TestArithmeticIntDivide(c *C) {
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntUnsignedSigned)
 		case *builtinArithmeticIntDivideIntUnsignedUnsignedSig:
 			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideIntUnsignedUnsigned)
+		case *builtinArithmeticIntDivideDecimalSig:
+			c.Assert(sig.PbCode(), Equals, tipb.ScalarFuncSig_IntDivideDecimal)
 		default:
 			panic("Wrong type of signature tested")
 		}
