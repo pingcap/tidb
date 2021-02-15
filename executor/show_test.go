@@ -942,7 +942,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	))
 }
 
-// Override testAutoRandomSuite to test auto id cache.
+// TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
 func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1222,4 +1222,15 @@ func (s *testSuite5) TestIssue19507(c *C) {
 			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
 			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
 			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+}
+
+// TestShowPerformanceSchema tests for Issue 19231
+func (s *testSuite5) TestShowPerformanceSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Ideally we should create a new performance_schema table here with indices that we run the tests on.
+	// However, its not possible to create a new performance_schema table since its a special in memory table.
+	// Instead the test below uses the default index on the table.
+	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL"))
 }
