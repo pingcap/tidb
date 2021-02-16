@@ -1250,6 +1250,8 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 			if len(prevData) == 0 {
 				break
 			}
+		} else if curData[len(curData)-1] == '\n' {
+			curData = curData[0 : len(curData)-1]
 		}
 		select {
 		case <-loadDataInfo.QuitCh:
