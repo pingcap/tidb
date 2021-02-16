@@ -458,7 +458,9 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
 					switch tp.Tp {
-					case mysql.TypeEnum, mysql.TypeSet:
+					case mysql.TypeEnum:
+						fVal = 1
+					case mysql.TypeSet:
 						fVal = float64(len(sVal))
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
