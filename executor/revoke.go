@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -96,7 +97,10 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if !exists {
 			return errors.Errorf("Unknown user: %s", user.User)
 		}
-
+		err = e.checkDynamicPrivilegeUsage()
+		if err != nil {
+			return err
+		}
 		err = e.revokeOneUser(internalSession, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
@@ -112,12 +116,26 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Checks that dynamic privileges are only of global scope.
+// Returns the mysql-correct error when not the case.
+func (e *RevokeExec) checkDynamicPrivilegeUsage() error {
+	var dynamicPrivs []string
+	for _, priv := range e.Privs {
+		if priv.Priv == mysql.ExtendedPriv {
+			dynamicPrivs = append(dynamicPrivs, strings.ToUpper(priv.Name))
+		}
+	}
+	if len(dynamicPrivs) > 0 && e.Level.Level != ast.GrantLevelGlobal {
+		return ErrIllegalPrivilegeLevel.GenWithStackByArgs(strings.Join(dynamicPrivs, ","))
+	}
+	return nil
+}
+
 func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, host string) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
-
 	// If there is no privilege entry in corresponding table, insert a new one.
 	// DB scope:		mysql.DB
 	// Table scope:		mysql.Tables_priv
@@ -165,7 +183,19 @@ func (e *RevokeExec) revokePriv(internalSession sessionctx.Context, priv *ast.Pr
 	return errors.Errorf("Unknown revoke level: %#v", e.Level)
 }
 
+func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privName string, user, host string) error {
+	privName = strings.ToUpper(privName)
+	if !privileges.IsDynamicPrivilege(privName) { // for MySQL compatibility
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrDynamicPrivilegeNotRegistered.GenWithStackByArgs(privName))
+	}
+	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "DELETE FROM mysql.global_grants WHERE user = %? AND host = %? AND priv = %?", user, host, privName)
+	return err
+}
+
 func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
+	if priv.Priv == mysql.ExtendedPriv {
+		return e.revokeDynamicPriv(internalSession, priv.Name, user, host)
+	}
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "N")

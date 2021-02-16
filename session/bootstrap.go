@@ -320,6 +320,14 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+	// CreateGlobalGrantsTable stores dynamic privs
+	CreateGlobalGrantsTable = `CREATE TABLE IF NOT EXISTS mysql.global_grants (
+		USER char(32) NOT NULL DEFAULT '',
+		HOST char(255) NOT NULL DEFAULT '',
+		PRIV char(32) NOT NULL DEFAULT '',
+		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
+		PRIMARY KEY (USER,HOST,PRIV)
+	  );`
 )
 
 // bootstrap initiates system DB for a store.
@@ -463,9 +471,11 @@ const (
 	version63 = 63
 	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
 	version64 = 64
+	// version65 adds mysql.global_grants for DYNAMIC privileges
+	version65 = 65
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version64
+	currentBootstrapVersion = version65
 )
 
 var (
@@ -534,6 +544,7 @@ var (
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
+		upgradeToVer65,
 	}
 )
 
@@ -1429,6 +1440,13 @@ func upgradeToVer64(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
 }
 
+func upgradeToVer65(s Session, ver int64) {
+	if ver >= version65 {
+		return
+	}
+	doReentrantDDL(s, CreateGlobalGrantsTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
@@ -1503,6 +1521,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsExtended)
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
+	// Create global_grants
+	mustExecute(s, CreateGlobalGrantsTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

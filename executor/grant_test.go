@@ -384,3 +384,34 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	c.Assert(err, IsNil)
 }
+
+func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user dyn")
+	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
+	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered), IsTrue)
+
+	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, BACKUP_ADMIN ON *.* TO dyn") // grant multiple
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN N", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT ROLE_ADMIN, BACKUP_ADMIN ON *.* TO dyn WITH GRANT OPTION") // grant multiple with GRANT option.
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN Y", "dyn % ROLE_ADMIN Y", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, Select, ROLE_ADMIN ON *.* TO dyn") // grant mixed dynamic/non dynamic
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("N"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='SYSTEM_VARIABLES_ADMIN'").Check(testkit.Rows("N"))
+
+	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
+
+}
