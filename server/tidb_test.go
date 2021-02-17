@@ -196,6 +196,7 @@ func (ts *tidbTestSuite) TestIssues(c *C) {
 	c.Parallel()
 	ts.runTestIssue3662(c)
 	ts.runTestIssue3680(c)
+	ts.runTestIssue22646(c)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
