@@ -26,10 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/metrics"
+	tidbmetrics "github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -248,7 +249,7 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
 			logutil.BgLogger().Error("batchCommandsClient.recv panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
@@ -330,7 +331,7 @@ func (c *batchCommandsClient) reCreateStreamingClientOnce(perr error) error {
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransportLayerLoad *uint64) {
 	defer func() {
 		if r := recover(); r != nil {
-			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
 			logutil.BgLogger().Error("batchRecvLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
@@ -404,7 +405,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 			break
 		}
 
-		err2 := b.Backoff(boTiKVRPC, err1)
+		err2 := b.Backoff(BoTiKVRPC, err1)
 		// As timeout is set to math.MaxUint32, err2 should always be nil.
 		// This line is added to make the 'make errcheck' pass.
 		terror.Log(err2)
@@ -447,7 +448,7 @@ func resetRequests(requests []*tikvpb.BatchCommandsRequest_Request) []*tikvpb.Ba
 func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
+			tidbmetrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
 			logutil.BgLogger().Error("batchSendLoop",
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
@@ -644,7 +645,7 @@ func sendBatchRequest(
 	}
 }
 
-func (c *rpcClient) recycleIdleConnArray() {
+func (c *RPCClient) recycleIdleConnArray() {
 	var addrs []string
 	c.RLock()
 	for _, conn := range c.conns {

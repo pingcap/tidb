@@ -26,14 +26,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikvStore
+	store *KVStore
 }
 
 // GetAddress returns the network address.
@@ -56,12 +56,12 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
-	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
+	ctx = context.WithValue(ctx, TxnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
+	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, NewKeyRanges(req.KeyRanges), kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,7 +74,10 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 
 // mppResponse wraps mpp data packet.
 type mppResponse struct {
-	pbResp *mpp.MPPDataPacket
+	pbResp   *mpp.MPPDataPacket
+	detail   *CopRuntimeStats
+	respTime time.Duration
+	respSize int64
 
 	err error
 }
@@ -91,20 +94,30 @@ func (m *mppResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently.
 func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
-	return nil
+	return m.detail
 }
 
 // MemSize returns how many bytes of memory this response use
 func (m *mppResponse) MemSize() int64 {
-	return int64(m.pbResp.Size())
+	if m.respSize != 0 {
+		return m.respSize
+	}
+
+	if m.detail != nil {
+		m.respSize += int64(sizeofExecDetails)
+	}
+	if m.pbResp != nil {
+		m.respSize += int64(m.pbResp.Size())
+	}
+	return m.respSize
 }
 
 func (m *mppResponse) RespTime() time.Duration {
-	return 0
+	return m.respTime
 }
 
 type mppIterator struct {
-	store *tikvStore
+	store *KVStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -159,7 +172,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 				ConfVer: task.task.region.confVer,
 				Version: task.task.region.ver,
 			},
-			Ranges: task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.ToPBRanges(),
 		})
 	}
 
@@ -248,7 +261,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// TODO: cancel the whole process when some error happens
 	for {
-		err := m.handleMPPStreamResponse(resp, req)
+		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
 			m.sendError(err)
 			return
@@ -259,7 +272,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 				return
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
+			if err1 := bo.Backoff(BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 				} else {
@@ -284,7 +297,7 @@ func (m *mppIterator) Close() error {
 	return nil
 }
 
-func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -296,7 +309,18 @@ func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 
 	resp := &mppResponse{
 		pbResp: response,
+		detail: new(CopRuntimeStats),
 	}
+
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
 	m.sendToRespCh(resp)
 	return
