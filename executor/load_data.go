@@ -564,6 +564,9 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 	}
 	var line []byte
 	var isEOF, hasStarting, reachLimit bool
+	if e.LinesInfo.Terminated != "\n" && len(curData) > 0 && curData[len(curData)-1] == '\n' {
+		curData = curData[0 : len(curData)-1]
+	}
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
 		prevData, curData = curData, prevData
