@@ -102,7 +102,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()
-	s.gcWorker = gcWorker.(*GCWorker)
+	s.gcWorker = gcWorker
 }
 
 func (s *testGCWorkerSuite) TearDownTest(c *C) {
