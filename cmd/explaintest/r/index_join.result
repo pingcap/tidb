@@ -18,14 +18,14 @@ IndexJoin_25	5.00	root		inner join, inner:IndexLookUp_24, outer key:test.t2.a, i
   └─TableRowIDScan_22(Probe)	5.00	cop[tikv]	table:t1	keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-Projection_6	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
-└─HashJoin_37	5.00	root		inner join, equal:[eq(test.t2.a, test.t1.a)]
-  ├─TableReader_48(Build)	1.00	root		data:Selection_47
-  │ └─Selection_47	1.00	cop[tikv]		not(isnull(test.t2.a))
-  │   └─TableFullScan_46	1.00	cop[tikv]	table:t2	keep order:false
-  └─TableReader_54(Probe)	5.00	root		data:Selection_53
-    └─Selection_53	5.00	cop[tikv]		not(isnull(test.t1.a))
-      └─TableFullScan_52	5.00	cop[tikv]	table:t1	keep order:false
+Projection_8	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
+└─HashJoin_39	5.00	root		inner join, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader_50(Build)	1.00	root		data:Selection_49
+  │ └─Selection_49	1.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan_48	1.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader_56(Probe)	5.00	root		data:Selection_55
+    └─Selection_55	5.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_54	5.00	cop[tikv]	table:t1	keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));

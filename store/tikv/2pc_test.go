@@ -29,11 +29,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -42,7 +41,7 @@ import (
 type testCommitterSuite struct {
 	OneByOneSuite
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 }
 
 var _ = SerialSuites(&testCommitterSuite{})
@@ -60,9 +59,9 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("b"), []byte("c"))
 	s.cluster = cluster
 	client := mocktikv.NewRPCClient(cluster, mvccStore)
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	spkv := NewMockSafePointKV()
-	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false, nil)
+	store, err := NewKVStore("mocktikv-store", pdCli, spkv, client, nil)
 	store.EnableTxnLocalLatches(1024000)
 	c.Assert(err, IsNil)
 
@@ -424,8 +423,8 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
-func newTwoPhaseCommitterWithInit(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
-	c, err := newTwoPhaseCommitter(txn, connID)
+func newTwoPhaseCommitterWithInit(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+	c, err := newTwoPhaseCommitter(txn, sessionID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -957,14 +956,14 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 		LockType:        kvrpcpb.Op_PessimisticLock,
 		LockForUpdateTS: txn1.startTS,
 	}
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_TTLExpirePessimisticRollback)
 
 	// Txn2 tries to lock the secondary key k2, there should be no dead loop.
 	// Since the resolving key k2 is a pessimistic lock, no rollback record should be written, and later lock
 	// and the other secondary key k3 should succeed if there is no fail point enabled.
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey2, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_LockNotExistDoNothing)
 	txn2 := s.begin(c)
@@ -997,7 +996,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn3.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
 	err = txn3.LockKeys(ctx, lockCtx, k3)
 	c.Assert(err, IsNil)
-	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey3, variable.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
+	status, err = s.store.lockResolver.getTxnStatusFromLock(bo, lockKey3, oracle.GoTimeToTS(time.Now().Add(200*time.Millisecond)), false)
 	c.Assert(err, IsNil)
 	c.Assert(status.Action(), Equals, kvrpcpb.Action_LockNotExistDoNothing)
 }
@@ -1287,7 +1286,7 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 
 	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
 	c.Assert(err, IsNil)
-	committer.connID = 1
+	committer.sessionID = 1
 	committer.minCommitTS = txn1.startTS + 10
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
@@ -1298,9 +1297,24 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	})
 }
 
+func updateGlobalConfig(f func(conf *config.Config)) {
+	g := config.GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	config.StoreGlobalConfig(&newConf)
+}
+
+// restoreFunc gets a function that restore the config to the current value.
+func restoreGlobalConfFunc() (restore func()) {
+	g := config.GetGlobalConfig()
+	return func() {
+		config.StoreGlobalConfig(g)
+	}
+}
+
 func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer restoreGlobalConfFunc()()
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 16
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
 	})
@@ -1318,12 +1332,12 @@ func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(committer.checkAsyncCommit(), IsTrue)
 
-	config.UpdateGlobal(func(conf *config.Config) {
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 15
 	})
 	c.Assert(committer.checkAsyncCommit(), IsFalse)
 
-	config.UpdateGlobal(func(conf *config.Config) {
+	updateGlobalConfig(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 20
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
 	})

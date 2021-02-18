@@ -186,6 +186,14 @@ func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	s.runTestsWithTestData("TestIsFromUnixtimeNullRejective", tk, c)
 }
 
+func (s *testIntegrationSuite) TestIssue22298(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a int, b int);`)
+	tk.MustGetErrMsg(`select * from t where 0 and c = 10;`, "[planner:1054]Unknown column 'c' in 'where clause'")
+}
+
 func (s *testIntegrationSuite) runTestsWithTestData(caseName string, tk *testkit.TestKit, c *C) {
 	var input []string
 	var output []struct {
@@ -340,6 +348,118 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+func (s *testIntegrationSerialSuite) TestMPPJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists d1_t")
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("insert into d1_t values(1,2),(2,3)")
+	tk.MustExec("analyze table d1_t")
+	tk.MustExec("drop table if exists d2_t")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
+	tk.MustExec("analyze table d2_t")
+	tk.MustExec("drop table if exists d3_t")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
+	tk.MustExec("analyze table d3_t")
+	tk.MustExec("drop table if exists fact_t")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("analyze table fact_t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists d1_t")
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("insert into d1_t values(1,2),(2,3)")
+	tk.MustExec("insert into d1_t values(1,2),(2,3)")
+	tk.MustExec("analyze table d1_t")
+	tk.MustExec("drop table if exists d2_t")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
+	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
+	tk.MustExec("analyze table d2_t")
+	tk.MustExec("drop table if exists d3_t")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
+	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
+	tk.MustExec("analyze table d3_t")
+	tk.MustExec("drop table if exists fact_t")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("analyze table fact_t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -778,7 +898,7 @@ func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table cluster_index_t(a int, b int, c int, primary key (a, b));")
 
 	var input []string
@@ -813,7 +933,7 @@ func (s *testIntegrationSuite) TestIndexJoinUniqueCompositeIndex(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("set @@tidb_enable_clustered_index=0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table t1(a int not null, c int not null)")
 	tk.MustExec("create table t2(a int not null, b int not null, c int not null, primary key(a,b))")
 	tk.MustExec("insert into t1 values(1,1)")
@@ -1317,13 +1437,10 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)").Check(testkit.Rows(
-		"Projection_4 1.60 root  test.t.a, test.t.b",
-		"└─IndexMerge_9 1.60 root  ",
-		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection_8(Probe) 1.60 cop[tikv]  eq(length(cast(test.t.a)), 1), eq(length(cast(test.t.b)), 1)",
-		"    └─TableRowIDScan_7 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+		"TableReader_7 1.60 root  data:Selection_6",
+		"└─Selection_6 1.60 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
@@ -1550,7 +1667,7 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
 	tk.MustExec(`insert into t1 values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
@@ -1579,7 +1696,7 @@ func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
 	tk.MustExec("create database cluster_idx_unique_double_read;")
 	tk.MustExec("use cluster_idx_unique_double_read;")
 	defer tk.MustExec("drop database cluster_idx_unique_double_read;")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));")
@@ -1590,7 +1707,7 @@ func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
 func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
 	tk.MustExec(`insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
@@ -1617,7 +1734,7 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t2")
-	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b), index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
@@ -1763,7 +1880,7 @@ func (s *testIntegrationSerialSuite) Test19942(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("SET @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("CREATE TABLE test.`t` (" +
 		"  `a` int(11) NOT NULL," +
 		"  `b` varchar(10) COLLATE utf8_general_ci NOT NULL," +
@@ -2196,6 +2313,31 @@ func (s *testIntegrationSuite) TestConditionColPruneInPhysicalUnionScan(c *C) {
 		Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite) TestInvalidHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(a int, key(a));")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	warning := "show warnings;"
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warnings = s.testData.ConvertRowsToStrings(tk.MustQuery(warning).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 // Test for issue https://github.com/pingcap/tidb/issues/18320
 func (s *testIntegrationSuite) TestNonaggregateColumnWithSingleValueInOnlyFullGroupByMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -2245,5 +2387,259 @@ func (s *testIntegrationSuite) TestConvertRangeToPoint(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue22040(c *C) {
+	// #22040
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key(a,b))")
+	// valid case
+	tk.MustExec("select * from t where (a,b) in ((1,2),(1,2))")
+	// invalid case, column count doesn't match
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in (1,2)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+	{
+		err := tk.ExecToErr("select * from t where (a,b) in ((1,2),1)")
+		c.Assert(errors.Cause(err), FitsTypeOf, expression.ErrOperandColumns)
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue22105(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t1 (
+  key1 int(11) NOT NULL,
+  key2 int(11) NOT NULL,
+  key3 int(11) NOT NULL,
+  key4 int(11) NOT NULL,
+  key5 int(11) DEFAULT NULL,
+  key6 int(11) DEFAULT NULL,
+  key7 int(11) NOT NULL,
+  key8 int(11) NOT NULL,
+  KEY i1 (key1),
+  KEY i2 (key2),
+  KEY i3 (key3),
+  KEY i4 (key4),
+  KEY i5 (key5),
+  KEY i6 (key6)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue22071(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values(1),(2),(5)")
+	tk.MustQuery("select n in (1,2) from (select a in (1,2) as n from t) g;").Sort().Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select n in (1,n) from (select a in (1,2) as n from t) g;").Check(testkit.Rows("1", "1", "1"))
+}
+
+func (s *testIntegrationSuite) TestIssue22199(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(i int primary key, j int, index idx_j(j))")
+	tk.MustExec("create table t2(i int primary key, j int, index idx_j(j))")
+	tk.MustGetErrMsg("select t1.*, (select t2.* from t1) from t1", "[planner:1051]Unknown table 't2'")
+}
+
+func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestReorderSimplifiedOuterJoins(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("create table t1 (pk char(32) primary key, col1 char(32), col2 varchar(40), col3 char(32), key (col1), key (col3), key (col2,col3), key (col1,col3))")
+	tk.MustExec("create table t2 (pk char(32) primary key, col1 varchar(100))")
+	tk.MustExec("create table t3 (pk char(32) primary key, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestPushDownAggForMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestMppAggWithJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(" set @@tidb_allow_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }

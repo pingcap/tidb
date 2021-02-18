@@ -491,6 +491,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1242"]
+error = '''
+Subquery returns more than 1 row
+'''
+
 ["executor:1295"]
 error = '''
 This command is not supported in the prepared statement protocol yet
@@ -779,6 +784,11 @@ Access denied for user '%-.48s'@'%-.64s'
 ["planner:1046"]
 error = '''
 No database selected
+'''
+
+["planner:1048"]
+error = '''
+Column '%-.192s' cannot be null
 '''
 
 ["planner:1051"]

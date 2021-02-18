@@ -407,12 +407,15 @@ func resolveType4Extremum(args []Expression) types.EvalType {
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
-			if types.IsTemporalWithDate(item.Tp) {
-				temporalItem = item
+			// Find the temporal value in the arguments but prefer DateTime value.
+			if types.IsTypeTemporal(item.Tp) {
+				if temporalItem == nil || item.Tp == mysql.TypeDatetime {
+					temporalItem = item
+				}
 			}
 		}
 
-		if !types.IsTemporalWithDate(aggType.Tp) && temporalItem != nil {
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
 		}
 		// TODO: String charset, collation checking are needed.
@@ -443,6 +446,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	cmpAsDatetime := false
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -656,8 +661,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	tp := resolveType4Extremum(args)
 	cmpAsDatetime := false
-	if tp == types.ETDatetime {
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -687,7 +694,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETString:
 		sig = &builtinLeastStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
@@ -1092,6 +1099,8 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 		return types.ETString
 	} else if (lhs == types.ETInt || (lft != nil && lft.Hybrid())) && (rhs == types.ETInt || (rft != nil && rft.Hybrid())) {
 		return types.ETInt
+	} else if (lhs == types.ETDecimal && rhs == types.ETString) || (lhs == types.ETString && rhs == types.ETDecimal) {
+		return types.ETReal
 	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal

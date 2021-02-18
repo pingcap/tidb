@@ -1394,6 +1394,29 @@
     ]
   },
   {
+    "Name": "TestMergeJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": [
+          "insert into t2 values (11, 'amazing merkle')",
+          "insert into t2 values (12, 'amazing merkle')",
+          "explain select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
+        ],
+        "Plan": [
+          "Sort_8 12500.00 root  test.t1.c_int, test.t2.c_str",
+          "└─MergeJoin_11 12500.00 root  inner join, left key:test.t1.c_int, test.t1.c_int, right key:test.t2.c_int, test.t2.c_int",
+          "  ├─Sort_19(Build) 10000.00 root  test.t2.c_int, test.t2.c_int",
+          "  │ └─UnionScan_16 10000.00 root  ",
+          "  │   └─TableReader_18 10000.00 root  data:TableFullScan_17",
+          "  │     └─TableFullScan_17 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Sort_14(Probe) 10000.00 root  test.t1.c_int, test.t1.c_int",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestSemiJoinToInner",
     "Cases": [
       {
