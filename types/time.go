@@ -2896,9 +2896,9 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%S": secondsNumeric,        // Seconds (00..59)
 	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
 	"%Y": yearNumericFourDigits, // Year, numeric, four digits
-	"%#": skipAllNums,           // skip all numbers
-	"%.": skipAllPunct,          // skip all punctation characters
-	"%@": skipAllAlpha,          // skip all alpha characters
+	"%#": skipAllNums,           // Skip all numbers
+	"%.": skipAllPunct,          // Skip all punctation characters
+	"%@": skipAllAlpha,          // Skip all alpha characters
 	// Deprecated since MySQL 5.7.5
 	"%y": yearNumericTwoDigits, // Year, numeric (two digits)
 	// TODO: Add the following...
