@@ -18,15 +18,13 @@ import "sync"
 // TSSet is a set of timestamps.
 type TSSet struct {
 	sync.RWMutex
-	capacity int
-	m        map[uint64]struct{}
+	m map[uint64]struct{}
 }
 
 // NewTSSet creates a set to store timestamps.
 func NewTSSet(capacity int) *TSSet {
 	return &TSSet{
-		capacity: capacity,
-		m:        make(map[uint64]struct{}, capacity),
+		m: make(map[uint64]struct{}, capacity),
 	}
 }
 
