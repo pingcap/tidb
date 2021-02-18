@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -77,6 +78,7 @@ type tikvSnapshot struct {
 		taskID      uint64
 	}
 	sampleStep uint32
+	txnScope   string
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -414,6 +416,12 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		Client:            s.store.client,
 		resolveLite:       true,
 	}
+
+	var tsFuture oracle.Future
+	if s.version == kv.MaxVersion {
+		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
+	}
+
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -431,12 +439,6 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			TaskId:       s.mu.taskID,
 		})
 	s.mu.RUnlock()
-
-	// It is an optimization for async commit.
-	// We do not ignore async commit locks when we get using MaxVersion for linearizability.
-	// But if the lock we encounter during a retry is different from the first one, we can
-	// make sure the lock is written later than the get event and thus can be ignored.
-	var firstLockTS uint64
 
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
@@ -472,11 +474,15 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 				return nil, errors.Trace(err)
 			}
 
-			if firstLockTS == 0 {
-				firstLockTS = lock.TxnID
-			} else if s.version == kv.MaxVersion && firstLockTS != lock.TxnID {
-				cli.minCommitTSPushed.Update([]uint64{lock.TxnID})
-				continue
+			if s.version == kv.MaxVersion {
+				newTS, err := tsFuture.Wait()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				s.version = kv.NewVersion(newTS)
+				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
+					continue
+				}
 			}
 
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
@@ -553,6 +559,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.mu.Unlock()
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.TxnScope:
+		s.txnScope = val.(string)
 	}
 }
 
