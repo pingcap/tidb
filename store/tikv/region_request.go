@@ -224,6 +224,16 @@ func (s *RegionRequestSender) GetStoreAddr() string {
 	return s.storeAddr
 }
 
+// GetRPCError returns the RPC error.
+func (s *RegionRequestSender) GetRPCError() error {
+	return s.rpcError
+}
+
+// SetRPCError rewrite the rpc error.
+func (s *RegionRequestSender) SetRPCError(err error) {
+	s.rpcError = err
+}
+
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)
@@ -735,7 +745,8 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	return false, nil
 }
 
-func pbIsolationLevel(level kv.IsoLevel) kvrpcpb.IsolationLevel {
+// IsolationLevelToPB converts isolation level to wire type.
+func IsolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	switch level {
 	case kv.RC:
 		return kvrpcpb.IsolationLevel_RC
