@@ -26,14 +26,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // MPPClient servers MPP requests.
 type MPPClient struct {
-	store *tikvStore
+	store *KVStore
 }
 
 // GetAddress returns the network address.
@@ -56,12 +56,12 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
-	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
+	ctx = context.WithValue(ctx, TxnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
+	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, NewKeyRanges(req.KeyRanges), kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -117,7 +117,7 @@ func (m *mppResponse) RespTime() time.Duration {
 }
 
 type mppIterator struct {
-	store *tikvStore
+	store *KVStore
 
 	tasks    []*kv.MPPDispatchRequest
 	finishCh chan struct{}
@@ -172,7 +172,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 				ConfVer: task.task.region.confVer,
 				Version: task.task.region.ver,
 			},
-			Ranges: task.task.ranges.toPBRanges(),
+			Ranges: task.task.ranges.ToPBRanges(),
 		})
 	}
 
@@ -272,7 +272,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 				return
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
+			if err1 := bo.Backoff(BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
 					logutil.BgLogger().Info("stream recv timeout", zap.Error(err))
 				} else {
