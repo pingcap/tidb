@@ -48,7 +48,7 @@ type testPlanSuiteBase struct {
 func (s *testPlanSuiteBase) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 }
 
 type testPlanSerialSuite struct {
@@ -559,6 +559,48 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestMergeJoinUnionScan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	var input [][]string
+	var output []struct {
+		SQL  []string
+		Plan []string
+	}
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int))")
+	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (11, 'keen williamson'), (10, 'gracious hermann')")
+	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (10, 'gracious hermann')")
+
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		tk.MustExec("begin")
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+		tk.MustExec("rollback")
+	}
+}
+
 func (s *testPlanSuite) TestDoSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -833,6 +875,26 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestExplainJoinHints(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, key(b), key(c))")
+	tk.MustQuery("explain format='hint' select /*+ inl_merge_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(@`sel_1` `test`.`t2`), inl_merge_join(`t2`)",
+	))
+	tk.MustQuery("explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(@`sel_1` `test`.`t2`), inl_hash_join(`t2`)",
+	))
+}
+
 func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -1019,6 +1081,9 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 		PARTITION p0 VALUES LESS THAN (2),
 		PARTITION p1 VALUES LESS THAN (100)
 	);`)
+
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("CREATE TABLE `tc`(`timestamp` timestamp NULL DEFAULT NULL, KEY `idx_timestamp` (`timestamp`)) PARTITION BY RANGE ( UNIX_TIMESTAMP(`timestamp`) ) (PARTITION `p2020072312` VALUES LESS THAN (1595480400),PARTITION `p2020072313` VALUES LESS THAN (1595484000));")
 
 	tk.MustExec("drop table if exists ta")
 	tk.MustExec("create table ta(a int);")

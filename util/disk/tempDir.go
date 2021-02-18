@@ -81,15 +81,6 @@ func InitializeTempDir() error {
 		return err
 	}
 
-	// Create dir for MemoryUsageAlarmRecord.
-	_, err = os.Stat(filepath.Join(tempDir, "record"))
-	if err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(filepath.Join(tempDir, "record"), 0755)
-		if err != nil {
-			return err
-		}
-	}
-
 	subDirs, err := ioutil.ReadDir(tempDir)
 	if err != nil {
 		return err
@@ -121,4 +112,16 @@ func CleanUp() {
 		err := tempDirLock.Unlock()
 		terror.Log(errors.Trace(err))
 	}
+}
+
+// CheckAndCreateDir check whether the directory is existed. If not, then create it.
+func CheckAndCreateDir(path string) error {
+	_, err := os.Stat(path)
+	if err != nil && !os.IsExist(err) {
+		err = os.MkdirAll(path, 0755)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

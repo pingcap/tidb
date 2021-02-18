@@ -56,6 +56,10 @@ func checkLabelConstraint(label string) (LabelConstraint, error) {
 		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
+	if op == In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
+		return r, errors.Errorf("unsupported label constraint '%s'", label)
+	}
+
 	r.Key = key
 	r.Op = op
 	r.Values = []string{val}
@@ -70,7 +74,37 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 		if err != nil {
 			return constraints, err
 		}
-		constraints = append(constraints, label)
+
+		pass := true
+
+		for _, cnst := range constraints {
+			if label.Key == cnst.Key {
+				sameOp := label.Op == cnst.Op
+				sameVal := label.Values[0] == cnst.Values[0]
+				// no following cases:
+				// 1. duplicated constraint
+				// 2. no instance can meet: +dc=sh, -dc=sh
+				// 3. can not match multiple instances: +dc=sh, +dc=bj
+				if sameOp && sameVal {
+					pass = false
+					break
+				} else if (!sameOp && sameVal) || (sameOp && !sameVal && label.Op == In) {
+					s1, err := label.Restore()
+					if err != nil {
+						s1 = err.Error()
+					}
+					s2, err := cnst.Restore()
+					if err != nil {
+						s2 = err.Error()
+					}
+					return constraints, errors.Errorf("conflicting constraints '%s' and '%s'", s1, s2)
+				}
+			}
+		}
+
+		if pass {
+			constraints = append(constraints, label)
+		}
 	}
 	return constraints, nil
 }
@@ -118,16 +152,37 @@ func BuildPlacementDropBundle(partitionID int64) *Bundle {
 	}
 }
 
-// BuildPlacementTruncateBundle builds the bundle to copy placement rules from old id to new id.
-func BuildPlacementTruncateBundle(oldBundle *Bundle, newID int64) *Bundle {
+// BuildPlacementCopyBundle copies a new bundle from the old, with a new name and a new key range.
+func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
 	for _, rule := range newBundle.Rules {
 		rule.GroupID = newBundle.ID
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
 	}
 	return newBundle
+}
+
+// GetLeaderDCByBundle returns the leader's DC by Bundle if found
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
+	for _, rule := range bundle.Rules {
+		if isValidLeaderRule(rule, dcLabelKey) {
+			return rule.LabelConstraints[0].Values[0], true
+		}
+	}
+	return "", false
+}
+
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 {
+		for _, con := range rule.LabelConstraints {
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
+			}
+		}
+	}
+	return false
 }

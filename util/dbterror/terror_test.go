@@ -14,6 +14,7 @@
 package dbterror
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -30,14 +31,60 @@ var _ = Suite(&testkSuite{})
 
 type testkSuite struct{}
 
+func genErrMsg(pattern string, a ...interface{}) string {
+	return fmt.Sprintf(pattern, a...)
+}
+
 func (s *testkSuite) TestErrorRedact(c *C) {
 	original := errors.RedactLogEnabled.Load()
 	errors.RedactLogEnabled.Store(true)
 	defer func() { errors.RedactLogEnabled.Store(original) }()
 
 	class := ErrClass{}
-	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive", "data")
-	c.Assert(strings.Contains(err.Error(), "?"), IsTrue)
-	c.Assert(strings.Contains(err.Error(), "sensitive"), IsFalse)
-	c.Assert(strings.Contains(err.Error(), "data"), IsFalse)
+
+	NoSensitiveValue := "no_sensitive"
+	SensitiveData := "sensitive_data"
+	QuestionMark := "?"
+
+	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs(SensitiveData, NoSensitiveValue)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrDupEntry].Raw, QuestionMark, NoSensitiveValue)), IsTrue)
+	err = class.NewStd(errno.ErrCutValueGroupConcat).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrCutValueGroupConcat].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrDuplicatedValueInType).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrDuplicatedValueInType].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrTruncatedWrongValue).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrTruncatedWrongValue].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrInvalidCharacterString).FastGenByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrInvalidCharacterString].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrTruncatedWrongValueForField).FastGenByArgs(SensitiveData, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrTruncatedWrongValueForField].Raw, QuestionMark, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrIllegalValueForType).FastGenByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrIllegalValueForType].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+
+	err = class.NewStd(errno.ErrPartitionWrongValues).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrPartitionWrongValues].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrNoParts).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrNoParts].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrWrongValue).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrWrongValue].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrNoPartitionForGivenValue).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrNoPartitionForGivenValue].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrDataOutOfRange).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrDataOutOfRange].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+
+	err = class.NewStd(errno.ErrRowInWrongPartition).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrRowInWrongPartition].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrInvalidJSONText).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrInvalidJSONText].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrTxnRetryable).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrTxnRetryable].Raw, QuestionMark)), IsTrue)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrTxnRetryable].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrIncorrectDatetimeValue].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrInvalidTimeFormat).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrInvalidTimeFormat].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrRowNotFound).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrRowNotFound].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrWriteConflict).GenWithStackByArgs(NoSensitiveValue, NoSensitiveValue, NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrWriteConflict].Raw, NoSensitiveValue, NoSensitiveValue, NoSensitiveValue, QuestionMark)), IsTrue)
 }

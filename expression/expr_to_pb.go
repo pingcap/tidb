@@ -17,6 +17,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -174,8 +175,8 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func collationToProto(c string) int32 {
-	if v, ok := mysql.CollationNames[c]; ok {
-		return collate.RewriteNewCollationIDIfNeeded(int32(v))
+	if coll, err := charset.GetCollationByName(c); err == nil {
+		return collate.RewriteNewCollationIDIfNeeded(int32(coll.ID))
 	}
 	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
 	logutil.BgLogger().Warn(
@@ -188,9 +189,9 @@ func collationToProto(c string) int32 {
 }
 
 func protoToCollation(c int32) string {
-	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
-	if ok {
-		return v
+	coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c)))
+	if err == nil {
+		return coll.Name
 	}
 	logutil.BgLogger().Warn(
 		"Unable to get collation name from ID, use name of the default collation instead",

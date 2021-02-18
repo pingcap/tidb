@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -58,6 +59,16 @@ const (
 	SampleStep
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
+	// Enable1PC indicates whether one-phase commit is enabled
+	Enable1PC
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
+	// TxnScope indicates which @@txn_scope this transaction will work with.
+	TxnScope
+	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	IsStalenessReadOnly
 )
 
 // Priority value for transaction priority.
@@ -255,6 +266,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
@@ -303,20 +316,10 @@ type ReturnedValue struct {
 	AlreadyLocked bool
 }
 
-// MPPClient accepts and processes mpp requests.
-type MPPClient interface {
-	// ConstructMPPTasks schedules task for a plan fragment.
-	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTask, error)
-
-	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
-}
-
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -410,31 +413,6 @@ type Request struct {
 	TiDBServerID uint64
 }
 
-// MPPTask stands for a min execution unit for mpp.
-type MPPTask interface {
-	// GetAddress indicates which node this task should execute on.
-	GetAddress() string
-}
-
-// MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
-// However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
-type MPPBuildTasksRequest struct {
-	KeyRanges []KeyRange
-	StartTS   uint64
-}
-
-// MPPDispatchRequest stands for a dispatching task.
-type MPPDispatchRequest struct {
-	Data    []byte  // data encodes the dag coprocessor request.
-	Task    MPPTask // mpp store is the location of tiflash store.
-	IsRoot  bool    // root task returns data to tidb directly.
-	Timeout uint64  // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
-	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar int64
-	StartTs   uint64
-	ID        int64 // identify a single task
-}
-
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
 type ResultSubset interface {
@@ -485,23 +463,27 @@ type Driver interface {
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
-	// Begin transaction
+	// Begin a global transaction
 	Begin() (Transaction, error)
-	// BeginWithStartTS begins transaction with startTS.
-	BeginWithStartTS(startTS uint64) (Transaction, error)
+	// Begin a transaction with the given txnScope (local or global)
+	BeginWithTxnScope(txnScope string) (Transaction, error)
+	// BeginWithStartTS begins transaction with given txnScope and startTS.
+	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
+	// BeginWithStalenessTS begins transaction with given staleness
+	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
-	// GetClient gets a mpp client instance.
+	// GetMPPClient gets a mpp client instance.
 	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
-	// CurrentVersion returns current max committed version.
-	CurrentVersion() (Version, error)
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
@@ -512,6 +494,15 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	// GetMemCache return memory mamager of the storage
+	GetMemCache() MemManager
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() ([]string, error)
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // FnKeyCmp is the function for iterator the keys

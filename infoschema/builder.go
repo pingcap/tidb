@@ -46,13 +46,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
-		tblIDs := b.applyDropSchema(diff.SchemaID)
-		return tblIDs, nil
+		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
-	case model.ActionAlterTableAlterPartition:
-		// there is no need to udpate table schema
-		return nil, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -72,6 +68,24 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	default:
 		oldTableID = diff.TableID
 		newTableID = diff.TableID
+	}
+	// handle placement rule cache
+	switch diff.Type {
+	case model.ActionDropTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+	case model.ActionTruncateTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionRecoverTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionExchangeTablePartition:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
@@ -122,20 +136,38 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
-			// Reduce the impact on DML when executing partition DDL. eg.
-			// While session 1 performs the DML operation associated with partition 1,
-			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			switch diff.Type {
+			case model.ActionAlterTableAlterPartition:
+				partitionID := opt.TableID
+				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
+				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
+				// Reduce the impact on DML when executing partition DDL. eg.
+				// While session 1 performs the DML operation associated with partition 1,
+				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 				tblIDs = append(tblIDs, opt.OldTableID)
+
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				continue
-			case model.ActionDropTablePartition:
+			case model.ActionDropTable, model.ActionDropTablePartition:
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				continue
+			case model.ActionTruncateTable:
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			case model.ActionRecoverTable:
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				continue
 			}
 			var err error
@@ -152,6 +184,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, errors.Trace(err)
 			}
 			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	} else {
+		switch diff.Type {
+		case model.ActionAlterTableAlterPartition:
+			// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
+			return []int64{}, nil
 		}
 	}
 	return tblIDs, nil
@@ -242,6 +280,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		return nil
 	}
 	delete(b.is.schemaMap, di.Name.L)
+	b.applyPlacementDelete(placement.GroupID(schemaID))
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Tables))
@@ -257,6 +296,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	di = di.Clone()
 	for _, id := range tableIDs {
+		b.applyPlacementDelete(placement.GroupID(id))
 		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs
@@ -414,7 +454,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 }
 
 func (b *Builder) applyPlacementDelete(id string) {
-	delete(b.is.ruleBundleMap, id)
+	b.is.deleteBundle(id)
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
@@ -424,7 +464,9 @@ func (b *Builder) applyPlacementUpdate(id string) error {
 	}
 
 	if !bundle.IsEmpty() {
-		b.is.ruleBundleMap[id] = bundle
+		b.is.SetBundle(bundle)
+	} else {
+		b.applyPlacementDelete(id)
 	}
 	return nil
 }
@@ -446,8 +488,9 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 }
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
-	for k, v := range oldIS.ruleBundleMap {
-		b.is.ruleBundleMap[k] = v
+	is := b.is
+	for _, v := range oldIS.RuleBundles() {
+		is.SetBundle(v)
 	}
 }
 
@@ -471,9 +514,8 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
-	info.ruleBundleMap = make(map[string]*placement.Bundle, len(bundles))
 	for _, bundle := range bundles {
-		info.ruleBundleMap[bundle.ID] = bundle
+		info.SetBundle(bundle)
 	}
 
 	for _, di := range dbInfos {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -91,6 +92,8 @@ type selectResult struct {
 	copPlanIDs []int
 	rootPlanID int
 
+	storeType kv.StoreType
+
 	fetchDuration    time.Duration
 	durationReported bool
 	memTracker       *memory.Tracker
@@ -146,9 +149,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -281,8 +283,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	if copStats.CopDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.CopDetail)
+	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
@@ -290,7 +292,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
 		}
 	}
 }
@@ -347,8 +349,8 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	if copStats.CopDetail != nil {
-		s.procKeys = append(s.procKeys, copStats.CopDetail.ProcessedKeys)
+	if copStats.ScanDetail != nil {
+		s.procKeys = append(s.procKeys, copStats.ScanDetail.ProcessedKeys)
 	} else {
 		s.procKeys = append(s.procKeys, 0)
 	}
@@ -356,8 +358,8 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
-	s.totalProcessTime += copStats.ProcessTime
-	s.totalWaitTime += copStats.WaitTime
+	s.totalProcessTime += copStats.TimeDetail.ProcessTime
+	s.totalWaitTime += copStats.TimeDetail.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
@@ -403,10 +405,11 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
+	rpcStat := s.rpcStat
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max: %v, proc_keys: %v", execdetails.FormatDuration(s.copRespTime[0]), s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
@@ -424,36 +427,43 @@ func (s *selectResultRuntimeStats) String() string {
 			})
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size, vMax, vMin, vAvg, vP95))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+				execdetails.FormatDuration(vMax), execdetails.FormatDuration(vMin),
+				execdetails.FormatDuration(vAvg), execdetails.FormatDuration(vP95)))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
 				buf.WriteString(", p95_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyP95, 10))
 			}
-			if s.totalProcessTime > 0 {
-				buf.WriteString(", tot_proc: ")
-				buf.WriteString(s.totalProcessTime.String())
-				if s.totalWaitTime > 0 {
-					buf.WriteString(", tot_wait: ")
-					buf.WriteString(s.totalWaitTime.String())
-				}
+		}
+		if s.totalProcessTime > 0 {
+			buf.WriteString(", tot_proc: ")
+			buf.WriteString(execdetails.FormatDuration(s.totalProcessTime))
+			if s.totalWaitTime > 0 {
+				buf.WriteString(", tot_wait: ")
+				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
-		copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
 		if copRPC != nil && copRPC.Count > 0 {
-			delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+			rpcStat = rpcStat.Clone()
+			delete(rpcStat.Stats, tikvrpc.CmdCop)
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
-			buf.WriteString(time.Duration(copRPC.Consume).String())
+			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
-		buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
-			strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		if config.GetGlobalConfig().TiKVClient.CoprCache.Enable {
+			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
+				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		} else {
+			buf.WriteString(", copr_cache: disabled")
+		}
 		buf.WriteString("}")
 	}
 
-	rpcStatsStr := s.rpcStat.String()
+	rpcStatsStr := rpcStat.String()
 	if len(rpcStatsStr) > 0 {
 		buf.WriteString(", ")
 		buf.WriteString(rpcStatsStr)
@@ -467,7 +477,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, d.String()))
+			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDuration(d)))
 		}
 		buf.WriteString("}")
 	}
