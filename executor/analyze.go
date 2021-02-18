@@ -1311,7 +1311,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
 	if statsVer == statistics.Version2 {
-		poped := statistics.MergeTopN(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]), false)
+		poped := statistics.MergeTopNAndUpdateCMSketch(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]))
 		hist.AddIdxVals(poped)
 	}
 	result := analyzeResult{
