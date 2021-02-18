@@ -1103,6 +1103,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
+		failpoint.Inject("getMinCommitTSFromTSO", nil)
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
