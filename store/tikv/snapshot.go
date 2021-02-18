@@ -417,10 +417,14 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		resolveLite:       true,
 	}
 
+	// Secondary locks or async commit locks cannot be ignored when getting using the max version.
+	// So we concurrently get a TS from PD and use it in retries to avoid unnecessary blocking.
 	var tsFuture oracle.Future
 	if s.version == kv.MaxVersion {
 		tsFuture = s.store.oracle.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.txnScope})
 	}
+
+	failpoint.Inject("snapshotGetTSAsync", nil)
 
 	s.mu.RLock()
 	if s.mu.stats != nil {
@@ -473,13 +477,14 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-
 			if s.version == kv.MaxVersion {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
 				s.version = kv.NewVersion(newTS)
+				req.Req.(*pb.GetRequest).Version = newTS
+				// skip lock resolving and backoff if the lock does not block the read
 				if newTS < lock.TxnID || newTS < lock.MinCommitTS {
 					continue
 				}
