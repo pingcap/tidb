@@ -344,6 +344,8 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "one_pc_txn_counter",
 			Help:      "Counter of 1PC transactions.",
 		}, []string{LblType})
+
+	initShortcuts()
 }
 
 func init() {

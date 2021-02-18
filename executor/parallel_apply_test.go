@@ -421,7 +421,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	core.SetPreparedPlanCache(orgEnable)
 
 	// cluster index
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t, t2")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, c))")
@@ -429,7 +429,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 
 	// partitioning table
 	tk.MustExec("drop table if exists t1, t2")

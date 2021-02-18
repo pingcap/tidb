@@ -500,7 +500,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
-	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
+	// priority of the sysvar is lower than `start transaction with causal consistency only`
+	if s.txn.GetOption(kv.GuaranteeLinearizability) == nil {
+		s.txn.SetOption(kv.GuaranteeLinearizability, s.GetSessionVars().GuaranteeLinearizability)
+	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
 }
@@ -868,6 +871,14 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
 			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
+	if execOption.AnalyzeVer != 0 {
+		oldStatsVer := se.GetSessionVars().AnalyzeVersion
+		se.GetSessionVars().AnalyzeVersion = execOption.AnalyzeVer
+		defer func() {
+			se.GetSessionVars().AnalyzeVersion = oldStatsVer
 		}()
 	}
 
@@ -1441,6 +1452,14 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 			}
 			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
+	if execOption.AnalyzeVer != 0 {
+		prevStatsVer := se.sessionVars.AnalyzeVersion
+		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
+		defer func() {
+			se.sessionVars.AnalyzeVersion = prevStatsVer
 		}()
 	}
 
@@ -2615,12 +2634,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
-	variable.TiDBGuaranteeExternalConsistency,
+	variable.TiDBGuaranteeLinearizability,
 	variable.TiDBAnalyzeVersion,
 	variable.TiDBEnableIndexMergeJoin,
 	variable.TiDBTrackAggregateMemoryUsage,
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
+	variable.TiDBEnableTiFlashFallbackTiKV,
 }
 
 var (
