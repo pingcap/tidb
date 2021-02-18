@@ -129,7 +129,7 @@ func (s *testSuite1) TestClusterIndexAnalyze(c *C) {
 	tk.MustExec("drop database if exists test_cluster_index_analyze;")
 	tk.MustExec("create database test_cluster_index_analyze;")
 	tk.MustExec("use test_cluster_index_analyze;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 100; i++ {
@@ -345,8 +345,8 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
 		TableID: core.AnalyzeTableID{
-			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
-			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+			PartitionID: -1,
+			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
 		TblInfo: tblInfo,
 		Opts:    opts,

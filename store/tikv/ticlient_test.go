@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +25,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/util/codec"
+	pd "github.com/tikv/pd/client"
 )
 
 var (
@@ -33,15 +36,22 @@ var (
 	pdAddrs            = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
 )
 
-// NewTestStore creates a kv.Storage for testing purpose.
-func NewTestStore(c *C) kv.Storage {
+// NewTestStore creates a KVStore for testing purpose.
+func NewTestStore(c *C) *KVStore {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
 
 	if *WithTiKV {
-		var d Driver
-		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+		addrs := strings.Split(*pdAddrs, ",")
+		pdClient, err := pd.NewClient(addrs, pd.SecurityOption{})
+		c.Assert(err, IsNil)
+		var securityConfig config.Security
+		tlsConfig, err := securityConfig.ToTLSConfig()
+		c.Assert(err, IsNil)
+		spKV, err := NewEtcdSafePointKV(addrs, tlsConfig)
+		c.Assert(err, IsNil)
+		store, err := NewKVStore("test-store", &CodecPDClient{Client: pdClient}, spKV, NewRPCClient(securityConfig), nil)
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
@@ -55,7 +65,7 @@ func NewTestStore(c *C) kv.Storage {
 	return store
 }
 
-func clearStorage(store kv.Storage) error {
+func clearStorage(store *KVStore) error {
 	txn, err := store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -75,7 +85,7 @@ func clearStorage(store kv.Storage) error {
 
 type testTiclientSuite struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 	// prefix is prefix of each key in this test. It is used for table isolation,
 	// or it may pollute other data.
 	prefix string
@@ -85,7 +95,7 @@ var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
