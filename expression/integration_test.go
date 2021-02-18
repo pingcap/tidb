@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -8552,6 +8553,7 @@ PARTITION BY RANGE (c) (
 	testcases := []struct {
 		name      string
 		txnScope  string
+		zone      string
 		sql       string
 		expectErr error
 	}{
@@ -8571,49 +8573,59 @@ PARTITION BY RANGE (c) (
 		//},
 		{
 			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c = 1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1 where c < 6",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "cross dc read to global by holding bj",
-			txnScope:  "bj",
+			txnScope:  "local",
+			zone:      "bj",
 			sql:       "select * from t1",
 			expectErr: fmt.Errorf(".*can not be read by.*"),
 		},
 		{
 			name:      "read sh dc by holding sh",
-			txnScope:  "sh",
+			txnScope:  "local",
+			zone:      "sh",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 		{
 			name:      "read sh dc by holding global",
 			txnScope:  "global",
+			zone:      "",
 			sql:       "select * from t1 where c < 6",
 			expectErr: nil,
 		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		config.GetGlobalConfig().Labels = map[string]string{
+			"zone": testcase.zone,
+		}
 		_, err = tk.Exec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		c.Assert(err, IsNil)
 		res, err := tk.Exec(testcase.sql)

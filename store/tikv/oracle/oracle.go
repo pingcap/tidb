@@ -48,6 +48,8 @@ const (
 	physicalShiftBits = 18
 	// GlobalTxnScope is the default transaction scope for a Oracle service.
 	GlobalTxnScope = "global"
+	// LocalTxnScope indicates the local txn scope for a Oracle service.
+	LocalTxnScope = "local"
 )
 
 // ComposeTS creates a ts from physical and logical parts.
