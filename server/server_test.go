@@ -1555,6 +1555,22 @@ func (cli *testServerClient) runTestIssue3680(c *C) {
 	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)")
 }
 
+func (cli *testServerClient) runTestIssue22646(c *C) {
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		c1 := make(chan string, 1)
+		go func() {
+			dbt.mustExec(``) // empty query.
+			c1 <- "success"
+		}()
+		select {
+		case res := <-c1:
+			fmt.Println(res)
+		case <-time.After(30 * time.Second):
+			panic("read empty query statement timed out.")
+		}
+	})
+}
+
 func (cli *testServerClient) runTestIssue3682(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
