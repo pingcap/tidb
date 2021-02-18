@@ -459,7 +459,8 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				if tp.Hybrid() {
 					switch tp.Tp {
 					case mysql.TypeEnum, mysql.TypeSet:
-						fVal = float64(len(sVal))
+						// Enum and Set type value to bool is always true.
+						fVal = 1
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
 						iVal, err := bl.ToInt(sc)

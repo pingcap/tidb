@@ -8690,3 +8690,22 @@ func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
 	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
 	tk.MustExec("drop table if exists t")
 }
+
+func (s *testIntegrationSuite) Test22717(c *C) {
+	// For issue 22717
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+					 	a enum('a','b','c'),
+						b enum('0','1','2'),
+						c set('a','b','c'),
+						d set('0','1','2')
+					 )`)
+	tk.MustExec("insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 0 a 0", "b 1 b 1", "c 2 a,b 0,1"))
+	tk.MustQuery("select a from t where a").Check(testkit.Rows("a", "b", "c"))
+	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
+	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "b", "a,b"))
+	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
+}
