@@ -200,7 +200,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	plannercore.SetPreparedPlanCache(true)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
@@ -289,7 +289,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 
 	// For issue 19002
-	tk.MustExec(`set @@tidb_enable_clustered_index = 1`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
 	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)

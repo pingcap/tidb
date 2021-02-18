@@ -220,7 +220,7 @@ func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
 	tk.MustExec("create database cluster_index_duplicate_entry_error;")
 	tk.MustExec("use cluster_index_duplicate_entry_error;")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t(a char(20), b int, primary key(a));")
 	tk.MustExec("insert into t values('aa', 1), ('bb', 1);")
@@ -237,7 +237,7 @@ func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
 func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
@@ -1305,7 +1305,7 @@ type testSuite10 struct {
 func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists t1pk`)
 	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
@@ -1347,7 +1347,7 @@ func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
 func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists it1pk`)
 	tk.MustExec(`create table it1pk(id varchar(200) primary key, v int)`)
@@ -1373,7 +1373,7 @@ func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
 func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec(`drop table if exists dt1pi`)
 	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
@@ -1405,7 +1405,7 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("drop table if exists pkt1;")
 	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
@@ -1454,8 +1454,8 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	for _, enable := range []int{1, 0} {
-		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
+	for _, enable := range []bool{true, false} {
+		tk.Se.GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t value (34, '12Ak');")
