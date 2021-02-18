@@ -193,7 +193,6 @@ index-limit = 70
 table-column-count-limit = 4000
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
-txn-scope = "dc-1"
 enable-enum-length-limit = false
 stores-refresh-interval = 30
 [performance]
@@ -221,6 +220,7 @@ engines = ["tiflash"]
 [labels]
 foo= "bar"
 group= "abc"
+zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
 `)
@@ -267,12 +267,12 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IndexLimit, Equals, 70)
 	c.Assert(conf.TableColumnCountLimit, Equals, uint32(4000))
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
-	c.Assert(len(conf.Labels), Equals, 2)
+	c.Assert(len(conf.Labels), Equals, 3)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
 	c.Assert(conf.Labels["group"], Equals, "abc")
+	c.Assert(conf.Labels["zone"], Equals, "dc-1")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
-	c.Assert(conf.TxnScope, Equals, "dc-1")
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
@@ -402,7 +402,8 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	conf.Security.ClusterSSLCA = certFile
 	conf.Security.ClusterSSLCert = certFile
 	conf.Security.ClusterSSLKey = keyFile
-	tlsConfig, err := conf.Security.ToTLSConfig()
+	clusterSecurity := conf.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	c.Assert(err, IsNil)
 	c.Assert(tlsConfig, NotNil)
 
@@ -498,19 +499,6 @@ func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	checkValid(DefTableColumnCountLimit-1, false)
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
-}
-
-func (s *testConfigSuite) TestParsePath(c *C) {
-	etcdAddrs, disableGC, err := ParsePath("tikv://node1:2379,node2:2379")
-	c.Assert(err, IsNil)
-	c.Assert(etcdAddrs, DeepEquals, []string{"node1:2379", "node2:2379"})
-	c.Assert(disableGC, IsFalse)
-
-	_, _, err = ParsePath("tikv://node1:2379")
-	c.Assert(err, IsNil)
-	_, disableGC, err = ParsePath("tikv://node1:2379?disableGC=true")
-	c.Assert(err, IsNil)
-	c.Assert(disableGC, IsTrue)
 }
 
 func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
