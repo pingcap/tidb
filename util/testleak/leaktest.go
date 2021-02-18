@@ -38,7 +38,6 @@ func interestingGoroutines() (gs []string) {
 		"check.(*suiteRunner).runFunc",
 		"check.(*suiteRunner).parallelRun",
 		"localstore.(*dbStore).scheduler",
-		"tikv.(*noGCHandler).Start",
 		"ddl.(*ddl).start",
 		"ddl.(*delRange).startEmulator",
 		"domain.NewDomain",

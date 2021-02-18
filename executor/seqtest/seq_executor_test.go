@@ -198,7 +198,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -218,7 +218,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -401,7 +401,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4",
 	))
 	// for issue https://github.com/pingcap/tidb/issues/4678
@@ -412,7 +412,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 	tk.MustExec(`drop table show_auto_increment`)
@@ -421,7 +421,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("insert into show_auto_increment values(10)")
@@ -430,7 +430,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT="+strconv.Itoa(int(autoID)),
 	))
 
@@ -594,7 +594,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`y`)\n"+
+			"  PRIMARY KEY (`y`) /*T![clustered_index] NONCLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show create table with zerofill flag
@@ -604,7 +604,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
 			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`id`)\n"+
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show columns with different types of default value
