@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -145,6 +147,15 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, st
 		if needRetry {
 			// Backoff once for each retry.
 			err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// Actually ErrRegionUnavailable would be thrown out rather than ErrTiFlashServerTimeout. However, since currently
+			// we don't have MockTiFlash, we inject ErrTiFlashServerTimeout to simulate the situation that TiFlash is down.
+			if storeType == kv.TiFlash {
+				failpoint.Inject("errorMockTiFlashServerTimeout", func(val failpoint.Value) {
+					if val.(bool) {
+						failpoint.Return(nil, errors.Trace(ErrTiFlashServerTimeout))
+					}
+				})
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -160,7 +171,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, st
 				zap.Int("range len", rangesLen),
 				zap.Int("task len", len(batchTasks)))
 		}
-		tikvTxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
 		return batchTasks, nil
 	}
 }

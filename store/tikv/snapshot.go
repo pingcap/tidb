@@ -47,10 +47,6 @@ const (
 	batchGetSize  = 5120
 )
 
-var (
-	tikvTxnRegionsNumHistogramWithSnapshot = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
-)
-
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store           *KVStore
@@ -222,14 +218,14 @@ func appendBatchKeysBySize(b []batchKeys, region RegionVerID, keys [][]byte, siz
 
 func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collectF func(k, v []byte)) error {
 	defer func(start time.Time) {
-		tikvTxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+		metrics.TxnCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 	groups, _, err := s.store.regionCache.GroupKeysByRegion(bo, keys, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tikvTxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
+	metrics.TxnRegionsNumHistogramWithSnapshot.Observe(float64(len(groups)))
 
 	var batches []batchKeys
 	for id, g := range groups {
@@ -368,7 +364,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 	defer func(start time.Time) {
-		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
+		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 
 	ctx = context.WithValue(ctx, TxnStartKey, s.version.Ver)
