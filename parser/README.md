@@ -47,7 +47,7 @@ found you are one of the users but not listed here:
 
 ## Contributing
 
-Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md) for details on submitting patches and the contribution workflow.
+Contributions are welcomed and greatly appreciated. See [Contribution Guide](https://github.com/pingcap/community/blob/master/contributors/README.md) for details on submitting patches and the contribution workflow.
 
 Here is how to [update parser for TiDB](https://github.com/pingcap/parser/blob/master/docs/update-parser-for-tidb.md).
 
