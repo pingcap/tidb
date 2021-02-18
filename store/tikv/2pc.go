@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1698,7 +1699,7 @@ func (b *batched) forgetPrimary() {
 // batchExecutor is txn controller providing rate control like utils
 type batchExecutor struct {
 	rateLim           int                  // concurrent worker numbers
-	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
+	rateLimiter       *util.RateLimit      // rate limiter for concurrency control, maybe more strategies
 	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
 	action            twoPhaseCommitAction // the work action type
 	backoffer         *Backoffer           // Backoffer
@@ -1715,7 +1716,7 @@ func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 // initUtils do initialize batchExecutor related policies like rateLimit util
 func (batchExe *batchExecutor) initUtils() error {
 	// init rateLimiter by injected rate limit number
-	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
+	batchExe.rateLimiter = util.NewRateLimit(batchExe.rateLim)
 	return nil
 }
 
@@ -1723,11 +1724,11 @@ func (batchExe *batchExecutor) initUtils() error {
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchMutations) {
 	for idx, batch1 := range batches {
 		waitStart := time.Now()
-		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
+		if exit := batchExe.rateLimiter.GetToken(exitCh); !exit {
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
-				defer batchExe.rateLimiter.putToken()
+				defer batchExe.rateLimiter.PutToken()
 				var singleBatchBackoffer *Backoffer
 				if _, ok := batchExe.action.(actionCommit); ok {
 					// Because the secondary batches of the commit actions are implemented to be
@@ -1812,7 +1813,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
-		return kvPriorityToCommandPri(pri.(int))
+		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
 }
@@ -1824,7 +1825,8 @@ func getTxnSyncLog(txn *tikvTxn) bool {
 	return false
 }
 
-func kvPriorityToCommandPri(pri int) pb.CommandPri {
+// PriorityToPB converts priority type to wire type.
+func PriorityToPB(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
 		return pb.CommandPri_Low

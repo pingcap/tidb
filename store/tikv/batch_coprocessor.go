@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
@@ -187,18 +188,13 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
-		store:      c.store,
-		req:        req,
-		finishCh:   make(chan struct{}),
-		vars:       vars,
-		memTracker: req.MemTracker,
-		clientHelper: clientHelper{
-			LockResolver:      c.store.GetLockResolver(),
-			RegionCache:       c.store.GetRegionCache(),
-			Client:            c.store.GetTiKVClient(),
-			minCommitTSPushed: &minCommitTSPushed{data: make(map[uint64]struct{}, 5)},
-		},
-		rpcCancel: NewRPCanceller(),
+		store:        c.store,
+		req:          req,
+		finishCh:     make(chan struct{}),
+		vars:         vars,
+		memTracker:   req.MemTracker,
+		ClientHelper: NewClientHelper(c.store, util.NewTSSet(5)),
+		rpcCancel:    NewRPCanceller(),
 	}
 	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
@@ -208,7 +204,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 }
 
 type batchCopIterator struct {
-	clientHelper
+	*ClientHelper
 
 	store    *KVStore
 	req      *kv.Request
@@ -328,7 +324,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer,
 			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.RegionCache, NewKeyRanges(ranges), b.req.StoreType)
+	return buildBatchCopTasks(bo, b.regionCache, NewKeyRanges(ranges), b.req.StoreType)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
@@ -354,8 +350,8 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
-		Priority:       kvPriorityToCommandPri(b.req.Priority),
+		IsolationLevel: IsolationLevelToPB(b.req.IsolationLevel),
+		Priority:       PriorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
