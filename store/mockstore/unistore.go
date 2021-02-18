@@ -58,3 +58,7 @@ func (s *mockStorage) TLSConfig() *tls.Config {
 func (s *mockStorage) GetMemCache() kv.MemManager {
 	return s.memCache
 }
+
+func (s *mockStorage) StartGCWorker() error {
+	return nil
+}
