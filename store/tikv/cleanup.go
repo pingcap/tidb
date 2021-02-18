@@ -26,14 +26,13 @@ import (
 type actionCleanup struct{}
 
 var _ twoPhaseCommitAction = actionCleanup{}
-var tiKVTxnRegionsNumHistogramCleanup = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
 
 func (actionCleanup) String() string {
 	return "cleanup"
 }
 
 func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramCleanup
+	return metrics.TxnRegionsNumHistogramCleanup
 }
 
 func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
