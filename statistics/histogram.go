@@ -1550,8 +1550,8 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 	}
 }
 
-// mergeBucketNDV merges bucket NDV from tow bucket `b` & `left`.
-// Before merging, you need to make sure that when using (upper, lower) as the comparison key, `b` is greater than `left`
+// mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
+// Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
 func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
 	res := right.Clone()
 	if left.NDV == 0 {
@@ -1568,7 +1568,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		return nil, err
 	}
 	// __right__|
-	// -------left----|
+	// _______left____|
 	// illegal order.
 	if upperCompare < 0 {
 		return nil, errors.Errorf("illegal bucket order")
@@ -1665,9 +1665,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 //		repeat = sum of buckets[i] (buckets[i].upper == global bucket.upper && i in [l...r))
 //		ndv = merge bucket ndv from r-1 to l by mergeBucketNDV
 // Notice: lower is not calculated here.
-func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) *bucket4Merging {
+func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Merging) (*bucket4Merging, error) {
 	if len(buckets) == 0 {
-		return nil
+		return nil, errors.Errorf("not enough buckets to merge")
 	}
 	res := bucket4Merging{}
 	res.upper = buckets[len(buckets)-1].upper.Clone()
@@ -1676,7 +1676,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		res.Count += buckets[i].Count
 		compare, err := buckets[i].upper.CompareDatum(sc, res.upper)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		if compare == 0 {
 			res.Repeat += buckets[i].Repeat
@@ -1684,24 +1684,24 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 		if i != len(buckets)-1 {
 			tmp, err := mergeBucketNDV(sc, buckets[i], &right)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			right = *tmp
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
-	return &res
+	return &res, nil
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
 // Notice: If expBucketNumber == 0, we will let expBucketNumber = max(hists.Len())
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
-	// minValue is used to calc the bucket lower.
 	needBucketNumber := false
 	if expBucketNumber == 0 {
 		needBucketNumber = true
 	}
+	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
@@ -1709,19 +1709,19 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		bucketNumber += int64(hist.Len())
 		if hist.Len() > 0 {
 			totCount += hist.Buckets[hist.Len()-1].Count
+			if needBucketNumber && int64(hist.Len()) > expBucketNumber {
+				expBucketNumber = int64(hist.Len())
+			}
 			if minValue == nil {
 				minValue = hist.GetLower(0).Clone()
 				continue
 			}
 			res, err := hist.GetLower(0).CompareDatum(sc, minValue)
-			if err != nil && res < 0 {
+			if err != nil {
+				return nil, err
+			}
+			if res < 0 {
 				minValue = hist.GetLower(0).Clone()
-			}
-			if !needBucketNumber {
-				continue
-			}
-			if int64(hist.Len()) > expBucketNumber {
-				expBucketNumber = int64(hist.Len())
 			}
 		}
 	}
@@ -1766,9 +1766,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					break
 				}
 			}
-			merged := mergePartitionBuckets(sc, buckets[i:r])
-			if merged == nil {
-				return nil, errors.Errorf("merge partition-level hist failed")
+			merged, err := mergePartitionBuckets(sc, buckets[i:r])
+			if err != nil {
+				return nil, err
 			}
 			globalBuckets = append(globalBuckets, merged)
 			r = i
@@ -1776,9 +1776,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 	}
 	if r > 0 {
-		merged := mergePartitionBuckets(sc, buckets[0:r])
-		if merged == nil {
-			return nil, errors.Errorf("merge partition-level hist failed")
+		merged, err := mergePartitionBuckets(sc, buckets[0:r])
+		if err != nil {
+			return nil, err
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
@@ -1794,6 +1794,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	globalBuckets[0].lower = minValue.Clone()
 	for i := 1; i < len(globalBuckets); i++ {
 		globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
 	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize)
 	for _, bucket := range globalBuckets {

@@ -160,8 +160,7 @@ func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
 
 func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 	hists := make([]*Histogram, 0, 2)
-	// Col(1) = [1, 4, 6, 9, 9, 12, 12, 12, 13, 14, 15]
-	// H(1) = [(1, 0),(4, 2),(9, 3),(12, 3),(15, 3)]
+	// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
 	h1Buckets := []*bucket4Test{
 		{
 			lower:  1,
@@ -193,8 +192,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		},
 	}
 	hists = append(hists, genHist4Test(h1Buckets, 11))
-	// Col(2) = [2, 5, 6, 7, 7, 11, 11, 11, 13, 14, 17]
-	// H(2) = [(2, 0),(5, 2),(7, 3),(11, 3),(17, 3)]
+	// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
 	h2Buckets := []*bucket4Test{
 		{
 			lower:  2,
@@ -241,14 +239,14 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		{
 			lower:  7,
 			upper:  11,
-			count:  6,
+			count:  13,
 			repeat: 3,
 			ndv:    3,
 		},
 		{
 			lower:  11,
 			upper:  17,
-			count:  9,
+			count:  22,
 			repeat: 1,
 			ndv:    5,
 		},
@@ -261,4 +259,61 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
 	}
 	c.Assert(globalHist.TotColSize, Equals, int64(22))
+}
+
+func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
+	l := types.NewIntDatum(lower)
+	r := types.NewIntDatum(upper)
+	return bucket4Merging{
+		lower: &l,
+		upper: &r,
+		Bucket: Bucket{
+			NDV: ndv,
+		},
+		disjointNDV: disjointNDV,
+	}
+}
+
+func (s *testStatisticsSuite) TestMergeBucketNDV(c *C) {
+	type testData struct {
+		left   bucket4Merging
+		right  bucket4Merging
+		result bucket4Merging
+	}
+	tests := []testData{
+		{
+			left:   genBucket4Merging4Test(1, 2, 2, 0),
+			right:  genBucket4Merging4Test(1, 2, 3, 0),
+			result: genBucket4Merging4Test(1, 2, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(2, 3, 2, 0),
+			result: genBucket4Merging4Test(1, 3, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(4, 6, 2, 2),
+			result: genBucket4Merging4Test(1, 3, 2, 4),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 5, 5, 0),
+			right:  genBucket4Merging4Test(2, 6, 5, 0),
+			result: genBucket4Merging4Test(1, 6, 6, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(3, 5, 3, 0),
+			right:  genBucket4Merging4Test(2, 6, 4, 0),
+			result: genBucket4Merging4Test(2, 6, 5, 0),
+		},
+	}
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	for _, t := range tests {
+		res, err := mergeBucketNDV(sc, &t.left, &t.right)
+		c.Assert(err, IsNil)
+		c.Assert(t.result.lower.GetInt64(), Equals, res.lower.GetInt64())
+		c.Assert(t.result.upper.GetInt64(), Equals, res.upper.GetInt64())
+		c.Assert(t.result.NDV, Equals, res.NDV)
+		c.Assert(t.result.disjointNDV, Equals, res.disjointNDV)
+	}
 }
