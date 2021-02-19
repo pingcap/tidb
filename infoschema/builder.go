@@ -148,7 +148,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				tblIDs = append(tblIDs, opt.OldTableID)
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				if opt.TableID != -1 {
-					// -1 indicates fetching new placement rules from PD
+					// (!= -1) => fetching new placement rules from PD
 					err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 					if err != nil {
 						return nil, errors.Trace(err)
