@@ -267,12 +267,12 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // UpdateSessionVar updates the necessary session variables for the stats reader.
 func (h *Handle) UpdateSessionVar() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
 		return err
