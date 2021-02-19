@@ -157,7 +157,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 		} else if chk != nil {
 			if e.exchangeTp == tipb.ExchangeType_Hash {
 				rows := chk.NumRows()
-				targetChunks := make([]*chunk.Chunk, 0)
+				targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
 				for i := 0; i < len(e.tunnels); i++ {
 					targetChunks = append(targetChunks, chunk.NewChunkWithCapacity(e.fieldTypes, rows))
 				}

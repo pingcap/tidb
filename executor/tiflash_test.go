@@ -138,7 +138,7 @@ func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	// test proj and selection
 	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
 
-	// test shuffle agg
+	// test shuffle hash join.
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=1")
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
