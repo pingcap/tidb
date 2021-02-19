@@ -53,13 +53,6 @@ func createEtcdKV(addrs []string, tlsConfig *tls.Config) (*clientv3.Client, erro
 	return cli, nil
 }
 
-// EtcdBackend is used for judging a storage is a real TiKV.
-type EtcdBackend interface {
-	EtcdAddrs() ([]string, error)
-	TLSConfig() *tls.Config
-	StartGCWorker() error
-}
-
 // update oracle's lastTS every 2000ms.
 var oracleUpdateInterval = 2000
 
@@ -74,10 +67,8 @@ type KVStore struct {
 	coprCache    *coprCache
 	lockResolver *LockResolver
 	txnLatches   *latch.LatchesScheduler
-	gcWorker     GCHandler
 
-	mock     bool
-	enableGC bool
+	mock bool
 
 	kv        SafePointKV
 	safePoint uint64
@@ -119,7 +110,7 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 }
 
 // NewKVStore creates a new TiKV store instance.
-func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, enableGC bool, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
+func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client, coprCacheConfig *config.CoprocessorCache) (*KVStore, error) {
 	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -140,7 +131,6 @@ func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Client
 		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
-	store.enableGC = enableGC
 
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
@@ -162,21 +152,6 @@ func (s *KVStore) EnableTxnLocalLatches(size uint) {
 // IsLatchEnabled is used by mockstore.TestConfig.
 func (s *KVStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
-}
-
-// StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
-func (s *KVStore) StartGCWorker() error {
-	if !s.enableGC || NewGCHandlerFunc == nil {
-		return nil
-	}
-
-	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcWorker.Start()
-	s.gcWorker = gcWorker
-	return nil
 }
 
 func (s *KVStore) runSafePointChecker() {
@@ -244,9 +219,6 @@ func (s *KVStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *KVStore) Close() error {
 	s.oracle.Close()
 	s.pdClient.Close()
-	if s.gcWorker != nil {
-		s.gcWorker.Close()
-	}
 
 	close(s.closed)
 	if err := s.client.Close(); err != nil {
@@ -387,11 +359,6 @@ func (s *KVStore) GetRegionCache() *RegionCache {
 // GetLockResolver returns the lock resolver instance.
 func (s *KVStore) GetLockResolver() *LockResolver {
 	return s.lockResolver
-}
-
-// GetGCHandler returns the GC worker instance.
-func (s *KVStore) GetGCHandler() GCHandler {
-	return s.gcWorker
 }
 
 // Closed returns a channel that indicates if the store is closed.
