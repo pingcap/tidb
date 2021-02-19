@@ -1,0 +1,42 @@
+name: Go
+on:
+  push:
+    branches:
+      - master
+      - 'release-.*'
+  pull_request:
+    branches:
+      - master
+      - 'release-.*'
+
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+      - name: Check
+        run: make check
+      - name: Unit test
+        run: make test WITH_RACE=1
+      - uses: codecov/codecov-action@v1
+
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download dependencies
+        run: sh install.sh
+      - name: Start MySQL
+        run: |
+          sudo systemctl start mysql.service
+          mysqladmin -uroot -proot password ''
+      - name: Integration test
+        run: make integration_test

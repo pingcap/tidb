@@ -7,20 +7,33 @@ set -eux
 echo "starting localstack writing to ${DUMPLING_OUTPUT_DIR}"
 mkdir -p "${DUMPLING_OUTPUT_DIR}"
 ls "${DUMPLING_OUTPUT_DIR}"
-docker run --name dumpling_test_s3 -d \
-  -p 5000:5000 \
-  motoserver/moto
-sleep 1 # wait for motoserver to start up
+
+DBPATH="${DUMPLING_OUTPUT_DIR}/s3.minio"
+
+export MINIO_ACCESS_KEY=testid
+export MINIO_SECRET_KEY=testkey8
+export MINIO_BROWSER=off
+export S3_ENDPOINT=127.0.0.1:5000
+bin/minio server --address $S3_ENDPOINT "$DBPATH" &
+MINIO_PID=$!
+
+i=0
+while ! curl -o /dev/null -v -s "http://$S3_ENDPOINT/"; do
+  i=$(($i+1))
+  if [ $i -gt 7 ]; then
+    echo 'Failed to start minio'
+    exit 1
+  fi
+  sleep 2
+done
+
 cleanup() {
   echo "Stopping motoserver"
-  docker rm -f dumpling_test_s3
+  kill -2 $MINIO_PID
 }
 trap cleanup EXIT
 
-awslocal() {
-  docker run --rm --net=host -it -e PAGER=cat -e AWS_ACCESS_KEY_ID=foo -e AWS_SECRET_ACCESS_KEY=foo amazon/aws-cli --endpoint http://localhost:5000 "$@"
-}
-awslocal s3api create-bucket --bucket mybucket
+mkdir -p "$DBPATH/mybucket"
 
 DB_NAME="s3"
 TABLE_NAME="t"
@@ -40,14 +53,14 @@ HOST_DIR=${DUMPLING_OUTPUT_DIR}
 export DUMPLING_OUTPUT_DIR=s3://mybucket/dump
 export DUMPLING_TEST_DATABASE=$DB_NAME
 export AWS_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=testid
-export AWS_SECRET_ACCESS_KEY=testkey
-run_dumpling --s3.endpoint=http://localhost:5000
+export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
+run_dumpling --s3.endpoint="http://$S3_ENDPOINT/"
 ls "${HOST_DIR}"
 
-curl -o "${HOST_DIR}/s3-schema-create.sql" http://localhost:5000/mybucket/dump/s3-schema-create.sql
-curl -o "${HOST_DIR}/s3.t-schema.sql" http://localhost:5000/mybucket/dump/s3.t-schema.sql
-curl -o "${HOST_DIR}/s3.t.000000000.sql" http://localhost:5000/mybucket/dump/s3.t.000000000.sql
+curl -o "${HOST_DIR}/s3-schema-create.sql" http://$S3_ENDPOINT/mybucket/dump/s3-schema-create.sql
+curl -o "${HOST_DIR}/s3.t-schema.sql" http://$S3_ENDPOINT/mybucket/dump/s3.t-schema.sql
+curl -o "${HOST_DIR}/s3.t.000000000.sql" http://$S3_ENDPOINT/mybucket/dump/s3.t.000000000.sql
 
 file_should_exist "$HOST_DIR/s3-schema-create.sql"
 file_should_exist "$HOST_DIR/s3.t-schema.sql"

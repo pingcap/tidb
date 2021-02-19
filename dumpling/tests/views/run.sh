@@ -9,7 +9,7 @@ run_sql_file "$DUMPLING_BASE_NAME/data/views-schema-create.sql"
 export DUMPLING_TEST_DATABASE="views"
 
 run_sql "create table t (a bigint, b varchar(255))"
-run_sql "create definer = 'root'@'localhost' view v as select * from t;"
+run_sql "set session collation_connection='utf8mb4_general_ci'; create definer = 'root'@'localhost' view v as select * from t;"
 # insert 20 records to `t`.
 run_sql "insert into t values $(seq -s, 20 | sed 's/,*$//g' | sed 's/[0-9]*/(\0,"\0")/g')"
 
