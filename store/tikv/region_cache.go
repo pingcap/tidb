@@ -1244,6 +1244,19 @@ func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
 }
 
+// GetTiFlashStoreAddrs returns addresses of all tiflash nodes.
+func (c *RegionCache) GetTiFlashStoreAddrs() []string {
+	c.storeMu.RLock()
+	defer c.storeMu.RUnlock()
+	var addrs []string
+	for _, s := range c.storeMu.stores {
+		if s.storeType == kv.TiFlash {
+			addrs = append(addrs, s.addr)
+		}
+	}
+	return addrs
+}
+
 // btreeItem is BTree's Item that uses []byte to compare.
 type btreeItem struct {
 	key          []byte
