@@ -631,7 +631,7 @@ func NewTopN(n int) *TopN {
 // MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
 // The input parameters are multiple TopN structures to be merged and the size of the new TopN that will be generated.
 // The output parameters are the newly generated TopN structure and the remaining numbers.
-// Notice: If n == 0, we will let n = max(len(TopN.TopN))
+// Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
 func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	needTopNNum := n == 0
 	totCnt := uint64(0)

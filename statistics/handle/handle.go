@@ -384,7 +384,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], 0)
+		n := uint32(0)
+		for _, topN := range allTopN[i] {
+			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
+		}
+		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
 		if len(popedTopN) != 0 {
 			// TODO: use the popedTopN as a bucket for later histogram merging.
 		}
