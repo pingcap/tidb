@@ -45,7 +45,7 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
 	c.store.regionCache.storeMu.RLock()
 	for _, st := range c.store.regionCache.storeMu.stores {
-		if st.storeType == kv.TiFlash {
+		if st.storeType == TiFlash {
 			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
 			resultTasks = append(resultTasks, task)
 		}
