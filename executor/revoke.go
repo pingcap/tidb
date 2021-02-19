@@ -136,6 +136,7 @@ func (e *RevokeExec) revokeOneUser(internalSession sessionctx.Context, user, hos
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
+
 	// If there is no privilege entry in corresponding table, insert a new one.
 	// DB scope:		mysql.DB
 	// Table scope:		mysql.Tables_priv

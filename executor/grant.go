@@ -149,7 +149,6 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// DB scope:			mysql.DB
 		// Table scope:			mysql.Tables_priv
 		// Column scope:		mysql.Columns_priv
-
 		if e.TLSOptions != nil {
 			err = checkAndInitGlobalPriv(internalSession, user.User.Username, user.User.Hostname)
 			if err != nil {
@@ -451,6 +450,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 	if priv.Priv == 0 {
 		return nil
 	}
+
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "Y")

@@ -1171,7 +1171,6 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 }
 
 func (s *testPrivilegeSuite) TestDynamicPrivs(c *C) {
-
 	rootSe := newSession(c, s.store, s.dbName)
 	mustExec(c, rootSe, "CREATE USER notsuper")
 	mustExec(c, rootSe, "CREATE USER otheruser")

@@ -413,5 +413,4 @@ func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
 	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
-
 }

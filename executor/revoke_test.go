@@ -184,5 +184,4 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustExec("GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT ON *.* TO dyn WITH GRANT OPTION")
 	tk.MustExec("REVOKE BACKUP_ADMIN, SELECT, GRANT OPTION ON *.* FROM dyn")
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % SYSTEM_VARIABLES_ADMIN Y"))
-
 }

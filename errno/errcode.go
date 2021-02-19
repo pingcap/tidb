@@ -898,7 +898,6 @@ const (
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
 	ErrDynamicPrivilegeNotRegistered                                = 3929
-
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
