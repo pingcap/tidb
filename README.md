@@ -33,10 +33,11 @@ Building
 2. Run `make build` to compile. The output is in `bin/dumpling`.
 3. Run `make test` to run the unit tests.
 4. Run `make integration_test` to run integration tests. For integration test:
-  - The following executables must be copied or generated or linked into these locations, `sync_diff_inspector` can be downloaded from [tidb-enterprise-tools-latest-linux-amd64](http://download.pingcap.org/tidb-enterprise-tools-latest-linux-amd64.tar.gz), `tidb-server` can be downloaded from [tidb-master-linux-amd64](https://download.pingcap.org/tidb-master-linux-amd64.tar.gz), and `tidb-lightning` can be downloaded from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.org/tidb-toolkit-latest-linux-amd64.tar.gz):
-    * `bin/sync_diff_inspector`
-    * `bin/tidb-server`
-    * `bin/tidb-lightning`
+  - The following executables must be copied or generated or linked into these locations:
+    * `bin/sync_diff_inspector` (download from [tidb-enterprise-tools-latest-linux-amd64](http://download.pingcap.org/tidb-enterprise-tools-latest-linux-amd64.tar.gz))
+    * `bin/tidb-server` (download from [tidb-master-linux-amd64](https://download.pingcap.org/tidb-master-linux-amd64.tar.gz))
+    * `bin/tidb-lightning` (download from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.org/tidb-toolkit-latest-linux-amd64.tar.gz))
+    * `bin/minio` (download from <https://min.io/download>)
   - The following programs must be installed:
     * `mysql` (the CLI client)
   - There must be a local mysql server listening on `127.0.0.1:3306`, and an active user with no password that can be connected through this TCP address.
