@@ -458,8 +458,20 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
 					switch tp.Tp {
-					case mysql.TypeEnum, mysql.TypeSet:
+					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
+						if fVal == 0 {
+							// The elements listed in the column specification are assigned index numbers, beginning
+							// with 1. The index value of the empty string error value (distinguish from a "normal"
+							// empty string) is 0. Thus we need to check whether it's an empty string error value when
+							// `fVal==0`.
+							for idx, elem := range tp.Elems {
+								if elem == sVal {
+									fVal = float64(idx + 1)
+									break
+								}
+							}
+						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
 						iVal, err := bl.ToInt(sc)
