@@ -359,15 +359,15 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		globalStats.Count += partitionStats.Count
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
+			tp := &tableInfo.Columns[i].FieldType
 			if isIndex != 0 {
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
-				allFieldType = append(allFieldType, types.NewFieldType(mysql.TypeBlob))
-			} else {
-				allFieldType = append(allFieldType, &tableInfo.Columns[i].FieldType)
+				tp = types.NewFieldType(mysql.TypeBlob)
 			}
 			if idx == 0 {
 				allID = append(allID, ID)
+				allFieldType = append(allFieldType, tp)
 			}
 			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)
@@ -390,14 +390,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 
 		// Merge topN. We need to merge TopN before merging the histogram.
 		// Because after merging TopN, some numbers will be left.
-		// These left numbers should be inserted into the histogram.
+		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], 0)
-
 		if len(popedTopN) != 0 {
-			popedTopNHg := statistics.NewHistogram(allID[i], 0, 0, 0, allFieldType[i], 0, 0)
-			popedTopNHg.AddIdxVals(popedTopN)
-			allHg[i] = append(allHg[i], popedTopNHg)
+			// TODO: use the popedTopN as a bucket for later histogram merging.
 		}
 
 		// Merge histogram
