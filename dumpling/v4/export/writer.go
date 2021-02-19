@@ -200,7 +200,7 @@ func (w *Writer) tryToWriteTableData(ctx context.Context, meta TableMeta, ir Tab
 	}
 
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(w.extStorage, fileName, conf.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(ctx, w.extStorage, fileName, conf.CompressType)
 		err = format.WriteInsert(ctx, conf, meta, ir, fileWriter)
 		tearDown(ctx)
 		if err != nil {

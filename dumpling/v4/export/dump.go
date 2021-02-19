@@ -775,6 +775,8 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
 	updateInterval := time.Duration(ttl/2) * time.Second
 	tick := time.NewTicker(updateInterval)
+	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
+	log.Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
 
 	for {
 		log.Debug("update PD safePoint limit with ttl",
