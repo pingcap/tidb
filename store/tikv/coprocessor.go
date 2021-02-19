@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
@@ -74,8 +75,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
+		resolvedLocks:   util.NewTSSet(5),
 	}
-	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -86,7 +87,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 
 	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
+		it.sendRate = util.NewRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
 		capacity := it.concurrency
@@ -97,9 +98,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			capacity = it.concurrency * 2
 		}
 		it.respChan = make(chan *copResponse, capacity)
-		it.sendRate = newRateLimit(it.concurrency)
+		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
-	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
+	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
 	if sessionMemTracker != nil {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -226,7 +227,7 @@ type copIterator struct {
 	curr int
 
 	// sendRate controls the sending rate of copIteratorTaskSender
-	sendRate *rateLimit
+	sendRate *util.RateLimit
 
 	// Otherwise, results are stored in respChan.
 	respChan chan *copResponse
@@ -245,7 +246,7 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
-	minCommitTSPushed
+	resolvedLocks *util.TSSet
 
 	actionOnExceed *rateLimitAction
 }
@@ -259,7 +260,7 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
-	clientHelper
+	*ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -275,7 +276,7 @@ type copIteratorTaskSender struct {
 	tasks    []*copTask
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
-	sendRate *rateLimit
+	sendRate *util.RateLimit
 }
 
 type copResponse struct {
@@ -381,19 +382,14 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			taskCh:   taskCh,
-			wg:       &it.wg,
-			store:    it.store,
-			req:      it.req,
-			respChan: it.respChan,
-			finishCh: it.finishCh,
-			vars:     it.vars,
-			clientHelper: clientHelper{
-				LockResolver:      it.store.GetLockResolver(),
-				RegionCache:       it.store.GetRegionCache(),
-				minCommitTSPushed: &it.minCommitTSPushed,
-				Client:            it.store.GetTiKVClient(),
-			},
+			taskCh:          taskCh,
+			wg:              &it.wg,
+			store:           it.store,
+			req:             it.req,
+			respChan:        it.respChan,
+			finishCh:        it.finishCh,
+			vars:            it.vars,
+			ClientHelper:    NewClientHelper(it.store, it.resolvedLocks),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
@@ -426,7 +422,7 @@ func (sender *copIteratorTaskSender) run() {
 		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
 		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		exit := sender.sendRate.getToken(sender.finishCh)
+		exit := sender.sendRate.GetToken(sender.finishCh)
 		if exit {
 			break
 		}
@@ -554,7 +550,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
-				it.sendRate.putToken()
+				it.sendRate.PutToken()
 			})
 			return it.Next(ctx)
 		}
@@ -575,7 +571,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				break
 			}
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
-				it.sendRate.putToken()
+				it.sendRate.PutToken()
 			})
 			// Switch to next task.
 			it.tasks[it.curr] = nil
@@ -674,7 +670,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
-			if cValue != nil && cValue.RegionID == task.region.id && cValue.TimeStamp <= worker.req.StartTs {
+			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
 				copReq.CacheIfMatchVersion = cValue.RegionDataVersion
@@ -688,8 +684,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, worker.req.ReplicaRead, &worker.replicaReadSeed, kvrpcpb.Context{
-		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
-		Priority:       kvPriorityToCommandPri(worker.req.Priority),
+		IsolationLevel: IsolationLevelToPB(worker.req.IsolationLevel),
+		Priority:       PriorityToPB(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
 		RecordTimeStat: true,
 		RecordScanStat: true,
@@ -725,51 +721,34 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
-type minCommitTSPushed struct {
-	data map[uint64]struct{}
-	sync.RWMutex
-}
-
-func (m *minCommitTSPushed) Update(from []uint64) {
-	m.Lock()
-	for _, v := range from {
-		m.data[v] = struct{}{}
-	}
-	m.Unlock()
-}
-
-func (m *minCommitTSPushed) Get() []uint64 {
-	m.RLock()
-	defer m.RUnlock()
-	if len(m.data) == 0 {
-		return nil
-	}
-
-	ret := make([]uint64, 0, len(m.data))
-	for k := range m.data {
-		ret = append(ret, k)
-	}
-	return ret
-}
-
-// clientHelper wraps LockResolver and RegionRequestSender.
+// ClientHelper wraps LockResolver and RegionRequestSender.
 // It's introduced to support the new lock resolving pattern in the large transaction.
 // In the large transaction protocol, sending requests and resolving locks are
 // context-dependent. For example, when a send request meets a secondary lock, we'll
 // call ResolveLock, and if the lock belongs to a large transaction, we may retry
 // the request. If there is no context information about the resolved locks, we'll
 // meet the secondary lock again and run into a deadloop.
-type clientHelper struct {
-	*LockResolver
-	*RegionCache
-	*minCommitTSPushed
-	Client
-	resolveLite bool
+type ClientHelper struct {
+	lockResolver  *LockResolver
+	regionCache   *RegionCache
+	resolvedLocks *util.TSSet
+	client        Client
+	resolveLite   bool
 	RegionRequestRuntimeStats
 }
 
+// NewClientHelper creates a helper instance.
+func NewClientHelper(store *KVStore, resolvedLocks *util.TSSet) *ClientHelper {
+	return &ClientHelper{
+		lockResolver:  store.GetLockResolver(),
+		regionCache:   store.GetRegionCache(),
+		resolvedLocks: resolvedLocks,
+		client:        store.GetTiKVClient(),
+	}
+}
+
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
-func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
+func (ch *ClientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
@@ -779,28 +758,28 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 		}(time.Now())
 	}
 	if ch.resolveLite {
-		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.ResolveLocksLite(bo, callerStartTS, locks)
+		msBeforeTxnExpired, resolvedLocks, err = ch.lockResolver.ResolveLocksLite(bo, callerStartTS, locks)
 	} else {
-		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.ResolveLocks(bo, callerStartTS, locks)
+		msBeforeTxnExpired, resolvedLocks, err = ch.lockResolver.ResolveLocks(bo, callerStartTS, locks)
 	}
 	if err != nil {
 		return msBeforeTxnExpired, err
 	}
 	if len(resolvedLocks) > 0 {
-		ch.minCommitTSPushed.Update(resolvedLocks)
+		ch.resolvedLocks.Put(resolvedLocks...)
 		return 0, nil
 	}
 	return msBeforeTxnExpired, nil
 }
 
 // SendReqCtx wraps the SendReqCtx function and use the resolved lock result in the kvrpcpb.Context.
-func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
-	sender := NewRegionRequestSender(ch.RegionCache, ch.Client)
+func (ch *ClientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration, sType kv.StoreType, directStoreAddr string) (*tikvrpc.Response, *RPCContext, string, error) {
+	sender := NewRegionRequestSender(ch.regionCache, ch.client)
 	if len(directStoreAddr) > 0 {
 		sender.SetStoreAddr(directStoreAddr)
 	}
 	sender.Stats = ch.Stats
-	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
+	req.Context.ResolvedLocks = ch.resolvedLocks.GetAll()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.GetStoreAddr(), err
 }
@@ -811,7 +790,7 @@ const (
 )
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
-	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.id, task.storeAddr)
+	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.GetID(), task.storeAddr)
 	if bo.GetTotalSleep() > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.GetTypes()), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
@@ -968,7 +947,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	resp.detail.Stats = worker.Stats
 	worker.Stats = nil
 	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
 	for backoff := range backoffTimes {
@@ -1022,7 +1001,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				newCacheValue := coprCacheValue{
 					Data:              data,
 					TimeStamp:         worker.req.StartTs,
-					RegionID:          task.region.id,
+					RegionID:          task.region.GetID(),
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
 				}
 				worker.store.coprCache.Set(cacheKey, &newCacheValue)
@@ -1106,33 +1085,6 @@ func (it *copIterator) Close() error {
 	it.actionOnExceed.close()
 	it.wg.Wait()
 	return nil
-}
-
-type rateLimit struct {
-	token chan struct{}
-}
-
-func newRateLimit(n int) *rateLimit {
-	return &rateLimit{
-		token: make(chan struct{}, n),
-	}
-}
-
-func (r *rateLimit) getToken(done <-chan struct{}) (exit bool) {
-	select {
-	case <-done:
-		return true
-	case r.token <- struct{}{}:
-		return false
-	}
-}
-
-func (r *rateLimit) putToken() {
-	select {
-	case <-r.token:
-	default:
-		panic("put a redundant token")
-	}
 }
 
 // copErrorResponse returns error when calling Next()
