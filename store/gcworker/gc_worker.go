@@ -69,7 +69,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.Storage, pdClient pd.Client) (GCHandler, error) {
+func NewGCWorker(store tikv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2183,16 +2183,3 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 
 	return nil
 }
-
-// GCHandler runs garbage collection job.
-type GCHandler interface {
-	// Start starts the GCHandler.
-	Start()
-
-	// Close closes the GCHandler.
-	Close()
-}
-
-// NewGCHandlerFunc creates a new GCHandler.
-// To enable real GC, we should assign the function to `gcworker.NewGCWorker`.
-var NewGCHandlerFunc func(storage tikv.Storage, pdClient pd.Client) (GCHandler, error)

@@ -499,7 +499,7 @@ type Storage interface {
 // StorageEx extended the interface Storage.
 type StorageEx interface {
 	Storage
-	// GetMemCache return memory mamager of the storage
+	// GetMemCache return memory mamager of the storage.
 	GetMemCache() MemManager
 }
 
