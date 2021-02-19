@@ -330,13 +330,15 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 	allHg := make([][]*statistics.Histogram, globalStats.Num)
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
+	allID := make([]int64, 0, globalStats.Num)
+	allFieldType := make([]*types.FieldType, 0, globalStats.Num)
 	for i := 0; i < globalStats.Num; i++ {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 	}
 
-	for _, partitionID := range partitionIDs {
+	for idx, partitionID := range partitionIDs {
 		h.mu.Lock()
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
 		h.mu.Unlock()
@@ -360,6 +362,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 			if isIndex != 0 {
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
+				allFieldType = append(allFieldType, types.NewFieldType(mysql.TypeBlob))
+			} else {
+				allFieldType = append(allFieldType, &tableInfo.Columns[i].FieldType)
+			}
+			if idx == 0 {
+				allID = append(allID, ID)
 			}
 			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)
@@ -386,9 +394,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 		var popedTopN []statistics.TopNMeta
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], 0)
 
-		// TODO: Use the numbers in popedTopN to construct additional histogram
 		if len(popedTopN) != 0 {
-
+			popedTopNHg := statistics.NewHistogram(allID[i], 0, 0, 0, allFieldType[i], 0, 0)
+			popedTopNHg.AddIdxVals(popedTopN)
+			allHg[i] = append(allHg[i], popedTopNHg)
 		}
 
 		// Merge histogram

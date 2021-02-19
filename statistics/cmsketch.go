@@ -309,7 +309,7 @@ func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []To
 	topNs := []*TopN{src, dst}
 	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
 	if mergedTopN == nil {
-		// dst == nil means the total count of the input TopN are equal to zero
+		// mergedTopN == nil means the total count of the input TopN are equal to zero
 		return popedTopNPair
 	}
 	dst.TopN = mergedTopN.TopN
