@@ -376,8 +376,8 @@ func (b *builtinArithmeticMinusIntSig) minusFUU(result *chunk.Column, lhi64s, rh
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		ulh, urh, uMaxInt64, uMinInt64 := uint64(lh), uint64(rh), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
-		if (ulh >= urh && ulh-urh > uMaxInt64) || (ulh < urh && urh-ulh > uMinInt64) {
+		ulh, urh, uMaxInt64, uAbsMinInt64 := uint64(lh), uint64(rh), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
+		if (ulh >= urh && ulh-urh > uMaxInt64) || (ulh < urh && urh-ulh > uAbsMinInt64) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 

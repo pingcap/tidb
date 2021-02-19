@@ -421,8 +421,8 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 
 	switch {
 	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		ua, ub, uMaxInt64, uMinInt64 := uint64(a), uint64(b), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
-		if (ua >= ub && ua-ub > uMaxInt64) || (ua < ub && ub-ua > uMinInt64) {
+		ua, ub, uMaxInt64, uAbsMinInt64 := uint64(a), uint64(b), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
+		if (ua >= ub && ua-ub > uMaxInt64) || (ua < ub && ub-ua > uAbsMinInt64) {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
