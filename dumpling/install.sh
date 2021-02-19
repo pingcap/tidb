@@ -23,3 +23,7 @@ git clone -b $TIDB_TAG https://github.com/pingcap/tidb
 cd $pwd/tidb && make
 cd $pwd
 mv tidb/bin/tidb-server bin/
+
+# download minio
+wget https://dl.min.io/server/minio/release/linux-amd64/minio -O bin/minio
+chmod a+x bin/minio
