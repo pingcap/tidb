@@ -404,9 +404,43 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	return nil, curData
 }
 
+func (e *LoadDataInfo) isInQuoter(bs []byte) bool{
+	inQuoter := false
+
+	type termType int
+	const (
+		none termType = iota
+		enclosed
+		escaped
+	)
+
+	cmpTerm := func(bs byte) (typ termType){
+		if bs == e.FieldsInfo.Enclosed{
+			return enclosed
+		}
+		if bs == e.FieldsInfo.Escaped{
+			return escaped
+		}
+		return none
+	}
+
+	for i := 0; i < len(bs); i ++ {
+		switch cmpTerm(bs[i]) {
+		case enclosed:
+			inQuoter = !inQuoter
+		case escaped:
+			i++
+		default:
+
+		}
+
+	}
+	return inQuoter
+}
+
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
+func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -448,7 +482,9 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
 loop:
 	for i := 0; i < len(bs); i++ {
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			inQuoter = true
+			if !isInQuoter {
+				inQuoter = true
+			}
 			atFieldStart = false
 			continue
 		}
@@ -496,7 +532,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if prevData == nil && len(curData) < startingLen {
 		return nil, curData, false
 	}
-
+	inquotor := e.isInQuoter(prevData)
 	prevLen := len(prevData)
 	terminatedLen := len(e.LinesInfo.Terminated)
 	curStartIdx := 0
@@ -508,7 +544,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:])
+			endIdx = e.indexOfTerminator(curData[curStartIdx:],inquotor)
 		}
 	}
 	if endIdx == -1 {
@@ -522,7 +558,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:])
+			endIdx = e.indexOfTerminator(curData[startingLen:],inquotor)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
@@ -543,7 +579,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:])
+		endIdx = e.indexOfTerminator(prevData[startingLen:],inquotor)
 	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -564,9 +600,6 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 	}
 	var line []byte
 	var isEOF, hasStarting, reachLimit bool
-	if e.LinesInfo.Terminated != "\n" && len(curData) > 0 && curData[len(curData)-1] == '\n' {
-		curData = curData[0 : len(curData)-1]
-	}
 	if len(prevData) > 0 && len(curData) == 0 {
 		isEOF = true
 		prevData, curData = curData, prevData

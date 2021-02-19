@@ -168,6 +168,10 @@ func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
 	ts.runTestLoadDataAutoRandom(c)
 }
 
+func(ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
+	ts.runTestLoadDataAutoRandomWithSpecialTerm(c)
+}
+
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
 	ts.runTestExplainForConn(c)
 }
