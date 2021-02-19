@@ -386,6 +386,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		var popedTopN []statistics.TopNMeta
 		n := uint32(0)
 		for _, topN := range allTopN[i] {
+			if topN == nil {
+				continue
+			}
 			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
 		}
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
