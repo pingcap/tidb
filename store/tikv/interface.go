@@ -16,15 +16,12 @@ package tikv
 import (
 	"time"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
 // Storage represent the kv.Storage runs on TiKV.
 type Storage interface {
-	kv.Storage
-
 	// GetRegionCache gets the RegionCache.
 	GetRegionCache() *RegionCache
 
@@ -39,6 +36,9 @@ type Storage interface {
 
 	// UpdateSPCache updates the cache of safe point.
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
 
 	// SetOracle sets the Oracle.
 	SetOracle(oracle oracle.Oracle)
