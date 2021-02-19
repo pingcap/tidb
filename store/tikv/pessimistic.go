@@ -39,9 +39,6 @@ type actionPessimisticRollback struct{}
 var (
 	_ twoPhaseCommitAction = actionPessimisticLock{}
 	_ twoPhaseCommitAction = actionPessimisticRollback{}
-
-	tiKVTxnRegionsNumHistogramPessimisticLock     = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_lock"))
-	tiKVTxnRegionsNumHistogramPessimisticRollback = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("pessimistic_rollback"))
 )
 
 func (actionPessimisticLock) String() string {
@@ -49,7 +46,7 @@ func (actionPessimisticLock) String() string {
 }
 
 func (actionPessimisticLock) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPessimisticLock
+	return metrics.TxnRegionsNumHistogramPessimisticLock
 }
 
 func (actionPessimisticRollback) String() string {
@@ -57,7 +54,7 @@ func (actionPessimisticRollback) String() string {
 }
 
 func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPessimisticRollback
+	return metrics.TxnRegionsNumHistogramPessimisticRollback
 }
 
 func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
@@ -233,7 +230,7 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 }
 
 func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
-	if c.connID > 0 {
+	if c.sessionID > 0 {
 		failpoint.Inject("beforePessimisticLock", func(val failpoint.Value) {
 			// Pass multiple instructions in one string, delimited by commas, to trigger multiple behaviors, like
 			// `return("delay,fail")`. Then they will be executed sequentially at once.

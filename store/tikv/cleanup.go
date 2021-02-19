@@ -26,14 +26,13 @@ import (
 type actionCleanup struct{}
 
 var _ twoPhaseCommitAction = actionCleanup{}
-var tiKVTxnRegionsNumHistogramCleanup = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
 
 func (actionCleanup) String() string {
 	return "cleanup"
 }
 
 func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramCleanup
+	return metrics.TxnRegionsNumHistogramCleanup
 }
 
 func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
@@ -58,7 +57,7 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 		return errors.Trace(err)
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
-		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("session %d 2PC cleanup failed: %s", c.sessionID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
