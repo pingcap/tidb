@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"go.uber.org/zap"
@@ -58,7 +59,7 @@ type tikvSnapshot struct {
 	keyOnly         bool
 	vars            *kv.Variables
 	replicaReadSeed uint32
-	minCommitTSPushed
+	resolvedLocks   *util.TSSet
 
 	// Cache the result of BatchGet.
 	// The invariance is that calling BatchGet multiple times using the same start ts,
@@ -92,9 +93,7 @@ func newTiKVSnapshot(store *KVStore, ver kv.Version, replicaReadSeed uint32) *ti
 		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
 		replicaReadSeed: replicaReadSeed,
-		minCommitTSPushed: minCommitTSPushed{
-			data: make(map[uint64]struct{}, 5),
-		},
+		resolvedLocks:   util.NewTSSet(5),
 	}
 }
 
@@ -110,7 +109,7 @@ func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
 	s.mu.cached = nil
 	s.mu.Unlock()
 	// And also the minCommitTS pushed information.
-	s.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
+	s.resolvedLocks = util.NewTSSet(5)
 }
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
@@ -259,12 +258,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	cli := clientHelper{
-		LockResolver:      s.store.lockResolver,
-		RegionCache:       s.store.regionCache,
-		minCommitTSPushed: &s.minCommitTSPushed,
-		Client:            s.store.client,
-	}
+	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -407,13 +401,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 	})
 
-	cli := clientHelper{
-		LockResolver:      s.store.lockResolver,
-		RegionCache:       s.store.regionCache,
-		minCommitTSPushed: &s.minCommitTSPushed,
-		Client:            s.store.client,
-		resolveLite:       true,
-	}
+	cli := NewClientHelper(s.store, s.resolvedLocks)
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -515,7 +503,7 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.IsolationLevel:
 		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
-		s.priority = kvPriorityToCommandPri(val.(int))
+		s.priority = PriorityToPB(val.(int))
 	case kv.NotFillCache:
 		s.notFillCache = val.(bool)
 	case kv.SyncLog:
