@@ -330,15 +330,13 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 	allHg := make([][]*statistics.Histogram, globalStats.Num)
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
-	allID := make([]int64, 0, globalStats.Num)
-	allFieldType := make([]*types.FieldType, 0, globalStats.Num)
 	for i := 0; i < globalStats.Num; i++ {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 	}
 
-	for idx, partitionID := range partitionIDs {
+	for _, partitionID := range partitionIDs {
 		h.mu.Lock()
 		partitionTable, ok := h.getTableByPhysicalID(is, partitionID)
 		h.mu.Unlock()
@@ -359,15 +357,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		globalStats.Count += partitionStats.Count
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
-			tp := &tableInfo.Columns[i].FieldType
 			if isIndex != 0 {
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
-				tp = types.NewFieldType(mysql.TypeBlob)
-			}
-			if idx == 0 {
-				allID = append(allID, ID)
-				allFieldType = append(allFieldType, tp)
 			}
 			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)

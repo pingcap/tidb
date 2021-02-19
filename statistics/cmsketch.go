@@ -633,22 +633,15 @@ func NewTopN(n int) *TopN {
 // The output parameters are the newly generated TopN structure and the remaining numbers.
 // Notice: If n == 0, we will let n = max(len(TopN.TopN))
 func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
-	needTopNNum := false
-	if n == 0 {
-		needTopNNum = true
-	}
-	totCnt := uint64(0)
-	for _, topN := range topNs {
-		totCnt += topN.TotalCount()
-	}
-	if totCnt == 0 {
-		return nil, nil
-	}
+	needTopNNum := n == 0
 	// Different TopN structures may hold the same value, we have to merge them.
 	counter := make(map[hack.MutableString]uint64)
 	for _, topN := range topNs {
 		if needTopNNum && uint32(len(topN.TopN)) > n {
 			n = uint32(len(topN.TopN))
+		}
+		if topN.TotalCount() == 0 {
+			continue
 		}
 		for _, val := range topN.TopN {
 			counter[hack.String(val.Encoded)] += val.Count
@@ -656,6 +649,9 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	}
 
 	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil
+	}
 	sorted := make([]uint64, numTop)
 	for _, cnt := range counter {
 		sorted = append(sorted, cnt)
