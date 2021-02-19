@@ -956,7 +956,7 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 }
 
 // RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
 	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
@@ -967,7 +967,7 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 		h := r.Hostname
 		for _, record := range p.Dynamic[u] {
 			if record.match(u, h) {
-				if grantable && !record.GrantOption {
+				if withGrant && !record.GrantOption {
 					continue
 				}
 				if record.PrivilegeName == privName {
@@ -979,6 +979,10 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
 	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
 	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.
+	// The visitInfo system will also need modification to support OR conditions.
+	if withGrant && !p.RequestVerification(activeRoles, user, host, "", "", "", mysql.GrantPriv) {
+		return false
+	}
 	return p.RequestVerification(activeRoles, user, host, "", "", "", mysql.SuperPriv)
 }
 

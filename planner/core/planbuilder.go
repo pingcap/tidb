@@ -2335,14 +2335,26 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	if dbName == "" {
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
-
+	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
 		if item.Priv == mysql.ExtendedPriv {
-			vi = appendDynamicVisitInfo(vi, item.Name, stmt.WithGrant, nil)
+			// The observed MySQL behavior is that the error is:
+			// ERROR 1227 (42000): Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation
+			// This is ambiguous, because it doesn't say the GRANT OPTION for which dynamic privilege.
+
+			// In privilege/privileges/cache.go:RequestDynamicVerification SUPER+Grant_Priv will also be accepted here by TiDB, but it is *not* by MySQL.
+			// This extension is currently required because:
+			// - The visitInfo system does not accept OR conditions. There are many scenarios where SUPER or a DYNAMIC privilege are supported,
+			//   this is the one case where SUPER is not intended to be an alternative.
+			// - The "ALL" privilege for TiDB does not include all dynamic privileges. This could be fixed by a bootstrap task to assign all SUPER users
+			//   with dynamic privileges.
+
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("GRANT OPTION")
+			vi = appendDynamicVisitInfo(vi, item.Name, true, err)
 			continue
 		}
+		nonDynamicPrivilege = true
 		if item.Priv == mysql.AllPriv {
 			switch stmt.Level.Level {
 			case ast.GrantLevelGlobal:
@@ -2360,7 +2372,11 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	for _, priv := range allPrivs {
 		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
-
+	if nonDynamicPrivilege {
+		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
+		// we need to attach the "GLOBAL" version of the GRANT OPTION.
+		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
+	}
 	return vi
 }
 
