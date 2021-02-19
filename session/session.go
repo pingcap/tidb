@@ -92,6 +92,17 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 )
 
+<<<<<<< HEAD
+=======
+var gcVariableMap = map[string]string{
+	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
+	variable.TiDBGCLifetime:     "tikv_gc_life_time",
+	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
+	variable.TiDBGCEnable:       "tikv_gc_enable",
+	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
+}
+
+>>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context
@@ -956,15 +967,19 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	}
 }
 
-// getExecRet executes restricted sql and the result is one column.
+// getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
-func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
-	rows, fields, err := s.ExecRestrictedSQL(sql)
+func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	if err != nil {
+		return "", err
+	}
+	rows, fields, err := s.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return "", err
 	}
 	if len(rows) == 0 {
-		return "", executor.ErrResultIsEmpty
+		return "", errResultIsEmpty
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
@@ -974,10 +989,45 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	return value, nil
 }
 
+<<<<<<< HEAD
 // GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
 func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
+=======
+var gcVariableComments = map[string]string{
+	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
+	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
+	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
+	variable.TiDBGCEnable:       "Current GC enable status",
+	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
+	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
+}
+
+// replaceTableValue executes restricted sql updates the variable value
+func (s *session) replaceTableValue(ctx context.Context, tblName string, varName, val string) error {
+	if tblName == mysql.TiDBTable { // maintain comment metadata
+		comment := gcVariableComments[varName]
+		stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, mysql.SystemDB, tblName, varName, val, comment)
+		if err != nil {
+			return err
+		}
+		_, _, err = s.ExecRestrictedStmt(ctx, stmt)
+		return err
+	}
+	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
+	return err
+}
+
+func (s *session) varFromTiDBTable(name string) bool {
+	switch name {
+	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
+		return true
+>>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 	}
 	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
 	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
@@ -1002,12 +1052,16 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(s, sql)
+	sysVar, err := s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 	if err != nil {
+<<<<<<< HEAD
 		if executor.ErrResultIsEmpty.Equal(err) {
 			if sv, ok := variable.SysVars[name]; ok {
+=======
+		if errResultIsEmpty.Equal(err) {
+			sv := variable.GetSysVar(name)
+			if sv != nil {
+>>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 				return sv.Value, nil
 			}
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1035,12 +1089,124 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
+<<<<<<< HEAD
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
 }
 
+=======
+	// update mysql.tidb if required.
+	if s.varFromTiDBTable(name) {
+		if err = s.setTiDBTableValue(name, sVal); err != nil {
+			return err
+		}
+	}
+	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
+	stmt, err := s.ParseWithParams(context.TODO(), "REPLACE %n.%n VALUES (%?, %?)", mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
+	return err
+}
+
+// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
+// for backwards compatibility. Validation has already been performed.
+func (s *session) setTiDBTableValue(name, val string) error {
+	if name == variable.TiDBGCConcurrency {
+		autoConcurrency := "false"
+		if val == "-1" {
+			autoConcurrency = "true"
+		}
+		err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency, autoConcurrency)
+		if err != nil {
+			return err
+		}
+	}
+	val = onOffToTrueFalse(val)
+	err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
+	return err
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return variable.BoolOn
+	} else if strings.EqualFold("false", str) {
+		return variable.BoolOff
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
+// getTiDBTableValue handles tikv_* sysvars which need
+// to read from mysql.tidb for backwards compatibility.
+func (s *session) getTiDBTableValue(name, val string) (string, error) {
+	if name == variable.TiDBGCConcurrency {
+		// Check if autoconcurrency is set
+		autoConcurrencyVal, err := s.getTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency)
+		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
+			return "-1", nil // convention for "AUTO"
+		}
+	}
+	tblValue, err := s.getTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name])
+	if err != nil {
+		return val, nil // mysql.tidb value does not exist.
+	}
+	// Run validation on the tblValue. This will return an error if it can't be validated,
+	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
+	tblValue = trueFalseToOnOff(tblValue)
+	validatedVal, err := variable.ValidateSetSystemVar(s.sessionVars, name, tblValue, variable.ScopeGlobal)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
+			zap.Error(err),
+			zap.String("name", name),
+			zap.String("tblName", gcVariableMap[name]),
+			zap.String("tblValue", tblValue),
+			zap.String("restoredValue", val))
+		err = s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
+		return val, err
+	}
+	if validatedVal != val {
+		// The sysvar value is out of sync.
+		err = s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, gcVariableMap[name], validatedVal)
+		return validatedVal, err
+	}
+	return validatedVal, nil
+}
+
+func (s *session) ensureFullGlobalStats() error {
+	stmt, err := s.ParseWithParams(context.TODO(), `select count(1) from information_schema.tables t where t.create_options = 'partitioned'
+	and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
+	if err != nil {
+		return err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return err
+	}
+	row := rows[0]
+	count := row.GetInt64(0)
+	if count > 0 {
+		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
+	}
+	return nil
+}
+
+>>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -1693,11 +1859,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	return s, nil
 }
 
-// loadSystemTZ loads systemTZ from mysql.tidb
-func loadSystemTZ(se *session) (string, error) {
-	return loadParameter(se, "system_tz")
-}
-
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
 	para, err := loadParameter(se, tidbNewCollationEnabled)
@@ -1741,6 +1902,7 @@ var (
 
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
+<<<<<<< HEAD
 	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
@@ -1760,6 +1922,9 @@ func loadParameter(se *session, name string) (string, error) {
 		return "", errResultIsEmpty
 	}
 	return req.GetRow(0).GetString(0), nil
+=======
+	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
+>>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
@@ -1777,8 +1942,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	initLoadCommonGlobalVarsSQL()
-
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -1790,8 +1953,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	// get system tz from mysql.tidb
-	tz, err := loadSystemTZ(se)
+	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
@@ -2118,24 +2282,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 }
 
-var (
-	loadCommonGlobalVarsSQLOnce sync.Once
-	loadCommonGlobalVarsSQL     string
-)
-
-func initLoadCommonGlobalVarsSQL() {
-	loadCommonGlobalVarsSQLOnce.Do(func() {
-		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-		if len(variable.PluginVarNames) > 0 {
-			vars = append(vars, variable.PluginVarNames...)
-		}
-		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
-	})
-}
-
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
-	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
@@ -2150,7 +2298,17 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
-		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+
+		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		return s.ExecRestrictedStmt(context.TODO(), stmt)
 	}
 	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
 	if err != nil {
