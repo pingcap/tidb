@@ -147,6 +147,7 @@ func WriteInsert(pCtx context.Context, cfg *Config, meta TableMeta, tblIR TableD
 
 	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, cfg.Labels)
 
+	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -277,6 +278,7 @@ func WriteInsertInCsv(pCtx context.Context, cfg *Config, meta TableMeta, tblIR T
 		delimiter: []byte(cfg.CsvDelimiter),
 	}
 
+	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -419,13 +421,15 @@ func buildFileWriter(ctx context.Context, s storage.ExternalStorage, fileName st
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(context.Context)) {
+func buildInterceptFileWriter(pCtx context.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(context.Context)) {
 	fileName += compressFileSuffix(compressType)
 	var writer storage.ExternalFileWriter
 	fullPath := path.Join(s.URI(), fileName)
 	fileWriter := &InterceptFileWriter{}
-	initRoutine := func(ctx context.Context) error {
-		w, err := storage.WithCompression(s, compressType).Create(ctx, fileName)
+	initRoutine := func() error {
+		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
+		// which will cause a context canceled error when closing gcs's Writer
+		w, err := storage.WithCompression(s, compressType).Create(pCtx, fileName)
 		if err != nil {
 			log.Error("open file failed",
 				zap.String("path", fullPath),
@@ -446,7 +450,9 @@ func buildInterceptFileWriter(s storage.ExternalStorage, fileName string, compre
 		log.Debug("tear down lazy file writer...", zap.String("path", fullPath))
 		err := writer.Close(ctx)
 		if err != nil {
-			log.Error("close file failed", zap.String("path", fullPath))
+			log.Error("close file failed",
+				zap.String("path", fullPath),
+				zap.Error(err))
 		}
 	}
 	return fileWriter, tearDownRoutine
@@ -492,13 +498,13 @@ type InterceptFileWriter struct {
 	sync.Once
 	SomethingIsWritten bool
 
-	initRoutine func(context.Context) error
+	initRoutine func() error
 	err         error
 }
 
 // Write implements storage.ExternalFileWriter.Write. It check whether writer has written something and init a file at first time
 func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) {
-	w.Do(func() { w.err = w.initRoutine(ctx) })
+	w.Do(func() { w.err = w.initRoutine() })
 	if len(p) > 0 {
 		w.SomethingIsWritten = true
 	}
