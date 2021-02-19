@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -451,7 +452,7 @@ func (b *Builder) applyPlacementDelete(id string) {
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
-	bundle, err := infosync.GetRuleBundle(nil, id)
+	bundle, err := infosync.GetRuleBundle(context.TODO(), id)
 	if err != nil {
 		return err
 	}
