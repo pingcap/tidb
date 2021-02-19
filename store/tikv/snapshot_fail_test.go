@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
@@ -123,19 +124,21 @@ func (s *testSnapshotFailSuite) TestRetryPointGetWithTS(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotGetTSAsync", `pause`), IsNil)
 	ch := make(chan error)
 	go func() {
-		_, err := snapshot.Get(context.Background(), []byte("k1"))
-		ch<-err
+		_, err := snapshot.Get(context.Background(), []byte("k4"))
+		ch <- err
 	}()
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = txn.Set([]byte("k1"), []byte("v1"))
+	err = txn.Set([]byte("k4"), []byte("v4"))
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
 	txn.SetOption(kv.GuaranteeLinearizability, false)
+	// Prewrite an async-commit lock and do not commit it.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", `return`), IsNil)
 	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
 	c.Assert(err, IsNil)
+	// Sets its minCommitTS to a large value, so the lock can be actually ignored.
 	committer.minCommitTS = committer.startTS + (1 << 28)
 	err = committer.execute(context.Background())
 	c.Assert(err, IsNil)

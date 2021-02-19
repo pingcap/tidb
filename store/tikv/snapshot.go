@@ -477,6 +477,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+
 			if s.version == kv.MaxVersion {
 				newTS, err := tsFuture.Wait()
 				if err != nil {
