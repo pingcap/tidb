@@ -8432,28 +8432,6 @@ func (s *testIntegrationSuite) TestIssue22098(c *C) {
 	tk.MustExec("set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';")
 	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f").Check(testkit.Rows())
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
-	// For issue 22179
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(10))")
-	tk.MustExec("insert into t values('aaaaaaaaa'),('天王盖地虎宝塔镇河妖')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
-
-	// check the collation of sub query of union statement.
-	tk.MustQuery("select collation(a) from (select null as a) aaa").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(a) from (select a from t limit 1) aaa").Check(testkit.Rows("utf8mb4_bin"))
-
-	// Reverse sub query of union statement.
-	tk.MustQuery("select * from (select null as a union all select a from t) aaa order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
-	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
-	tk.MustExec("drop table if exists t")
-}
 
 func (s *testIntegrationSuite) Test22717(c *C) {
 	// For issue 22717
@@ -8475,4 +8453,3 @@ func (s *testIntegrationSuite) Test22717(c *C) {
 	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
 	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }
->>>>>>> 8c2db1b93... expression: fix enum and set type expression in where clause (#22785)
