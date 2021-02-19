@@ -461,7 +461,10 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
 						if fVal == 0 {
-							// Check whether "" in set type.
+							// The elements listed in the column specification are assigned index numbers, beginning
+							// with 1. The index value of the empty string error value (distinguish from a "normal"
+							// empty string) is 0. Thus we need to check whether it's an empty string error value when
+							// `fVal==0`.
 							for idx, elem := range tp.Elems {
 								if elem == sVal {
 									fVal = float64(idx + 1)
