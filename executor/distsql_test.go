@@ -283,19 +283,3 @@ func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_a) where a > 99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
 	tk.MustQuery("select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
 }
-
-func (s *testSuite3) BenchmarkIndexLookUpGetResultChunk(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, d text, key idx_b_c(b,c))")
-	for i := 0; i < 1000; i ++ {
-		tk.MustExec("insert into tbl values(1,1,1,'11111 11111'),(2,2,2,'22222 22222'),(3,3,3,'33333 33333'),(4,4,4,'444444 44444'),(5,5,5,'55555 55555')")
-	}
-	c.ResetTimer()
-	for i := 0; i < c.N; i++ {
-		tk.MustQuery("select * from tbl use index(idx_b_c) where b = 1")
-		tk.MustQuery("select * from tbl use index(idx_b_c) where b > 2")
-		tk.MustQuery("select * from tbl use index(idx_b_c) where b = 3 limit 10")
-	}
-}
