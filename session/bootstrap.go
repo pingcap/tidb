@@ -1454,13 +1454,8 @@ func doDMLWorks(s Session) {
 	}
 }
 
-<<<<<<< HEAD
-func mustExecute(s Session, sql string) {
-	_, err := s.Execute(context.Background(), sql)
-=======
 func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(context.Background(), sql, args...)
->>>>>>> 99d0b22f0... session, util: update session to use new APIs (#22652)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))
