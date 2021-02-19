@@ -168,7 +168,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
+			sc := e.ctx.GetSessionVars().StmtCtx
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
 				return err
 			}
@@ -413,7 +414,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 				if err := cms.MergeCMSketch(cm); err != nil {
 					return nil, nil, nil, err
 				}
-				statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
+				statistics.MergeTopNAndUpdateCMSketch(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]))
 			}
 		}
 	}
@@ -1156,7 +1157,7 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		statistics.MergeTopN(topN, curTopN, cmSketch, numTop, false)
+		statistics.MergeTopNAndUpdateCMSketch(topN, curTopN, cmSketch, numTop)
 	}
 	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
@@ -1311,7 +1312,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
 	if statsVer == statistics.Version2 {
-		poped := statistics.MergeTopN(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]), false)
+		poped := statistics.MergeTopNAndUpdateCMSketch(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]))
 		hist.AddIdxVals(poped)
 	}
 	result := analyzeResult{
