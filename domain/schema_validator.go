@@ -158,7 +158,7 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 		for idx, ac := range actionTypes {
 			// NOTE: ac is not an action type, it is (1 << action type).
 			if ac == 1<<model.ActionUnlockTable {
-				s.do.Store().(kv.Store).GetMemCache().Delete(tblIDs[idx])
+				s.do.Store().(kv.StorageEx).GetMemCache().Delete(tblIDs[idx])
 			}
 		}
 		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),

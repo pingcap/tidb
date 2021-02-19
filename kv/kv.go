@@ -496,8 +496,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 }
 
-// Store defines the interface for a Store.
-type Store interface {
+// StorageEx extended the interface Storage.
+type StorageEx interface {
 	// GetMemCache return memory mamager of the storage
 	GetMemCache() MemManager
 }
