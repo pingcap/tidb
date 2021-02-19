@@ -32,13 +32,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(errno.ErrInvalidKey, errno.MySQLErrName[errno.ErrInvalidKey])
-	errInvalidRecordKey = terror.ClassXEval.New(errno.ErrInvalidRecordKey, errno.MySQLErrName[errno.ErrInvalidRecordKey])
-	errInvalidIndexKey  = terror.ClassXEval.New(errno.ErrInvalidIndexKey, errno.MySQLErrName[errno.ErrInvalidIndexKey])
+	errInvalidKey       = dbterror.ClassXEval.NewStd(errno.ErrInvalidKey)
+	errInvalidRecordKey = dbterror.ClassXEval.NewStd(errno.ErrInvalidRecordKey)
+	errInvalidIndexKey  = dbterror.ClassXEval.NewStd(errno.ErrInvalidIndexKey)
 )
 
 var (
@@ -473,6 +474,9 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
+			if types.CommonHandleNeedRestoredData(ft) {
+				continue
+			}
 			d, err := decodeHandleToDatum(handle, ft, idx)
 			if err != nil {
 				return row, err
@@ -856,6 +860,11 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsRecordKey is used to check whether the key is an record key.
+func IsRecordKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'r'
+}
+
 // IsIndexKey is used to check whether the key is an index key.
 func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
@@ -1108,33 +1117,34 @@ func encodePartitionID(idxVal []byte, partitionID int64) []byte {
 	return idxVal
 }
 
-type indexValueSegments struct {
-	commonHandle   []byte
-	partitionID    []byte
-	restoredValues []byte
-	intHandle      []byte
+// IndexValueSegments use to store result of SplitIndexValue.
+type IndexValueSegments struct {
+	CommonHandle   []byte
+	PartitionID    []byte
+	RestoredValues []byte
+	IntHandle      []byte
 }
 
-// splitIndexValue splits index value into segments.
-func splitIndexValue(value []byte) (segs indexValueSegments) {
+// SplitIndexValue splits index value into segments.
+func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 	tailLen := int(value[0])
 	tail := value[len(value)-tailLen:]
 	value = value[1 : len(value)-tailLen]
 	if len(tail) >= 8 {
-		segs.intHandle = tail[:8]
+		segs.IntHandle = tail[:8]
 	}
 	if len(value) > 0 && value[0] == CommonHandleFlag {
 		handleLen := uint16(value[1])<<8 + uint16(value[2])
 		handleEndOff := 3 + handleLen
-		segs.commonHandle = value[3:handleEndOff]
+		segs.CommonHandle = value[3:handleEndOff]
 		value = value[handleEndOff:]
 	}
 	if len(value) > 0 && value[0] == PartitionIDFlag {
-		segs.partitionID = value[1:9]
+		segs.PartitionID = value[1:9]
 		value = value[9:]
 	}
 	if len(value) > 0 && value[0] == RestoreDataFlag {
-		segs.restoredValues = value
+		segs.RestoredValues = value
 	}
 	return
 }
@@ -1145,13 +1155,13 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
-	segs := splitIndexValue(value)
+	segs := SplitIndexValue(value)
 	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
 	if err != nil {
 		return nil, err
 	}
-	if segs.restoredValues != nil { // new collation
-		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.restoredValues)
+	if segs.RestoredValues != nil { // new collation
+		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
 		if err != nil {
 			return nil, err
 		}
@@ -1160,12 +1170,12 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return resultValues, nil
 	}
 
-	if segs.intHandle != nil {
+	if segs.IntHandle != nil {
 		// In unique int handle index.
-		handle = decodeIntHandleInIndexValue(segs.intHandle)
-	} else if segs.commonHandle != nil {
+		handle = decodeIntHandleInIndexValue(segs.IntHandle)
+	} else if segs.CommonHandle != nil {
 		// In unique common handle index.
-		handle, err = decodeHandleInIndexKey(segs.commonHandle)
+		handle, err = decodeHandleInIndexKey(segs.CommonHandle)
 		if err != nil {
 			return nil, err
 		}
@@ -1181,8 +1191,8 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
-	if segs.partitionID != nil {
-		_, pid, err := codec.DecodeInt(segs.partitionID)
+	if segs.PartitionID != nil {
+		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
 		}

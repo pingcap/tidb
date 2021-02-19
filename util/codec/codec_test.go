@@ -927,6 +927,15 @@ func (s *testCodecSuite) TestCut(c *C) {
 	c.Assert(n, Equals, int64(42))
 }
 
+func (s *testCodecSuite) TestCutOneError(c *C) {
+	var b []byte
+	_, _, err := CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key")
+	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
+	_, _, err = CutOne(b)
+	c.Assert(err, ErrorMatches, "invalid encoded key.*")
+}
+
 func (s *testCodecSuite) TestSetRawValues(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
@@ -1034,6 +1043,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
 		{types.Set{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.Set{Name: "f", Value: 32}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a", "b", "c", "d", "e", "f"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
@@ -1064,14 +1074,14 @@ func chunkForTest(c *C, sc *stmtctx.StatementContext, datums []types.Datum, tps 
 }
 
 func (s *testCodecSuite) TestDecodeRange(c *C) {
-	_, _, err := DecodeRange(nil, 0)
+	_, _, err := DecodeRange(nil, 0, nil, nil)
 	c.Assert(err, NotNil)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(nil, nil, datums...)
 	c.Assert(err, IsNil)
 
-	datums1, _, err := DecodeRange(rowData, len(datums))
+	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
 	c.Assert(err, IsNil)
 	for i, datum := range datums1 {
 		cmp, err := datum.CompareDatum(nil, &datums[i])
@@ -1081,7 +1091,7 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 	for _, b := range []byte{NilFlag, bytesFlag, maxFlag, maxFlag + 1} {
 		newData := append(rowData, b)
-		_, _, err := DecodeRange(newData, len(datums)+1)
+		_, _, err := DecodeRange(newData, len(datums)+1, nil, nil)
 		c.Assert(err, IsNil)
 	}
 }

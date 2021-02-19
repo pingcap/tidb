@@ -40,20 +40,20 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("explicit_defaults_for_timestamp")
 	c.Assert(f, NotNil)
-	c.Assert(f.Value, Equals, "1")
+	c.Assert(f.Value, Equals, "ON")
 
 	f = GetSysVar("port")
 	c.Assert(f, NotNil)
 	c.Assert(f.Value, Equals, "4000")
 
 	f = GetSysVar("tidb_low_resolution_tso")
-	c.Assert(f.Value, Equals, "0")
+	c.Assert(f.Value, Equals, "OFF")
 
 	f = GetSysVar("tidb_replica_read")
 	c.Assert(f.Value, Equals, "leader")
 
 	f = GetSysVar("tidb_enable_table_partition")
-	c.Assert(f.Value, Equals, "on")
+	c.Assert(f.Value, Equals, "ON")
 }
 
 func (*testSysVarSuite) TestTxnMode(c *C) {
@@ -68,11 +68,6 @@ func (*testSysVarSuite) TestTxnMode(c *C) {
 	c.Assert(err, IsNil)
 	err = seVar.setTxnMode("something else")
 	c.Assert(err, NotNil)
-}
-
-func (*testSysVarSuite) TestBoolToInt32(c *C) {
-	c.Assert(BoolToInt32(true), Equals, int32(1))
-	c.Assert(BoolToInt32(false), Equals, int32(0))
 }
 
 func (*testSysVarSuite) TestError(c *C) {

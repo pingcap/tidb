@@ -187,7 +187,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test table primary key is not integer.
-	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")
@@ -591,6 +591,18 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		{
 			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
 			"create table t1 (id int) /*T![auto_id_cache] auto_id_cache=5 */ ;",
+		},
+		{
+			"create table t1 (id int, a varchar(255), primary key (a, b) clustered);",
+			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] clustered */ );",
+		},
+		{
+			"create table t1 (id int, a varchar(255), primary key (a, b) nonclustered);",
+			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */ );",
+		},
+		{
+			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
+			"create table t1 (id int, a varchar(255), primary key (a, b) /*T![clustered_index] nonclustered */);",
 		},
 	}
 	for _, ca := range testCase {

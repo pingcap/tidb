@@ -43,16 +43,16 @@ func (s *FspTest) TestCheckFsp(c *C) {
 	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 1)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+1))
+	c.Assert(obtained, Equals, MaxFsp)
+	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 2019)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+2019))
+	c.Assert(obtained, Equals, MaxFsp)
+	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 4294967296)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MaxFsp)+4294967296))
+	c.Assert(obtained, Equals, MaxFsp)
+	c.Assert(err, IsNil)
 
 	obtained, err = CheckFsp(int(MaxFsp+MinFsp) / 2)
 	c.Assert(obtained, Equals, (MaxFsp+MinFsp)/2)

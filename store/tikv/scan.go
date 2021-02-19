@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -86,7 +86,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackofferWithVars(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
+	bo := NewBackofferWithVars(context.WithValue(context.Background(), TxnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -144,7 +144,8 @@ func (s *Scanner) startTS() uint64 {
 }
 
 func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
-	val, err := s.snapshot.get(bo, current.Key)
+	ctx := context.Background()
+	val, err := s.snapshot.get(ctx, bo, current.Key)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -189,7 +190,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Context: &pb.Context{
 				Priority:       s.snapshot.priority,
 				NotFillCache:   s.snapshot.notFillCache,
-				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+				IsolationLevel: IsolationLevelToPB(s.snapshot.isolationLevel),
 			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
@@ -203,11 +204,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
+		s.snapshot.mu.RLock()
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.mu.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
-			TaskId:       s.snapshot.taskID,
+			TaskId:       s.snapshot.mu.taskID,
 		})
+		s.snapshot.mu.RUnlock()
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
 			return errors.Trace(err)
@@ -233,6 +236,26 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		err = s.snapshot.store.CheckVisibility(s.startTS())
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// When there is a response-level key error, the returned pairs are incomplete.
+		// We should resolve the lock first and then retry the same request.
+		if keyErr := cmdScanResp.GetError(); keyErr != nil {
+			lock, err := extractLockFromKeyErr(keyErr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			msBeforeExpired, _, err := newLockResolver(s.snapshot.store).ResolveLocks(bo, s.snapshot.version.Ver, []*Lock{lock})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if msBeforeExpired > 0 {
+				err = bo.BackoffWithMaxSleep(BoTxnLockFast, int(msBeforeExpired), errors.Errorf("key is locked during scanning"))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			continue
 		}
 
 		kvPairs := cmdScanResp.Pairs

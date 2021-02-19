@@ -14,7 +14,6 @@
 package domain
 
 import (
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -40,17 +39,4 @@ func GetDomain(ctx sessionctx.Context) *Domain {
 		return nil
 	}
 	return v
-}
-
-// CanRuntimePruneTbl indicates whether tbl support runtime prune.
-func CanRuntimePruneTbl(ctx sessionctx.Context, tbl *model.TableInfo) bool {
-	if tbl.Partition == nil {
-		return false
-	}
-	return GetDomain(ctx).StatsHandle().CanRuntimePrune(tbl.ID, tbl.Partition.Definitions[0].ID)
-}
-
-// CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
-func CanRuntimePrune(ctx sessionctx.Context, tid, p0Id int64) bool {
-	return GetDomain(ctx).StatsHandle().CanRuntimePrune(tid, p0Id)
 }

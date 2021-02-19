@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -36,19 +38,44 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testSerialStatsSuite{})
 
-type testStatsSuite struct {
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+type testSuiteBase struct {
 	store kv.Storage
 	do    *domain.Domain
 	hook  *logHook
 }
 
-func (s *testStatsSuite) SetUpSuite(c *C) {
+type testStatsSuite struct {
+	testSuiteBase
+}
+
+func (s *testSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
 	s.registerHook()
@@ -57,13 +84,13 @@ func (s *testStatsSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStatsSuite) TearDownSuite(c *C) {
+func (s *testSuiteBase) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testStatsSuite) registerHook() {
+func (s *testSuiteBase) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
@@ -321,184 +348,265 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
-	testKit.MustExec(createTable)
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	pi := tableInfo.GetPartitionInfo()
-	c.Assert(len(pi.Definitions), Equals, 2)
-	bColID := tableInfo.Columns[1].ID
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		s.do.StatsHandle().RefreshVars()
+		testKit.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
+		testKit.MustExec(createTable)
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		pi := tableInfo.GetPartitionInfo()
+		c.Assert(len(pi.Definitions), Equals, 2)
+		bColID := tableInfo.Columns[1].ID
 
-	testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(1))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
-	}
+		testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(1))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+		}
 
-	testKit.MustExec(`update t set a = a + 1, b = "aa"`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(2))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
-	}
+		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
+		}
 
-	testKit.MustExec("delete from t")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(3))
-		c.Assert(statsTbl.Count, Equals, int64(0))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
-	}
+		testKit.MustExec("delete from t")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+			c.Assert(statsTbl.Count, Equals, int64(0))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
+		}
+	})
 }
 
 func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a varchar(20))")
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (a varchar(20))")
 
-	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
-	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-	}()
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
 
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
 
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(h.Update(is), IsNil)
-	stats := h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(0))
+		h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(h.Update(is), IsNil)
+		stats := h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(5))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	for _, item := range stats.Columns {
-		// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
-		c.Assert(item.TotColSize, Equals, int64(15))
-		break
-	}
+		_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(5))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+		for _, item := range stats.Columns {
+			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
+			c.Assert(item.TotColSize, Equals, int64(15))
+			break
+		}
 
-	// Test that even if the table is recently modified, we can still analyze the table.
-	h.SetLease(time.Second)
-	defer func() { h.SetLease(0) }()
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(6))
-	c.Assert(stats.ModifyCount, Equals, int64(1))
+		// Test that even if the table is recently modified, we can still analyze the table.
+		h.SetLease(time.Second)
+		defer func() { h.SetLease(0) }()
+		_, err = testKit.Exec("insert into t values ('fff')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(6))
+		c.Assert(stats.ModifyCount, Equals, int64(1))
 
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(7))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
+		_, err = testKit.Exec("insert into t values ('fff')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(7))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values ('eee')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	// Modify count is non-zero means that we do not analyze the table.
-	c.Assert(stats.ModifyCount, Equals, int64(1))
-	for _, item := range stats.Columns {
-		// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-		c.Assert(item.TotColSize, Equals, int64(27))
-		break
-	}
+		_, err = testKit.Exec("insert into t values ('eee')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(8))
+		// Modify count is non-zero means that we do not analyze the table.
+		c.Assert(stats.ModifyCount, Equals, int64(1))
+		for _, item := range stats.Columns {
+			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
+			c.Assert(item.TotColSize, Equals, int64(27))
+			break
+		}
 
-	testKit.MustExec("analyze table t")
-	_, err = testKit.Exec("create index idx on t(a)")
-	c.Assert(err, IsNil)
-	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-	c.Assert(ok, IsTrue)
-	c.Assert(hg.NDV, Equals, int64(3))
-	c.Assert(hg.Len(), Equals, 3)
+		testKit.MustExec("analyze table t")
+		_, err = testKit.Exec("create index idx on t(a)")
+		c.Assert(err, IsNil)
+		is = do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo = tbl.Meta()
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(8))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
+		c.Assert(ok, IsTrue)
+		c.Assert(hg.NDV, Equals, int64(3))
+		c.Assert(hg.Len(), Equals, 3)
+	})
 }
 
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
-	testKit.MustExec("analyze table t")
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+		testKit.MustExec("analyze table t")
 
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
+
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		pi := tableInfo.GetPartitionInfo()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
+
+		c.Assert(h.Update(is), IsNil)
+		stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(stats.Count, Equals, int64(0))
+
+		testKit.MustExec("insert into t values (1)")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(stats.Count, Equals, int64(1))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+	})
+}
+
+func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
+	do := s.do
 	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 	defer func() {
 		handle.AutoAnalyzeMinCnt = 1000
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 	}()
-
-	do := s.do
+	h := do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	is := do.InfoSchema()
+	err := h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	// Auto analyze when global ver is 1.
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	pi := tableInfo.GetPartitionInfo()
-	h := do.StatsHandle()
-
-	c.Assert(h.Update(is), IsNil)
-	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	c.Assert(stats.Count, Equals, int64(0))
-
-	testKit.MustExec("insert into t values (1)")
+	statsTbl1 := h.GetTableStats(tbl.Meta())
+	// Check that all the version of t's stats are 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 2")
+	err = h.UpdateSessionVar()
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze(is)
-	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	c.Assert(stats.Count, Equals, int64(1))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
+	c.Assert(h.Update(is), IsNil)
+	statsTbl1 = h.GetTableStats(tbl.Meta())
+	c.Assert(statsTbl1.Count, Equals, int64(5))
+	// All of its statistics should still be version 1.
+	for _, col := range statsTbl1.Columns {
+		c.Assert(col.StatsVer, Equals, int64(1))
+	}
+	for _, idx := range statsTbl1.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(1))
+	}
+	// Add a new table after the analyze version set to 2.
+	tk.MustExec("create table tt(a int, index idx(a))")
+	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	c.Assert(h.Update(is), IsNil)
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
+	for _, idx := range statsTbl2.Indices {
+		c.Assert(idx.StatsVer, Equals, int64(2))
+	}
+	for _, col := range statsTbl2.Columns {
+		c.Assert(col.StatsVer, Equals, int64(2))
+	}
+	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
@@ -734,7 +842,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
@@ -760,25 +868,25 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5 order by a desc",
 			hist: "column:1 ndv:4 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
-				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n" +
-				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
+				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1",
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0\n" +
-				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1",
+				"num: 3 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -880,22 +988,22 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
-				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0 ndv: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0 ndv: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0 ndv: 0",
 			idxCols: 1,
 		},
 	}
@@ -985,7 +1093,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
@@ -1017,9 +1125,9 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	tbl := h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
+		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	c.Assert(err, IsNil)
@@ -1027,8 +1135,8 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0\n"+
-		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1")
+		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0")
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
@@ -1073,9 +1181,9 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
-		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
+		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 }
 
 type logHook struct {
@@ -1148,17 +1256,17 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}" +
-				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, column=a, rangeStr=range: [-inf,8), actual: 8, expected: 8, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, column=a, rangeStr=range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}" +
-				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1}",
+			result: "[stats-feedback] test.t, index=idx, rangeStr=range: [-inf,8), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0, num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0}" +
+				"[stats-feedback] test.t, index=idx, rangeStr=range: [8,16), actual: 8, expected: 8, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1 ndv: 0, num: 4 lower_bound: 16 upper_bound: 19 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
-			result: "[stats-feedback] test.t, index=idx_ba, actual=1, equality=1, expected equality=1, range=range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
+			result: "[stats-feedback] test.t, index=idx_ba, actual=1, equality=1, expected equality=1, range=range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1 ndv: 0}",
 		},
 		{
 			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
@@ -1495,7 +1603,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
-	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("analyze table t with 3 buckets, 0 topn")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
 	is := s.do.InfoSchema()
@@ -1514,9 +1622,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `a = 1` is 0.
 			sql: "select * from t where a = 1 and b < 21",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 14 upper_bound: 21 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1525,9 +1633,9 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			// The real count of `b > 10` is 0.
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
-				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
+				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1585,25 +1693,25 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50 or (a > 130 and a < 140)",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t where a >= 10",
 			hist: "column:1 ndv:30 totColSize:0\n" +
-				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0 ndv: 0",
 			colID: 1,
 		},
 		{
 			sql: "select * from t use index(idx) where a = 1 and (b <= 50 or (b > 130 and b < 140))",
 			hist: "column:2 ndv:20 totColSize:30\n" +
-				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
-				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0",
+				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 7 lower_bound: 14 upper_bound: 51 repeats: 0 ndv: 0",
 			colID: 2,
 		},
 	}
@@ -1665,33 +1773,33 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		{
 			sql: "select * from t where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t",
 		},
 		{
 			sql: "select count(*) from t",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0 ndv: 0",
 			tblName: "t",
 		},
 		{
 			sql: "select * from t1 where a <= 50",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0 ndv: 0",
 			tblName: "t1",
 		},
 		{
 			sql: "select count(*) from t1",
 			hist: "column:1 ndv:30 totColSize:10\n" +
-				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0\n" +
-				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0\n" +
-				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0",
+				"num: 8 lower_bound: 0 upper_bound: 8 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 16 repeats: 0 ndv: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 18446744073709551615 repeats: 0 ndv: 0",
 			tblName: "t1",
 		},
 	}
@@ -1774,4 +1882,64 @@ func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
 	for i := 0; i < c.N; i++ {
 		h.HandleAutoAnalyze(is)
 	}
+}
+
+// subtraction parses the number for counter and returns new - old.
+// string for counter will be `label:<name:"type" value:"ok" > counter:<value:0 > `
+func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
+	newStr := newMetric.String()
+	oldStr := oldMetric.String()
+	newIdx := strings.LastIndex(newStr, ":")
+	newNum, _ := strconv.Atoi(newStr[newIdx+1 : len(newStr)-3])
+	oldIdx := strings.LastIndex(oldStr, ":")
+	oldNum, _ := strconv.Atoi(oldStr[oldIdx+1 : len(oldStr)-3])
+	return newNum - oldNum
+}
+
+func (s *testStatsSuite) TestDisableFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(0.0)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 0)
+}
+
+func (s *testStatsSuite) TestFeedbackCounter(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability.Store(1)
+	oldNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
+	testKit.MustExec("analyze table t with 0 topn")
+	for i := 0; i < 20; i++ {
+		testKit.MustQuery("select /*+ use_index(t, idx_a) */ * from t where a < 4")
+	}
+
+	newNum := &dto.Metric{}
+	metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(newNum)
+	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }

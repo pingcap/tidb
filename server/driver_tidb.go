@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -148,10 +149,23 @@ func (ts *TiDBStatement) Reset() {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-	//TODO close at tidb level
-	err := ts.ctx.DropPreparedStmt(ts.id)
-	if err != nil {
-		return err
+	// TODO close at tidb level
+	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
+		err := ts.ctx.DropPreparedStmt(ts.id)
+		if err != nil {
+			return err
+		}
+	} else {
+		if core.PreparedPlanCacheEnabled() {
+			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			if !ok {
+				return errors.Errorf("invalid CachedPrepareStmt type")
+			}
+			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+		}
+		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -378,9 +392,9 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// client such as Navicat. Now we only allow string type enter this branch.
 		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
 		if err != nil {
-			ci.ColumnLength = ci.ColumnLength * 4
+			ci.ColumnLength *= 4
 		} else {
-			ci.ColumnLength = ci.ColumnLength * uint32(charsetDesc.Maxlen)
+			ci.ColumnLength *= uint32(charsetDesc.Maxlen)
 		}
 	}
 

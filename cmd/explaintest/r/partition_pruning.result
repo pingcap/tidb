@@ -1950,7 +1950,7 @@ partition p2 values less than (2000)
 insert into t8 values ('1985-05-05'),('1995-05-05');
 explain select * from t8 where a < '1980-02-02';
 id	estRows	task	access object	operator info
-TableReader_7	3323.33	root	partition:all	data:Selection_6
+TableReader_7	3323.33	root	partition:p0,p1	data:Selection_6
 └─Selection_6	3323.33	cop[tikv]		lt(test.t8.a, 1980-02-02 00:00:00.000000)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
 create table t9 (a date not null) partition by RANGE(TO_DAYS(a)) (
@@ -2172,9 +2172,9 @@ IndexLookUp_10	250.00	root	partition:all
 └─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t2 where b > 5 and b < 7;
 id	estRows	task	access object	operator info
-IndexLookUp_10	250.00	root	partition:all	
-├─IndexRangeScan_8(Build)	250.00	cop[tikv]	table:t2, index:b(b)	range:(5,7), keep order:false, stats:pseudo
-└─TableRowIDScan_9(Probe)	250.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_10	312.50	root	partition:all	
+├─IndexRangeScan_8(Build)	312.50	cop[tikv]	table:t2, index:b(b)	range:[6,6], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	312.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t2 where b > 0 and b < 5;
 id	estRows	task	access object	operator info
 IndexLookUp_10	250.00	root	partition:all	
@@ -2333,8 +2333,8 @@ TableReader_7	250.00	root	partition:all	data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
 id	estRows	task	access object	operator info
-TableReader_7	250.00	root	partition:all	data:Selection_6
-└─Selection_6	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+TableReader_7	3323.33	root	partition:all	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t1;
 create table t1 (a bigint) partition by range(a+0) (

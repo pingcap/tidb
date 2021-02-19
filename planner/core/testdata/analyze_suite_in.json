@@ -117,6 +117,12 @@
     ]
   },
   {
+    "name": "TestLowSelIndexGreedySearch",
+    "cases": [
+      "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'"
+    ]
+  },
+  {
     "name": "TestEmptyTable",
     "cases": [
       "select * from t where t.c1 <= 50",
@@ -186,6 +192,15 @@
       "explain select * from t where a = 7639902",
       // Should choose `primary` index instead of index `b`.
       "explain select c, b from t where a = 7639902 order by b asc limit 6"
+    ]
+  },
+  {
+    "name": "TestLimitIndexEstimation",
+    "cases": [
+      // Should choose idx_a instead of idx_b, because idx_b would scan 990001 rows.
+      "explain select * from t where a <= 10000 order by b limit 1",
+      // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
+      "explain select * from t where a >= 999900 order by b limit 1"
     ]
   }
 ]

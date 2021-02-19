@@ -257,13 +257,12 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 			}
 			return nil
 		}
+		result.MergeNulls(src)
 		for i := range f32s {
-			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
-			if src.IsNull(i) {
-				result.SetNull(i, true)
-			} else {
-				f64s[i] = float64(f32s[i])
+			if result.IsNull(i) {
+				continue
 			}
+			f64s[i] = float64(f32s[i])
 		}
 		return nil
 	}
@@ -331,7 +330,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col)), nil
+	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.

@@ -113,7 +113,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
 	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
@@ -174,7 +174,7 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		conf.AlterPrimaryKey = false
 	})
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
 	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -332,7 +332,7 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.MustExec("set @@tidb_enable_clustered_index = true")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
@@ -376,7 +376,7 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
 	tk.MustExec("use test_get_endhandle")
-	tk.MustExec("set @@tidb_enable_clustered_index = true")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
@@ -591,7 +591,11 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	errMsg := err.Error()
+	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
+	// For now, there's no way to guarantee that cancelling will always take effect.
+	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
+	c.Assert(strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"), IsTrue)
 }
 
 func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
@@ -646,9 +650,8 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// if GC enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
+	tk.MustExec("DROP TABLE t_recover")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -890,7 +893,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				return t.DropTableOrView(job.SchemaID, job.TableID, true)
 			})
@@ -1166,6 +1169,9 @@ func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
 
 	tk.MustExec("use auto_random_db")
 
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
 	tk.MustExec("drop table if exists e1, e2, e3, e4;")
 
 	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
@@ -1250,6 +1256,31 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	}
 }
 
+func (s *testSerialSuite) TestAutoRandomWithPreSplitRegion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
+	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+
+	// Test pre-split table region for auto_random table.
+	tk.MustExec("create table t (a bigint auto_random(2) primary key, b int) pre_split_regions=2;")
+	re := tk.MustQuery("show table t regions;")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 4)
+	tbl := testGetTableByName(c, tk.Se, "auto_random_db", "t")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+}
+
 func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -1281,6 +1312,7 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustExec("alter table t collate utf8mb4_general_ci")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs")
 	// Change the default collation of database is allowed.
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
@@ -1474,4 +1506,30 @@ func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
 	tk.MustExec("drop table if exists t")
 	_, err := tk.Exec("create table t(a int)")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSerialSuite) TestCheckEnumLength(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
+	tk.MustGetErrCode("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
+	tk.MustGetErrCode("create table t1 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
+	tk.MustExec("create table t2 (id int primary key)")
+	tk.MustGetErrCode("alter table t2 add a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')", errno.ErrTooLongValueForType)
+	tk.MustGetErrCode("alter table t2 add a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')", errno.ErrTooLongValueForType)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableEnumLengthLimit = false
+	})
+	_, err := tk.Exec("create table t3 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))")
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t3 values(1)")
+	tk.MustQuery("select a from t3").Check(testkit.Rows("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+	_, err = tk.Exec("create table t4 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))")
+	c.Assert(err, IsNil)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableEnumLengthLimit = true
+	})
+	tk.MustGetErrCode("create table t5 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
+	tk.MustGetErrCode("create table t5 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
+	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
 }

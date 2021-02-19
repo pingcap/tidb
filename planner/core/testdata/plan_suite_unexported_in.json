@@ -163,6 +163,8 @@
       "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
       // Test TopN + Left Semi Join Apply + Proj.
       "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+      // Test TopN + Left Semi Outer Join + Proj.
+      "select (exists (select s.a from t s where t.a = s.a)) as x from t order by x limit 5",
       // Test TopN + Semi Join Apply + Proj.
       "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
       // Test TopN + Right Join + Proj.
@@ -362,7 +364,9 @@
       "select f, g, sum(a) from t",
       "select * from t t1 join t t2 on t1.a = t2.e",
       "select f from t having sum(a) > 0",
-      "select * from t t1 left join t t2 on t1.a = t2.a"
+      "select * from t t1 left join t t2 on t1.a = t2.a",
+      "select a from t where b > 0",
+      "select a from t where b > 0 limit 5"
     ]
   },
   {
@@ -399,7 +403,16 @@
       "select t01.a from (select a from t t21 union all select a from t t22) t2 join t t01 on 1 left outer join t t3 on 1 join t t4 on 1",
       "select 1 from (select count(b) as cnt from t) t1",
       "select count(1) from (select count(b) as cnt from t) t1",
-      "select count(1) from (select count(b) as cnt from t group by c) t1"
+      "select count(1) from (select count(b) as cnt from t group by c) t1",
+      "select b from t where a > 0 limit 5, 10"
+    ]
+  },
+  {
+    "name": "TestSortByItemsPruning",
+    "cases": [
+      "select * from t where a > 1 order by a asc, a asc limit 10",
+      "select * from t where a > 1 order by a asc, b asc, a asc, c asc limit 10",
+      "select * from t where a > 1 order by pow(a, 2) asc, b asc, pow(a, 2) asc, c asc limit 10"
     ]
   },
   {

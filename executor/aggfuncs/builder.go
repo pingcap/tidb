@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -25,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -53,12 +56,18 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevPop:
+		return buildStdDevPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
-	case ast.AggFuncStddevPop:
-		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxPercentile:
+		return buildApproxPercentile(ctx, aggFuncDesc, ordinal)
+	case ast.AggFuncVarSamp:
+		return buildVarSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevSamp:
+		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -83,11 +92,11 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncNtile:
 		return buildNtile(windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
-		return buildPercenRank(ordinal, orderByCols)
+		return buildPercentRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
-		return buildLead(windowFuncDesc, ordinal)
+		return buildLead(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
-		return buildLag(windowFuncDesc, ordinal)
+		return buildLag(ctx, windowFuncDesc, ordinal)
 	case ast.AggFuncMax:
 		// The max/min aggFunc using in the window function will using the sliding window algo.
 		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
@@ -125,6 +134,43 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
 		case aggregation.Partial2Mode, aggregation.FinalMode:
 			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
+}
+
+func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	// Checked while building descriptor
+	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
+	if err != nil {
+		// Should not reach here
+		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
+		return nil
+	}
+
+	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
+
+	switch aggFuncDesc.Mode {
+	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		case types.ETInt:
+			return &percentileOriginal4Int{base}
+		case types.ETReal:
+			return &percentileOriginal4Real{base}
+		case types.ETDecimal:
+			return &percentileOriginal4Decimal{base}
+		case types.ETDatetime, types.ETTimestamp:
+			return &percentileOriginal4Time{base}
+		case types.ETDuration:
+			return &percentileOriginal4Duration{base}
+		default:
+			// Return NULL in any case
+			return &base
 		}
 	}
 
@@ -202,6 +248,11 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 			ordinal: ordinal,
 		},
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -230,6 +281,15 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if len(base.args) == 2 {
+		frac = base.args[1].GetType().Decimal
+	}
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
+
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -274,6 +334,11 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
@@ -323,6 +388,11 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		},
 		isMax: isMax,
 	}
+	frac := base.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
@@ -503,6 +573,44 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
+// buildVarSamp builds the AggFunc implementation for function "VAR_SAMP()"
+func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &varSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildStddevSamp builds the AggFunc implementation for function "STDDEV_SAMP()"
+func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &stddevSamp4Float64{varPop4Float64{base}}
+	}
+}
+
 // buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
 func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
@@ -577,14 +685,14 @@ func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &ntile{baseAggFunc: base, n: n}
 }
 
-func buildPercenRank(ordinal int, orderByCols []*expression.Column) AggFunc {
+func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 	base := baseAggFunc{
 		ordinal: ordinal,
 	}
 	return &percentRank{baseAggFunc: base, rowComparer: buildRowComparer(orderByCols)}
 }
 
-func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
+func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
 		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
@@ -593,6 +701,13 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	defaultExpr = expression.NewNull()
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
+		switch et := defaultExpr.(type) {
+		case *expression.Constant:
+			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			if err1 == nil {
+				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			}
+		}
 	}
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
@@ -602,10 +717,10 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
-func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lead{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLead(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lead{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }
 
-func buildLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return &lag{buildLeadLag(aggFuncDesc, ordinal)}
+func buildLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	return &lag{buildLeadLag(ctx, aggFuncDesc, ordinal)}
 }

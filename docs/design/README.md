@@ -6,7 +6,7 @@ The design document provides a high-level description of the architecture and im
 
 Writing a design document can promote us to think deliberately and gather knowledge from others to get our job done better. An excellent design document is closely related to the success of our task.
 
-## Proprosal Process
+## Proposal Process
 
 1. Before starting to write a design document, please [create a new issue](https://github.com/pingcap/tidb/issues/new/choose) for tracing the process of your design.
 2. Create a new [Google Doc](https://docs.google.com/document/u/0/) to write the design document. Please refer to this [proposal template](./TEMPLATE.md).
@@ -34,6 +34,7 @@ Writing a design document can promote us to think deliberately and gather knowle
 - [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 - [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 - [Proposal: Access a table using multiple indexes](./2019-04-11-indexmerge.md)
+- [Proposal: Collations in TiDB](./2020-01-24-collations.md)
 
 ### Completed
 

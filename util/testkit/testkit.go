@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
@@ -116,6 +117,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	return &TestKit{
 		c:     c,
 		store: store,
+	}
+}
+
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
 	}
 }
 
@@ -309,7 +319,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(err, check.IsNil, comment)
+	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
@@ -325,4 +335,11 @@ func (tk *TestKit) GetTableID(tableName string) int64 {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	tk.c.Assert(err, check.IsNil)
 	return tbl.Meta().ID
+}
+
+// WithPruneMode run test case under prune mode.
+func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
+	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
+	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
+	f()
 }

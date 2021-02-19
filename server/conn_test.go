@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -557,21 +558,21 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	//There is no underlying netCon, use failpoint to avoid panic
+	// There is no underlying netCon, use failpoint to avoid panic
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
 
 	c.Parallel()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
-	connID := 1
-	se.SetConnectionID(uint64(connID))
+	connID := uint64(1)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
-		connectionID: uint32(connID),
+		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
@@ -579,8 +580,8 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
-		clients: map[uint32]*clientConn{
-			uint32(connID): cc,
+		clients: map[uint64]*clientConn{
+			connID: cc,
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
@@ -675,11 +676,16 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
-	tk.MustExec("set @@tidb_enable_clustered_index=0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
@@ -704,4 +710,50 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+}
+
+func (ts *ConnTestSuite) TestFallbackToTiKVWhenTiFlashIsDown(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout", "return(true)"), IsNil)
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+
+	tk.MustExec("set @@session.tidb_enable_tiflash_fallback_tikv = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (3, 4), (6, 7), (9, 10)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustQuery("explain select sum(a) from t").Check(testkit.Rows(
+		"StreamAgg_20 1.00 root  funcs:sum(Column#6)->Column#4",
+		"└─TableReader_21 1.00 root  data:StreamAgg_8",
+		"  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
+		"    └─TableFullScan_19 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"))
+
+	ctx := context.Background()
+	c.Assert(cc.handleQuery(ctx, "select sum(a) from t"), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+	c.Assert(cc.handleStmtPrepare(ctx, "select sum(a) from t"), IsNil)
+	c.Assert(cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}), IsNil)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/errorMockTiFlashServerTimeout"), IsNil)
 }
