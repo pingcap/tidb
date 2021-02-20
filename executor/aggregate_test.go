@@ -898,7 +898,7 @@ func (s *testSuiteAgg) TestAggEliminator(c *C) {
 func (s *testSuiteAgg) TestClusterIndexMaxMinEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 10+1; i++ {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
