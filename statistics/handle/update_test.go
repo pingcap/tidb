@@ -1182,6 +1182,102 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0 ndv: 0")
 }
 
+func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set global tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
+
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 Variable tidb_analyze_version will not be updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback.`))
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+
+	// Case 2: Feedback wouldn't be applied on version 2 statistics.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("2"))
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	testKit.MustExec("analyze table t")
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblBefore := h.GetTableStats(tblInfo)
+	statistics.FeedbackProbability.Store(1)
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	// trigger feedback
+	testKit.MustExec("select * from t where t.a <= 5 order by a desc")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter := h.GetTableStats(tblInfo)
+	// assert that statistics not changed
+	assertTableEqual(c, statsTblBefore, statsTblAfter)
+
+	// case 3: Feedback is still effective on version 1 statistics.
+	testKit.MustExec("set tidb_analyze_version = 1")
+	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t1 with 0 topn")
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	is = s.do.InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblInfo = table.Meta()
+	statsTblBefore = h.GetTableStats(tblInfo)
+	// trigger feedback
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter = h.GetTableStats(tblInfo)
+	// assert that statistics changed(feedback worked)
+	c.Assert(statistics.HistogramEqual(&statsTblBefore.Indices[1].Histogram, &statsTblAfter.Indices[1].Histogram, false), IsFalse)
+
+	// case 4: When existing version 1 stats + tidb_analyze_version=2 + feedback enabled, explicitly running `analyze table` still results in version 1 stats.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set tidb_analyze_version = 2")
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustExec("analyze table t1 with 0 topn")
+	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
+}
+
 type logHook struct {
 	zapcore.Core
 	results string

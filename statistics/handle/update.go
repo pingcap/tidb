@@ -557,13 +557,10 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // it takes 10 minutes for a feedback to take effect. However, we can use the
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
-	logutil.BgLogger().Error("=============UpdateStatsByLocalFeedback")
 	h.sweepList()
 OUTER:
 	for _, fbs := range h.feedback.Feedbacks {
-		logutil.BgLogger().Error("=============for each h.feedback.Feedbacks")
 		for _, fb := range fbs {
-			logutil.BgLogger().Error("=============for each QueryFeedback")
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
 			h.mu.Unlock()
@@ -582,9 +579,6 @@ OUTER:
 				if idx.StatsVer >= statistics.Version2 {
 					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
-					logutil.BgLogger().Warn("[stats] Feedback is not used because statistics on this table is version 2, which is incompatible with feedback. "+
-						"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
-						zap.Int64("table_id", fb.PhysicalID), zap.Int64("hist_id", fb.Hist.ID), zap.Int64("is_index", 1))
 					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
@@ -600,9 +594,6 @@ OUTER:
 				if col.StatsVer >= statistics.Version2 {
 					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
-					logutil.BgLogger().Warn("[stats] Feedback is not used because statistics on this table is version 2, which is incompatible with feedback. "+
-						"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
-						zap.Int64("table_id", fb.PhysicalID), zap.Int64("hist_id", fb.Hist.ID), zap.Int64("is_index", 0))
 					continue OUTER
 				}
 				newCol := *col
@@ -743,7 +734,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		statsVer = idx.StatsVer
 		if statsVer >= 2 {
 			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
-				"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
 				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
 			return err
 		}
@@ -758,7 +749,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		col, ok := tbl.Columns[histID]
 		if ok && col.StatsVer >= 2 {
 			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
-				"Please consider setting feedback-probability to 0.0 in config file to disable statistics feedback.",
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
 				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
 			return err
 		}
