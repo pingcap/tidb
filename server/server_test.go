@@ -593,7 +593,7 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
 		str2 := strconv.Itoa(n2)
-		row := "'" + str1 + "','" + str2+ "'"
+		row := "'" + str1 + "','" + str2 + "'"
 		_, err := fp.WriteString(row)
 		c.Assert(err, IsNil)
 		if i != 49999 {

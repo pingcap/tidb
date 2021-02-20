@@ -404,7 +404,7 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	return nil, curData
 }
 
-func (e *LoadDataInfo) isInQuoter(bs []byte) bool{
+func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 	inQuoter := false
 
 	type termType int
@@ -414,17 +414,17 @@ func (e *LoadDataInfo) isInQuoter(bs []byte) bool{
 		escaped
 	)
 
-	cmpTerm := func(bs byte) (typ termType){
-		if bs == e.FieldsInfo.Enclosed{
+	cmpTerm := func(bs byte) (typ termType) {
+		if bs == e.FieldsInfo.Enclosed {
 			return enclosed
 		}
-		if bs == e.FieldsInfo.Escaped{
+		if bs == e.FieldsInfo.Escaped {
 			return escaped
 		}
 		return none
 	}
 
-	for i := 0; i < len(bs); i ++ {
+	for i := 0; i < len(bs); i++ {
 		switch cmpTerm(bs[i]) {
 		case enclosed:
 			inQuoter = !inQuoter
@@ -544,7 +544,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:],inquotor)
+			endIdx = e.indexOfTerminator(curData[curStartIdx:], inquotor)
 		}
 	}
 	if endIdx == -1 {
@@ -558,7 +558,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:],inquotor)
+			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
@@ -579,7 +579,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:],inquotor)
+		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
 	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true

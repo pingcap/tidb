@@ -168,7 +168,7 @@ func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
 	ts.runTestLoadDataAutoRandom(c)
 }
 
-func(ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
+func (ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
 	ts.runTestLoadDataAutoRandomWithSpecialTerm(c)
 }
 
