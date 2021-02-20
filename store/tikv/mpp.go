@@ -43,14 +43,10 @@ func (c *batchCopTask) GetAddress() string {
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
-	c.store.regionCache.storeMu.RLock()
-	for _, st := range c.store.regionCache.storeMu.stores {
-		if st.storeType == TiFlash {
-			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
-			resultTasks = append(resultTasks, task)
-		}
+	for _, addr := range c.store.regionCache.GetTiFlashStoreAddrs() {
+		task := &batchCopTask{storeAddr: addr, cmdType: tikvrpc.CmdMPPTask}
+		resultTasks = append(resultTasks, task)
 	}
-	c.store.regionCache.storeMu.RUnlock()
 	return resultTasks
 }
 
