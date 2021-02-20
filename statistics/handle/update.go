@@ -878,12 +878,13 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
 		return
 	}
+	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || pruneMode == variable.DynamicOnly {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
@@ -892,15 +893,12 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
-				for _, def := range pi.Definitions {
-					sql := "analyze table %n.%n partition %n"
-					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-					if analyzed {
-						return
-					}
-					continue
+			for _, def := range pi.Definitions {
+				sql := "analyze table %n.%n partition %n"
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				if analyzed {
+					return
 				}
 			}
 		}
