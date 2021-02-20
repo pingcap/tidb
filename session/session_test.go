@@ -77,6 +77,8 @@ var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
+var _ = Suite(&testClusteredSuite{})
+var _ = SerialSuites(&testClusteredSerialSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
