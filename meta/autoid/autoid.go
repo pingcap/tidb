@@ -91,6 +91,14 @@ func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
 	alloc.customStep = true
 }
 
+// V4TableInfoAllocOption is one kind of AllocOption to represent the related `TableInfo` is in version 4.
+type V4TableInfoAllocOption struct{}
+
+// ApplyOn is implement the AllocOption interface.
+func (step V4TableInfoAllocOption) ApplyOn(alloc *allocator) {
+	alloc.greaterThanV4TableInfo = true
+}
+
 // AllocOption is a interface to define allocator custom options coming in future.
 type AllocOption interface {
 	ApplyOn(*allocator)
@@ -154,13 +162,14 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	// dbID is current database's ID.
-	dbID          int64
-	isUnsigned    bool
-	lastAllocTime time.Time
-	step          int64
-	customStep    bool
-	allocType     AllocatorType
-	sequence      *model.SequenceInfo
+	dbID                   int64
+	isUnsigned             bool
+	lastAllocTime          time.Time
+	step                   int64
+	customStep             bool
+	allocType              AllocatorType // Please use GetType() to access this field.
+	sequence               *model.SequenceInfo
+	greaterThanV4TableInfo bool
 }
 
 // GetStep is only used by tests
@@ -408,6 +417,9 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 	for _, fn := range opts {
 		fn.ApplyOn(alloc)
 	}
+	if !alloc.greaterThanV4TableInfo && alloc.allocType == AutoIncrementType {
+		alloc.allocType = RowIDAllocType
+	}
 	return alloc
 }
 
@@ -426,25 +438,22 @@ func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
+	var opts []AllocOption
+	if tblInfo.AutoIdCache > 0 {
+		opts = []AllocOption{CustomAutoIncCacheOption(tblInfo.AutoIdCache)}
+	}
+	if tblInfo.Version >= model.TableInfoVersion4 {
+		opts = append(opts, V4TableInfoAllocOption{})
+	}
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	if hasRowID {
-		if tblInfo.AutoIdCache > 0 {
-			opt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, opt))
-		} else {
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
-		}
+		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, opts...))
 	}
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasAutoIncID {
-		if tblInfo.AutoIdCache > 0 {
-			opt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, opt))
-		} else {
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType))
-		}
+		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, opts...))
 	}
 	if tblInfo.ContainsAutoRandomBits() {
 		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))

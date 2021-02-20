@@ -361,12 +361,16 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 			hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
+			var opts []autoid.AllocOption
+			if tblInfo.Version >= model.TableInfoVersion4 {
+				opts = []autoid.AllocOption{autoid.V4TableInfoAllocOption{}}
+			}
 			if hasRowID {
-				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, opts...)
 				allocs = append(allocs, newAlloc)
 			}
 			if ok, _ := HasAutoIncrementColumn(tblInfo); ok {
-				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.AutoIncrementType)
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.AutoIncrementType, opts...)
 				allocs = append(allocs, newAlloc)
 			}
 		case model.ActionRebaseAutoRandomBase:

@@ -346,6 +346,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		var colName, idType string
 		switch alloc.GetType() {
 		case autoid.RowIDAllocType:
+			idType = "_tidb_rowid"
 			colName = model.ExtraHandleName.O
 		case autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
