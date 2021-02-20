@@ -527,9 +527,9 @@ func (s *testStatsSuite) TestInitStatsVer2(c *C) {
 	c.Assert(h.InitStats(is), IsNil)
 	table0 := h.GetTableStats(tbl.Meta())
 	cols := table0.Columns
-	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
-	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
-	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x33))
+	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x34))
+	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x34))
+	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x34))
 	h.Clear()
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())

@@ -1207,7 +1207,7 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	statistics.FeedbackProbability.Store(1)
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 	testKit.MustExec("set @@tidb_analyze_version = 2")
-	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 Variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback.`))
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback`))
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 
 	// Case 2: Feedback wouldn't be applied on version 2 statistics.
@@ -1283,6 +1283,8 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 		"Warning 1105 Use analyze version 1 on table `t1` because this table already has version 1 statistics and query feedback is also enabled." +
 			" If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
+
+	testKit.MustExec("set global tidb_analyze_version = 1")
 }
 
 type logHook struct {
