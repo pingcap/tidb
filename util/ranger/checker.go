@@ -210,7 +210,7 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 
 // GetLengthOfPrefixableConstant returns length of characters if constant is bytes or string type and returns -1 otherwise.
 func GetLengthOfPrefixableConstant(c *expression.Constant, tp *types.FieldType) int {
-	if c == nil {
+	if c == nil || c.DeferredExpr != nil || c.ParamMarker != nil {
 		return -1
 	}
 	val, err := c.Eval(chunk.Row{})
