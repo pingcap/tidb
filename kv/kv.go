@@ -343,6 +343,7 @@ const (
 )
 
 // StoreType represents the type of a store.
+// Type enums should sync with store/tikv.StoreType.
 type StoreType uint8
 
 const (
