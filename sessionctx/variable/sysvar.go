@@ -750,7 +750,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBGuaranteeLinearizability, Value: BoolToOnOff(DefTiDBGuaranteeLinearizability), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if normalizedValue == "2" && FeedbackProbability.Load() > 0 {
-			var original string
+			var original = "1"
 			var err error
 			if scope == ScopeGlobal {
 				original, err = vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeVersion)
@@ -760,7 +760,7 @@ var defaultSysVars = []*SysVar{
 			} else {
 				original = strconv.Itoa(vars.AnalyzeVersion)
 			}
-			vars.StmtCtx.AppendError(errors.New("Variable tidb_analyze_version will not be updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback."))
+			vars.StmtCtx.AppendError(errors.New("Variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback."))
 			return original, nil
 		}
 		return normalizedValue, nil

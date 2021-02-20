@@ -1203,7 +1203,7 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	statistics.FeedbackProbability.Store(1)
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 	testKit.MustExec("set @@tidb_analyze_version = 2")
-	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 Variable tidb_analyze_version will not be updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback.`))
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 Variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback.`))
 	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 
 	// Case 2: Feedback wouldn't be applied on version 2 statistics.
@@ -1242,7 +1242,7 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	// assert that statistics not changed
 	assertTableEqual(c, statsTblBefore, statsTblAfter)
 
-	// case 3: Feedback is still effective on version 1 statistics.
+	// Case 3: Feedback is still effective on version 1 statistics.
 	testKit.MustExec("set tidb_analyze_version = 1")
 	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b))")
 	for i := 0; i < 200; i++ {
@@ -1270,7 +1270,7 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	// assert that statistics changed(feedback worked)
 	c.Assert(statistics.HistogramEqual(&statsTblBefore.Indices[1].Histogram, &statsTblAfter.Indices[1].Histogram, false), IsFalse)
 
-	// case 4: When existing version 1 stats + tidb_analyze_version=2 + feedback enabled, explicitly running `analyze table` still results in version 1 stats.
+	// Case 4: When existing version 1 stats + tidb_analyze_version=2 + feedback enabled, explicitly running `analyze table` still results in version 1 stats.
 	statistics.FeedbackProbability.Store(0)
 	testKit.MustExec("set tidb_analyze_version = 2")
 	statistics.FeedbackProbability.Store(1)

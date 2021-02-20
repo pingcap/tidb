@@ -760,7 +760,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	// The column or index has been deleted.
 	if hist == nil {
-		return err
+		return nil
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
