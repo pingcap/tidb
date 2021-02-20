@@ -54,9 +54,9 @@ func (s StringSet) Count() int {
 
 const (
 	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
-	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
 	// The bucket size may be changed by golang implement in the future.
-	defBucketMemoryUsage = 8*(1+16+0) + 16
+	DefStringSetBucketMemoryUsage = 8*(1+16+0) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
 	// Represent as loadFactorNum/loadFactorDen, to allow integer math.
 	loadFactorNum = 13
@@ -75,7 +75,7 @@ func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWith
 		StringSet: set,
 		bInMap:    0,
 	}
-	memDelta = defBucketMemoryUsage * (1 << setWithMemoryUsage.bInMap)
+	memDelta = DefStringSetBucketMemoryUsage * (1 << setWithMemoryUsage.bInMap)
 	for _, s := range ss {
 		memDelta += setWithMemoryUsage.Insert(s)
 	}
@@ -85,7 +85,7 @@ func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWith
 func (s StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	s.StringSet.Insert(val)
 	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
-		memDelta = defBucketMemoryUsage * (1 << s.bInMap)
+		memDelta = DefStringSetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
 	return memDelta + int64(len(val))

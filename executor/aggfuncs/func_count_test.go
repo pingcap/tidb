@@ -15,6 +15,7 @@ package aggfuncs_test
 
 import (
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/set"
 	"testing"
 
 	"github.com/dgryski/go-farm"
@@ -126,15 +127,15 @@ func (s *testSuite) TestMemCount(c *C) {
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4CountDistinctRealSize, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4CountDistinctDecimalSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctDecimalSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 5,
-			aggfuncs.DefPartialResult4CountDistinctStringSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountDistinctStringSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 5,
-			aggfuncs.DefPartialResult4CountWithDistinctSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountWithDistinctSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4CountDistinctDurationSize, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeJSON, 5,
-			aggfuncs.DefPartialResult4CountWithDistinctSize, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4CountWithDistinctSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 5,
