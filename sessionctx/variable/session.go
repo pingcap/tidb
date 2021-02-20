@@ -1683,6 +1683,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
+		if val != oracle.GlobalTxnScope && val != oracle.LocalTxnScope {
+			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		}
 		s.TxnScope = val
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))

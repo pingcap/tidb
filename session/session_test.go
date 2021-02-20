@@ -4019,6 +4019,18 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 	}
 }
 
+func (s *testSessionSuite) TestTxnScopeSetting(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	tk.MustExec("set @@txn_scope='local'")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.LocalTxnScope))
+	err := tk.ExecToErr("set @@txn_scope='foo'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
+}
+
 func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer", "return(false)"), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/executor/mockStalenessTxnSchemaVer")
