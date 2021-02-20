@@ -50,7 +50,7 @@ const (
 )
 
 type partialResult4CountDistinctInt struct {
-	valSet set.Int64Set
+	valSet set.Int64SetWithMemoryUsage
 }
 
 type countOriginalWithDistinct4Int struct {
@@ -58,14 +58,15 @@ type countOriginalWithDistinct4Int struct {
 }
 
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	valSet, memDelta := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctInt{
-		valSet: set.NewInt64Set(),
-	}), DefPartialResult4CountDistinctIntSize
+		valSet: valSet,
+	}), DefPartialResult4CountDistinctIntSize + memDelta
 }
 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
-	p.valSet = set.NewInt64Set()
+	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
 func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -194,7 +195,7 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 }
 
 type partialResult4CountDistinctDuration struct {
-	valSet set.Int64Set
+	valSet set.Int64SetWithMemoryUsage
 }
 
 type countOriginalWithDistinct4Duration struct {
@@ -202,14 +203,15 @@ type countOriginalWithDistinct4Duration struct {
 }
 
 func (e *countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	valSet, memDelta := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctDuration{
-		valSet: set.NewInt64Set(),
-	}), DefPartialResult4CountDistinctDurationSize
+		valSet: valSet,
+	}), DefPartialResult4CountDistinctDurationSize + memDelta
 }
 
 func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDuration)(pr)
-	p.valSet = set.NewInt64Set()
+	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
 }
 
 func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

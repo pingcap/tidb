@@ -82,7 +82,7 @@ func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWith
 	return setWithMemoryUsage, memDelta
 }
 
-func (s StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
+func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	s.StringSet.Insert(val)
 	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
 		memDelta = DefStringSetBucketMemoryUsage * (1 << s.bInMap)

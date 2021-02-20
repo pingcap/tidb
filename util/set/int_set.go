@@ -68,3 +68,38 @@ func (s Int64Set) Insert(val int64) {
 func (s Int64Set) Count() int {
 	return len(s)
 }
+
+const (
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
+	// DefInt64SetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(int64) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// The bucket size may be changed by golang implement in the future.
+	DefInt64SetBucketMemoryUsage = 8*(1+8+0) + 16
+)
+
+type Int64SetWithMemoryUsage struct {
+	Int64Set
+	bInMap int64
+}
+
+// NewStringSetWithMemoryUsage builds a string set.
+func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
+	set := make(Int64Set, len(ss))
+	setWithMemoryUsage = Int64SetWithMemoryUsage{
+		Int64Set: set,
+		bInMap:   0,
+	}
+	memDelta = DefInt64SetBucketMemoryUsage * (1 << setWithMemoryUsage.bInMap)
+	for _, s := range ss {
+		memDelta += setWithMemoryUsage.Insert(s)
+	}
+	return setWithMemoryUsage, memDelta
+}
+
+func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
+	s.Int64Set.Insert(val)
+	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+		memDelta = DefInt64SetBucketMemoryUsage * (1 << s.bInMap)
+		s.bInMap++
+	}
+	return memDelta + 8
+}
