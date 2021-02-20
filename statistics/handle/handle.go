@@ -882,11 +882,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	cm_sketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
+	cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
 	if err != nil {
 		return err
 	}
-	fm_sketch, err := statistics.EncodeFMSketch(hg.FMSketch)
+	fmSketch, err := statistics.EncodeFMSketch(hg.FMSketch)
 	if err != nil {
 		return err
 	}
@@ -906,7 +906,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		flag = statistics.AnalyzeFlag
 	}
 	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, fm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cm_sketch, fm_sketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, fmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
