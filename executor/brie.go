@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"strings"
@@ -37,12 +38,19 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+)
+
+const (
+	defaultCapOfCreateTable    = 512
+	defaultCapOfCreateDatabase = 64
+	brViaSQLComment            = `/*from(br_via_sql)*/`
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -411,6 +419,11 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
+	query, err := gs.showCreateDatabase(schema)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gs.se.SetValue(sessionctx.QueryString, query)
 	schema = schema.Clone()
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
@@ -421,7 +434,11 @@ func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBI
 // CreateTable implements glue.Session
 func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
-
+	query, err := gs.showCreateTable(table)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gs.se.SetValue(sessionctx.QueryString, query)
 	// Clone() does not clone partitions yet :(
 	table = table.Clone()
 	if table.Partition != nil {
@@ -429,7 +446,6 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-
 	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
 }
 
@@ -465,4 +481,28 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case "Size":
 		gs.info.archiveSize = value
 	}
+}
+
+// showCreateTable shows the result of SHOW CREATE TABLE from a TableInfo.
+func (gs *tidbGlueSession) showCreateTable(tbl *model.TableInfo) (string, error) {
+	table := tbl.Clone()
+	table.AutoIncID = 0
+	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateTable))
+	// this can never fail.
+	_, _ = result.WriteString(brViaSQLComment)
+	if err := ConstructResultOfShowCreateTable(gs.se, tbl, autoid.Allocators{}, result); err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.String(), nil
+}
+
+// showCreateDatabase shows the result of SHOW CREATE DATABASE from a dbInfo.
+func (gs *tidbGlueSession) showCreateDatabase(db *model.DBInfo) (string, error) {
+	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateDatabase))
+	// this can never fail.
+	_, _ = result.WriteString(brViaSQLComment)
+	if err := ConstructResultOfShowCreateDatabase(gs.se, db, true, result); err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.String(), nil
 }
