@@ -376,9 +376,9 @@ func (b *builtinArithmeticMinusIntSig) minusFUU(result *chunk.Column, lhi64s, rh
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		ulh, urh, uMaxInt64, uAbsMinInt64 := uint64(lh), uint64(rh), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
-		if (ulh >= urh && ulh-urh > uMaxInt64) || (ulh < urh && urh-ulh > uAbsMinInt64) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowFUU(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -393,14 +393,9 @@ func (b *builtinArithmeticMinusIntSig) minusFUS(result *chunk.Column, lhi64s, rh
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		// lh >= 0 && rh >= 0 : never overflow
-		// lh < 0 && rh > 0 : uint64(lh) - uint64(rh) > maxint64
-		// lh < 0 && rh <= 0 : definitely overflow
-		// lh >= 0 && rh < 0 : (-rh > maxint64 - lh) || lh >= 0 && rh == minint64
-		if (lh < 0 && rh > 0 && uint64(lh) > uint64(math.MaxInt64+rh)) ||
-			(lh < 0 && rh <= 0) ||
-			(lh >= 0 && rh < 0 && (rh == math.MinInt64 || -rh > math.MaxInt64-lh)) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowFUS(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -415,12 +410,9 @@ func (b *builtinArithmeticMinusIntSig) minusFSU(result *chunk.Column, lhi64s, rh
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		// lh >= 0 && rh >= 0 : never overflow
-		// lh >= 0 && rh < 0 : uint64(rh) - uint64(lh) > maxint64 + 1
-		// lh < 0 && rh >= 0 : lh - rh < minint64
-		// lh < 0 && rh < 0 : definitely overflow
-		if (lh >= 0 && rh < 0 && uint64(rh)-uint64(lh) > uint64(math.MaxInt64+1)) || (lh < 0 && rh >= 0 && -rh < math.MinInt64-lh) || (lh < 0 && rh < 0) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowFSU(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -434,8 +426,9 @@ func (b *builtinArithmeticMinusIntSig) minusUU(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if uint64(lh) < uint64(rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowUU(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -450,11 +443,9 @@ func (b *builtinArithmeticMinusIntSig) minusUS(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if rh >= 0 && uint64(lh) < uint64(rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
-		}
-		if rh < 0 && uint64(lh) > math.MaxUint64-uint64(-rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowUS(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -469,8 +460,9 @@ func (b *builtinArithmeticMinusIntSig) minusSU(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if lh < 0 || uint64(lh) < uint64(rh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowSU(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
@@ -484,8 +476,9 @@ func (b *builtinArithmeticMinusIntSig) minusSS(result *chunk.Column, lhi64s, rhi
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		if (lh >= 0 && rh == math.MinInt64) || (lh > 0 && -rh > math.MaxInt64-lh) || (lh < 0 && -rh < math.MinInt64-lh) {
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+		err := b.checkOverflowSS(lh, rh)
+		if err != nil {
+			return err
 		}
 
 		resulti64s[i] = lh - rh
