@@ -411,30 +411,6 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	return topN
 }
 
-// EncodeFMSketch encodes the given FMSketch to byte slice.
-func EncodeFMSketch(c *FMSketch) ([]byte, error) {
-	if c == nil {
-		return nil, nil
-	}
-	p := FMSketchToProto(c)
-	protoData, err := p.Marshal()
-	return protoData, err
-}
-
-// DecodeFMSketch decode a FMSketch from the given byte slice.
-func DecodeFMSketch(data []byte) (*FMSketch, error) {
-	if data == nil {
-		return nil, nil
-	}
-	p := &tipb.FMSketch{}
-	err := p.Unmarshal(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	fm := FMSketchFromProto(p)
-	return fm, nil
-}
-
 // EncodeCMSketchWithoutTopN encodes the given CMSketch to byte slice.
 // Note that it does not include the topN.
 func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
