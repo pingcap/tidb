@@ -614,7 +614,7 @@ func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, is
 }
 
 func (h *Handle) fmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
-	rows, _, err := reader.read("select fm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	rows, _, err := reader.read("select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
@@ -670,11 +670,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fms := row.GetBytes(11)
-	fmSketch, err := statistics.DecodeFMSketch(fms)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -714,6 +709,10 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			col.FMSketch = fmSketch
 			break
 		}
@@ -790,7 +789,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		table = table.Copy()
 	}
 	table.Pseudo = false
-	rows, _, err := reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos, fm_sketch from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
@@ -901,12 +900,17 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			}
 		}
 	}
+	if fmSketch != nil {
+		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
+			return err
+		}
+	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, fm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, fmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
