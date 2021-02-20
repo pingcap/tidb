@@ -32,13 +32,14 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -55,29 +56,14 @@ type twoPhaseCommitAction interface {
 	String() string
 }
 
-var (
-	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
-	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
-	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
-	tikvAsyncCommitTxnCounterOk                    = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
-	tikvAsyncCommitTxnCounterError                 = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("err")
-	tikvOnePCTxnCounterOk                          = metrics.TiKVOnePCTxnCounter.WithLabelValues("ok")
-	tikvOnePCTxnCounterError                       = metrics.TiKVOnePCTxnCounter.WithLabelValues("err")
-)
-
 // Global variable set by config file.
 var (
 	ManagedLockTTL uint64 = 20000 // 20s
 )
 
-// metricsTag returns detail tag for metrics.
-func metricsTag(action string) string {
-	return "2pc_" + action
-}
-
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store               *tikvStore
+	store               *KVStore
 	txn                 *tikvTxn
 	startTS             uint64
 	mutations           *memBufferMutations
@@ -89,9 +75,6 @@ type twoPhaseCommitter struct {
 	detail              unsafe.Pointer
 	txnSize             int
 	hasNoNeedCommitKeys bool
-
-	prewriteOnlyKeys int
-	ignoredKeys      int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -769,7 +752,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 					zap.Uint64("session", c.sessionID),
 					zap.Stringer("action type", action),
 					zap.Error(e))
-				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
+				metrics.SecondaryLockCleanupFailureCounterCommit.Inc()
 			}
 		}()
 	} else {
@@ -809,8 +792,8 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	// If the rate limit is too high, tikv will report service is busy.
 	// If the rate limit is too low, we can't full utilize the tikv's throughput.
 	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > config.GetGlobalConfig().Performance.CommitterConcurrency {
-		rateLim = config.GetGlobalConfig().Performance.CommitterConcurrency
+	if rateLim > config.GetGlobalConfig().CommitterConcurrency {
+		rateLim = config.GetGlobalConfig().CommitterConcurrency
 	}
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	err := batchExecutor.process(batches)
@@ -888,13 +871,13 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
-			if uptime > config.GetGlobalConfig().Performance.MaxTxnTTL {
+			if uptime > config.GetGlobalConfig().MaxTxnTTL {
 				// Checks maximum lifetime for the ttlManager, so when something goes wrong
 				// the key will not be locked forever.
 				logutil.Logger(bo.ctx).Info("ttlManager live up to its lifetime",
 					zap.Uint64("txnStartTS", c.startTS),
 					zap.Uint64("uptime", uptime),
-					zap.Uint64("maxTxnTTL", config.GetGlobalConfig().Performance.MaxTxnTTL))
+					zap.Uint64("maxTxnTTL", config.GetGlobalConfig().MaxTxnTTL))
 				metrics.TiKVTTLLifeTimeReachCounter.Inc()
 				// the pessimistic locks may expire if the ttl manager has timed out, set `LockExpired` flag
 				// so that this transaction could only commit or rollback with no more statement executions
@@ -910,18 +893,18 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 			startTime := time.Now()
 			_, err = sendTxnHeartBeat(bo, c.store, c.primary(), c.startTS, newTTL)
 			if err != nil {
-				tiKVTxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
+				metrics.TxnHeartBeatHistogramError.Observe(time.Since(startTime).Seconds())
 				logutil.Logger(bo.ctx).Warn("send TxnHeartBeat failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
 				return
 			}
-			tiKVTxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
+			metrics.TxnHeartBeatHistogramOK.Observe(time.Since(startTime).Seconds())
 		}
 	}
 }
 
-func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, ttl uint64) (uint64, error) {
+func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, ttl uint64) (uint64, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdTxnHeartBeat, &pb.TxnHeartBeatRequest{
 		PrimaryLock:   primary,
 		StartVersion:  startTS,
@@ -998,9 +981,10 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 	return c.sessionID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
 
-func (c *twoPhaseCommitter) needExternalConsistency() bool {
-	guaranteeExternalConsistencyOption := c.txn.us.GetOption(kv.GuaranteeExternalConsistency)
-	return guaranteeExternalConsistencyOption != nil && guaranteeExternalConsistencyOption.(bool)
+func (c *twoPhaseCommitter) needLinearizability() bool {
+	GuaranteeLinearizabilityOption := c.txn.us.GetOption(kv.GuaranteeLinearizability)
+	// by default, guarantee
+	return GuaranteeLinearizabilityOption == nil || GuaranteeLinearizabilityOption.(bool)
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
@@ -1045,10 +1029,10 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 			failpoint.Return()
 		})
 
-		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+		cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
 		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
 		if err != nil {
-			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
+			metrics.SecondaryLockCleanupFailureCounterRollback.Inc()
 			logutil.Logger(ctx).Info("2PC cleanup failed",
 				zap.Error(err),
 				zap.Uint64("txnStartTS", c.startTS))
@@ -1067,9 +1051,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if c.isOnePC() {
 			// The error means the 1PC transaction failed.
 			if err != nil {
-				tikvOnePCTxnCounterError.Inc()
+				metrics.OnePCTxnCounterError.Inc()
 			} else {
-				tikvOnePCTxnCounterOk.Inc()
+				metrics.OnePCTxnCounterOk.Inc()
 			}
 		} else if c.isAsyncCommit() {
 			// The error means the async commit should not succeed.
@@ -1077,9 +1061,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if c.getUndeterminedErr() == nil {
 					c.cleanup(ctx)
 				}
-				tikvAsyncCommitTxnCounterError.Inc()
+				metrics.AsyncCommitTxnCounterError.Inc()
 			} else {
-				tikvAsyncCommitTxnCounterOk.Inc()
+				metrics.AsyncCommitTxnCounterOk.Inc()
 			}
 		} else {
 			// Always clean up all written keys if the txn does not commit.
@@ -1114,11 +1098,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}
-	// If we want to use async commit or 1PC and also want external consistency across
+	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
-	if commitTSMayBeCalculated && c.needExternalConsistency() {
+	if commitTSMayBeCalculated && c.needLinearizability() {
+		failpoint.Inject("getMinCommitTSFromTSO", nil)
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
@@ -1714,7 +1699,7 @@ func (b *batched) forgetPrimary() {
 // batchExecutor is txn controller providing rate control like utils
 type batchExecutor struct {
 	rateLim           int                  // concurrent worker numbers
-	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
+	rateLimiter       *util.RateLimit      // rate limiter for concurrency control, maybe more strategies
 	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
 	action            twoPhaseCommitAction // the work action type
 	backoffer         *Backoffer           // Backoffer
@@ -1731,7 +1716,7 @@ func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 // initUtils do initialize batchExecutor related policies like rateLimit util
 func (batchExe *batchExecutor) initUtils() error {
 	// init rateLimiter by injected rate limit number
-	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
+	batchExe.rateLimiter = util.NewRateLimit(batchExe.rateLim)
 	return nil
 }
 
@@ -1739,11 +1724,11 @@ func (batchExe *batchExecutor) initUtils() error {
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchMutations) {
 	for idx, batch1 := range batches {
 		waitStart := time.Now()
-		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
+		if exit := batchExe.rateLimiter.GetToken(exitCh); !exit {
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
 			go func() {
-				defer batchExe.rateLimiter.putToken()
+				defer batchExe.rateLimiter.PutToken()
 				var singleBatchBackoffer *Backoffer
 				if _, ok := batchExe.action.(actionCommit); ok {
 					// Because the secondary batches of the commit actions are implemented to be
@@ -1828,7 +1813,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
-		return kvPriorityToCommandPri(pri.(int))
+		return PriorityToPB(pri.(int))
 	}
 	return pb.CommandPri_Normal
 }
@@ -1840,7 +1825,8 @@ func getTxnSyncLog(txn *tikvTxn) bool {
 	return false
 }
 
-func kvPriorityToCommandPri(pri int) pb.CommandPri {
+// PriorityToPB converts priority type to wire type.
+func PriorityToPB(pri int) pb.CommandPri {
 	switch pri {
 	case kv.PriorityLow:
 		return pb.CommandPri_Low

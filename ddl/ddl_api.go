@@ -628,7 +628,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionPrimaryKey:
 				// Check PriKeyFlag first to avoid extra duplicate constraints.
 				if col.Flag&mysql.PriKeyFlag == 0 {
-					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
+					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys,
+						Option: &ast.IndexOption{PrimaryKeyTp: v.PrimaryKeyTp}}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
 					// Add NotNullFlag early so that processColumnFlags() can see it.
@@ -1424,23 +1425,35 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			if !config.GetGlobalConfig().AlterPrimaryKey {
-				singleIntPK := isSingleIntPK(constr, lastCol)
-				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
-				if singleIntPK || clusteredIdx {
-					// Primary key cannot be invisible.
-					if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
-						return nil, ErrPKIndexCantBeInvisible
-					}
-				}
-				if singleIntPK {
+			pkTp := model.PrimaryKeyTypeDefault
+			if constr.Option != nil {
+				pkTp = constr.Option.PrimaryKeyTp
+			}
+			switch pkTp {
+			case model.PrimaryKeyTypeNonClustered:
+				break
+			case model.PrimaryKeyTypeClustered:
+				if isSingleIntPK(constr, lastCol) {
 					tbInfo.PKIsHandle = true
-					// Avoid creating index for PK handle column.
-					continue
-				}
-				if clusteredIdx {
+				} else {
 					tbInfo.IsCommonHandle = true
 				}
+			case model.PrimaryKeyTypeDefault:
+				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
+				if isSingleIntPK(constr, lastCol) {
+					tbInfo.PKIsHandle = !alterPKConf
+				} else {
+					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
+				}
+			}
+			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
+				// Primary key cannot be invisible.
+				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+					return nil, ErrPKIndexCantBeInvisible
+				}
+			}
+			if tbInfo.PKIsHandle {
+				continue
 			}
 		}
 
@@ -3158,6 +3171,10 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 }
 
 func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if !ctx.GetSessionVars().TiDBEnableExchangePartition {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errExchangePartitionDisabled)
+		return nil
+	}
 	ptSchema, pt, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)

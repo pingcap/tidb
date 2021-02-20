@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -33,7 +32,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -150,7 +149,7 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
@@ -203,7 +202,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// <-  0  -> <- 1 ->
 	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	pdCli := &CodecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 	bo := NewBackofferWithVars(context.Background(), 3000, nil)
@@ -261,44 +260,4 @@ func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...st
 		c.Assert(string(r.StartKey), Equals, keys[2*i])
 		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
 	}
-}
-
-func (s *testCoprocessorSuite) checkEqual(c *C, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {
-	c.Assert(copRanges.Len(), Equals, len(ranges))
-	for i := range ranges {
-		c.Assert(copRanges.At(i), DeepEquals, ranges[i])
-	}
-	if slice {
-		for i := 0; i <= copRanges.Len(); i++ {
-			for j := i; j <= copRanges.Len(); j++ {
-				s.checkEqual(c, copRanges.Slice(i, j), ranges[i:j], false)
-			}
-		}
-	}
-}
-
-func (s *testCoprocessorSuite) TestRateLimit(c *C) {
-	done := make(chan struct{}, 1)
-	rl := newRateLimit(1)
-	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
-	exit := rl.getToken(done)
-	c.Assert(exit, Equals, false)
-	rl.putToken()
-	c.Assert(rl.putToken, PanicMatches, "put a redundant token")
-
-	exit = rl.getToken(done)
-	c.Assert(exit, Equals, false)
-	done <- struct{}{}
-	exit = rl.getToken(done) // blocked but exit
-	c.Assert(exit, Equals, true)
-
-	sig := make(chan int, 1)
-	go func() {
-		exit = rl.getToken(done) // blocked
-		c.Assert(exit, Equals, false)
-		close(sig)
-	}()
-	time.Sleep(200 * time.Millisecond)
-	rl.putToken()
-	<-sig
 }

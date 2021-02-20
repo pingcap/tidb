@@ -139,3 +139,181 @@ func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, "(1, 0.5, \x14)")
 }
+
+type bucket4Test struct {
+	lower  int64
+	upper  int64
+	count  int64
+	repeat int64
+	ndv    int64
+}
+
+func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), len(buckets), totColSize)
+	for _, bucket := range buckets {
+		lower := types.NewIntDatum(bucket.lower)
+		upper := types.NewIntDatum(bucket.upper)
+		h.AppendBucketWithNDV(&lower, &upper, bucket.count, bucket.repeat, bucket.ndv)
+	}
+	return h
+}
+
+func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
+	hists := make([]*Histogram, 0, 2)
+	// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+	h1Buckets := []*bucket4Test{
+		{
+			lower:  1,
+			upper:  4,
+			count:  2,
+			repeat: 1,
+			ndv:    2,
+		},
+		{
+			lower:  6,
+			upper:  9,
+			count:  5,
+			repeat: 2,
+			ndv:    2,
+		},
+		{
+			lower:  12,
+			upper:  12,
+			count:  8,
+			repeat: 3,
+			ndv:    1,
+		},
+		{
+			lower:  13,
+			upper:  15,
+			count:  11,
+			repeat: 1,
+			ndv:    3,
+		},
+	}
+	hists = append(hists, genHist4Test(h1Buckets, 11))
+	// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+	h2Buckets := []*bucket4Test{
+		{
+			lower:  2,
+			upper:  5,
+			count:  2,
+			repeat: 1,
+			ndv:    2,
+		},
+		{
+			lower:  6,
+			upper:  7,
+			count:  5,
+			repeat: 2,
+			ndv:    2,
+		},
+		{
+			lower:  11,
+			upper:  11,
+			count:  8,
+			repeat: 3,
+			ndv:    1,
+		},
+		{
+			lower:  13,
+			upper:  17,
+			count:  11,
+			repeat: 1,
+			ndv:    3,
+		},
+	}
+	hists = append(hists, genHist4Test(h2Buckets, 11))
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	globalHist, err := MergePartitionHist2GlobalHist(sc, hists, 3)
+	c.Assert(err, IsNil)
+	expHist := []*bucket4Test{
+		{
+			lower:  1,
+			upper:  7,
+			count:  7,
+			repeat: 2,
+			ndv:    4,
+		},
+		{
+			lower:  7,
+			upper:  11,
+			count:  13,
+			repeat: 3,
+			ndv:    3,
+		},
+		{
+			lower:  11,
+			upper:  17,
+			count:  22,
+			repeat: 1,
+			ndv:    5,
+		},
+	}
+	for i, b := range expHist {
+		c.Assert(b.lower, Equals, globalHist.GetLower(i).GetInt64())
+		c.Assert(b.upper, Equals, globalHist.GetUpper(i).GetInt64())
+		c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
+		c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
+		c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
+	}
+	c.Assert(globalHist.TotColSize, Equals, int64(22))
+}
+
+func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
+	l := types.NewIntDatum(lower)
+	r := types.NewIntDatum(upper)
+	return bucket4Merging{
+		lower: &l,
+		upper: &r,
+		Bucket: Bucket{
+			NDV: ndv,
+		},
+		disjointNDV: disjointNDV,
+	}
+}
+
+func (s *testStatisticsSuite) TestMergeBucketNDV(c *C) {
+	type testData struct {
+		left   bucket4Merging
+		right  bucket4Merging
+		result bucket4Merging
+	}
+	tests := []testData{
+		{
+			left:   genBucket4Merging4Test(1, 2, 2, 0),
+			right:  genBucket4Merging4Test(1, 2, 3, 0),
+			result: genBucket4Merging4Test(1, 2, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(2, 3, 2, 0),
+			result: genBucket4Merging4Test(1, 3, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(4, 6, 2, 2),
+			result: genBucket4Merging4Test(1, 3, 2, 4),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 5, 5, 0),
+			right:  genBucket4Merging4Test(2, 6, 5, 0),
+			result: genBucket4Merging4Test(1, 6, 6, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(3, 5, 3, 0),
+			right:  genBucket4Merging4Test(2, 6, 4, 0),
+			result: genBucket4Merging4Test(2, 6, 5, 0),
+		},
+	}
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	for _, t := range tests {
+		res, err := mergeBucketNDV(sc, &t.left, &t.right)
+		c.Assert(err, IsNil)
+		c.Assert(t.result.lower.GetInt64(), Equals, res.lower.GetInt64())
+		c.Assert(t.result.upper.GetInt64(), Equals, res.upper.GetInt64())
+		c.Assert(t.result.NDV, Equals, res.NDV)
+		c.Assert(t.result.disjointNDV, Equals, res.disjointNDV)
+	}
+}
