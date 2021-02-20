@@ -267,12 +267,12 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // UpdateSessionVar updates the necessary session variables for the stats reader.
 func (h *Handle) UpdateSessionVar() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
 		return err
@@ -295,7 +295,7 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -382,14 +382,28 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 
 		// Merge topN. We need to merge TopN before merging the histogram.
 		// Because after merging TopN, some numbers will be left.
-		// These left numbers should be inserted into the histogram.
-		err = errors.Errorf("TODO: The merge function of the topN structure has not been implemented yet")
+		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
+		var popedTopN []statistics.TopNMeta
+		n := uint32(0)
+		for _, topN := range allTopN[i] {
+			if topN == nil {
+				continue
+			}
+			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
+		}
+		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
+		if len(popedTopN) != 0 {
+			// TODO: use the popedTopN as a bucket for later histogram merging.
+		}
+
+		// Merge histogram
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], 0)
 		if err != nil {
 			return
 		}
 
-		// Merge histogram
-		err = errors.Errorf("TODO: The merge function of the histogram structure has not been implemented yet")
+		// Merge NDV
+		err = errors.Errorf("TODO: The merge function of the NDV has not been implemented yet")
 		if err != nil {
 			return
 		}

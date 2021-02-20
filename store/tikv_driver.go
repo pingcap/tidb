@@ -175,7 +175,7 @@ type tikvStore struct {
 	tlsConfig *tls.Config
 	pdClient  pd.Client
 	enableGC  bool
-	gcWorker  gcworker.GCHandler
+	gcWorker  *gcworker.GCWorker
 }
 
 var (
@@ -232,11 +232,11 @@ func (s *tikvStore) TLSConfig() *tls.Config {
 
 // StartGCWorker starts GC worker, it's called in BootstrapSession, don't call this function more than once.
 func (s *tikvStore) StartGCWorker() error {
-	if !s.enableGC || gcworker.NewGCHandlerFunc == nil {
+	if !s.enableGC {
 		return nil
 	}
 
-	gcWorker, err := gcworker.NewGCHandlerFunc(s, s.pdClient)
+	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
 	if err != nil {
 		return errors.Trace(err)
 	}
