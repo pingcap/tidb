@@ -3255,9 +3255,14 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 
 	// assert set sys variable
-	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	tk.MustExec("set @@session.txn_scope = 'local';")
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows("dc-1"))
+	result.Check(testkit.Rows("local"))
+
+	// assert set invalid txn_scope
+	err := tk.ExecToErr("set @@txn_scope='foo'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 
 	// assert session scope
 	se, err := session.CreateSession4Test(s.store)
@@ -4017,18 +4022,6 @@ func (s *testSessionSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
 			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
 		}
 	}
-}
-
-func (s *testSessionSuite) TestTxnScopeSetting(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.GlobalTxnScope))
-	tk.MustExec("set @@txn_scope='local'")
-	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(oracle.LocalTxnScope))
-	err := tk.ExecToErr("set @@txn_scope='foo'")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, `.*txn_scope value should be global or local.*`)
 }
 
 func (s *testSessionSerialSuite) TestSpecialSQLInStalenessTxn(c *C) {
