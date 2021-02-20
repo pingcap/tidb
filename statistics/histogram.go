@@ -1693,9 +1693,19 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return &res, nil
 }
 
+func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
+	res := newBucket4Meging()
+	res.lower = d.Clone()
+	res.upper = d.Clone()
+	res.Count = int64(t.Count)
+	res.Repeat = int64(t.Count)
+	res.NDV = int64(1)
+	return res
+}
+
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
 // Notice: If expBucketNumber == 0, we will let expBucketNumber = max(hists.Len())
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, expBucketNumber int64) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	needBucketNumber := false
 	if expBucketNumber == 0 {
@@ -1725,6 +1735,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			}
 		}
 	}
+
+	bucketNumber += int64(len(popedTopN))
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
@@ -1732,6 +1744,27 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, hist := range hists {
 		buckets = append(buckets, hist.buildBucket4Merging()...)
 	}
+
+	for _, meta := range popedTopN {
+		totCount += int64(meta.Count)
+		_, d, err := codec.DecodeOne(meta.Encoded)
+		if err != nil {
+			return nil, err
+		}
+		if minValue == nil {
+			minValue = d.Clone()
+			continue
+		}
+		res, err := d.CompareDatum(sc, minValue)
+		if err != nil {
+			return nil, err
+		}
+		if res < 0 {
+			minValue = d.Clone()
+		}
+		buckets = append(buckets, meta.buildBucket4Merging(&d))
+	}
+
 	var sortError error
 	sort.Slice(buckets, func(i, j int) bool {
 		res, err := buckets[i].upper.CompareDatum(sc, buckets[j].upper)

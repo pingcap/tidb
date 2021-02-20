@@ -392,12 +392,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
 		}
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
-		if len(popedTopN) != 0 {
-			// TODO: use the popedTopN as a bucket for later histogram merging.
-		}
 
 		// Merge histogram
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], 0)
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, 0)
 		if err != nil {
 			return
 		}
