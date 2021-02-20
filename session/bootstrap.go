@@ -195,6 +195,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	BLOB DEFAULT NULL,
+		fm_sketch			BLOB(6291456),
 		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
@@ -463,9 +464,11 @@ const (
 	version63 = 63
 	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
 	version64 = 64
+	// version65 add `fm_sketch blob(6291456)` to `mysql.stats_histograms`
+	version65 = 65
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version64
+	currentBootstrapVersion = version65
 )
 
 var (
@@ -534,6 +537,7 @@ var (
 		upgradeToVer62,
 		upgradeToVer63,
 		upgradeToVer64,
+		upgradeToVer65,
 	}
 )
 
@@ -1427,6 +1431,13 @@ func upgradeToVer64(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+func upgradeToVer65(s Session, ver int64) {
+	if ver >= version65 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `fm_sketch` BLOB(6291456)", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {

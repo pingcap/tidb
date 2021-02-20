@@ -613,6 +613,14 @@ func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, is
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
+func (h *Handle) fmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
+	rows, _, err := reader.read("select fm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
+}
+
 func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
@@ -841,7 +849,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, fms *statistics.FMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -868,7 +876,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
+	cm_sketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
+	if err != nil {
+		return err
+	}
+	fm_sketch, err := statistics.EncodeFMSketch(fms)
 	if err != nil {
 		return err
 	}
@@ -887,8 +899,8 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, fm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cm_sketch, fm_sketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
