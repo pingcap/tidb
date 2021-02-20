@@ -97,7 +97,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 }
 
 type partialResult4CountDistinctReal struct {
-	valSet set.Float64Set
+	valSet set.Float64SetWithMemoryUsage
 }
 
 type countOriginalWithDistinct4Real struct {
@@ -105,14 +105,15 @@ type countOriginalWithDistinct4Real struct {
 }
 
 func (e *countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	valSet, memDelta := set.NewFloat64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctReal{
-		valSet: set.NewFloat64Set(),
-	}), DefPartialResult4CountDistinctRealSize
+		valSet: valSet,
+	}), DefPartialResult4CountDistinctRealSize + memDelta
 }
 
 func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctReal)(pr)
-	p.valSet = set.NewFloat64Set()
+	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
 func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

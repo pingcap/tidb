@@ -47,7 +47,7 @@ type partialResult4SumDecimal struct {
 type partialResult4SumDistinctFloat64 struct {
 	val    float64
 	isNull bool
-	valSet set.Float64Set
+	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
@@ -265,14 +265,14 @@ type sum4DistinctFloat64 struct {
 func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size
+	p.valSet, memDelta = set.NewFloat64SetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + memDelta
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.isNull = true
-	p.valSet = set.NewFloat64Set()
+	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
