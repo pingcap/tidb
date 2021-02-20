@@ -45,19 +45,19 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		}
 	case model.ActionAddTablePartition, model.ActionTruncateTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.StaticOnly {
 			for _, def := range t.PartInfo.Definitions {
 				if err := h.insertTableStats2KV(t.TableInfo, def.ID); err != nil {
 					return err
 				}
 			}
 		}
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.DynamicOnly {
 			// TODO: need trigger full analyze
 		}
 	case model.ActionDropTablePartition:
 		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		if pruneMode == variable.DynamicOnly {
 			// TODO: need trigger full analyze
 		}
 	}

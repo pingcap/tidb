@@ -843,14 +843,12 @@ const (
 	StaticOnly PartitionPruneMode = "static-only"
 	// DynamicOnly indicates only prune at execute phase.
 	DynamicOnly PartitionPruneMode = "dynamic-only"
-	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
-	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
 )
 
 // Valid indicate PruneMode is validated.
 func (p PartitionPruneMode) Valid() bool {
 	switch p {
-	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+	case StaticOnly, DynamicOnly:
 		return true
 	default:
 		return false
