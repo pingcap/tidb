@@ -164,14 +164,14 @@ func genHist4Test(buckets []*bucket4Test, totColSize int64) *Histogram {
 }
 
 func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
-	type testCase struct{
-		partitionHists [][]*bucket4Test
-		totColSize []int64
-		popedTopN []topN4Test
-		expHist []*bucket4Test
+	type testCase struct {
+		partitionHists  [][]*bucket4Test
+		totColSize      []int64
+		popedTopN       []topN4Test
+		expHist         []*bucket4Test
 		expBucketNumber int64
 	}
-	tests := []testCase {
+	tests := []testCase{
 		{
 			partitionHists: [][]*bucket4Test{
 				{
@@ -238,8 +238,8 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 				},
 			},
 			totColSize: []int64{11, 11},
-			popedTopN: []topN4Test{},
-			expHist: []*bucket4Test {
+			popedTopN:  []topN4Test{},
+			expHist: []*bucket4Test{
 				{
 					lower:  1,
 					upper:  7,
@@ -332,15 +332,15 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 			totColSize: []int64{11, 11},
 			popedTopN: []topN4Test{
 				{
-					data: 18,
+					data:  18,
 					count: 5,
 				},
 				{
-					data: 4,
+					data:  4,
 					count: 6,
 				},
 			},
-			expHist: []*bucket4Test {
+			expHist: []*bucket4Test{
 				{
 					lower:  1,
 					upper:  5,
@@ -382,7 +382,7 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 			c.Assert(err, IsNil)
 			tmp := TopNMeta{
 				Encoded: b,
-				Count: uint64(top.count),
+				Count:   uint64(top.count),
 			}
 			poped = append(poped, tmp)
 		}
