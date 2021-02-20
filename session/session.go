@@ -1085,10 +1085,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
+	isInternal := s.isInternal()
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	parseStartTime := time.Now()
+	var charsetInfo, collation string
+	if isInternal {
+		charsetInfo, collation = mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation
+	} else {
+		charsetInfo, collation = s.sessionVars.GetCharsetInfo()
+	}
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1099,7 +1104,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
-	isInternal := s.isInternal()
 	if isInternal {
 		if len(stmtNodes) > 1 {
 			// Prohibit multiple statements in restricted SQL can prevent malicious injected SQL to some extent.
