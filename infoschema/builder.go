@@ -361,17 +361,15 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 			hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-			var opts []autoid.AllocOption
-			if tblInfo.Version >= model.TableInfoVersion4 {
-				opts = []autoid.AllocOption{autoid.V4TableInfoAllocOption{}}
-			}
 			if hasRowID {
-				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, opts...)
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
 				allocs = append(allocs, newAlloc)
 			}
-			if ok, _ := HasAutoIncrementColumn(tblInfo); ok {
-				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.AutoIncrementType, opts...)
-				allocs = append(allocs, newAlloc)
+			if tblInfo.Version >= model.TableInfoVersion4 {
+				if ok, _ := HasAutoIncrementColumn(tblInfo); ok {
+					newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.AutoIncrementType)
+					allocs = append(allocs, newAlloc)
+				}
 			}
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
