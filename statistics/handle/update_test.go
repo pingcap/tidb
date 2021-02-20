@@ -1193,12 +1193,12 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	testKit.MustExec("set global tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
