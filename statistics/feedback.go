@@ -781,7 +781,6 @@ func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSke
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.Tp, len(buckets), h.TotColSize)
-	// TODO: make FMSketch correct when the feedback occur
 	preCount := int64(0)
 	for _, bkt := range buckets {
 		hist.AppendBucketWithNDV(bkt.Lower, bkt.Upper, bkt.Count+preCount, bkt.Repeat, bkt.Ndv)
