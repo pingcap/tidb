@@ -171,7 +171,8 @@ type baseTestSuite struct {
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
-type checkSelectRequestHookKey struct{}
+type checkSelectRequestHookContextKey struct{}
+var checkSelectRequestHook = checkSelectRequestHookContextKey{}
 
 func (s *baseTestSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
@@ -3320,7 +3321,7 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 	c.Assert(systemTZ.String(), Not(Equals), "Local")
 	ctx := context.Background()
 	count := 0
-	ctx1 := context.WithValue(ctx, checkSelectRequestHookKey{}, func(req *kv.Request) {
+	ctx1 := context.WithValue(ctx, checkSelectRequestHook, func(req *kv.Request) {
 		count += 1
 		dagReq := new(tipb.DAGRequest)
 		err := proto.Unmarshal(req.Data, dagReq)
@@ -3353,7 +3354,7 @@ func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	count := 0
 	ctx := context.Background()
 	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, checkSelectRequestHookKey{}, func(req *kv.Request) {
+		ctx1 := context.WithValue(ctx, checkSelectRequestHook, func(req *kv.Request) {
 			count++
 			if req.NotFillCache != test.expect {
 				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.NotFillCache)
@@ -3782,7 +3783,7 @@ func (s *testSuite) TestCoprocessorStreamingFlag(c *C) {
 
 	ctx := context.Background()
 	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, checkSelectRequestHookKey{}, func(req *kv.Request) {
+		ctx1 := context.WithValue(ctx, checkSelectRequestHook, func(req *kv.Request) {
 			if req.Streaming != test.expect {
 				c.Errorf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
 			}
