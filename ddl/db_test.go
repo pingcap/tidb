@@ -6573,13 +6573,15 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	tk1.MustExec("begin")
 	tk1.MustExec("update t1 set id = 2 where id = 1")
 
+	// resolve conflict of fake kv
+	time.Sleep(100 * time.Microsecond)
+
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test;")
 	tk2.MustExec("alter table t1 truncate partition p0")
 
+	time.Sleep(100 * time.Microsecond)
+
 	_, err := tk1.Exec("commit")
-	estr := err.Error()
-	ok1, _ := Matches.Check([]interface{}{estr, ".*8028.*Information schema is changed during the execution of the statement.*"}, []string{"test1"})
-	ok2, _ := Matches.Check([]interface{}{estr, ".*9007.*Write conflict.*"}, []string{"test2"})
-	c.Assert(ok1 || ok2, IsTrue)
+	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
