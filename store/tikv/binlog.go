@@ -27,7 +27,7 @@ import (
 
 // BinlogExecutor defines the logic to replicate binlogs during transaction commit.
 type BinlogExecutor interface {
-	Prewrite(ctx context.Context, primary []byte) chan BinlogWriteResult
+	Prewrite(ctx context.Context, primary []byte) <-chan BinlogWriteResult
 	Commit(ctx context.Context, commitTS int64)
 	Skip()
 }
@@ -46,7 +46,7 @@ func (e *binlogExecutor) Skip() {
 	binloginfo.RemoveOneSkippedCommitter()
 }
 
-func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) chan BinlogWriteResult {
+func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) <-chan BinlogWriteResult {
 	ch := make(chan BinlogWriteResult, 1)
 	go func() {
 		logutil.Eventf(ctx, "start prewrite binlog")

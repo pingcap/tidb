@@ -1129,7 +1129,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	failpoint.Inject("beforePrewrite", nil)
 
 	c.prewriteStarted = true
-	var binlogChan chan BinlogWriteResult
+	var binlogChan <-chan BinlogWriteResult
 	if c.shouldWriteBinlog() {
 		binlogChan = c.binlog.Prewrite(ctx, c.primary())
 	}
