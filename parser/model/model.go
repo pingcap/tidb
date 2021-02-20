@@ -248,9 +248,14 @@ const (
 	// However, the convert is missed in some scenarios before v2.1.9, so for all those tables prior to TableInfoVersion3, their
 	// charsets / collations will be converted to lower-case while loading from the storage.
 	TableInfoVersion3 = uint16(3)
+	// TableInfoVersion4 indicates that the auto_increment allocator in TiDB has been separated from
+	// _tidb_rowid allocator. This version is introduced to preserve the compatibility of old tables:
+	// the tables with version < TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
+	// Also see https://github.com/pingcap/tidb/issues/982.
+	TableInfoVersion4 = uint16(4)
 
 	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
-	CurrLatestTableInfoVersion = TableInfoVersion3
+	CurrLatestTableInfoVersion = TableInfoVersion4
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
