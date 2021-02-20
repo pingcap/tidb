@@ -108,7 +108,7 @@ type twoPhaseCommitter struct {
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
 
-	binlog *binlogExecutor
+	binlog BinlogExecutor
 }
 
 type memBufferMutations struct {

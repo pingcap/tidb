@@ -25,18 +25,25 @@ import (
 	zap "go.uber.org/zap"
 )
 
-type binlogExecutor struct {
-	txn *tikvTxn
-}
-
-func (e *binlogExecutor) Skip() {
-	binloginfo.RemoveOneSkippedCommitter()
+// BinlogExecutor defines the logic to replicate binlogs during transaction commit.
+type BinlogExecutor interface {
+	Prewrite(ctx context.Context, primary []byte) chan BinlogWriteResult
+	Commit(ctx context.Context, commitTS int64)
+	Skip()
 }
 
 // BinlogWriteResult defines the result of prewrite binlog.
 type BinlogWriteResult interface {
 	Skipped() bool
 	GetError() error
+}
+
+type binlogExecutor struct {
+	txn *tikvTxn
+}
+
+func (e *binlogExecutor) Skip() {
+	binloginfo.RemoveOneSkippedCommitter()
 }
 
 func (e *binlogExecutor) Prewrite(ctx context.Context, primary []byte) chan BinlogWriteResult {
