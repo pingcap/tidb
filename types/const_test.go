@@ -239,7 +239,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 + 9223372036854775807)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(18446744073709551615 - 9223372036854775807)'")
 	c.Assert(rs.Close(), IsNil)
 
 	// normal case: cast(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned) = 18446744073709551615 - 9223372036854775807
@@ -253,7 +253,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(0 + 9223372036854775809)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(0 - 9223372036854775809)'")
 	c.Assert(rs.Close(), IsNil)
 
 	// 1.3 minusFUU, normal case
@@ -343,7 +343,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 + 9223372036854775810)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(1 - 9223372036854775810)'")
 	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
@@ -353,7 +353,7 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 + 9223372036854775808)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
 	c.Assert(rs.Close(), IsNil)
 
 	tk.MustQuery("SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned)").Check(testkit.Rows("-9223372036854775808"))
@@ -363,14 +363,14 @@ func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775807 + 18446744073709551615)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-9223372036854775807 - 18446744073709551615)'")
 	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);")
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 + 9223372036854775808)'")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(-1 - 9223372036854775808)'")
 	c.Assert(rs.Close(), IsNil)
 
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
