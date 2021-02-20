@@ -75,6 +75,12 @@ type Histogram struct {
 	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
 	// Index histogram.
 	Correlation float64
+
+	// FMSketch is used when the following conditions are met:
+	// 1. column Histogram
+	// 2. merge partition-level histogram to global-level histogram
+	// NOTE: In other situations, the FMSketch can be nil.
+	FMSketch *FMSketch
 }
 
 // Bucket store the bucket count and repeat.
@@ -251,6 +257,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 // ConvertTo converts the histogram bucket values into `Tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
+	hist.FMSketch = hg.FMSketch
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -735,6 +742,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	tp := types.NewFieldType(mysql.TypeBlob)
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
+	// TODO: add FMSketch to tipb.Histogram
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
 		if bucket.Ndv != nil {
@@ -1366,6 +1374,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			CMSketch:   oldCol.CMSketch,
 		}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		// TODO: Investigate whether FMSketch needs to be updated here
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		if !ok {

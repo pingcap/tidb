@@ -138,8 +138,14 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 					terror.Log(err)
 				}
 			}
+			fms, err := statistics.DecodeFMSketch(row.GetBytes(12))
+			if err != nil {
+				fms = nil
+				terror.Log(errors.Trace(err))
+			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
+			hist.FMSketch = fms
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,

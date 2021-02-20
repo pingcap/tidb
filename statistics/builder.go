@@ -117,7 +117,9 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil
+		hg := NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize)
+		hg.FMSketch = collector.FMSketch
+		return hg, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
@@ -126,6 +128,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 		return nil, err
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
+	hg.FMSketch = collector.FMSketch
 
 	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets)
 	if err != nil {
@@ -219,7 +222,9 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
+		hg := NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize)
+		hg.FMSketch = collector.FMSketch
+		return hg, nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
@@ -228,6 +233,7 @@ func BuildColumnHistAndTopN(ctx sessionctx.Context, numBuckets, numTopN int, id 
 		return nil, nil, err
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
+	hg.FMSketch = collector.FMSketch
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
