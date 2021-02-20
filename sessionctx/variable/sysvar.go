@@ -761,7 +761,7 @@ var defaultSysVars = []*SysVar{
 			} else {
 				original = strconv.Itoa(vars.AnalyzeVersion)
 			}
-			vars.StmtCtx.AppendError(errors.New("Variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback."))
+			vars.StmtCtx.AppendError(errors.New("variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback"))
 			return original, nil
 		}
 		return normalizedValue, nil
@@ -779,7 +779,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBGCScanLockMode, Value: "PHYSICAL", Type: TypeEnum, PossibleValues: []string{"PHYSICAL", "LEGACY"}},
 }
 
-// This variable points to the FeedbackProbability in statistics package.
+// FeedbackProbability points to the FeedbackProbability in statistics package.
 // It's initialized in init() in feedback.go to solve import cycle.
 var FeedbackProbability *atomic2.Float64
 
