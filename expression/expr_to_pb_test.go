@@ -628,6 +628,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// ExtractDatetime: can be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// CastIntAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), intColumn)
 	c.Assert(err, IsNil)
@@ -724,9 +729,15 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
+
+	// ExtractDatetimeFromString: can not be pushed
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
-	c.Assert(len(pushed), Equals, len(exprs)-1)
-	c.Assert(len(remained), Equals, 1)
+	c.Assert(len(pushed), Equals, len(exprs)-2)
+	c.Assert(len(remained), Equals, 2)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
