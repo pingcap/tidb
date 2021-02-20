@@ -649,11 +649,11 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -724,11 +724,11 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -846,12 +846,12 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
@@ -966,11 +966,11 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(3,4),(4,1),(5,6)")
 	testKit.MustExec("analyze table t")
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1096,12 +1096,12 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
@@ -1156,11 +1156,11 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1327,13 +1327,13 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriMinError := handle.MinLogErrorRate
 	oriLevel := log.GetLevel()
 	oriLease := s.do.StatsHandle().Lease()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriMinError
 		s.do.StatsHandle().SetLease(oriLease)
@@ -1506,9 +1506,9 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(1)
 
@@ -1640,11 +1640,11 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1687,11 +1687,11 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 	}()
@@ -1760,12 +1760,12 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
@@ -1836,12 +1836,12 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
 	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
 		statistics.MaxNumberOfRanges = oriNumber
@@ -1948,9 +1948,9 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(1)
 
@@ -2001,9 +2001,9 @@ func (s *testStatsSuite) TestDisableFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(0.0)
 	oldNum := &dto.Metric{}
@@ -2025,9 +2025,9 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
-	oriProbability := statistics.FeedbackProbability
+	oriProbability := statistics.FeedbackProbability.Load()
 	defer func() {
-		statistics.FeedbackProbability = oriProbability
+		statistics.FeedbackProbability.Store(oriProbability)
 	}()
 	statistics.FeedbackProbability.Store(1)
 	oldNum := &dto.Metric{}
