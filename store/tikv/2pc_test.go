@@ -88,17 +88,17 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testCommitterSuite) begin(c *C) *tikvTxn {
+func (s *testCommitterSuite) begin(c *C) *TikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn.(*TikvTxn)
 }
 
-func (s *testCommitterSuite) beginAsyncCommit(c *C) *tikvTxn {
+func (s *testCommitterSuite) beginAsyncCommit(c *C) *TikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.EnableAsyncCommit, true)
-	return txn.(*tikvTxn)
+	return txn.(*TikvTxn)
 }
 
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
@@ -423,7 +423,7 @@ func errMsgMustContain(c *C, err error, msg string) {
 	c.Assert(strings.Contains(err.Error(), msg), IsTrue)
 }
 
-func newTwoPhaseCommitterWithInit(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
+func newTwoPhaseCommitterWithInit(txn *TikvTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	c, err := newTwoPhaseCommitter(txn, sessionID)
 	if err != nil {
 		return nil, errors.Trace(err)

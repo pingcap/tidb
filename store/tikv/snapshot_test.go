@@ -63,10 +63,10 @@ func (s *testSnapshotSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSnapshotSuite) beginTxn(c *C) *tikvTxn {
+func (s *testSnapshotSuite) beginTxn(c *C) *TikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn.(*TikvTxn)
 }
 
 func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {

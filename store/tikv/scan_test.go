@@ -64,10 +64,10 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
+func (s *testScanSuite) beginTxn(c *C) *TikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	return txn.(*tikvTxn)
+	return txn.(*TikvTxn)
 }
 
 func (s *testScanSuite) TestScan(c *C) {

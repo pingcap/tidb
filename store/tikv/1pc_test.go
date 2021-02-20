@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 )
 
-func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) begin1PC(c *C) *TikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.Enable1PC, true)
-	return txn.(*tikvTxn)
+	return txn.(*TikvTxn)
 }
 
 type testOnePCSuite struct {
@@ -241,8 +241,8 @@ func (s *testOnePCSuite) Test1PCLinearizability(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.(*tikvTxn).committer.commitTS
-	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	commitTS1 := t1.(*TikvTxn).committer.commitTS
+	commitTS2 := t2.(*TikvTxn).committer.commitTS
 	c.Assert(commitTS2, Less, commitTS1)
 }
 
