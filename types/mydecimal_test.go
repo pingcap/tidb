@@ -14,6 +14,7 @@
 package types
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -100,7 +101,8 @@ func (s *testMyDecimalSuite) TestToUint(c *C) {
 		/* ULLONG_MAX = 18446744073709551615ULL */
 		{"18446744073709551615", 18446744073709551615, nil},
 		{"18446744073709551616", 18446744073709551615, ErrOverflow},
-		{"-1", 0, ErrOverflow},
+		{"-1", uint64(math.MaxInt64+1), ErrOverflow},
+		{"-9223372036854775809", uint64(math.MaxInt64+1), ErrOverflow},
 		{"1.23", 1, ErrTruncated},
 		{"9999999999999999999999999.000", 18446744073709551615, ErrOverflow},
 	}
