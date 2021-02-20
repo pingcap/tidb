@@ -6563,3 +6563,23 @@ func (s *testDBSuite4) TestIssue22207(c *C) {
 	c.Assert(len(tk.MustQuery("select * from t1").Rows()), Equals, 0)
 	tk.MustExec("set @@session.tidb_enable_exchange_partition = 0;")
 }
+
+func (s *testSerialDBSuite) TestIssue22819(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test;")
+	tk1.MustExec("drop table if exists t1;")
+	tk1.MustExec("create table t1 (id int primary key, v int) partition by range (id) (partition p0 values less than (4), partition p_rest values less than maxvalue)")
+	tk1.MustExec("insert into t1 values (1, 2)")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t1 set id = 2 where id = 1")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test;")
+	tk2.MustExec("alter table t1 truncate partition p0")
+
+	_, err := tk1.Exec("commit")
+	estr := err.Error()
+	ok1, _ := Matches.Check([]interface{}{estr, ".*8028.*Information schema is changed during the execution of the statement.*"}, []string{"test1"})
+	ok2, _ := Matches.Check([]interface{}{estr, ".*9007.*Write conflict.*"}, []string{"test2"})
+	c.Assert(ok1 || ok2, IsTrue)
+}
