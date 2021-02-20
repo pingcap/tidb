@@ -1049,7 +1049,7 @@ func (d *MyDecimal) ToInt() (int64, error) {
 // ToUint returns int part of the decimal, returns the result and errcode.
 func (d *MyDecimal) ToUint() (uint64, error) {
 	if d.negative {
-		return uint64(math.MaxInt64+1), ErrOverflow
+		return uint64(math.MaxInt64 + 1), ErrOverflow
 	}
 	var x uint64
 	wordIdx := 0
