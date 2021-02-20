@@ -172,6 +172,7 @@ type baseTestSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 type checkSelectRequestHookContextKey struct{}
+
 var checkSelectRequestHook = checkSelectRequestHookContextKey{}
 
 func (s *baseTestSuite) SetUpSuite(c *C) {

@@ -90,9 +90,11 @@ func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{
 }
 
 type totalRowsContextKey struct{}
+
 var totalRowsKey = totalRowsContextKey{}
 
 type expectedRowsRetContextKey struct{}
+
 var expectedRowsRetKey = expectedRowsRetContextKey{}
 
 func mockDistsqlSelectCtxSet(totalRows int, expectedRowsRet []int) context.Context {
