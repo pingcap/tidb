@@ -1275,6 +1275,9 @@ func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
 	testKit.MustExec("set tidb_analyze_version = 2")
 	statistics.FeedbackProbability.Store(1)
 	testKit.MustExec("analyze table t1 with 0 topn")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Use analyze version 1 on table `t1` because this table already has version 1 statistics and query feedback is also enabled." +
+			" If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
 	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
 }
 
