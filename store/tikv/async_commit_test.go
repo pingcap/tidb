@@ -24,23 +24,23 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/store/tikv/util"
 )
 
 // testAsyncCommitCommon is used to put common parts that will be both used by
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
 type testAsyncCommitCommon struct {
 	cluster cluster.Cluster
-	store   *tikvStore
+	store   *KVStore
 }
 
 func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	if *WithTiKV {
-		s.store = NewTestStore(c).(*tikvStore)
+		s.store = NewTestStore(c)
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
-	s.store = store.(*tikvStore)
+	s.store = store
 }
 
 func (s *testAsyncCommitCommon) putAlphabets(c *C, enableAsyncCommit bool) {
@@ -115,9 +115,9 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
-func (s *testAsyncCommitCommon) beginAsyncCommitWithExternalConsistency(c *C) *tikvTxn {
+func (s *testAsyncCommitCommon) beginAsyncCommitWithLinearizability(c *C) *tikvTxn {
 	txn := s.beginAsyncCommit(c)
-	txn.SetOption(kv.GuaranteeExternalConsistency, true)
+	txn.SetOption(kv.GuaranteeLinearizability, true)
 	return txn
 }
 
@@ -329,12 +329,12 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 }
 
 func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
-	var connID uint64 = 0
+	var sessionID uint64 = 0
 	test := func(isPessimistic bool) {
 		s.putKV(c, []byte("k1"), []byte("v1"), true)
 
-		connID++
-		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
+		sessionID++
+		ctx := context.WithValue(context.Background(), util.SessionID, sessionID)
 		txn1 := s.beginAsyncCommit(c)
 		txn1.SetOption(kv.Pessimistic, isPessimistic)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
@@ -366,16 +366,16 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 	test(true)
 }
 
-// It's just a simple validation of external consistency.
+// It's just a simple validation of linearizability.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
-func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
-	t1 := s.beginAsyncCommitWithExternalConsistency(c)
-	t2 := s.beginAsyncCommitWithExternalConsistency(c)
+func (s *testAsyncCommitSuite) TestAsyncCommitLinearizability(c *C) {
+	t1 := s.beginAsyncCommitWithLinearizability(c)
+	t2 := s.beginAsyncCommitWithLinearizability(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	// t2 commits earlier than t1
 	err = t2.Commit(ctx)
 	c.Assert(err, IsNil)
@@ -397,7 +397,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitWithMultiDC(c *C) {
 	err := localTxn.Set([]byte("a"), []byte("a1"))
 	localTxn.SetOption(kv.TxnScope, "bj")
 	c.Assert(err, IsNil)
-	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	ctx := context.WithValue(context.Background(), util.SessionID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(localTxn.committer.isAsyncCommit(), IsFalse)
