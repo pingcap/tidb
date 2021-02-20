@@ -167,6 +167,7 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
+	bInMap           int64
 	groupSet         set.StringSet
 	groupKeys        []string
 	cursor4GroupKey  int
@@ -286,6 +287,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
+	e.bInMap = 0
+	e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -904,6 +907,11 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 			e.memTracker.Consume(memDelta)
 		}
 		e.partialResultMap[groupKey] = partialResults
+		e.memTracker.Consume(int64(len(groupKey)))
+		if len(e.partialResultMap) > (1<<e.bInMap)*loadFactorNum/loadFactorDen {
+			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
+			e.bInMap++
+		}
 	}
 	return partialResults
 }
