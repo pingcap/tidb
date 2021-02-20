@@ -28,12 +28,12 @@ type UnionStore interface {
 	HasPresumeKeyNotExists(k Key) bool
 	// UnmarkPresumeKeyNotExists deletes the key presume key not exists error flag for the lazy check.
 	UnmarkPresumeKeyNotExists(k Key)
-	// CacheIndexName caches the index name.
-	// PresumeKeyNotExists will use this to help decode error message.
-	CacheTableInfo(id int64, info *model.TableInfo)
-	// GetIndexName returns the cached index name.
-	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
-	GetTableInfo(id int64) *model.TableInfo
+	// // CacheIndexName caches the index name.
+	// // PresumeKeyNotExists will use this to help decode error message.
+	// CacheTableInfo(id int64, info *model.TableInfo)
+	// // GetIndexName returns the cached index name.
+	// // If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	// GetTableInfo(id int64) *model.TableInfo
 
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
@@ -44,6 +44,15 @@ type UnionStore interface {
 	GetOption(opt Option) interface{}
 	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
+}
+
+type TableInfoCacher interface {
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheTableInfo(id int64, info *model.TableInfo)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetTableInfo(id int64) *model.TableInfo
 }
 
 // AssertionType is the type of a assertion.
@@ -142,14 +151,6 @@ func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
 // DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
 	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
-}
-
-func (us *unionStore) GetTableInfo(id int64) *model.TableInfo {
-	return us.idxNameCache[id]
-}
-
-func (us *unionStore) CacheTableInfo(id int64, info *model.TableInfo) {
-	us.idxNameCache[id] = info
 }
 
 // SetOption implements the unionStore SetOption interface.

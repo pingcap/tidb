@@ -1184,7 +1184,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.

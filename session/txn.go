@@ -24,6 +24,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -51,10 +52,20 @@ type TxnState struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
+	idxNameCache  map[int64]*model.TableInfo
+}
+
+func (txn *TxnState) GetTableInfo(id int64) *model.TableInfo {
+	return txn.idxNameCache[id]
+}
+
+func (txn *TxnState) CacheTableInfo(id int64, info *model.TableInfo) {
+	txn.idxNameCache[id] = info
 }
 
 func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
+	st.idxNameCache = make(map[int64]*model.TableInfo)
 }
 
 func (st *TxnState) initStmtBuf() {

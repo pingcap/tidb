@@ -69,6 +69,18 @@ func (d *ErrDeadlock) Error() string {
 	return d.Deadlock.String()
 }
 
+type ErrKeyExist struct {
+	key []byte
+}
+
+func (k *ErrKeyExist) Error() string {
+	return "key exist"
+}
+
+func (k *ErrKeyExist) Key() []byte {
+	return k.key
+}
+
 // PDError wraps *pdpb.Error to implement the error interface.
 type PDError struct {
 	Err *pdpb.Error

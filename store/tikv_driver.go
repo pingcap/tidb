@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/tikv"
@@ -257,10 +258,6 @@ func (s *tikvStore) Close() error {
 	return s.KVStore.Close()
 }
 
-type tikvTxn struct {
-	*tikv.TikvTxn
-}
-
 // Begin a global transaction.
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
@@ -272,7 +269,7 @@ func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 	if err != nil {
 		return txn, errors.Trace(err)
 	}
-	return tikvTxn{txn.(*tikv.TikvTxn)}, err
+	return tikvTxn{txn.(*tikv.TikvTxn), make(map[int64]*model.TableInfo)}, err
 }
 
 // BeginWithStartTS begins a transaction with startTS.
@@ -281,7 +278,7 @@ func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transa
 	if err != nil {
 		return txn, errors.Trace(err)
 	}
-	return tikvTxn{txn.(*tikv.TikvTxn)}, err
+	return tikvTxn{txn.(*tikv.TikvTxn), make(map[int64]*model.TableInfo)}, err
 }
 
 // BeginWithExactStaleness begins transaction with given staleness
@@ -290,5 +287,5 @@ func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv
 	if err != nil {
 		return txn, errors.Trace(err)
 	}
-	return tikvTxn{txn.(*tikv.TikvTxn)}, err
+	return tikvTxn{txn.(*tikv.TikvTxn), make(map[int64]*model.TableInfo)}, err
 }

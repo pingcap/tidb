@@ -180,9 +180,10 @@ func (c *index) GenIndexValue(sc *stmtctx.StatementContext, indexedValues []type
 //		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
 //		   Length of value <= 9, use to distinguish from the new encoding.
 //
-func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+	us := txn.GetUnionStore()
 	if c.Meta().Unique {
-		us.CacheTableInfo(c.phyTblID, c.tblInfo)
+		txn.(kv.TableInfoCacher).CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
