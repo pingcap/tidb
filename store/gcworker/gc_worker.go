@@ -69,7 +69,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error) {
+func NewGCWorker(store tikv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
