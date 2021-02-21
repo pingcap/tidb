@@ -6568,19 +6568,19 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test;")
 	tk1.MustExec("drop table if exists t1;")
-	tk1.MustExec("create table t1 (id int primary key, v int) partition by range (id) (partition p0 values less than (4), partition p_rest values less than maxvalue)")
-	tk1.MustExec("insert into t1 values (1, 2)")
-	tk1.MustExec("begin")
-	tk1.MustExec("update t1 set id = 2 where id = 1")
+	defer func() {
+		tk1.MustExec("drop table if exists t1;")
+	}()
 
-	// resolve conflict of fake kv
-	time.Sleep(10 * time.Millisecond)
+	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
+	tk1.MustExec("insert into t1 values (1)")
 
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test;")
-	tk2.MustExec("alter table t1 truncate partition p0")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t1 set v = 2 where v = 1")
 
-	time.Sleep(10 * time.Millisecond)
+	tk2.MustExec("alter table t1 truncate partition p0")
 
 	_, err := tk1.Exec("commit")
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
