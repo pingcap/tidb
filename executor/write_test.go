@@ -318,12 +318,12 @@ func (s *testSuite) TestInsert(c *C) {
 
 	// issue 22851
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)));")
-	tk.MustExec("insert into t(name, b) values(\"cha\", 3);")
-	_, err = tk.Exec("insert into t(name, b) values(\"chb\", 3);")
+	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)))")
+	tk.MustExec("insert into t(name, b) values(\"cha\", 3)")
+	_, err = tk.Exec("insert into t(name, b) values(\"chb\", 3)")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry 'ch' for key 'PRIMARY'")
-	tk.MustExec("insert into t(name, b) values(\"测试\", 3);")
-	_, err = tk.Exec("insert into t(name, b) values(\"测试\", 3);")
+	tk.MustExec("insert into t(name, b) values(\"测试\", 3)")
+	_, err = tk.Exec("insert into t(name, b) values(\"测试\", 3)")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
 }
 
