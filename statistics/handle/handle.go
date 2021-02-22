@@ -982,9 +982,6 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	bucketSize := len(rows)
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	hg.Correlation = corr
