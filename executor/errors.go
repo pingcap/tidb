@@ -39,6 +39,7 @@ var (
 	ErrBuildExecutor = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 	ErrBatchDMLFail  = terror.ClassExecutor.New(codeBatchDMLFail, "Batch DML failed, please clean the table and try again. %s")
 
+	ErrUnsupportedPs               = terror.ClassExecutor.New(mysql.ErrUnsupportedPs, mysql.MySQLErrName[mysql.ErrUnsupportedPs])
 	ErrCantCreateUserWithGrant     = terror.ClassExecutor.New(mysql.ErrCantCreateUserWithGrant, mysql.MySQLErrName[mysql.ErrCantCreateUserWithGrant])
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
 	ErrCannotUser                  = terror.ClassExecutor.New(mysql.ErrCannotUser, mysql.MySQLErrName[mysql.ErrCannotUser])
@@ -58,6 +59,7 @@ var (
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrUnsupportedPs:               mysql.ErrUnsupportedPs,
 		mysql.ErrPasswordNoMatch:             mysql.ErrPasswordNoMatch,
 		mysql.ErrCannotUser:                  mysql.ErrCannotUser,
 		mysql.ErrWrongValueCountOnRow:        mysql.ErrWrongValueCountOnRow,

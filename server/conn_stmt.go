@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -106,6 +107,11 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
+	defer func() {
+		if err != nil {
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		}
+	}()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
