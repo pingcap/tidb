@@ -1636,6 +1636,15 @@ func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 		id INT NOT NULL
 	);`)
 	tk.MustExec(`INSERT INTO e VALUES (1669),(337),(16),(2005)`)
+	// test disable exchange partition
+	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it"))
+	tk.MustQuery("select * from e").Check(testkit.Rows("16", "1669", "337", "2005"))
+	tk.MustQuery("select * from e2").Check(testkit.Rows())
+
+	// enable exchange partition
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("ALTER TABLE e EXCHANGE PARTITION p0 WITH TABLE e2")
 	tk.MustQuery("select * from e2").Check(testkit.Rows("16"))
 	tk.MustQuery("select * from e").Check(testkit.Rows("1669", "337", "2005"))
@@ -2022,6 +2031,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	for i, t := range cases {
 		tk.MustExec(t.ptSQL)
 		tk.MustExec(t.ntSQL)
@@ -2035,6 +2045,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			tk.MustExec(t.exchangeSQL)
 		}
 	}
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
@@ -2043,6 +2054,8 @@ func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
 	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	tk.MustExec("drop table if exists pt1;")
 	tk.MustExec("create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;")
 	tk.MustExec("alter table pt1 add index idx((a+c));")
@@ -3172,6 +3185,8 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 			)`)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk2.MustExec("set @@tidb_enable_exchange_partition=0")
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into schema_change values (1, '2019-12-25 13:27:42')")
