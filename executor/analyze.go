@@ -144,6 +144,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					globalStatsMap[globalStatsID] = globalStatsInfo{result.IsIndex, hg.ID, result.StatsVer}
 				}
 			}
+
 			err1 := statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.Fms[i], result.StatsVer, 1)
 			if err1 != nil {
 				err = err1
@@ -292,6 +293,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		Hist:     []*statistics.Histogram{hist},
 		Cms:      []*statistics.CMSketch{cms},
 		TopNs:    []*statistics.TopN{topN},
+		Fms:      []*statistics.FMSketch{nil},
 		IsIndex:  1,
 		job:      idxExec.job,
 		StatsVer: statsVer,
@@ -715,6 +717,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 				Hist:     []*statistics.Histogram{hists[i]},
 				Cms:      []*statistics.CMSketch{cms[i]},
 				TopNs:    []*statistics.TopN{topNs[i]},
+				Fms:      []*statistics.FMSketch{nil},
 				IsIndex:  1,
 				Count:    hists[i].NullCount,
 				job:      exec.job,
@@ -1326,6 +1329,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		Hist:     []*statistics.Histogram{hist},
 		Cms:      []*statistics.CMSketch{cms},
 		TopNs:    []*statistics.TopN{topN},
+		Fms:      []*statistics.FMSketch{nil},
 		IsIndex:  1,
 		job:      idxExec.job,
 		StatsVer: statsVer,
@@ -1366,6 +1370,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		Hist:     []*statistics.Histogram{hist},
 		Cms:      []*statistics.CMSketch{nil},
 		TopNs:    []*statistics.TopN{nil},
+		Fms:      []*statistics.FMSketch{nil},
 		job:      colExec.job,
 		StatsVer: statistics.Version1,
 	}

@@ -290,7 +290,7 @@ const (
 		table_id 	BIGINT(64) NOT NULL,
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
-		value 		BLOB(6291456),
+		value 		LONGBLOB,
 		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
