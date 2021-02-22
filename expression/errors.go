@@ -50,7 +50,9 @@ var (
 	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 
 	// Sequence usage privilege check.
-	errSequenceAccessDenied = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
+	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
+	errUnsupportedJSONComparison = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet,
+		pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

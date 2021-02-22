@@ -197,6 +197,22 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
+	if !sql.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
+		}
+
+		// Handle the stmt commit/rollback.
+		if se.txn.Valid() {
+			if meetsErr != nil {
+				se.StmtRollback()
+			} else {
+				se.StmtCommit()
+			}
+		}
+	}
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
