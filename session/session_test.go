@@ -47,9 +47,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -183,7 +183,7 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
 		c.Assert(err, IsNil)
