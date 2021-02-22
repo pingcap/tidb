@@ -55,7 +55,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitZapLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", tikv.Driver{})
+	err = store.Register("tikv", store.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -97,7 +97,7 @@ func newBenchDB() *benchDB {
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.Execute(context.Background(), "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -106,10 +106,11 @@ func newBenchDB() *benchDB {
 	}
 }
 
-func (ut *benchDB) mustExec(sql string) {
-	rss, err := ut.session.Execute(context.Background(), sql)
+func (ut *benchDB) mustExec(sql string, args ...interface{}) {
+	// executeInternal only return one resultSet for this.
+	rs, err := ut.session.ExecuteInternal(context.Background(), sql, args...)
 	defer func() {
-		for _, rs := range rss {
+		if rs != nil {
 			err = rs.Close()
 			if err != nil {
 				log.Fatal(err.Error())
@@ -120,9 +121,8 @@ func (ut *benchDB) mustExec(sql string) {
 		log.Fatal(err.Error())
 		return
 	}
-	if len(rss) > 0 {
+	if rs != nil {
 		ctx := context.Background()
-		rs := rss[0]
 		req := rs.NewChunk()
 		for {
 			err := rs.Next(ctx, req)
@@ -179,7 +179,7 @@ func (ut *benchDB) mustParseSpec(s string) (start, end, count int) {
 
 func (ut *benchDB) createTable() {
 	cLog("create table")
-	createSQL := "CREATE TABLE IF NOT EXISTS " + *tableName + ` (
+	createSQL := `CREATE TABLE IF NOT EXISTS %n (
   id bigint(20) NOT NULL,
   name varchar(32) NOT NULL,
   exp bigint(20) NOT NULL DEFAULT '0',
@@ -187,12 +187,12 @@ func (ut *benchDB) createTable() {
   PRIMARY KEY (id),
   UNIQUE KEY name (name)
 )`
-	ut.mustExec(createSQL)
+	ut.mustExec(createSQL, *tableName)
 }
 
 func (ut *benchDB) truncateTable() {
 	cLog("truncate table")
-	ut.mustExec("truncate table " + *tableName)
+	ut.mustExec("truncate table %n", *tableName)
 }
 
 func (ut *benchDB) runCountTimes(name string, count int, f func()) {
@@ -234,9 +234,8 @@ func (ut *benchDB) insertRows(spec string) {
 				break
 			}
 			rand.Read(buf)
-			insetQuery := fmt.Sprintf("insert %s (id, name, data) values (%d, '%d', '%x')",
-				*tableName, id, id, buf)
-			ut.mustExec(insetQuery)
+			insertQuery := "insert %n (id, name, data) values(%?, %?, %?)"
+			ut.mustExec(insertQuery, *tableName, id, id, buf)
 			id++
 		}
 		ut.mustExec("commit")
@@ -254,8 +253,8 @@ func (ut *benchDB) updateRandomRows(spec string) {
 				break
 			}
 			id := rand.Intn(end-start) + start
-			updateQuery := fmt.Sprintf("update %s set exp = exp + 1 where id = %d", *tableName, id)
-			ut.mustExec(updateQuery)
+			updateQuery := "update %n set exp = exp + 1 where id = %?"
+			ut.mustExec(updateQuery, *tableName, id)
 			runCount++
 		}
 		ut.mustExec("commit")
@@ -266,8 +265,8 @@ func (ut *benchDB) updateRangeRows(spec string) {
 	start, end, count := ut.mustParseSpec(spec)
 	ut.runCountTimes("update-range", count, func() {
 		ut.mustExec("begin")
-		updateQuery := fmt.Sprintf("update %s set exp = exp + 1 where id >= %d and id < %d", *tableName, start, end)
-		ut.mustExec(updateQuery)
+		updateQuery := "update %n set exp = exp + 1 where id >= %? and id < %?"
+		ut.mustExec(updateQuery, *tableName, start, end)
 		ut.mustExec("commit")
 	})
 }
@@ -275,8 +274,8 @@ func (ut *benchDB) updateRangeRows(spec string) {
 func (ut *benchDB) selectRows(spec string) {
 	start, end, count := ut.mustParseSpec(spec)
 	ut.runCountTimes("select", count, func() {
-		selectQuery := fmt.Sprintf("select * from %s where id >= %d and id < %d", *tableName, start, end)
-		ut.mustExec(selectQuery)
+		selectQuery := "select * from %n where id >= %? and id < %?"
+		ut.mustExec(selectQuery, *tableName, start, end)
 	})
 }
 

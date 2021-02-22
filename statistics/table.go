@@ -197,6 +197,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
+// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch and TopN.
+func (t *Table) GetStatsInfo(ID int64, isIndex bool) (*Histogram, *CMSketch, *TopN) {
+	if isIndex {
+		idxStatsInfo := t.Indices[ID]
+		return idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy()
+	}
+	colStatsInfo := t.Columns[ID]
+	return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy()
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
@@ -472,6 +482,9 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 			break
 		}
 		if col, ok := coll.Columns[colID]; ok {
+			if col.IsInvalid(sc, coll.Pseudo) {
+				continue
+			}
 			lowExclude := idxPointRange.LowExclude
 			highExclude := idxPointRange.HighExclude
 			// Consider this case:
@@ -526,7 +539,9 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 			if i >= usedColsLen {
 				break
 			}
-			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
+			if col, ok := coll.Columns[colID]; ok {
+				ndv = mathutil.MaxInt64(ndv, col.NDV)
+			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
@@ -895,4 +910,36 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 		size++
 	}
 	return
+}
+
+// CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.
+// If not, it will return false and set the version to the tbl's.
+// We use this check to make sure all the statistics of the table are in the same version.
+func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
+	for _, col := range tbl.Columns {
+		// Version0 means no statistics is collected currently.
+		if col.StatsVer == Version0 {
+			continue
+		}
+		if col.StatsVer != int64(*version) {
+			*version = int(col.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	for _, idx := range tbl.Indices {
+		// Version0 means no statistics is collected currently.
+		if idx.StatsVer == Version0 {
+			continue
+		}
+		if idx.StatsVer != int64(*version) {
+			*version = int(idx.StatsVer)
+			return false
+		}
+		// If we found one column and the version is the same, we can directly return since all the versions from this table is the same.
+		return true
+	}
+	// This table has no statistics yet. We can directly return true.
+	return true
 }

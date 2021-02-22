@@ -194,7 +194,10 @@ var sink = func(s string) {
 
 // GetBytes gets bytes value.
 func (d *Datum) GetBytes() []byte {
-	return d.b
+	if d.b != nil {
+		return d.b
+	}
+	return []byte{}
 }
 
 // SetBytes sets bytes value to datum.
