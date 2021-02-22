@@ -448,14 +448,14 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain format = 'brief' select a from t1 where a = 1").Check(testkit.Rows(
-		"IndexReader_6 4.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
+		"IndexReader 4.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
 	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain format = 'brief' select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
@@ -469,8 +469,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
 	tk.MustExec(`analyze table t3`)
 	tk.MustQuery(`explain format = 'brief' select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
-		"IndexReader_8 2.00 root  index:IndexRangeScan_7",
-		"└─IndexRangeScan_7 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+		"IndexReader 2.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
 }
