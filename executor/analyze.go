@@ -749,6 +749,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	if handleHist != nil {
+		handleHist.ID = e.commonHandle.ID
 		if handleTopn != nil && handleTopn.TotalCount() > 0 {
 			handleHist.RemoveIdxVals(handleTopn.TopN)
 		}
