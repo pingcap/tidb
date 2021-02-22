@@ -22,7 +22,7 @@ sig/planner:
 component/statistics:
   - statistics/*
 
-sig/infra:
+sig/sql-infra:
   - ddl/*
   - domain/*
   - infoschema/*
