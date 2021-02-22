@@ -526,7 +526,7 @@ type AnalyzeColumnsExec struct {
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, true, false, !hasPkHist(e.handleCols))
+	firstPartRanges, secondPartRanges := distsql.SplitRangesBySign(ranges, true, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return err
