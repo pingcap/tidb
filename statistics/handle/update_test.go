@@ -1944,51 +1944,51 @@ func (s *testStatsSuite) TestFeedbackCounter(c *C) {
 	c.Assert(subtraction(newNum, oldNum), Equals, 20)
 }
 
-func (s *testStatsSuite) TestUpdateGlobalStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t")
-		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
-					partition by range (a) (
-					partition p0 values less than (10),
-					partition p1 values less than (20),
-					partition p2 values less than (30))`)
-		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
-		testKit.MustExec("analyze table t")
-
-		handle.AutoAnalyzeMinCnt = 0
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.4")
-		defer func() {
-			handle.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-		}()
-
-		do := s.do
-		is := do.InfoSchema()
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
-		tableInfo := tbl.Meta()
-		pi := tableInfo.GetPartitionInfo()
-		h := do.StatsHandle()
-		c.Assert(h.RefreshVars(), IsNil)
-
-		c.Assert(h.Update(is), IsNil)
-		globalStats := h.GetTableStats(tableInfo)
-		c.Assert(globalStats.Count, Equals, int64(6))
-		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(partitionStats.Count, Equals, int64(2))
-
-		testKit.MustExec("insert into t values (3, 'g')")
-		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-		c.Assert(h.Update(is), IsNil)
-		h.HandleAutoAnalyze(is)
-		globalStats = h.GetTableStats(tableInfo)
-		c.Assert(globalStats.Count, Equals, int64(7))
-		c.Assert(globalStats.ModifyCount, Equals, int64(0))
-		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(partitionStats.Count, Equals, int64(3))
-		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
-	})
-}
+//func (s *testStatsSuite) TestUpdateGlobalStats(c *C) {
+//	defer cleanEnv(c, s.store, s.do)
+//	testKit := testkit.NewTestKit(c, s.store)
+//	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
+//		testKit.MustExec("use test")
+//		testKit.MustExec("drop table if exists t")
+//		testKit.MustExec(`create table t (a int, b varchar(10), index idx_ab(a, b))
+//					partition by range (a) (
+//					partition p0 values less than (10),
+//					partition p1 values less than (20),
+//					partition p2 values less than (30))`)
+//		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
+//		testKit.MustExec("analyze table t")
+//
+//		handle.AutoAnalyzeMinCnt = 0
+//		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.4")
+//		defer func() {
+//			handle.AutoAnalyzeMinCnt = 1000
+//			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+//		}()
+//
+//		do := s.do
+//		is := do.InfoSchema()
+//		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+//		c.Assert(err, IsNil)
+//		tableInfo := tbl.Meta()
+//		pi := tableInfo.GetPartitionInfo()
+//		h := do.StatsHandle()
+//		c.Assert(h.RefreshVars(), IsNil)
+//
+//		c.Assert(h.Update(is), IsNil)
+//		globalStats := h.GetTableStats(tableInfo)
+//		c.Assert(globalStats.Count, Equals, int64(6))
+//		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+//		c.Assert(partitionStats.Count, Equals, int64(2))
+//
+//		testKit.MustExec("insert into t values (3, 'g')")
+//		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+//		c.Assert(h.Update(is), IsNil)
+//		h.HandleAutoAnalyze(is)
+//		globalStats = h.GetTableStats(tableInfo)
+//		c.Assert(globalStats.Count, Equals, int64(7))
+//		c.Assert(globalStats.ModifyCount, Equals, int64(0))
+//		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+//		c.Assert(partitionStats.Count, Equals, int64(3))
+//		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+//	})
+//}
