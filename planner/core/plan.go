@@ -601,6 +601,9 @@ func (p *basePlan) ExplainInfo() string {
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.tp
+		}
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }
