@@ -14,6 +14,7 @@
 package gcutil
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%s'`
+	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
                               ON DUPLICATE KEY
 			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
@@ -33,8 +34,12 @@ const (
 
 // CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_enable")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -80,8 +85,12 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
-	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_safe_point")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
