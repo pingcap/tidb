@@ -93,6 +93,41 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a bigint unsigned not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(18446744073709551606,0)")
+	tk.MustExec("insert into t values(9223372036854775798,0)")
+
+	tk.MustExec("create table t1(a bigint unsigned not null primary key, b int not null)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "t1")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1 values(1,0)")
+	tk.MustExec("insert into t1 values(2,0)")
+	tk.MustExec("insert into t1 values(3,0)")
+	tk.MustExec("insert into t1 values(18446744073709551606,0)")
+	tk.MustExec("insert into t1 values(9223372036854775798,0)")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
+
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and ((t1.a < 9223372036854775800 and t1.a > 2) or (t1.a <= 1 and t1.a > -1))").Check(testkit.Rows("3"))
+}
+
 func (s *tiflashTestSuite) TestMppExecution(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
