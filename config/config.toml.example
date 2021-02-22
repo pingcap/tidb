@@ -38,9 +38,6 @@ oom-action = "log"
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 

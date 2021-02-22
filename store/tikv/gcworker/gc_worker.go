@@ -57,8 +57,8 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte) []*tikv.Lock
-		resolveLocks func(regionID tikv.RegionVerID) (ok bool, err error)
+		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
+		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	}
 }
 
@@ -868,12 +868,18 @@ retryScanAndResolve:
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
 		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key)...)
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
+		locForResolve := loc
 		for {
-			ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
+			var (
+				ok   bool
+				err1 error
+			)
 			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(loc.Region)
+				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
+			} else {
+				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}
 			if err1 != nil {
 				return regions, errors.Trace(err1)
@@ -888,7 +894,7 @@ retryScanAndResolve:
 					return regions, errors.Trace(err)
 				}
 				if stillInSame {
-					loc = refreshedLoc
+					locForResolve = refreshedLoc
 					continue
 				}
 				continue retryScanAndResolve
@@ -901,7 +907,7 @@ retryScanAndResolve:
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
 				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
+				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key

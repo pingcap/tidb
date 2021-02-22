@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
@@ -456,6 +457,15 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// by test suites.
 		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
 		go func() {
+			failpoint.Inject("beforeCommitSecondaries", func(v failpoint.Value) {
+				if s, ok := v.(string); !ok {
+					logutil.Logger(bo.ctx).Info("[failpoint] sleep 2s before commit secondary keys",
+						zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+					time.Sleep(2 * time.Second)
+				} else if s == "skip" {
+					failpoint.Return()
+				}
+			})
 			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				logutil.Logger(context.Background()).Debug("2PC async doActionOnBatches",
@@ -1020,7 +1030,10 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			// There must be a serious bug somewhere.
 			logutil.Logger(context.Background()).Error("2PC failed commit key after primary key committed",
 				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.String("primaryKey", hex.EncodeToString(c.primaryKey)),
+				zap.Uint64("txnStartTS", c.startTS),
+				zap.Uint64("forUpdateTS", c.forUpdateTS),
+				zap.Uint64("commitTS", c.commitTS))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
