@@ -2086,6 +2086,8 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("11212 3612 1212 2400"))
 	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
 	result.Check(testkit.Rows("112 36 12 24"))
+	result = tk.MustQuery("select extract(day_microsecond from cast('2017-01-01 12:12:12' as datetime)), extract(day_second from cast('2017-01-01 12:12:12' as datetime)), extract(day_minute from cast('2017-01-01 12:12:12' as datetime)), extract(day_hour from cast('2017-01-01 12:12:12' as datetime))")
+	result.Check(testkit.Rows("1121212000000 1121212 11212 112"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
@@ -3132,6 +3134,17 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 
 	result = tk.MustQuery(`select 1 / '2007' div 1;`)
 	result.Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite2) TestIssue11648(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int NOT NULL DEFAULT 8);")
+	tk.MustExec("SET sql_mode = '';")
+	tk.MustExec("insert into t values (1), (NULL), (2);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'id' cannot be null"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
 }
 
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
@@ -4737,10 +4750,17 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	}
 	// split table t by ('bbbb', 10, '2020-01-01');
 	data := []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewTimeDatum(getTime(2020, 1, 1, mysql.TypeDatetime))}
-	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", buildCommonKeyFromData(tbl.Meta().ID, data))
+	hexKey := buildCommonKeyFromData(tbl.Meta().ID, data)
+	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	result = tk.MustQuery(sql)
 	rs := fmt.Sprintf(`{"handle":{"a":"bbbb","b":"10","c":"2020-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
 	result.Check(testkit.Rows(rs))
+
+	// split table t by ('bbbb', 10, null);
+	data = []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewDatum(nil)}
+	hexKey = buildCommonKeyFromData(tbl.Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
@@ -4757,10 +4777,17 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	}
 	// split table t index idx by ('aaaaa', 100, '2000-01-01');
 	data = []types.Datum{types.NewStringDatum("aaaaa"), types.NewIntDatum(100), types.NewTimeDatum(getTime(2000, 1, 1, mysql.TypeDatetime))}
-	hexKey := buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
+	hexKey = buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	result = tk.MustQuery(sql)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":"aaaaa","b":"100","c":"2000-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
+	result.Check(testkit.Rows(rs))
+	// split table t index idx by (null, null, null);
+	data = []types.Datum{types.NewDatum(nil), types.NewDatum(nil), types.NewDatum(nil)}
+	hexKey = buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	result = tk.MustQuery(sql)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":null,"b":null,"c":null},"table_id":%d}`, tbl.Meta().ID)
 	result.Check(testkit.Rows(rs))
 }
 
@@ -5241,10 +5268,10 @@ func (s *testIntegrationSuite) TestTimestampDatumEncode(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a bigint primary key, b timestamp)`)
 	tk.MustExec(`insert into t values (1, "2019-04-29 11:56:12")`)
-	tk.MustQuery(`explain select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
-		"TableReader_40 10.00 root  data:Selection_39",
-		"└─Selection_39 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
-		"  └─TableFullScan_38 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`explain format = 'brief' select * from t where b = (select max(b) from t)`).Check(testkit.Rows(
+		"TableReader 10.00 root  data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t.b, 2019-04-29 11:56:12)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`select * from t where b = (select max(b) from t)`).Check(testkit.Rows(`1 2019-04-29 11:56:12`))
 }
@@ -5290,7 +5317,7 @@ func (s *testIntegrationSuite) TestExprPushdown(c *C) {
 		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
-	rows := tk.MustQuery("explain select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
 	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
@@ -5299,14 +5326,14 @@ func (s *testIntegrationSuite) TestExprPushdown(c *C) {
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][2]), Equals, "root")
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
 	tk.MustQuery("select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
-	rows = tk.MustQuery("explain select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
+	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\")")
 	c.Assert(fmt.Sprintf("%v", rows[3][2]), Equals, "cop[tikv]")
@@ -5315,7 +5342,7 @@ func (s *testIntegrationSuite) TestExprPushdown(c *C) {
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
+	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[1][2]), Equals, "root")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")")
 	tk.MustQuery("select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
@@ -5325,7 +5352,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	tk.MustExec("create table t1(id varchar(36) not null primary key, org_id varchar(36) not null, " +
 		"status tinyint default 1 not null, ns varchar(36) default '' not null);")
 	tk.MustExec("create table t2(id varchar(36) not null primary key, order_id varchar(36) not null, " +
@@ -5336,7 +5363,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 	tk.MustExec("insert into t1 value (3,1,3,'a');")
 	tk.MustExec("insert into t2 value (1,2,date'2020-05-08');")
 
-	rows := tk.MustQuery("explain SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
+	rows := tk.MustQuery("explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) " +
 		"AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[1][0]), Matches, ".*IndexMergeJoin.*")
 	c.Assert(fmt.Sprintf("%v", rows[4][3]), Equals, "table:t1")
@@ -5377,14 +5404,14 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 
 	// < not pushed, cast only pushed to TiKV, date_format only pushed to TiFlash,
 	// > pushed to both TiKV and TiFlash
-	rows := tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+	rows := tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "gt(cast(test.t.a), 10.10)")
 	c.Assert(fmt.Sprintf("%v", rows[3][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\"), gt(test.t.b, 1988-01-01)")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
-	rows = tk.MustQuery("explain select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
+	rows = tk.MustQuery("explain format = 'brief' select * from test.t where b > date'1988-01-01' and b < date'1994-01-01' " +
 		"and cast(a as decimal(10,2)) > 10.10 and date_format(b,'%m') = '11'").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[0][4]), Equals, "lt(test.t.b, 1994-01-01)")
 	c.Assert(fmt.Sprintf("%v", rows[1][4]), Equals, "eq(date_format(test.t.b, \"%m\"), \"11\")")
@@ -6883,7 +6910,7 @@ func (s *testIntegrationSerialSuite) TestNewCollationCheckClusterIndexTable(c *C
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name))")
 	tk.MustExec("insert into t values(\"aaaa\", 1, 1), (\"bbb\", 2, 2), (\"ccc\", 3, 3)")
 	tk.MustExec("admin check table t")
@@ -6991,7 +7018,7 @@ func (s *testIntegrationSerialSuite) TestNewCollationWithClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t(d double primary key, a int, name varchar(255), index idx(name(2)), index midx(a, name))")
 	tk.MustExec("insert into t values(2.11, 1, \"aa\"), (-1, 0, \"abcd\"), (9.99, 0, \"aaaa\")")
 	tk.MustQuery("select d from t use index(idx) where name=\"aa\"").Check(testkit.Rows("2.11"))
@@ -7911,7 +7938,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("CREATE TABLE `t` (" +
 		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
 		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
@@ -8341,8 +8368,8 @@ func (s *testIntegrationSerialSuite) TestIssue20876(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
 	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
@@ -8368,6 +8395,15 @@ func (s *testIntegrationSuite) TestIssue17726(c *C) {
 	result.Check(testkit.Rows("54995666 0 54995666117979.5 20040110095704"))
 }
 
+func (s *testIntegrationSuite) TestDatetimeUserVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @p = now()")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true")
+	c.Check(tk.MustQuery("select @p").Rows()[0][0] != "", IsTrue)
+}
+
 func (s *testIntegrationSuite) TestIssue12205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -8379,6 +8415,19 @@ func (s *testIntegrationSuite) TestIssue12205(c *C) {
 		testkit.Rows("838:59:59 18446744072635875328"))
 	tk.MustQuery("show warnings;").Check(
 		testkit.Rows("Warning 1292 Truncated incorrect time value: '18446744072635875000'"))
+}
+
+// for issue 20128
+func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b enum('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z') DEFAULT NULL, c decimal(40,20));")
+	tk.MustExec("insert into t values('z', 19.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 26.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 25.18040000000000000000);")
+	tk.MustQuery("select * from t where t.b > t.c;").Check(testkit.Rows("z 19.18040000000000000000", "z 25.18040000000000000000"))
+	tk.MustQuery("select * from t where t.b < t.c;").Check(testkit.Rows("z 26.18040000000000000000"))
 }
 
 func (s *testIntegrationSuite) TestIssue21677(c *C) {
@@ -8473,9 +8522,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
 
-	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
-	is.MockBundles(bundles)
 
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
@@ -8483,7 +8530,7 @@ PARTITION BY RANGE (c) (
 		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
 		c.Assert(err, IsNil)
 		groupID := placement.GroupID(pid)
-		oldBundle := &placement.Bundle{
+		is.SetBundle(&placement.Bundle{
 			ID: groupID,
 			Rules: []*placement.Rule{
 				{
@@ -8499,8 +8546,7 @@ PARTITION BY RANGE (c) (
 					},
 				},
 			},
-		}
-		bundles[groupID] = placement.BuildPlacementCopyBundle(oldBundle, pid)
+		})
 	}
 	setBundle("p0", "sh")
 	setBundle("p1", "bj")
@@ -8600,4 +8646,70 @@ func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	res = tk.MustQuery("select cast('2010-09-09' as date) a union select  '2010-09-09  ';")
 	c.Check(len(res.Rows()), Equals, 1)
+}
+
+func (s *testIntegrationSuite) TestIssue22098(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `ta` (" +
+		"  `k` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `c0` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `c` varchar(18) NOT NULL DEFAULT ' '," +
+		"  `e0` varchar(1) NOT NULL DEFAULT ' '," +
+		"  PRIMARY KEY (`k`,`c0`,`c`)," +
+		"  KEY `idx` (`c`,`e0`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("CREATE TABLE `tb` (" +
+		"  `k` varchar(32) NOT NULL DEFAULT ' '," +
+		"  `e` int(11) NOT NULL DEFAULT '0'," +
+		"  `i` int(11) NOT NULL DEFAULT '0'," +
+		"  `s` varchar(1) NOT NULL DEFAULT ' '," +
+		"  `c` varchar(50) NOT NULL DEFAULT ' '," +
+		"  PRIMARY KEY (`k`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("prepare stmt from \"select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')\"")
+	tk.MustExec("set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';")
+	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSerialSuite) TestCollationUnion2(c *C) {
+	// For issue 22179
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10))")
+	tk.MustExec("insert into t values('aaaaaaaaa'),('天王盖地虎宝塔镇河妖')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+
+	// check the collation of sub query of union statement.
+	tk.MustQuery("select collation(a) from (select null as a) aaa").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(a) from (select a from t limit 1) aaa").Check(testkit.Rows("utf8mb4_bin"))
+
+	// Reverse sub query of union statement.
+	tk.MustQuery("select * from (select null as a union all select a from t) aaa order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+	tk.MustQuery("select * from (select a from t) aaa union all select null as a order by a").Check(testkit.Rows("<nil>", "aaaaaaaaa", "天王盖地虎宝塔镇河妖"))
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testIntegrationSuite) Test22717(c *C) {
+	// For issue 22717
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t(
+					 	a enum('a','','c'),
+						b enum('0','1','2'),
+						c set('a','','c'),
+						d set('0','1','2')
+					 )`)
+	tk.MustExec("insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustExec("insert into t values('','','','')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a 0 a 0", " 1  1", "c 2 a, 0,1", "   "))
+	tk.MustQuery("select a from t where a").Check(testkit.Rows("a", "", "c", ""))
+	tk.MustQuery("select b from t where b").Check(testkit.Rows("0", "1", "2"))
+	tk.MustQuery("select c from t where c").Check(testkit.Rows("a", "", "a,", ""))
+	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }

@@ -1192,7 +1192,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 		}
 		var qLen int
 		for {
-			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
@@ -1224,7 +1224,7 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 	go func() {
 		var qLen int
 		for {
-			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				jobs, err3 := admin.GetDDLJobs(txn)
 				if err3 != nil {
 					return err3
@@ -1638,7 +1638,7 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	ID, err := strconv.Atoi(jobID)
 	c.Assert(err, IsNil)
 	var historyJob *model.Job
-	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err = t.GetHistoryDDLJob(int64(ID))
 		if err != nil {
