@@ -435,9 +435,6 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		statsVer:           statsVer,
 	}
 	builder.RecordSet = e
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	if analyzeReq.IdxReq.TopNSize != nil {
 		e.topNCount = *analyzeReq.IdxReq.TopNSize
 	}
@@ -445,6 +442,9 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		e.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
 	collectors, _, err := builder.CollectColumnStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// columns
 	colResp := &tipb.AnalyzeColumnsResp{}
 	for _, c := range collectors {
