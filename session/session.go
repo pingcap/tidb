@@ -952,8 +952,6 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	}
 }
 
-// getTableValue executes restricted sql and the result is one column.
-// It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
 	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
@@ -2073,6 +2071,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	initLoadCommonGlobalVarsSQL()
+
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -2084,7 +2084,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
@@ -2447,8 +2446,24 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableExchangePartition,
 }
 
+var (
+	loadCommonGlobalVarsSQLOnce sync.Once
+	loadCommonGlobalVarsSQL     string
+)
+
+func initLoadCommonGlobalVarsSQL() {
+	loadCommonGlobalVarsSQLOnce.Do(func() {
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
+	})
+}
+
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
@@ -2463,17 +2478,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	loadFunc := func() ([]chunk.Row, []*ast.ResultField, error) {
-		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-		if len(variable.PluginVarNames) > 0 {
-			vars = append(vars, variable.PluginVarNames...)
-		}
-
-		stmt, err := s.ParseWithParams(context.TODO(), "select HIGH_PRIORITY * from mysql.global_variables where variable_name in (%?)", vars)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		return s.ExecRestrictedStmt(context.TODO(), stmt)
+		return s.ExecRestrictedSQL(loadCommonGlobalVarsSQL)
 	}
 	rows, fields, err := gvc.LoadGlobalVariables(loadFunc)
 	if err != nil {
