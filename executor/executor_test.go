@@ -57,8 +57,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -7244,6 +7244,15 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
 	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func (s *testSuite) TestIssue22817(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a year)")
+	tk.MustExec("insert into t3 values (1991), (\"1992\"), (\"93\"), (94)")
+	tk.MustQuery("select * from t3 where a >= NULL").Check(testkit.Rows())
 }
 
 func (s *testSuite) TestIssue13953(c *C) {
