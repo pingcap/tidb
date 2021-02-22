@@ -394,7 +394,13 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
 
 		// Merge histogram
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, 0)
+		numBuckets := int64(0)
+		for _, hg := range allHg[i] {
+			if int64(hg.Len()) > numBuckets {
+				numBuckets = int64(hg.Len())
+			}
+		}
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
 		if err != nil {
 			return
 		}

@@ -1704,12 +1704,10 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-// Notice: If expBucketNumber == 0, we will let expBucketNumber = max(hists.Len())
 func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
-	needBucketNumber := false
 	if expBucketNumber == 0 {
-		needBucketNumber = true
+		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
@@ -1719,9 +1717,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		bucketNumber += int64(hist.Len())
 		if hist.Len() > 0 {
 			totCount += hist.Buckets[hist.Len()-1].Count
-			if needBucketNumber && int64(hist.Len()) > expBucketNumber {
-				expBucketNumber = int64(hist.Len())
-			}
 			if minValue == nil {
 				minValue = hist.GetLower(0).Clone()
 				continue
