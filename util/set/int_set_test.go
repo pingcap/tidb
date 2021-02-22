@@ -14,7 +14,9 @@
 package set
 
 import (
+	"fmt"
 	"github.com/pingcap/check"
+	"testing"
 )
 
 var _ = check.Suite(&intSetTestSuite{})
@@ -64,4 +66,58 @@ func (s *intSetTestSuite) TestInt64Set(c *check.C) {
 		c.Assert(set.Exist(int64(i)), check.IsTrue)
 	}
 	c.Assert(set.Exist(7), check.IsFalse)
+}
+
+func BenchmarkInt64SetMemoryUsage(b *testing.B) {
+	b.ReportAllocs()
+	type testCase struct {
+		rowNum    int
+		expectedB int
+	}
+	cases := []testCase{
+		{
+			rowNum:    0,
+			expectedB: 0,
+		},
+		{
+			rowNum:    100,
+			expectedB: 4,
+		},
+		{
+			rowNum:    10000,
+			expectedB: 11,
+		},
+		{
+			rowNum:    1000000,
+			expectedB: 18,
+		},
+		{
+			rowNum:    851968, // 6.5 * (1 << 17)
+			expectedB: 17,
+		},
+		{
+			rowNum:    851969, // 6.5 * (1 << 17) + 1
+			expectedB: 18,
+		},
+		{
+			rowNum:    425984, // 6.5 * (1 << 16)
+			expectedB: 16,
+		},
+		{
+			rowNum:    425985, // 6.5 * (1 << 16) + 1
+			expectedB: 17,
+		},
+	}
+
+	for _, c := range cases {
+		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				int64Set, _ := NewInt64SetWithMemoryUsage()
+				for num := 0; num < c.rowNum; num++ {
+					int64Set.Insert(int64(num))
+				}
+			}
+		})
+	}
 }
