@@ -2045,6 +2045,20 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 	}
+	if task.CommonHandleInfo != nil {
+		topNSize := new(int32)
+		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+		statsVersion := new(int32)
+		*statsVersion = int32(task.StatsVersion)
+		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
+			TopNSize:   topNSize,
+			Version:    statsVersion,
+		}
+		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
+		e.commonHandle = task.CommonHandleInfo
+	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
