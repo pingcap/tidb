@@ -430,9 +430,9 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	}
 	e := &analyzeMixedExec{
 		analyzeColumnsExec: *colExec,
-		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
-		statsVer:     statsVer,
+		colLen:             int(analyzeReq.IdxReq.NumColumns),
+		statsBuilder:       statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsVer:           statsVer,
 	}
 	builder.RecordSet = e
 	if err != nil {
