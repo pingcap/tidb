@@ -483,8 +483,8 @@ func (s *testPointGetSuite) TestPointGetByRowID(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(20), b int)")
 	tk.MustExec("insert into t values(\"aaa\", 12)")
-	tk.MustQuery("explain select * from t where t._tidb_rowid = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t handle:1"))
+	tk.MustQuery("explain format = 'brief' select * from t where t._tidb_rowid = 1").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1"))
 	tk.MustQuery("select * from t where t._tidb_rowid = 1").Check(testkit.Rows("aaa 12"))
 }
 
@@ -560,10 +560,10 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk.MustExec(`drop table if exists snp`)
 	tk.MustExec(`create table snp(id1 int, id2 int, v int, primary key(id1, id2))`)
 	tk.MustExec(`insert snp values (1, 1, 1), (2, 2, 2), (2, 3, 3)`)
-	tk.MustQuery(`explain select * from snp where id1 = 1`).Check(testkit.Rows("TableReader_6 10.00 root  data:TableRangeScan_5",
-		"└─TableRangeScan_5 10.00 cop[tikv] table:snp range:[1,1], keep order:false, stats:pseudo"))
-	tk.MustQuery(`explain select * from snp where id1 in (1, 100)`).Check(testkit.Rows("TableReader_6 20.00 root  data:TableRangeScan_5",
-		"└─TableRangeScan_5 20.00 cop[tikv] table:snp range:[1,1], [100,100], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format = 'brief' select * from snp where id1 = 1`).Check(testkit.Rows("TableReader 10.00 root  data:TableRangeScan",
+		"└─TableRangeScan 10.00 cop[tikv] table:snp range:[1,1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format = 'brief' select * from snp where id1 in (1, 100)`).Check(testkit.Rows("TableReader 20.00 root  data:TableRangeScan",
+		"└─TableRangeScan 20.00 cop[tikv] table:snp range:[1,1], [100,100], keep order:false, stats:pseudo"))
 	tk.MustQuery("select * from snp where id1 = 2").Check(testkit.Rows("2 2 2", "2 3 3"))
 }
 
