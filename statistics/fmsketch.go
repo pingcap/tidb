@@ -146,3 +146,9 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 	fm := FMSketchFromProto(p)
 	return fm, nil
 }
+
+// MemoryUsage returns the total memory usage of a FMSketch.
+func (c *FMSketch) MemoryUsage() (sum int64) {
+	// TODO: sum = ?
+	return
+}

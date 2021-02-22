@@ -292,6 +292,7 @@ type GlobalStats struct {
 	Hg    []*statistics.Histogram
 	Cms   []*statistics.CMSketch
 	TopN  []*statistics.TopN
+	Fms   []*statistics.FMSketch
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
@@ -542,11 +543,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -563,6 +568,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Info:       c.Info,
 			CMSketch:   cms,
 			TopN:       topN,
+			FMSketch:   fms,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
@@ -670,6 +676,10 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -700,6 +710,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -709,11 +720,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			col.Histogram.Correlation = correlation
-			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			col.FMSketch = fmSketch
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
@@ -731,6 +737,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Info:       colInfo,
 				CMSketch:   cms,
 				TopN:       topN,
+				FMSketch:   fmSketch,
 				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
@@ -854,7 +861,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -885,7 +892,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	fmSketch, err := statistics.EncodeFMSketch(hg.FMSketch)
+	fmSketch, err := statistics.EncodeFMSketch(fms)
 	if err != nil {
 		return err
 	}
@@ -975,22 +982,11 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var fmSketch *statistics.FMSketch
-	if isIndex == 0 {
-		fmSketch, err = h.fmSketchFromStorage(reader, tableID, 0, colID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bucketSize := len(rows)
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
-	if isIndex == 0 {
-		hg.FMSketch = fmSketch
-	}
 	hg.Correlation = corr
 	totalCount := int64(0)
 	for i := 0; i < bucketSize; i++ {

@@ -472,7 +472,7 @@ const (
 	version63 = 63
 	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
 	version64 = 64
-	// version65 add add mysql.stats_fm_sketch table.
+	// version65 add mysql.stats_fm_sketch table.
 	version65 = 65
 
 	// please make sure this is the largest version

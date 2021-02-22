@@ -75,12 +75,6 @@ type Histogram struct {
 	// the column values. This ranges from -1 to +1, and it is only valid for Column histogram, not for
 	// Index histogram.
 	Correlation float64
-
-	// FMSketch is used when the following conditions are met:
-	// 1. column Histogram
-	// 2. merge partition-level histogram to global-level histogram
-	// NOTE: In other situations, the FMSketch can be nil.
-	FMSketch *FMSketch
 }
 
 // Bucket store the bucket count and repeat.
@@ -257,7 +251,6 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 // ConvertTo converts the histogram bucket values into `Tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
-	hist.FMSketch = hg.FMSketch
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -908,6 +901,7 @@ type Column struct {
 	Histogram
 	*CMSketch
 	*TopN
+	*FMSketch
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -954,6 +948,9 @@ func (c *Column) MemoryUsage() (sum int64) {
 	if c.CMSketch != nil {
 		sum += c.CMSketch.MemoryUsage()
 	}
+	if c.FMSketch != nil {
+		sum += c.FMSketch.MemoryUsage()
+	}
 	return
 }
 
@@ -967,11 +964,11 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
-	return c.TotalRowCount() == 0 || (c.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
@@ -983,8 +980,8 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+		if c.Histogram.NDV > 0 && c.outOfRange(val) {
+			return outOfRangeEQSelectivity(c.Histogram.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
@@ -1027,7 +1024,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 	if c.TopN != nil {
 		topNLen = int64(len(c.TopN.TopN))
 	}
-	ndv := c.NDV - topNLen - int64(len(c.Histogram.Buckets))
+	ndv := c.Histogram.NDV - topNLen - int64(len(c.Histogram.Buckets))
 	if ndv <= 0 {
 		return 0, nil
 	}
@@ -1373,7 +1370,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			IsHandle:   oldCol.IsHandle,
 			CMSketch:   oldCol.CMSketch,
 		}
-		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.Histogram.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		// TODO: Investigate whether FMSketch needs to be updated here
 		var err error
 		splitRanges, ok := oldCol.Histogram.SplitRange(sc, node.Ranges, false)

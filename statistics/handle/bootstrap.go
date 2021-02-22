@@ -145,7 +145,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
 			hist.Correlation = row.GetFloat64(9)
-			hist.FMSketch = fms
 			col := &statistics.Column{
 				Histogram:  *hist,
 				PhysicalID: table.PhysicalID,
@@ -154,6 +153,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
+				FMSketch:   fms,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
