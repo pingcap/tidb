@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	zap "go.uber.org/zap"
 )
@@ -109,6 +107,8 @@ type twoPhaseCommitter struct {
 
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
+
+	binlog BinlogExecutor
 }
 
 type memBufferMutations struct {
@@ -305,6 +305,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, sessionID uint64) (*twoPhaseCommitter, e
 			ch: make(chan struct{}),
 		},
 		isPessimistic: txn.IsPessimistic(),
+		binlog: &binlogExecutor{
+			txn: txn,
+		},
 	}, nil
 }
 
@@ -1076,13 +1079,16 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {
-				binloginfo.RemoveOneSkippedCommitter()
+				c.binlog.Skip()
+				return
+			}
+			if !c.shouldWriteBinlog() {
+				return
+			}
+			if err != nil {
+				c.binlog.Commit(ctx, 0)
 			} else {
-				if err != nil {
-					c.writeFinishBinlog(ctx, binlog.BinlogType_Rollback, 0)
-				} else {
-					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
-				}
+				c.binlog.Commit(ctx, int64(c.commitTS))
 			}
 		}
 	}()
@@ -1123,7 +1129,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	failpoint.Inject("beforePrewrite", nil)
 
 	c.prewriteStarted = true
-	binlogChan := c.prewriteBinlog(ctx)
+	var binlogChan <-chan BinlogWriteResult
+	if c.shouldWriteBinlog() {
+		binlogChan = c.binlog.Prewrite(ctx, c.primary())
+	}
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
 	err = c.prewriteMutations(prewriteBo, c.mutations)
@@ -1552,65 +1561,6 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 
 	c.maxCommitTS = maxCommitTS
 	return nil
-}
-
-func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo.WriteResult {
-	if !c.shouldWriteBinlog() {
-		return nil
-	}
-	ch := make(chan *binloginfo.WriteResult, 1)
-	go func() {
-		logutil.Eventf(ctx, "start prewrite binlog")
-		binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-		bin := binInfo.Data
-		bin.StartTs = int64(c.startTS)
-		if bin.Tp == binlog.BinlogType_Prewrite {
-			bin.PrewriteKey = c.primary()
-		}
-		wr := binInfo.WriteBinlog(c.store.clusterID)
-		if wr.Skipped() {
-			binInfo.Data.PrewriteValue = nil
-			binloginfo.AddOneSkippedCommitter()
-		}
-		logutil.Eventf(ctx, "finish prewrite binlog")
-		ch <- wr
-	}()
-	return ch
-}
-
-func (c *twoPhaseCommitter) writeFinishBinlog(ctx context.Context, tp binlog.BinlogType, commitTS int64) {
-	if !c.shouldWriteBinlog() {
-		return
-	}
-	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
-	binInfo.Data.Tp = tp
-	binInfo.Data.CommitTs = commitTS
-	binInfo.Data.PrewriteValue = nil
-
-	wg := sync.WaitGroup{}
-	mock := false
-	failpoint.Inject("mockSyncBinlogCommit", func(val failpoint.Value) {
-		if val.(bool) {
-			wg.Add(1)
-			mock = true
-		}
-	})
-	go func() {
-		logutil.Eventf(ctx, "start write finish binlog")
-		binlogWriteResult := binInfo.WriteBinlog(c.store.clusterID)
-		err := binlogWriteResult.GetError()
-		if err != nil {
-			logutil.BgLogger().Error("failed to write binlog",
-				zap.Error(err))
-		}
-		logutil.Eventf(ctx, "finish write finish binlog")
-		if mock {
-			wg.Done()
-		}
-	}()
-	if mock {
-		wg.Wait()
-	}
 }
 
 func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
