@@ -57,6 +57,7 @@ partition p2 values less than (10))`)
 func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	for i := 0; i < 3; i++ {
+		tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
 		tk.MustExec("drop table if exists p, t")
 		if i == 0 {
 			// Test for range partition

@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
@@ -62,10 +63,12 @@ const (
 	EnableAsyncCommit
 	// Enable1PC indicates whether one-phase commit is enabled
 	Enable1PC
-	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
-	GuaranteeExternalConsistency
+	// GuaranteeLinearizability indicates whether to guarantee linearizability at the cost of an extra tso request before prewrite
+	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
+	IsStalenessReadOnly
 )
 
 // Priority value for transaction priority.
@@ -263,6 +266,8 @@ type Transaction interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
+	// GetOption returns the option
+	GetOption(opt Option) interface{}
 	// DelOption deletes an option.
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
@@ -464,12 +469,14 @@ type Storage interface {
 	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with given txnScope and startTS.
 	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
+	// BeginWithStalenessTS begins transaction with given staleness
+	BeginWithExactStaleness(txnScope string, prevSec uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
-	// GetClient gets a mpp client instance.
+	// GetMPPClient gets a mpp client instance.
 	GetMPPClient() MPPClient
 	// Close store
 	Close() error
@@ -487,8 +494,15 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
-	// GetMemCache return memory mamager of the storage
+	// GetMemCache return memory manager of the storage
 	GetMemCache() MemManager
+}
+
+// EtcdBackend is used for judging a storage is a real TiKV.
+type EtcdBackend interface {
+	EtcdAddrs() ([]string, error)
+	TLSConfig() *tls.Config
+	StartGCWorker() error
 }
 
 // FnKeyCmp is the function for iterator the keys
