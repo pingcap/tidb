@@ -41,6 +41,7 @@ func NewFMSketch(maxSize int) *FMSketch {
 	}
 }
 
+// Copy makes a copy for current FMSketch.
 func (s *FMSketch) Copy() *FMSketch {
 	if s == nil {
 		return nil
@@ -120,15 +121,20 @@ func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
 // FMSketchToProto converts FMSketch to its protobuf representation.
 func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
-	protoSketch.Mask = s.mask
-	for val := range s.hashset {
-		protoSketch.Hashset = append(protoSketch.Hashset, val)
+	if s != nil {
+		protoSketch.Mask = s.mask
+		for val := range s.hashset {
+			protoSketch.Hashset = append(protoSketch.Hashset, val)
+		}
 	}
 	return protoSketch
 }
 
 // FMSketchFromProto converts FMSketch from its protobuf representation.
 func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
+	if protoSketch == nil {
+		return nil
+	}
 	sketch := &FMSketch{
 		hashset: make(map[uint64]bool, len(protoSketch.Hashset)),
 		mask:    protoSketch.Mask,
