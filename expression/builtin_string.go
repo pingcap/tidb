@@ -3885,7 +3885,12 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		sig = &builtinWeightStringSig{bf, padding, length}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
 }
@@ -3909,8 +3914,9 @@ func (b *builtinWeightStringNullSig) evalString(row chunk.Row) (string, bool, er
 type builtinWeightStringSig struct {
 	baseBuiltinFunc
 
-	padding weightStringPadding
-	length  int
+	padding          weightStringPadding
+	length           int
+	maxAllowedPacket uint64
 }
 
 func (b *builtinWeightStringSig) Clone() builtinFunc {
@@ -3918,6 +3924,7 @@ func (b *builtinWeightStringSig) Clone() builtinFunc {
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.padding = b.padding
 	newSig.length = b.length
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3941,6 +3948,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 		if b.length < lenRunes {
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
+			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("weight_string", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
 		ctor = collate.GetCollator(b.args[0].GetType().Collate)
@@ -3951,6 +3962,10 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
+			if uint64(b.length-lenStr) > b.maxAllowedPacket {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
+				return "", true, nil
+			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
 		ctor = collate.GetCollator(charset.CollationBin)

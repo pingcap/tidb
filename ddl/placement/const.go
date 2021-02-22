@@ -13,8 +13,12 @@
 
 package placement
 
-// BundleIDPrefix is the bundle prefix of all rules from TiDB_DDL statements.
-const BundleIDPrefix = "TiDB_DDL_"
+const (
+	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
+	BundleIDPrefix = "TiDB_DDL_"
+	// PDBundleID is the bundle name of pd, the default bundle for all regions.
+	PDBundleID = "pd"
+)
 
 const (
 	// RuleIndexDefault is the default index for a rule, check Rule.Index.
@@ -29,6 +33,17 @@ const (
 	RuleIndexIndex
 )
 
-// DCLabelKey indicates the key of label which represents the dc for Store.
-// FIXME: currently we assumes "zone" is the dcLabel key in Store
-const DCLabelKey = "zone"
+const (
+	// DCLabelKey indicates the key of label which represents the dc for Store.
+	// FIXME: currently we assumes "zone" is the dcLabel key in Store
+	DCLabelKey = "zone"
+	// EngineLabelKey is the label that indicates the backend of store instance:
+	// tikv or tiflash. TiFlash instance will contain a label of 'engine: tiflash'.
+	EngineLabelKey = "engine"
+	// EngineLabelTiFlash is the label value, which a TiFlash instance will have with
+	// a label key of EngineLabelKey.
+	EngineLabelTiFlash = "tiflash"
+	// EngineLabelTiKV is the label value used in some tests. And possibly TiKV will
+	// set the engine label with a value of EngineLabelTiKV.
+	EngineLabelTiKV = "tikv"
+)

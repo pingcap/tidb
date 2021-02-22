@@ -67,10 +67,16 @@ type Plan interface {
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+	if p.TaskTp == property.MppTaskType {
+		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
+			return mpp.enforceExchanger(p)
+		}
+		return &mppTask{}
+	}
 	if p.IsEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = finishCopTask(ctx, tsk)
+	tsk = tsk.convertToRootTask(ctx)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
@@ -382,7 +388,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
-		base.childrenReqProps = append(base.childrenReqProps, prop.Clone())
+		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil
 }
@@ -595,6 +601,9 @@ func (p *basePlan) ExplainInfo() string {
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.tp
+		}
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }

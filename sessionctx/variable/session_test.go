@@ -136,13 +136,15 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		ProcessTime:  time.Second * time.Duration(2),
-		WaitTime:     time.Minute,
 		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		CopDetail: &execdetails.CopDetails{
+		ScanDetail: &execdetails.ScanDetail{
 			ProcessedKeys: 20001,
 			TotalKeys:     10000,
+		},
+		TimeDetail: execdetails.TimeDetail{
+			ProcessTime: time.Second * time.Duration(2),
+			WaitTime:    time.Minute,
 		},
 	}
 	statsInfos := make(map[string]uint64)
