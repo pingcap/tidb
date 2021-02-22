@@ -424,8 +424,13 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
 		} else {
+			// Since this func is only used batch point get, the idxVals should be exactly equals to value in
+			// the index record. Errors like truncate/data-too-long will trim the idxVals value to the short
+			// another one, which will leading unexpected results. Here we force the cast func to return all
+			// the errors.
 			idxVals[i], err = table.CastValue(ctx, idxVals[i], colInfo, true, false)
-			if types.ErrOverflow.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) ||
+				types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 				return nil, kv.ErrNotExist
 			}
 		}
