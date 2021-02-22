@@ -681,7 +681,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1;")
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("create table t(a int, b int, c int) PARTITION BY HASH(a) PARTITIONS 3;")
 	testKit.MustExec("create table t1(a int);")
 	testKit.MustExec("insert into t values(1,1,1),(3,12,3),(4,20,4),(2,7,2),(5,21,5);")
@@ -703,8 +703,8 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	// Test the 'dynamic-only' mode
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only';")
+	// Test the 'dynamic' mode
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	err := testKit.ExecToErr("analyze table t, t1;")
 	c.Assert(err.Error(), Equals, "TODO: The merge function of the NDV has not been implemented yet")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
