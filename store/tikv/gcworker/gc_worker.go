@@ -1756,10 +1756,10 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	se := createSession(w.store)
 	defer se.Close()
 	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
-	defer terror.Call(rs.Close)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
+	defer terror.Call(rs.Close)
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
 	if err != nil {
