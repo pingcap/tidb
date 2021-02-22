@@ -527,16 +527,16 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	if colExec.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
 		result = append(result, analyzeResult{
 			TableID:  colExec.tableID,
-			Hist:     []*statistics.Histogram{hists[len(hists)-1]},
-			Cms:      []*statistics.CMSketch{cms[len(cms)-1]},
-			TopNs:    []*statistics.TopN{topNs[len(topNs)-1]},
+			Hist:     []*statistics.Histogram{hists[0]},
+			Cms:      []*statistics.CMSketch{cms[0]},
+			TopNs:    []*statistics.TopN{topNs[0]},
 			IsIndex:  1,
 			job:      colExec.job,
 			StatsVer: colExec.analyzeVer,
 		})
-		hists = hists[:len(hists)-1]
-		cms = cms[:len(cms)-1]
-		topNs = topNs[:len(topNs)-1]
+		hists = hists[1:]
+		cms = cms[1:]
+		topNs = topNs[1:]
 	}
 	colResult := analyzeResult{
 		TableID:  colExec.tableID,
@@ -756,9 +756,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if handleCms != nil {
 			handleCms.CalcDefaultValForAnalyze(uint64(handleHist.NDV))
 		}
-		hists = append(hists, handleHist)
-		cms = append(cms, handleCms)
-		topNs = append(topNs, handleTopn)
+		hists = append([]*statistics.Histogram{handleHist}, hists...)
+		cms = append([]*statistics.CMSketch{handleCms}, cms...)
+		topNs = append([]*statistics.TopN{handleTopn}, topNs...)
 	}
 	return hists, cms, topNs, extStats, nil
 }
