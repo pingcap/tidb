@@ -105,6 +105,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
+	c.Assert(vars.EnableTiFlashFallbackTiKV, Equals, DefTiDBEnableTiFlashFallbackTiKV)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -466,18 +467,10 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, ErrorMatches, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'")
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "ON")
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_cache' is a read only variable")
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, types.NewStringDatum("1"))
-	c.Assert(err, IsNil)
-	val, err = GetSessionSystemVar(v, TiDBFoundInBinding)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "OFF")
-	c.Assert(v.systems[TiDBFoundInBinding], Equals, "ON")
+	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_binding' is a read only variable")
 
 	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
