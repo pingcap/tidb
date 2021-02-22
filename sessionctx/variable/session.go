@@ -824,7 +824,7 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
@@ -839,16 +839,16 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 type PartitionPruneMode string
 
 const (
-	// StaticOnly indicates only prune at plan phase.
-	StaticOnly PartitionPruneMode = "static-only"
-	// DynamicOnly indicates only prune at execute phase.
-	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// Static indicates only prune at plan phase.
+	Static PartitionPruneMode = "static"
+	// Dynamic indicates only prune at execute phase.
+	Dynamic PartitionPruneMode = "dynamic"
 )
 
 // Valid indicate PruneMode is validated.
 func (p PartitionPruneMode) Valid() bool {
 	switch p {
-	case StaticOnly, DynamicOnly:
+	case Static, Dynamic:
 		return true
 	default:
 		return false

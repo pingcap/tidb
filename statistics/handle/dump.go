@@ -123,7 +123,7 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, hist
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil || h.CurrentPruneMode() == variable.DynamicOnly {
+	if pi == nil || h.CurrentPruneMode() == variable.Dynamic {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
 	jsonTbl := &JSONTable{
