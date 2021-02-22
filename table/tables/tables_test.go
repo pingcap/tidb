@@ -249,10 +249,6 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
-	handle, err := tables.AllocHandle(context.Background(), nil, tb)
-	c.Assert(err, IsNil)
-	c.Assert(handle.IntValue(), Greater, int64(0))
-
 	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
