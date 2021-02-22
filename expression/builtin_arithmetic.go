@@ -234,7 +234,7 @@ func (s *builtinArithmeticPlusIntUnsignedUnsignedSig) evalInt(row chunk.Row) (va
 	}
 
 	if uint64(a) > math.MaxUint64-uint64(b) {
-		return a + b, true, types.ErrOverflow.GenWithStackByArgs("UU: BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return a + b, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a + b, false, nil
@@ -262,11 +262,11 @@ func (s *builtinArithmeticPlusIntUnsignedSignedSig) evalInt(row chunk.Row) (val 
 	}
 
 	if b < 0 && uint64(-b) > uint64(a) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	if b > 0 && uint64(a) > math.MaxUint64-uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a + b, false, nil
@@ -295,7 +295,7 @@ func (s *builtinArithmeticPlusIntSignedSignedSig) evalInt(row chunk.Row) (val in
 
 	// underflow and overflow cases
 	if (b < 0 && a < 0 && a+b > a) || (a > 0 && b > 0 && a+b < a) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a + b, false, nil
@@ -323,11 +323,11 @@ func (s *builtinArithmeticPlusIntSignedUnsignedSig) evalInt(row chunk.Row) (val 
 	}
 
 	if a < 0 && uint64(-a) > uint64(b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	if a > 0 && uint64(b) > math.MaxUint64-uint64(a) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s) : (%d + %d)", s.args[0].String(), s.args[1].String(), a, b))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 
 	return a + b, false, nil
