@@ -405,69 +405,6 @@ func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntSig) checkOverflowFUU(a, b int64) (err error) {
-	ua, ub, uMaxInt64, uAbsMinInt64 := uint64(a), uint64(b), uint64(math.MaxInt64), uint64(math.MaxInt64+1)
-	if (ua >= ub && ua-ub > uMaxInt64) || (ua < ub && ub-ua > uAbsMinInt64) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowFUS(a, b int64) (err error) {
-	// lh >= 0 && rh >= 0 : never overflow
-	// lh < 0 && rh > 0 : uint64(lh) - uint64(rh) > maxint64
-	// lh < 0 && rh <= 0 : definitely overflow
-	// lh >= 0 && rh < 0 : (-rh > maxint64 - lh) || lh >= 0 && rh == minint64
-	if (a < 0 && b > 0 && uint64(a) > uint64(math.MaxInt64+b)) ||
-		(a < 0 && b <= 0) ||
-		(a >= 0 && b < 0 && (b == math.MinInt64 || -b > math.MaxInt64-a)) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowFSU(a, b int64) (err error) {
-	// lh >= 0 && rh >= 0 : never overflow
-	// lh >= 0 && rh < 0 : uint64(rh) - uint64(lh) > maxint64 + 1
-	// lh < 0 && rh >= 0 : lh - rh < minint64
-	// lh < 0 && rh < 0 : definitely overflow
-	if (a >= 0 && b < 0 && uint64(b)-uint64(a) > uint64(math.MaxInt64+1)) || (a < 0 && b >= 0 && -b < math.MinInt64-a) || (a < 0 && b < 0) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowSS(a, b int64) (err error) {
-	// We need `(a >= 0 && b == math.MinInt64)` due to `-(math.MinInt64) == math.MinInt64`.
-	// If `a<0 && b<=0`: `a-b` will not overflow even though b==math.MinInt64.
-	// If `a<0 && b>0`: `a-b` will not overflow only if `math.MinInt64<=a-b` satisfied
-	if (a >= 0 && b == math.MinInt64) || (a > 0 && -b > math.MaxInt64-a) || (a < 0 && -b < math.MinInt64-a) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowUU(a, b int64) (err error) {
-	if uint64(a) < uint64(b) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowUS(a, b int64) (err error) {
-	if (b >= 0 && uint64(a) < uint64(b)) || (b < 0 && uint64(a) > math.MaxUint64-uint64(-b)) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
-func (s *builtinArithmeticMinusIntSig) checkOverflowSU(a, b int64) (err error) {
-	if a < 0 || uint64(a) < uint64(b) {
-		return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
-	}
-	return nil
-}
-
 func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
@@ -482,44 +419,67 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
-	switch {
-	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err := s.checkOverflowFUU(a, b)
-		if err != nil {
-			return 0, true, err
+	errType := "BIGINT UNSIGNED"
+	if forceToSigned {
+		errType = "BIGINT"
+	}
+	overflow := s.overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned, a, b)
+	if overflow {
+		return 0, true, types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+	}
+
+	return a - b, false, nil
+}
+
+// returns true when overflowed
+func (s* builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned bool, a, b int64) bool {
+	res := a - b
+	ua, ub := uint64(a), uint64(b)
+	resUnsigned := false
+	if isLHSUnsigned {
+		if isRHSUnsigned {
+			if ua < ub {
+				if res >= 0 {
+					return true
+				}
+			} else {
+				resUnsigned = true
+			}
+		} else {
+			if b >= 0 {
+				if ua > ub {
+					resUnsigned = true
+				}
+			} else {
+				if testIfSumOverflowsUll(ua, uint64(-b)) {
+					return true
+				}
+				resUnsigned = true
+			}
 		}
-	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err := s.checkOverflowFUS(a, b)
-		if err != nil {
-			return 0, true, err
-		}
-	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err := s.checkOverflowFSU(a, b)
-		if err != nil {
-			return 0, true, err
-		}
-	case !isLHSUnsigned && !isRHSUnsigned:
-		err := s.checkOverflowSS(a, b)
-		if err != nil {
-			return 0, true, err
-		}
-	case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err := s.checkOverflowUU(a, b)
-		if err != nil {
-			return 0, true, err
-		}
-	case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err := s.checkOverflowUS(a, b)
-		if err != nil {
-			return 0, true, err
-		}
-	case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err := s.checkOverflowSU(a, b)
-		if err != nil {
-			return 0, true, err
+	} else {
+		if isRHSUnsigned {
+			if uint64(a-math.MinInt64) < ub {
+				return true
+			}
+		} else {
+			if a > 0 && b < 0 {
+				resUnsigned = true
+			} else if a < 0 && b > 0 && res >= 0 {
+				return true
+			}
 		}
 	}
-	return a - b, false, nil
+
+	if (!forceToSigned && !resUnsigned && res < 0) || (forceToSigned && resUnsigned && uint64(res) > uint64(math.MaxInt64)) {
+		return true
+	}
+
+	return false
+}
+
+func testIfSumOverflowsUll(a, b uint64) bool {
+	return math.MaxUint64-a < b
 }
 
 type arithmeticMultiplyFunctionClass struct {

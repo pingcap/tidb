@@ -349,140 +349,24 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 
-	switch {
-	case forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err = b.minusFUU(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusFUS(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err = b.minusFSU(result, lhi64s, rhi64s, resulti64s)
-	case forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusSS(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && isLHSUnsigned && isRHSUnsigned:
-		err = b.minusUU(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusUS(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && !isLHSUnsigned && isRHSUnsigned:
-		err = b.minusSU(result, lhi64s, rhi64s, resulti64s)
-	case !forceToSigned && !isLHSUnsigned && !isRHSUnsigned:
-		err = b.minusSS(result, lhi64s, rhi64s, resulti64s)
+	errType := "BIGINT UNSIGNED"
+	if forceToSigned {
+		errType = "BIGINT"
 	}
-	return err
-}
-func (b *builtinArithmeticMinusIntSig) minusFUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
 	for i := 0; i < len(lhi64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		err := b.checkOverflowFUU(lh, rh)
-		if err != nil {
-			return err
+		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned, lh, rh)
+		if overflow {
+			return types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
 		resulti64s[i] = lh - rh
 	}
-	return nil
-}
 
-func (b *builtinArithmeticMinusIntSig) minusFUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowFUS(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-
-func (b *builtinArithmeticMinusIntSig) minusFSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowFSU(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-func (b *builtinArithmeticMinusIntSig) minusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowUU(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-
-func (b *builtinArithmeticMinusIntSig) minusUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowUS(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-
-func (b *builtinArithmeticMinusIntSig) minusSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowSU(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
-	return nil
-}
-func (b *builtinArithmeticMinusIntSig) minusSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
-		lh, rh := lhi64s[i], rhi64s[i]
-
-		err := b.checkOverflowSS(lh, rh)
-		if err != nil {
-			return err
-		}
-
-		resulti64s[i] = lh - rh
-	}
 	return nil
 }
 
