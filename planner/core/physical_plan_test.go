@@ -473,10 +473,10 @@ func (s *testPlanSuite) TestEliminateMaxOneRow(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -983,9 +983,9 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 
 		comment := Commentf("case:%v sql:%s", i, ts)
 		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
@@ -1110,10 +1110,10 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1155,10 +1155,10 @@ func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1593,10 +1593,10 @@ func (s *testPlanSuite) TestNominalSort(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
@@ -1682,14 +1682,14 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 
 	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
 	// The query below is the same as queries in the testdata except for nth_plan() hint.
 	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
 	// hold in the future, you may need to modify this.
-	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
+	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }
