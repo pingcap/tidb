@@ -46,8 +46,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -112,6 +115,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
+	defer func() {
+		if err != nil {
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		}
+	}()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -186,12 +194,31 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 	}
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if cc.ctx.GetSessionVars().EnableTiFlashFallbackTiKV && err != nil && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		prevErr := err
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
+		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
+	}
+	return err
+}
+
+// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried
+// to correct error. Currently the first return value is used to fallback to TiKV when TiFlash is down.
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
-		return cc.writeOK(ctx)
+		return false, cc.writeOK(ctx)
 	}
 
 	// if the client wants to use cursor
@@ -201,20 +228,20 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		return cc.flush(ctx)
+		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	err = cc.writeResultset(ctx, rs, true, 0, 0)
+	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
-	return nil
+	return false, nil
 }
 
 // maxFetchSize constants
@@ -246,7 +273,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}

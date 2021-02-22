@@ -16,12 +16,12 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +96,26 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
+
+	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
+	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
+	needGlobalStats := pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic
+	type globalStatsKey struct {
+		tableID int64
+		indexID int64
+	}
+	type globalStatsInfo struct {
+		isIndex int
+		// When the `isIndex == 0`, the idxID will be the column ID.
+		// Otherwise, the idxID will be the index ID.
+		idxID        int64
+		statsVersion int
+	}
+	// globalStatsMap is a map used to store which partition tables and the corresponding indexes need global-level stats.
+	// The meaning of key in map is the structure that used to store the tableID and indexID.
+	// The meaning of value in map is some additional information needed to build global-level stats.
+	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+
 	for panicCnt < concurrency {
 		result, ok := <-resultCh
 		if !ok {
@@ -111,8 +131,20 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			result.job.Finish(true)
 			continue
 		}
+		statisticsID := result.TableID.GetStatisticsID()
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
+			if result.TableID.IsPartitionTable() && needGlobalStats {
+				// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+				idxID := int64(-1)
+				if result.IsIndex != 0 {
+					idxID = hg.ID
+				}
+				globalStatsID := globalStatsKey{result.TableID.TableID, idxID}
+				if _, ok := globalStatsMap[globalStatsID]; !ok {
+					globalStatsMap[globalStatsID] = globalStatsInfo{result.IsIndex, hg.ID, result.StatsVer}
+				}
+			}
+			err1 := statsHandle.SaveStatsToStorage(statisticsID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], result.StatsVer, 1)
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
@@ -120,7 +152,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				continue
 			}
 		}
-		if err1 := statsHandle.SaveExtendedStatsToStorage(result.TableID.PersistID, result.ExtStats, false); err1 != nil {
+		if err1 := statsHandle.SaveExtendedStatsToStorage(statisticsID, result.ExtStats, false); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save extended stats to storage failed", zap.Error(err))
 			result.job.Finish(true)
@@ -133,6 +165,22 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if err != nil {
 		return err
+	}
+	if needGlobalStats {
+		for globalStatsID, info := range globalStatsMap {
+			sc := e.ctx.GetSessionVars().StmtCtx
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
+			if err != nil {
+				return err
+			}
+			for i := 0; i < globalStats.Num; i++ {
+				hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, info.statsVersion, 1)
+				if err != nil {
+					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+			}
+		}
 	}
 	return statsHandle.Update(infoschema.GetInfoSchema(e.ctx))
 }
@@ -280,9 +328,9 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
-		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, true, ranges, nil)
+		kvReqBuilder = builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, true, ranges, nil)
 	} else {
-		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, e.idxInfo.ID, ranges)
+		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
@@ -366,7 +414,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 				if err := cms.MergeCMSketch(cm); err != nil {
 					return nil, nil, nil, err
 				}
-				statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
+				statistics.MergeTopNAndUpdateCMSketch(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]))
 			}
 		}
 	}
@@ -478,7 +526,7 @@ type AnalyzeColumnsExec struct {
 
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, true, false, !hasPkHist(e.handleCols))
+	firstPartRanges, secondPartRanges := distsql.SplitRangesBySign(ranges, true, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return err
@@ -499,7 +547,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -623,7 +671,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	}
 	if needExtStats {
 		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.tableID.PersistID, e.colsInfo, collectors)
+		extStats, err = statsHandle.BuildExtendedStats(e.tableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -719,16 +767,21 @@ type AnalyzeFastExec struct {
 }
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
-	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.tableID.PersistID)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	var stmt ast.StmtNode
+	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	if err != nil {
+		return
+	}
 	var rows []chunk.Row
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return
 	}
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.PersistID).Count)
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()).Count)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
@@ -745,21 +798,20 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 				err = rollbackFn()
 			}
 		}()
-		var partition string
-		if e.tableID.StoreAsCollectID() && e.tblInfo.ID != e.tableID.PersistID {
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
+
+		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
+		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
-				if definition.ID == e.tableID.PersistID {
-					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
+				if definition.ID == e.tableID.GetStatisticsID() {
+					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
 					break
 				}
 			}
 		}
-		sql := fmt.Sprintf("select count(*) from %s.%s", dbInfo.Name.L, e.tblInfo.Name.L)
-		if len(partition) > 0 {
-			sql += partition
-		}
 		var rs sqlexec.RecordSet
-		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
 		if err != nil {
 			return
 		}
@@ -809,37 +861,36 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	accessRegionsCounter := 0
-	for _, pid := range e.tableID.CollectIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
-		targetKey := startKey
-		for {
-			// Search for the region which contains the targetKey.
-			loc, err := e.cache.LocateKey(bo, targetKey)
-			if err != nil {
-				return err
-			}
-			if bytes.Compare(endKey, loc.StartKey) < 0 {
-				break
-			}
-			accessRegionsCounter++
+	pid := e.tableID.GetStatisticsID()
+	startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
+	targetKey := startKey
+	for {
+		// Search for the region which contains the targetKey.
+		loc, err := e.cache.LocateKey(bo, targetKey)
+		if err != nil {
+			return err
+		}
+		if bytes.Compare(endKey, loc.StartKey) < 0 {
+			break
+		}
+		accessRegionsCounter++
 
-			// Set the next search key.
-			targetKey = loc.EndKey
+		// Set the next search key.
+		targetKey = loc.EndKey
 
-			// If the KV pairs in the region all belonging to the table, add it to the sample task.
-			if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-				e.sampTasks = append(e.sampTasks, loc)
-				continue
-			}
+		// If the KV pairs in the region all belonging to the table, add it to the sample task.
+		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+			e.sampTasks = append(e.sampTasks, loc)
+			continue
+		}
 
-			e.scanTasks = append(e.scanTasks, loc)
-			if bytes.Compare(loc.StartKey, startKey) < 0 {
-				loc.StartKey = startKey
-			}
-			if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
-				loc.EndKey = endKey
-				break
-			}
+		e.scanTasks = append(e.scanTasks, loc)
+		if bytes.Compare(loc.StartKey, startKey) < 0 {
+			loc.StartKey = startKey
+		}
+		if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
+			loc.EndKey = endKey
+			break
 		}
 	}
 	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
@@ -1106,7 +1157,7 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		statistics.MergeTopN(topN, curTopN, cmSketch, numTop, false)
+		statistics.MergeTopNAndUpdateCMSketch(topN, curTopN, cmSketch, numTop)
 	}
 	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
@@ -1147,7 +1198,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	stats := domain.GetDomain(e.ctx).StatsHandle()
 	var rowCount int64 = 0
 	if stats.Lease() > 0 {
-		if t := stats.GetPartitionStats(e.tblInfo, e.tableID.PersistID); !t.Pseudo {
+		if t := stats.GetPartitionStats(e.tblInfo, e.tableID.GetStatisticsID()); !t.Pseudo {
 			rowCount = t.Count
 		}
 	}
@@ -1231,9 +1282,14 @@ type analyzeIndexIncrementalExec struct {
 	AnalyzeIndexExec
 	oldHist *statistics.Histogram
 	oldCMS  *statistics.CMSketch
+	oldTopN *statistics.TopN
 }
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
+	var statsVer = statistics.Version1
+	if idxExec.analyzePB.IdxReq.Version != nil {
+		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	}
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
 	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil, nil)
 	if err != nil {
@@ -1244,7 +1300,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
-	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]), statistics.Version1)
+	hist, err = statistics.MergeHistograms(idxExec.ctx.GetSessionVars().StmtCtx, idxExec.oldHist, hist, int(idxExec.opts[ast.AnalyzeOptNumBuckets]), statsVer)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}
@@ -1255,9 +1311,9 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		}
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
-	var statsVer = statistics.Version1
-	if idxExec.analyzePB.IdxReq.Version != nil {
-		statsVer = int(*idxExec.analyzePB.IdxReq.Version)
+	if statsVer == statistics.Version2 {
+		poped := statistics.MergeTopNAndUpdateCMSketch(topN, idxExec.oldTopN, cms, uint32(idxExec.opts[ast.AnalyzeOptNumTopN]))
+		hist.AddIdxVals(poped)
 	}
 	result := analyzeResult{
 		TableID:  idxExec.tableID,

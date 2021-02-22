@@ -125,6 +125,7 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 // single physical table means a table without partitions or a single partition in a partition table.
 func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
 	if ts != nil {
+		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 		if ts.Table.GetPartitionInfo() != nil {
 			tmp, _ := e.is.TableByID(ts.Table.ID)
 			tbl := tmp.(table.PartitionedTable)
@@ -136,7 +137,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			for _, p := range partitions {
 				pid := p.GetPhysicalID()
 				meta := p.Meta()
-				kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, ts.Ranges, nil)
+				kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -149,7 +150,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			return ret, nil
 		}
 
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, ts.Ranges, nil)
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

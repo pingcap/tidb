@@ -31,15 +31,12 @@ type actionCommit struct{ retry bool }
 
 var _ twoPhaseCommitAction = actionCommit{}
 
-var tikvSecondaryLockCleanupFailureCounterCommit = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit")
-var tiKVTxnRegionsNumHistogramCommit = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("commit"))
-
 func (actionCommit) String() string {
 	return "commit"
 }
 
 func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramCommit
+	return metrics.TxnRegionsNumHistogramCommit
 }
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
