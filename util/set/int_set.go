@@ -70,18 +70,19 @@ func (s Int64Set) Count() int {
 }
 
 const (
-	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// DefInt64SetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(int64) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// The bucket size may be changed by golang implement in the future.
 	DefInt64SetBucketMemoryUsage = 8*(1+8+0) + 16
 )
 
+// Int64SetWithMemoryUsage is a int set with memory usage.
 type Int64SetWithMemoryUsage struct {
 	Int64Set
 	bInMap int64
 }
 
-// NewStringSetWithMemoryUsage builds a string set.
+// NewInt64SetWithMemoryUsage builds a int64 set.
 func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
 	set := make(Int64Set, len(ss))
 	setWithMemoryUsage = Int64SetWithMemoryUsage{
@@ -95,6 +96,7 @@ func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMem
 	return setWithMemoryUsage, memDelta
 }
 
+// Insert inserts `val` into `s` and return memDelta.
 func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
 	s.Int64Set.Insert(val)
 	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {

@@ -53,8 +53,8 @@ func (s StringSet) Count() int {
 }
 
 const (
-	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
+	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// The bucket size may be changed by golang implement in the future.
 	DefStringSetBucketMemoryUsage = 8*(1+16+0) + 16
 	// Maximum average load of a bucket that triggers growth is 6.5.
@@ -63,6 +63,7 @@ const (
 	loadFactorDen = 2
 )
 
+// StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {
 	StringSet
 	bInMap int64
@@ -82,6 +83,7 @@ func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWith
 	return setWithMemoryUsage, memDelta
 }
 
+// Insert inserts `val` into `s` and return memDelta.
 func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	s.StringSet.Insert(val)
 	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
