@@ -28,11 +28,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-=======
->>>>>>> 745729fd9... bindinfo: use new sql apis (#22653)
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -401,7 +397,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 func (h *BindHandle) lockBindInfoTable() error {
 	// h.sctx already locked.
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(context.TODO(), h.lockBindInfoSQL())
+	_, err := exec.ExecuteInternal(context.TODO(), h.LockBindInfoSQL())
 	return err
 }
 
@@ -612,56 +608,6 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
-<<<<<<< HEAD
-func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string {
-	sql := fmt.Sprintf(
-		`DELETE FROM mysql.bind_info WHERE original_sql=%s AND default_db=%s`,
-		expression.Quote(normdOrigSQL),
-		expression.Quote(db),
-	)
-	if bindSQL == "" {
-		return sql
-	}
-	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindSQL))
-}
-
-func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Binding) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
-		expression.Quote(orignalSQL),
-		expression.Quote(info.BindSQL),
-		expression.Quote(db),
-		expression.Quote(info.Status),
-		expression.Quote(info.CreateTime.String()),
-		expression.Quote(info.UpdateTime.String()),
-		expression.Quote(info.Charset),
-		expression.Quote(info.Collation),
-		expression.Quote(info.Source),
-	)
-}
-
-// lockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-func (h *BindHandle) lockBindInfoSQL() string {
-	return fmt.Sprintf("UPDATE mysql.bind_info SET source=%s WHERE original_sql=%s",
-		expression.Quote(Builtin),
-		expression.Quote(BuiltinPseudoSQL4BindLock))
-}
-
-func (h *BindHandle) logicalDeleteBindInfoSQL(originalSQL, db string, updateTs types.Time, bindingSQL string) string {
-	updateTsStr := updateTs.String()
-	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%s,update_time=%s WHERE original_sql=%s and default_db=%s and update_time<%s`,
-		expression.Quote(deleted),
-		expression.Quote(updateTsStr),
-		expression.Quote(originalSQL),
-		expression.Quote(db),
-		expression.Quote(updateTsStr))
-	if bindingSQL == "" {
-		return sql
-	}
-	return sql + fmt.Sprintf(` and bind_sql = %s`, expression.Quote(bindingSQL))
-}
-
-=======
->>>>>>> 745729fd9... bindinfo: use new sql apis (#22653)
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
