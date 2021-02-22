@@ -37,12 +37,12 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -54,7 +54,7 @@ func TestT(t *testing.T) {
 type testGCWorkerSuite struct {
 	store      tikv.Storage
 	cluster    cluster.Cluster
-	oracle     *mockoracle.MockOracle
+	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
 	client     *testGCWorkerClient
@@ -93,7 +93,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 
 	s.store = store.(tikv.Storage)
 	c.Assert(err, IsNil)
-	s.oracle = &mockoracle.MockOracle{}
+	s.oracle = &oracles.MockOracle{}
 	s.store.SetOracle(s.oracle)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
