@@ -55,7 +55,7 @@ func (bpc *binPaddingCollator) Pattern() WildcardPattern {
 }
 
 type binPattern struct {
-	patChars []byte
+	patChars []rune
 	patTypes []byte
 }
 

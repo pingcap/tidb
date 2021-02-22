@@ -366,7 +366,7 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
 		for _, newPropCols := range exprProperties {
 			// Check if the prop has already been in `groupPropertyMap`.
-			newProp := property.PhysicalProperty{Items: property.ItemsFromCols(newPropCols, true)}
+			newProp := property.PhysicalProperty{SortItems: property.SortItemsFromCols(newPropCols, true)}
 			key := newProp.HashCode()
 			if _, ok := groupPropertyMap[string(key)]; !ok {
 				groupPropertyMap[string(key)] = newPropCols

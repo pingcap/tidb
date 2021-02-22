@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/twmb/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -38,17 +38,17 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func prepareCMSWithTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) (*CMSketch, error) {
+func prepareCMSAndTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) (*CMSketch, *TopN, error) {
 	data := make([][]byte, 0, len(vals))
 	for _, v := range vals {
 		bytes, err := codec.EncodeValue(nil, nil, *v)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		data = append(data, bytes)
 	}
-	cms, _, _ := NewCMSketchWithTopN(d, w, data, n, total)
-	return cms, nil
+	cms, topN, _, _ := NewCMSketchAndTopN(d, w, data, n, total)
+	return cms, topN, nil
 }
 
 // buildCMSketchAndMapWithOffset builds cm sketch using zipf and the generated values starts from `offset`.
@@ -71,7 +71,7 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 	return buildCMSketchAndMapWithOffset(d, w, seed, total, imax, s, 0)
 }
 
-func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint64, s float64) (*CMSketch, map[int64]uint32, error) {
+func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint64, s float64) (*CMSketch, *TopN, map[int64]uint32, error) {
 	mp := make(map[int64]uint32)
 	zipf := rand.NewZipf(rand.New(rand.NewSource(seed)), s, 1, imax)
 	vals := make([]*types.Datum, 0)
@@ -82,15 +82,15 @@ func buildCMSketchTopNAndMap(d, w, n, sample int32, seed int64, total, imax uint
 			vals = append(vals, &val)
 		}
 	}
-	cms, err := prepareCMSWithTopN(d, w, vals, uint32(n), total)
-	return cms, mp, err
+	cms, topN, err := prepareCMSAndTopN(d, w, vals, uint32(n), total)
+	return cms, topN, mp, err
 }
 
-func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
+func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint64, error) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	var total uint64
 	for num, count := range mp {
-		estimate, err := cms.queryValue(sc, types.NewIntDatum(num))
+		estimate, err := queryValue(sc, cms, topN, types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -128,22 +128,22 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		avg, err := averageAbsoluteError(lSketch, lMap)
+		avg, err := averageAbsoluteError(lSketch, nil, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
 		rSketch, rMap, err := buildCMSketchAndMap(d, w, 1, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		avg, err = averageAbsoluteError(rSketch, rMap)
+		avg, err = averageAbsoluteError(rSketch, nil, rMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
-		err = lSketch.MergeCMSketch(rSketch, 0)
+		err = lSketch.MergeCMSketch(rSketch)
 		c.Assert(err, IsNil)
 		for val, count := range rMap {
 			lMap[val] += count
 		}
-		avg, err = averageAbsoluteError(lSketch, lMap)
+		avg, err = averageAbsoluteError(lSketch, nil, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, Less, t.avgError*2)
 	}
@@ -160,7 +160,7 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := DecodeCMSketch(bytes, nil)
+	rSketch, _, err := DecodeCMSketchAndTopN(bytes, nil)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -194,10 +194,10 @@ func (s *testStatisticsSuite) TestCMSketchTopN(c *C) {
 	d, w := int32(5), int32(2048)
 	total, imax := uint64(1000000), uint64(1000000)
 	for _, t := range tests {
-		lSketch, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
+		lSketch, topN, lMap, err := buildCMSketchTopNAndMap(d, w, 20, 1000, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		c.Assert(len(lSketch.TopN()), LessEqual, 40)
-		avg, err := averageAbsoluteError(lSketch, lMap)
+		c.Assert(len(topN.TopN), LessEqual, 40)
+		avg, err := averageAbsoluteError(lSketch, topN, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 	}
@@ -230,13 +230,13 @@ func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
 		c.Check(err, IsNil)
-		avg, err := averageAbsoluteError(lSketch, lMap)
+		avg, err := averageAbsoluteError(lSketch, nil, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
 		rSketch, rMap, err := buildCMSketchAndMapWithOffset(d, w, 1, total, imax, t.zipfFactor, int64(imax))
 		c.Check(err, IsNil)
-		avg, err = averageAbsoluteError(rSketch, rMap)
+		avg, err = averageAbsoluteError(rSketch, nil, rMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 
@@ -244,7 +244,7 @@ func (s *testStatisticsSuite) TestMergeCMSketch4IncrementalAnalyze(c *C) {
 			lMap[key] += val
 		}
 		c.Assert(lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0), IsNil)
-		avg, err = averageAbsoluteError(lSketch, lMap)
+		avg, err = averageAbsoluteError(lSketch, nil, lMap)
 		c.Assert(err, IsNil)
 		c.Check(avg, LessEqual, t.avgError)
 		width, depth := lSketch.GetWidthAndDepth()
@@ -265,13 +265,13 @@ func (s *testStatisticsSuite) TestCMSketchTopNUniqueData(c *C) {
 			vals = append(vals, &val)
 		}
 	}
-	cms, err := prepareCMSWithTopN(d, w, vals, uint32(20), total)
+	cms, topN, err := prepareCMSAndTopN(d, w, vals, uint32(20), total)
 	c.Assert(err, IsNil)
-	avg, err := averageAbsoluteError(cms, mp)
+	avg, err := averageAbsoluteError(cms, topN, mp)
 	c.Assert(err, IsNil)
 	c.Check(cms.defaultValue, Equals, uint64(1))
 	c.Check(avg, Equals, uint64(0))
-	c.Check(len(cms.topN), Equals, 0)
+	c.Check(topN, IsNil)
 }
 
 func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
@@ -282,15 +282,14 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 			lSketch.table[i][j] = math.MaxUint32
 		}
 	}
-	lSketch.topN = make(map[uint64][]*TopNMeta)
+	topN := make([]TopNMeta, 20)
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
 	unsignedLong.Flag |= mysql.UnsignedFlag
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
 	var rows []chunk.Row
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
-		h1, h2 := murmur3.Sum128(tString)
-		lSketch.topN[h1] = []*TopNMeta{{h2, tString, math.MaxUint64}}
+		topN[i] = TopNMeta{tString, math.MaxUint64}
 		chk.AppendBytes(0, tString)
 		chk.AppendUint64(1, math.MaxUint64)
 		rows = append(rows, chk.GetRow(i))
@@ -299,9 +298,95 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := DecodeCMSketch(bytes, rows)
+	rSketch, _, err := DecodeCMSketchAndTopN(bytes, rows)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 	// do not panic
-	DecodeCMSketch([]byte{}, rows)
+	DecodeCMSketchAndTopN([]byte{}, rows)
+}
+
+func (s *testStatisticsSuite) TestMergeTopN(c *C) {
+	tests := []struct {
+		topnNum    int
+		n          int
+		maxTopNVal int
+		maxTopNCnt int
+	}{
+		{
+			topnNum:    10,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    1,
+			n:          5,
+			maxTopNVal: 50,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 5,
+			maxTopNCnt: 100,
+		},
+		{
+			topnNum:    5,
+			n:          5,
+			maxTopNVal: 10,
+			maxTopNCnt: 100,
+		},
+	}
+	for _, t := range tests {
+		topnNum, n := t.topnNum, t.n
+		maxTopNVal, maxTopNCnt := t.maxTopNVal, t.maxTopNCnt
+
+		// the number of maxTopNVal should be bigger than n.
+		ok := maxTopNVal >= n
+		c.Assert(ok, Equals, true)
+
+		topNs := make([]*TopN, 0, topnNum)
+		res := make(map[int]uint64)
+		rand.Seed(time.Now().Unix())
+		for i := 0; i < topnNum; i++ {
+			topN := NewTopN(n)
+			occur := make(map[int]bool)
+			for j := 0; j < n; j++ {
+				// The range of numbers in the topn structure is in [0, maxTopNVal)
+				// But there cannot be repeated occurrences of value in a topN structure.
+				randNum := rand.Intn(maxTopNVal)
+				for occur[randNum] {
+					randNum = rand.Intn(maxTopNVal)
+				}
+				occur[randNum] = true
+				tString := []byte(fmt.Sprintf("%d", randNum))
+				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
+				randCnt := uint64(rand.Intn(maxTopNCnt))
+				res[randNum] += randCnt
+				topNMeta := TopNMeta{tString, randCnt}
+				topN.TopN = append(topN.TopN, topNMeta)
+			}
+			topNs = append(topNs, topN)
+		}
+		topN, remainTopN := MergeTopN(topNs, uint32(n))
+		cnt := len(topN.TopN)
+		var minTopNCnt uint64
+		for _, topNMeta := range topN.TopN {
+			val, err := strconv.Atoi(string(topNMeta.Encoded))
+			c.Assert(err, IsNil)
+			c.Assert(topNMeta.Count, Equals, res[val])
+			minTopNCnt = topNMeta.Count
+		}
+		if remainTopN != nil {
+			cnt += len(remainTopN)
+			for _, remainTopNMeta := range remainTopN {
+				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
+				c.Assert(err, IsNil)
+				c.Assert(remainTopNMeta.Count, Equals, res[val])
+				ok = minTopNCnt > remainTopNMeta.Count
+				c.Assert(ok, Equals, true)
+			}
+		}
+		c.Assert(cnt, Equals, len(res))
+	}
 }

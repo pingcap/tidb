@@ -100,7 +100,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
-			c.Assert(strings.Contains(execInfo, "copr_cache_hit_ratio"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
 		}
 	}
 }
@@ -355,6 +355,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
+	testKit.MustExec("set @@tidb_partition_prune_mode = 'static-only';")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")
@@ -496,7 +497,7 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	h := dom.StatsHandle()
-	h.Clear4Test()
+	h.Clear()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	for i := 2; i < 4; i++ {
 		s.testData.OnRecord(func() {
@@ -552,7 +553,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear4Test()
+	dom.StatsHandle().Clear()
 	dom.StatsHandle().Update(dom.InfoSchema())
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
@@ -772,7 +773,7 @@ func (s *testAnalyzeSuite) TestIssue9805(c *C) {
 		)
 	`)
 	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
-	tk.MustExec("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
+	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
 
 func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
@@ -910,7 +911,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
-	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = false
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)

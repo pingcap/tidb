@@ -488,8 +488,8 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		// cast real as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			1,
-			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1)}),
+			2,
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(2.5)}),
 		},
 		// cast Time as int.
 		{

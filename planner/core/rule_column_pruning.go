@@ -219,6 +219,8 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) err
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
+	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
