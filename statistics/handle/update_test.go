@@ -1980,7 +1980,6 @@ func (s *testStatsSuite) TestUpdateGlobalStats(c *C) {
 		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 		c.Assert(partitionStats.Count, Equals, int64(2))
 
-
 		testKit.MustExec("insert into t values (3, 'g')")
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.Update(is), IsNil)
