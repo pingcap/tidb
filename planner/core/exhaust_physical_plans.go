@@ -2242,9 +2242,11 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
-		// MPP does not support distinct now
+		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
-			return false
+			if agg.Name != ast.AggFuncCount {
+				return false
+			}
 		}
 		// MPP does not support AggFuncApproxCountDistinct now
 		if agg.Name == ast.AggFuncApproxCountDistinct {
@@ -2328,7 +2330,11 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+		considerRootTask := !la.ctx.GetSessionVars().AllowDistinctAggPushDown
+		// If aggregation can be pushed down to MPP, we should not consider RootTask.
+		considerRootTask = considerRootTask && !(la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP())
+
+		if considerRootTask {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
