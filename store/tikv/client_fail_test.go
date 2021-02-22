@@ -47,7 +47,7 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	defer server.Stop()
 
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	rpcClient := newRPCClient(config.Security{}, func(c *rpcClient) {
+	rpcClient := NewRPCClient(config.Security{}, func(c *RPCClient) {
 		c.dialTimeout = time.Second / 3
 	})
 
