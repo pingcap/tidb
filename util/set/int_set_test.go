@@ -15,8 +15,9 @@ package set
 
 import (
 	"fmt"
-	"github.com/pingcap/check"
 	"testing"
+
+	"github.com/pingcap/check"
 )
 
 var _ = check.Suite(&intSetTestSuite{})
