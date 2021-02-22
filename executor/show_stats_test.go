@@ -80,36 +80,36 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (1, 1) (1, 1)"))
+	result.Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (1, 1) (1, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
-	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
+	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1) 0"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` datetime, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
+	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
-	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
+	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` date, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 2020-01-01", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (2020-01-01, 1) (2020-01-01, 1)"))
+	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 2020-01-01 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01, 1) (2020-01-01, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
-	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01, 1) (2020-01-01, 1)"))
+	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01, 1) (2020-01-01, 1) 0"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` timestamp, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
+	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
-	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
+	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 }
 
 func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
@@ -124,14 +124,14 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_buckets").Sort().Check(testkit.Rows(
-		"test t  a 0 0 1 1 1 1",
-		"test t  idx 1 0 1 1 1 1",
+		"test t  a 0 0 1 1 1 1 0",
+		"test t  idx 1 0 1 1 1 1 0",
 	))
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a int, b int, index idx(a, b))")
 	tk.MustExec("insert into t values(NULL, NULL)")
 	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 (NULL, NULL) (NULL, NULL)"))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 (NULL, NULL) (NULL, NULL) 0"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
@@ -201,7 +201,7 @@ func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 		c.Assert(result.Rows()[2][3], Equals, "idx")
 
 		result = tk.MustQuery("show stats_buckets").Sort()
-		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 b 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 
 		result = tk.MustQuery("show stats_healthy")
 		result.Check(testkit.Rows("test t p0 100"))

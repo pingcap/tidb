@@ -29,7 +29,7 @@ import (
 )
 
 // DispatchMPPTasks dispathes all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
 	if resp == nil {
 		err := errors.New("client returns nil response")
@@ -49,6 +49,9 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		ctx:        sctx,
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		encodeType: encodeType,
+		copPlanIDs: planIDs,
+		rootPlanID: rootID,
+		storeType:  kv.TiFlash,
 	}, nil
 
 }
@@ -111,6 +114,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
 		encodeType: encodetype,
+		storeType:  kvReq.StoreType,
 	}, nil
 }
 
@@ -146,6 +150,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    label,
 		encodeType: tipb.EncodeType_TypeDefault,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }
@@ -164,6 +169,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    metrics.LblGeneral,
 		encodeType: tipb.EncodeType_TypeDefault,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }

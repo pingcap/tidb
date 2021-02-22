@@ -92,6 +92,8 @@ type selectResult struct {
 	copPlanIDs []int
 	rootPlanID int
 
+	storeType kv.StoreType
+
 	fetchDuration    time.Duration
 	durationReported bool
 	memTracker       *memory.Tracker
@@ -147,9 +149,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -283,7 +284,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.ScanDetail)
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
@@ -291,7 +292,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
+				RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
 		}
 	}
 }
