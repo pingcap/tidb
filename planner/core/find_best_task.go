@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/util/collate"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -963,6 +964,12 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
 		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
 		if !coveredByPlainIndex && !coveredByClusteredIndex {
+			return false
+		}
+		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+			col.GetType().EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.GetType().Flag)
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx && ds.table.Meta().CommonHandleVersion == 0 {
 			return false
 		}
 	}
