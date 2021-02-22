@@ -171,6 +171,6 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 
 // MemoryUsage returns the total memory usage of a FMSketch.
 func (s *FMSketch) MemoryUsage() (sum int64) {
-	// TODO: sum = ?
+	sum = int64(16 + 9*len(s.hashset))
 	return
 }
