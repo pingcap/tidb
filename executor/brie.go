@@ -88,7 +88,7 @@ type brieTaskInfo struct {
 	connID      uint64
 	backupTS    uint64
 	archiveSize uint64
-	errStr      string
+	message     string
 }
 
 type brieQueueItem struct {
@@ -375,9 +375,10 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	if err != nil {
-		e.info.errStr = err.Error()
+		e.info.message = err.Error()
 		return err
 	}
+	e.info.message = ""
 
 	req.AppendString(0, e.info.storage)
 	req.AppendUint64(1, e.info.archiveSize)
@@ -409,8 +410,8 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 			e.result.AppendTime(4, item.info.execTime)
 			e.result.AppendTime(5, item.info.finishTime)
 			e.result.AppendUint64(6, item.info.connID)
-			if len(item.info.errStr) > 0 {
-				e.result.AppendString(7, item.info.errStr)
+			if len(item.info.message) > 0 {
+				e.result.AppendString(7, item.info.message)
 			} else {
 				e.result.AppendNull(7)
 			}
