@@ -304,43 +304,18 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-// MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
-func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopNMeta {
-	if dst.TotalCount()+src.TotalCount() == 0 {
-		return nil
+// MergeTopNAndUpdateCMSketch merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
+func MergeTopNAndUpdateCMSketch(dst, src *TopN, c *CMSketch, numTop uint32) []TopNMeta {
+	topNs := []*TopN{src, dst}
+	mergedTopN, popedTopNPair := MergeTopN(topNs, numTop)
+	if mergedTopN == nil {
+		// mergedTopN == nil means the total count of the input TopN are equal to zero
+		return popedTopNPair
 	}
-	popedTopNPair := make([]TopNMeta, 0, 4)
-	counter := make(map[hack.MutableString]uint64)
-	for _, meta := range dst.TopN {
-		counter[hack.String(meta.Encoded)] += meta.Count
+	dst.TopN = mergedTopN.TopN
+	for _, topNMeta := range popedTopNPair {
+		c.InsertBytesByCount(topNMeta.Encoded, topNMeta.Count)
 	}
-	for _, meta := range src.TopN {
-		if usingMax {
-			counter[hack.String(meta.Encoded)] = mathutil.MaxUint64(counter[hack.String(meta.Encoded)], meta.Count)
-		} else {
-			counter[hack.String(meta.Encoded)] += meta.Count
-		}
-	}
-	sorted := make([]uint64, len(counter))
-	for _, cnt := range counter {
-		sorted = append(sorted, cnt)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i] > sorted[j]
-	})
-	numTop = mathutil.MinUint32(uint32(len(counter)), numTop)
-	lastTopCnt := sorted[numTop-1]
-	dst.TopN = make([]TopNMeta, 0, numTop)
-	for value, cnt := range counter {
-		data := hack.Slice(string(value))
-		if cnt >= lastTopCnt {
-			dst.AppendTopN(data, cnt)
-		} else {
-			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
-			c.InsertBytesByCount(data, cnt)
-		}
-	}
-	dst.Sort()
 	return popedTopNPair
 }
 
@@ -651,4 +626,57 @@ func (c *TopN) RemoveVal(val []byte) {
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
+}
+
+// MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
+// The input parameters are multiple TopN structures to be merged and the size of the new TopN that will be generated.
+// The output parameters are the newly generated TopN structure and the remaining numbers.
+// Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
+func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
+	totCnt := uint64(0)
+	for _, topN := range topNs {
+		totCnt += topN.TotalCount()
+	}
+	if totCnt == 0 {
+		return nil, nil
+	}
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter := make(map[hack.MutableString]uint64)
+	for _, topN := range topNs {
+		if topN.TotalCount() == 0 {
+			continue
+		}
+		for _, val := range topN.TopN {
+			counter[hack.String(val.Encoded)] += val.Count
+		}
+	}
+
+	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil
+	}
+	sorted := make([]uint64, numTop)
+	for _, cnt := range counter {
+		sorted = append(sorted, cnt)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] > sorted[j]
+	})
+	n = mathutil.MinUint32(uint32(numTop), n)
+	// lastTopCnt is the smallest value in the new TopN structure
+	lastTopCnt := sorted[numTop-1]
+
+	var finalTopN TopN
+	finalTopN.TopN = make([]TopNMeta, 0, n)
+	popedTopNPair := make([]TopNMeta, 0, uint32(numTop)-n)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		if cnt >= lastTopCnt {
+			finalTopN.AppendTopN(data, cnt)
+		} else {
+			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
+		}
+	}
+	finalTopN.Sort()
+	return &finalTopN, popedTopNPair
 }

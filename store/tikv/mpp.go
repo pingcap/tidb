@@ -43,14 +43,10 @@ func (c *batchCopTask) GetAddress() string {
 
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
-	c.store.regionCache.storeMu.RLock()
-	for _, st := range c.store.regionCache.storeMu.stores {
-		if st.storeType == kv.TiFlash {
-			task := &batchCopTask{storeAddr: st.addr, cmdType: tikvrpc.CmdMPPTask}
-			resultTasks = append(resultTasks, task)
-		}
+	for _, addr := range c.store.regionCache.GetTiFlashStoreAddrs() {
+		task := &batchCopTask{storeAddr: addr, cmdType: tikvrpc.CmdMPPTask}
+		resultTasks = append(resultTasks, task)
 	}
-	c.store.regionCache.storeMu.RUnlock()
 	return resultTasks
 }
 
@@ -167,10 +163,10 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	originalTask := req.Meta.(*batchCopTask)
 	for _, task := range originalTask.copTasks {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: task.task.region.id,
+			RegionId: task.task.region.GetID(),
 			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: task.task.region.confVer,
-				Version: task.task.region.ver,
+				ConfVer: task.task.region.GetConfVer(),
+				Version: task.task.region.GetVer(),
 			},
 			Ranges: task.task.ranges.ToPBRanges(),
 		})
@@ -198,17 +194,17 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if len(originalTask.copTasks) != 0 {
-		sender := NewRegionBatchRequestSender(m.store.regionCache, m.store.client)
+		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
 		rpcResp, _, _, err = sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
-		if sender.rpcError != nil {
-			m.sendError(sender.rpcError)
+		if sender.GetRPCError() != nil {
+			m.sendError(sender.GetRPCError())
 			return
 		}
 	} else {
-		rpcResp, err = m.store.client.SendRequest(ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutMedium)
+		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutMedium)
 	}
 
 	if err != nil {
@@ -244,7 +240,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err := m.store.client.SendRequest(bo.ctx, req.Meta.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
+	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
 
 	if err != nil {
 		m.sendError(err)
@@ -312,13 +308,14 @@ func (m *mppIterator) handleMPPStreamResponse(bo *Backoffer, response *mpp.MPPDa
 		detail: new(CopRuntimeStats),
 	}
 
+	backoffTimes := bo.GetBackoffTimes()
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
-	for backoff := range bo.backoffTimes {
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
 		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
 	resp.detail.CalleeAddress = req.Meta.GetAddress()
 
