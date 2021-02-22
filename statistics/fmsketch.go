@@ -41,6 +41,22 @@ func NewFMSketch(maxSize int) *FMSketch {
 	}
 }
 
+func (s *FMSketch) Copy() *FMSketch {
+	if s == nil {
+		return nil
+	}
+	hashset := make(map[uint64]bool)
+	for key, value := range s.hashset {
+		hashset[key] = value
+	}
+	return &FMSketch{
+		hashset:  hashset,
+		mask:     s.mask,
+		maxSize:  s.maxSize,
+		hashFunc: murmur3.New64(),
+	}
+}
+
 // NDV returns the ndv of the sketch.
 func (s *FMSketch) NDV() int64 {
 	return int64(s.mask+1) * int64(len(s.hashset))

@@ -738,6 +738,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
+			fms = col.FMSketch
 		}
 	}
 	// The column or index has been deleted.

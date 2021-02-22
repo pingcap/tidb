@@ -1116,17 +1116,23 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	}
 }
 
-func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, error) {
+func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, *statistics.FMSketch, error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	data := make([][]byte, 0, len(collector.Samples))
+	fmSketch := statistics.NewFMSketch(maxSketchSize)
 	for i, sample := range collector.Samples {
 		sample.Ordinal = i
 		if sample.Value.IsNull() {
 			collector.NullCount++
 			continue
 		}
-		bytes, err := tablecodec.EncodeValue(e.ctx.GetSessionVars().StmtCtx, nil, sample.Value)
+		err := fmSketch.InsertValue(sc, sample.Value)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
+		}
+		bytes, err := tablecodec.EncodeValue(sc, nil, sample.Value)
+		if err != nil {
+			return nil, nil, nil, nil, err
 		}
 		data = append(data, bytes)
 	}
@@ -1134,7 +1140,7 @@ func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.Sampl
 	cmSketch, topN, ndv, scaleRatio := statistics.NewCMSketchAndTopN(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]), data, uint32(e.opts[ast.AnalyzeOptNumTopN]), uint64(rowCount))
 	// Build Histogram.
 	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), ID, collector, tp, rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
-	return hist, cmSketch, topN, err
+	return hist, cmSketch, topN, fmSketch, err
 }
 
 func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *statistics.SampleCollector, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, error) {
@@ -1226,9 +1232,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		}
 		if i < pkColCount {
 			pkCol := e.handleCols.GetCol(i)
-			hists[i], cms[i], topNs[i], err = e.buildColumnStats(pkCol.ID, e.collectors[i], pkCol.RetType, rowCount)
+			hists[i], cms[i], topNs[i], fms[i], err = e.buildColumnStats(pkCol.ID, e.collectors[i], pkCol.RetType, rowCount)
 		} else if i < pkColCount+len(e.colsInfo) {
-			hists[i], cms[i], topNs[i], err = e.buildColumnStats(e.colsInfo[i-pkColCount].ID, e.collectors[i], &e.colsInfo[i-pkColCount].FieldType, rowCount)
+			hists[i], cms[i], topNs[i], fms[i], err = e.buildColumnStats(e.colsInfo[i-pkColCount].ID, e.collectors[i], &e.colsInfo[i-pkColCount].FieldType, rowCount)
 		} else {
 			hists[i], cms[i], topNs[i], err = e.buildIndexStats(e.idxsInfo[i-pkColCount-len(e.colsInfo)], e.collectors[i], rowCount)
 		}

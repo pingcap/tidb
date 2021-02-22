@@ -331,10 +331,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 	allHg := make([][]*statistics.Histogram, globalStats.Num)
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
+	allFms := make([][]*statistics.FMSketch, globalStats.Num)
 	for i := 0; i < globalStats.Num; i++ {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
+		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
 
 	for _, partitionID := range partitionIDs {
@@ -362,10 +364,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
+			allFms[i] = append(allFms[i], fms)
 		}
 	}
 
