@@ -15,6 +15,7 @@ package session_test
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -3697,6 +3699,19 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
 		tk.MustExec("drop database br02")
+
+		// check the history ddl job to make sure job is created correctly
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		txnMeta := meta.NewMeta(txn)
+
+		jobs, err := txnMeta.GetAllHistoryDDLJobs()
+		c.Assert(err, IsNil)
+		jsBytes, err := json.MarshalIndent(jobs, "", " ")
+		c.Assert(err, IsNil)
+		jsStr := string(jsBytes)
+		c.Assert(strings.Contains(jsStr, "/*from(br_via_sql)*/CREATE TABLE"), IsTrue)
+		c.Assert(strings.Contains(jsStr, "/*from(br_via_sql)*/CREATE DATABASE"), IsTrue)
 	}
 }
 
