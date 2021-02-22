@@ -471,6 +471,21 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
+// outOfRangeIntervalSelectivity estimates selectivities for out-of-range range.
+func outOfRangeIntervalSelectivity(low, high types.Datum, hg *Histogram, modifyCount int64) float64 {
+	if modifyCount == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	hgLow, hgHigh := hg.GetLower(0), hg.GetUpper(len(hg.Buckets)-1)
+	hgWidth := calcWidth4Datums(hgLow, hgHigh, hgLow, hgHigh)
+	rangeWidth := calcWidth4Datums(&low, &high, hgLow, hgHigh)
+	rangeCount := hg.TotalRowCount() * (rangeWidth / hgWidth)
+	if math.IsNaN(rangeCount) {
+		return 0.0
+	}
+	return math.Min(rangeCount, float64(modifyCount))
+}
+
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
 func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
 	minRowCount := math.MaxFloat64
