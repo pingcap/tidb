@@ -67,7 +67,6 @@ func GetStoreTypeByMeta(store *metapb.Store) StoreType {
 type StoreType uint8
 
 // Store type enums.
-// They should be synced with tidb/kv.StoreType.
 const (
 	TiKV StoreType = iota
 	TiFlash
