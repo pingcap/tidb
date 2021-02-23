@@ -104,6 +104,7 @@ func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize i
 	return s, s.NDV(), nil
 }
 
+// MergeFMSketch merges two FM Sketch.
 func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	if s == nil || rs == nil {
 		return
