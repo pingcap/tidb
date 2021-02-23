@@ -1077,7 +1077,7 @@ func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueNewForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
 	}
-	return genIndexValueNew(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
+	return genIndexValueNew(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID)
 }
 
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
@@ -1160,68 +1160,68 @@ func GenIndexValueNewForClusteredIndexVersion1(sc *stmtctx.StatementContext, tbl
 }
 
 // genIndexValueNew create index value for both local and global index.
-func genIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-		idxVal := make([]byte, 1)
-		newEncode := false
-		tailLen := 0
-		if !h.IsInt() && distinct {
-			idxVal = encodeCommonHandle(idxVal, h)
-			newEncode = true
+func genIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+	idxVal := make([]byte, 1)
+	newEncode := false
+	tailLen := 0
+	if !h.IsInt() && distinct {
+		idxVal = encodeCommonHandle(idxVal, h)
+		newEncode = true
+	}
+	if idxInfo.Global {
+		idxVal = encodePartitionID(idxVal, partitionID)
+		newEncode = true
+	}
+	if collate.NewCollationEnabled() && IdxValNeedRestoredData {
+		colIds := make([]int64, len(idxInfo.Columns))
+		for i, col := range idxInfo.Columns {
+			colIds[i] = tblInfo.Columns[col.Offset].ID
 		}
-		if idxInfo.Global {
-			idxVal = encodePartitionID(idxVal, partitionID)
-			newEncode = true
+		rd := rowcodec.Encoder{Enable: true}
+		rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
+		if err != nil {
+			return nil, err
 		}
-		if collate.NewCollationEnabled() && IdxValNeedRestoredData {
-			colIds := make([]int64, len(idxInfo.Columns))
-			for i, col := range idxInfo.Columns {
-				colIds[i] = tblInfo.Columns[col.Offset].ID
-			}
-			rd := rowcodec.Encoder{Enable: true}
-			rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
-			if err != nil {
-				return nil, err
-			}
-			idxVal = append(idxVal, rowRestoredValue...)
-			newEncode = true
-		}
+		idxVal = append(idxVal, rowRestoredValue...)
+		newEncode = true
+	}
 
-		if newEncode {
-			if h.IsInt() && distinct {
-				// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
-				tailLen += 8
-				idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h, false)...)
-			} else if len(idxVal) < 10 {
-				// Padding the len to 10
-				paddingLen := 10 - len(idxVal)
-				tailLen += paddingLen
-				idxVal = append(idxVal, bytes.Repeat([]byte{0x0}, paddingLen)...)
-			}
-			if untouched {
-				// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
-				// then should also write the untouched index key/value to mem-buffer to make sure the data
-				// is consistent with the index in txn mem-buffer.
-				tailLen += 1
-				idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
-			}
-			idxVal[0] = byte(tailLen)
-		} else {
-			// Old index value encoding.
-			idxVal = make([]byte, 0)
-			if distinct {
-				idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
-			}
-			if untouched {
-				// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
-				// then should also write the untouched index key/value to mem-buffer to make sure the data
-				// is consistent with the index in txn mem-buffer.
-				idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
-			}
-			if len(idxVal) == 0 {
-				idxVal = []byte{'0'}
-			}
+	if newEncode {
+		if h.IsInt() && distinct {
+			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
+			tailLen += 8
+			idxVal = append(idxVal, EncodeHandleInUniqueIndexValue(h, false)...)
+		} else if len(idxVal) < 10 {
+			// Padding the len to 10
+			paddingLen := 10 - len(idxVal)
+			tailLen += paddingLen
+			idxVal = append(idxVal, bytes.Repeat([]byte{0x0}, paddingLen)...)
 		}
-		return idxVal, nil
+		if untouched {
+			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+			// then should also write the untouched index key/value to mem-buffer to make sure the data
+			// is consistent with the index in txn mem-buffer.
+			tailLen += 1
+			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
+		}
+		idxVal[0] = byte(tailLen)
+	} else {
+		// Old index value encoding.
+		idxVal = make([]byte, 0)
+		if distinct {
+			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
+		}
+		if untouched {
+			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+			// then should also write the untouched index key/value to mem-buffer to make sure the data
+			// is consistent with the index in txn mem-buffer.
+			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
+		}
+		if len(idxVal) == 0 {
+			idxVal = []byte{'0'}
+		}
+	}
+	return idxVal, nil
 }
 
 // TruncateIndexValues truncates the index values created using only the leading part of column values.

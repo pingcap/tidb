@@ -368,9 +368,9 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 
 func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	tbInfo := &model.TableInfo{
-		Name:           model.NewCIStr("t"),
-		ID:             1,
-		IsCommonHandle: true,
+		Name:                model.NewCIStr("t"),
+		ID:                  1,
+		IsCommonHandle:      true,
 		CommonHandleVersion: 1,
 		Indices: []*model.IndexInfo{
 			{

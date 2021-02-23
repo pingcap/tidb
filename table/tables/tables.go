@@ -19,7 +19,6 @@ package tables
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/collate"
 	"math"
 	"strconv"
 	"strings"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
