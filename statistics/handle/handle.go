@@ -350,7 +350,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, false, 0)
+		partitionStats, err = h.TableStatsFromStorage(tableInfo, partitionID, true, 0)
 		if err != nil {
 			return
 		}
