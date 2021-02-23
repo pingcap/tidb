@@ -670,6 +670,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					s.sessionVars.TxnCtx.IsPessimistic = true
 				}
 			}
+			// Complete the missing settings using `NewTxn` compared with lazy activation `txn.Txn(true)`.
+			// More refactors are needed in the future to make the inner logic of transaction activation
+			// interfaces the same.
+			if s.sessionVars.TxnCtx.IsPessimistic {
+				s.txn.SetOption(kv.Pessimistic, true)
+			}
+			if !s.sessionVars.IsAutocommit() {
+				s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			}
 		} else {
 			s.PrepareTxnCtx(ctx)
 		}
