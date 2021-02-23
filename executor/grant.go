@@ -272,7 +272,7 @@ func (e *GrantExec) grantTablePriv(priv *ast.PrivElem, user *ast.UserSpec) error
 	}
 	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?;`, user.User.Username, user.User.Hostname, dbName, tblName)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
-	return err
+	return errors.Trace(err)
 }
 
 // grantColumnPriv manipulates mysql.tables_priv table.

@@ -146,7 +146,7 @@ func (e *RevokeExec) revokeGlobalPriv(priv *ast.PrivElem, user, host string) err
 	}
 	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user, host)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
-	return err
+	return errors.Trace(err)
 }
 
 func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) error {
