@@ -1320,7 +1320,6 @@ type IndexValueSegments struct {
 	PartitionID     []byte
 	RestoredValues  []byte
 	IntHandle       []byte
-	RestoredValueV5 bool
 }
 
 // SplitIndexValue splits index value into segments.
