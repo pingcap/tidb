@@ -1717,6 +1717,5 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	prepare()
 	tk.MustGetErrCode("alter table orders modify user_id bigint", mysql.ErrFKIncompatibleColumns)
 
-	tk.MustExec("drop table if exists orders")
-	tk.MustExec("drop table if exists users")
+	tk.MustExec("drop table if exists orders, users")
 }
