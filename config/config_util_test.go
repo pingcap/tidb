@@ -168,3 +168,12 @@ engines = ["tikv", "tiflash", "tidb"]
 	c.Assert(toJSONStr(flatMap["log.format"]), Equals, `"text"`)
 	c.Assert(toJSONStr(flatMap["isolation-read.engines"]), Equals, `["tikv","tiflash","tidb"]`)
 }
+
+func (s *testConfigSuite) TestTxnScopeValue(c *C) {
+	GetGlobalConfig().Labels["zone"] = "bj"
+	c.Assert(GetTxnScopeDefaultValueFromConfig(), Equals, localTxnScope)
+	c.Assert(GetTxnScopeFromConfig(), Equals, "bj")
+	GetGlobalConfig().Labels["zone"] = ""
+	c.Assert(GetTxnScopeDefaultValueFromConfig(), Equals, globalTxnScope)
+	c.Assert(GetTxnScopeFromConfig(), Equals, globalTxnScope)
+}
