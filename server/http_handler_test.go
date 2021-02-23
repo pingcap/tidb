@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -67,6 +69,7 @@ type basicHTTPHandlerTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	tidbdrv *TiDBDriver
+	sh      *StatsHandler
 }
 
 type HTTPHandlerTestSuite struct {
@@ -490,6 +493,10 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	ts.waitUntilServerOnline()
+
+	do, err := session.GetDomain(ts.store)
+	c.Assert(err, IsNil)
+	ts.sh = &StatsHandler{do}
 }
 
 func getPortFromTCPAddr(addr net.Addr) uint {
@@ -1110,6 +1117,65 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(dbtbl.TableInfo.Name.L, Equals, "t1")
 	c.Assert(dbtbl.DBInfo.Name.L, Equals, "test")
 	c.Assert(dbtbl.TableInfo, DeepEquals, t)
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer db.Close()
+	dbt := &DBTest{c, db}
+
+	oldExpiryTime := executor.TableStatsCacheExpiry
+	executor.TableStatsCacheExpiry = 0
+	defer func() { executor.TableStatsCacheExpiry = oldExpiryTime }()
+
+	do := ts.sh.do
+	do.SetStatsUpdating(true)
+	h := do.StatsHandle()
+	h.Clear()
+	is := do.InfoSchema()
+
+	dbt.mustExec("use test")
+	dbt.mustExec("drop table if exists t")
+	dbt.mustExec("create table t (c int, d int, e char(5), index idx(e))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	dbt.mustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+
+	resp, err := ts.fetchStatus("/schema_storage/test")
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var tables []*schemaTableStorage
+	err = decoder.Decode(&tables)
+	c.Assert(err, IsNil)
+	c.Assert(len(tables), Equals, 1)
+	expects := []string{`t`}
+	names := make([]string, len(tables))
+	for i, v := range tables {
+		names[i] = v.TableName
+	}
+
+	sort.Strings(names)
+	c.Assert(names, DeepEquals, expects)
+
+	c.Assert(
+		[]int64{
+			tables[0].TableRows,
+			tables[0].AvgRowLength,
+			tables[0].DataLength,
+			tables[0].MaxDataLength,
+			tables[0].IndexLength,
+			tables[0].DataFree,
+		},
+		DeepEquals,
+		[]int64{3, 18, 54, 0, 6, 0},
+	)
+
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
