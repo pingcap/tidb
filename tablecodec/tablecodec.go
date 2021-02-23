@@ -904,6 +904,10 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
+	if getIndexVersion(value) == 1 {
+		seg := SplitIndexValueForClusteredIndexVersion1(value)
+		return kv.NewCommonHandle(seg.CommonHandle)
+	}
 	if len(value) > MaxOldEncodeValueLen {
 		tailLen := value[0]
 		if tailLen >= 8 {
@@ -1284,6 +1288,15 @@ func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle
 		}
 		return kv.IntHandle(int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):]))), nil
 	}
+	if getIndexVersion(data) == 1 {
+		seg := SplitIndexValueForClusteredIndexVersion1(data)
+		h, err := kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+		return h, nil
+	}
+
 	tailLen := int(data[0])
 	data = data[:len(data)-tailLen]
 	handleLen := uint16(data[2])<<8 + uint16(data[3])
@@ -1328,7 +1341,7 @@ func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 		segs.PartitionID = value[1:9]
 		value = value[9:]
 	}
-	if len(value) > 0 &&  value[0] == RestoreDataFlag {
+	if len(value) > 0 && value[0] == RestoreDataFlag {
 		segs.RestoredValues = value
 	}
 	return
@@ -1349,7 +1362,7 @@ func SplitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegm
 		segs.PartitionID = value[1:9]
 		value = value[9:]
 	}
-	if len(value) > 0 &&  value[0] == RestoreDataFlag {
+	if len(value) > 0 && value[0] == RestoreDataFlag {
 		segs.RestoredValues = value
 	}
 	return
@@ -1360,14 +1373,16 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	var keySuffix []byte
 	var handle kv.Handle
 	var err error
-	segs := SplitIndexValue(value)
+	segs := SplitIndexValueForClusteredIndexVersion1(value)
 	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
 	if err != nil {
 		return nil, err
 	}
-	resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
-	if err != nil {
-		return nil, err
+	if segs.RestoredValues != nil {
+		resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
