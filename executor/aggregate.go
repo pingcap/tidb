@@ -899,20 +899,22 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
 	partialResults, ok := e.partialResultMap[groupKey]
+	allMemDelta := int64(0)
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
 		for _, af := range e.PartialAggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults = append(partialResults, partialResult)
-			e.memTracker.Consume(memDelta)
+			allMemDelta += memDelta
 		}
 		e.partialResultMap[groupKey] = partialResults
-		e.memTracker.Consume(int64(len(groupKey)))
+		allMemDelta += int64(len(groupKey))
 		if len(e.partialResultMap) > (1<<e.bInMap)*loadFactorNum/loadFactorDen {
 			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
 			e.bInMap++
 		}
 	}
+	e.memTracker.Consume(allMemDelta)
 	return partialResults
 }
 
