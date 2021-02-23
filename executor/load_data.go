@@ -289,6 +289,9 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		return errors.New("mock commit one task error")
 	})
 	e.Ctx.StmtCommit()
+	// Make sure process stream routine never use invalid txn
+	e.txnInUse.Lock()
+	defer e.txnInUse.Unlock()
 	// Make sure that there are no retries when committing.
 	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))

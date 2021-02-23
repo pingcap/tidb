@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime"
 	"runtime/trace"
 	"sort"
@@ -142,54 +141,6 @@ func handleIsExtra(col *expression.Column) bool {
 		return true
 	}
 	return false
-}
-
-func splitRanges(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
-	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
-		return ranges, nil
-	}
-	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
-	if idx == len(ranges) {
-		return ranges, nil
-	}
-	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
-		signedRanges := ranges[0:idx]
-		unsignedRanges := ranges[idx:]
-		if !keepOrder {
-			return append(unsignedRanges, signedRanges...), nil
-		}
-		if desc {
-			return unsignedRanges, signedRanges
-		}
-		return signedRanges, unsignedRanges
-	}
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
-	signedRanges = append(signedRanges, ranges[0:idx]...)
-	if !(ranges[idx].LowVal[0].GetUint64() == math.MaxInt64 && ranges[idx].LowExclude) {
-		signedRanges = append(signedRanges, &ranger.Range{
-			LowVal:     ranges[idx].LowVal,
-			LowExclude: ranges[idx].LowExclude,
-			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
-		})
-	}
-	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
-		unsignedRanges = append(unsignedRanges, &ranger.Range{
-			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
-			HighVal:     ranges[idx].HighVal,
-			HighExclude: ranges[idx].HighExclude,
-		})
-	}
-	if idx < len(ranges) {
-		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
-	}
-	if !keepOrder {
-		return append(unsignedRanges, signedRanges...), nil
-	}
-	if desc {
-		return unsignedRanges, signedRanges
-	}
-	return signedRanges, unsignedRanges
 }
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range

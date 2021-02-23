@@ -1675,7 +1675,7 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
 	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
@@ -1699,7 +1699,14 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+				info := analyzeInfo{
+					DBName:        tbl.Schema.O,
+					TableName:     tbl.Name.O,
+					PartitionName: names[i],
+					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					Incremental:   as.Incremental,
+					StatsVersion:  version,
+				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
 					analyzeInfo: info,
@@ -1713,7 +1720,14 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				if id == tbl.TableInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+				info := analyzeInfo{
+					DBName:        tbl.Schema.O,
+					TableName:     tbl.Name.O,
+					PartitionName: names[i],
+					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					Incremental:   as.Incremental,
+					StatsVersion:  version,
+				}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					HandleCols:  handleCols,
 					ColsInfo:    colInfo,
@@ -1726,7 +1740,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
@@ -1738,6 +1752,17 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if err != nil {
 		return nil, err
 	}
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	if statsHandle == nil {
+		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
+	}
+	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
+	if !versionIsSame {
+		if b.ctx.GetSessionVars().EnableFastAnalyze {
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
@@ -1746,7 +1771,13 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					if id == tblInfo.ID {
 						id = -1
 					}
-					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+					info := analyzeInfo{
+						DBName:        as.TableNames[0].Schema.O,
+						TableName:     as.TableNames[0].Name.O,
+						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+						Incremental:  as.Incremental,
+						StatsVersion: version,
+					}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
@@ -1760,14 +1791,21 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+			info := analyzeInfo{
+				DBName:        as.TableNames[0].Schema.O,
+				TableName:     as.TableNames[0].Name.O,
+				PartitionName: names[i],
+				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				Incremental:   as.Incremental,
+				StatsVersion:  version,
+			}
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
@@ -1779,13 +1817,31 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if err != nil {
 		return nil, err
 	}
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	if statsHandle == nil {
+		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
+	}
+	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
+	if !versionIsSame {
+		if b.ctx.GetSessionVars().EnableFastAnalyze {
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for i, id := range physicalIDs {
 				if id == tblInfo.ID {
 					id = -1
 				}
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+				info := analyzeInfo{
+					DBName:        as.TableNames[0].Schema.O,
+					TableName:     as.TableNames[0].Name.O,
+					PartitionName: names[i],
+					TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+					Incremental:   as.Incremental,
+					StatsVersion:  version,
+				}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
@@ -1796,7 +1852,14 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			if id == tblInfo.ID {
 				id = -1
 			}
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id}, Incremental: as.Incremental}
+			info := analyzeInfo{
+				DBName:        as.TableNames[0].Schema.O,
+				TableName:     as.TableNames[0].Name.O,
+				PartitionName: names[i],
+				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				Incremental:   as.Incremental,
+				StatsVersion:  version,
+			}
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
@@ -1850,6 +1913,10 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
 		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
+	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
+	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion == statistics.Version2 {
+		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error
@@ -1866,11 +1933,11 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
-			return b.buildAnalyzeAllIndex(as, opts)
+			return b.buildAnalyzeAllIndex(as, opts, statsVersion)
 		}
-		return b.buildAnalyzeIndex(as, opts)
+		return b.buildAnalyzeIndex(as, opts, statsVersion)
 	}
-	return b.buildAnalyzeTable(as, opts)
+	return b.buildAnalyzeTable(as, opts, statsVersion)
 }
 
 func buildShowNextRowID() (*expression.Schema, types.NameSlice) {

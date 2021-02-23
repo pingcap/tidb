@@ -801,7 +801,7 @@ func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueReg
 
 func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, error) {
 	// check pd server exists.
-	etcd, ok := store.(tikv.EtcdBackend)
+	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {
 		return regions, nil
 	}

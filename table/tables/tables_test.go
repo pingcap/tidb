@@ -470,7 +470,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
@@ -572,7 +572,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 			"  `a` int(11) NOT NULL,\n" +
 			"  `c` int(11) DEFAULT NULL,\n" +
 			"  `e` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`)\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",

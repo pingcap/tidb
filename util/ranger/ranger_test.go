@@ -1219,16 +1219,16 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_enable_clustered_index=0")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = false
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
-		"Union_11 2.00 root  ",
-		"├─IndexReader_14 1.00 root  index:IndexRangeScan_13",
-		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
-		"└─IndexReader_17 1.00 root  index:IndexRangeScan_16",
-		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+	testKit.MustQuery("explain format = 'brief' select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"Union 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
@@ -1339,7 +1339,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = true
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1373,7 +1373,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@tidb_enable_clustered_index=1;")
+	testKit.Se.GetSessionVars().EnableClusteredIndex = true
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -83,6 +84,12 @@ type InsertValues struct {
 	rowLen int
 
 	stats *InsertRuntimeStat
+
+	// LoadData use two goroutines. One for generate batch data,
+	// The other one for commit task, which will invalid txn.
+	// We use mutex to protect routine from using invalid txn.
+	isLoadData bool
+	txnInUse   sync.Mutex
 }
 
 type defaultVal struct {
@@ -877,10 +884,6 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		_, err := e.ctx.Txn(true)
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
 		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -913,6 +916,14 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
+	}
+	if e.isLoadData {
+		e.txnInUse.Lock()
+		defer e.txnInUse.Unlock()
+	}
+	_, err = e.ctx.Txn(true)
+	if err != nil {
+		return 0, err
 	}
 	shard := e.ctx.GetSessionVars().TxnCtx.GetShard(tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit, 1)
 	autoRandomID |= shard
