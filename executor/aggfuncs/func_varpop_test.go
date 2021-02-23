@@ -6,7 +6,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/set"
 )
 
 func (s *testSuite) TestMergePartialResult4Varpop(c *C) {
@@ -32,7 +31,7 @@ func (s *testSuite) TestMemVarpop(c *C) {
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+aggfuncs.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -168,7 +167,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet            set.StringSetWithMemoryUsage
+	valSet            stringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -179,14 +178,14 @@ type groupConcatDistinct struct {
 func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
-	p.valSet, memDelta = set.NewStringSetWithMemoryUsage()
+	p.valSet, memDelta = newStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + memDelta
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer = nil
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = newStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -456,7 +455,7 @@ func (e *groupConcatOrder) GetTruncated() *int32 {
 
 type partialResult4GroupConcatOrderDistinct struct {
 	topN              *topNRows
-	valSet            set.StringSetWithMemoryUsage
+	valSet            stringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -479,7 +478,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
 	}
-	valSet, memDelta := set.NewStringSetWithMemoryUsage()
+	valSet, memDelta := newStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
 			desc:      desc,
@@ -495,7 +494,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	p.topN.reset()
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = newStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

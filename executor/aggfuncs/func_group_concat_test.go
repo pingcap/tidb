@@ -57,13 +57,13 @@ func (s *testSuite) TestMemGroupConcat(c *C) {
 	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatDistinctSize+set.DefStringSetBucketMemoryUsage, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatDistinctSize+aggfuncs.DefStringSetBucketMemoryUsage, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
 
 	multiArgsTest3 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatOrderSize, groupConcatOrderMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest3.multiArgsAggTest.orderBy = true
 	multiArgsTest4 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize+set.DefStringSetBucketMemoryUsage, groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize+aggfuncs.DefStringSetBucketMemoryUsage, groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens, true)
 	multiArgsTest4.multiArgsAggTest.orderBy = true
 
 	multiArgsTests := []multiArgsAggMemTest{multiArgsTest1, multiArgsTest2, multiArgsTest3, multiArgsTest4}

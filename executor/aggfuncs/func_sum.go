@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -47,13 +46,13 @@ type partialResult4SumDecimal struct {
 type partialResult4SumDistinctFloat64 struct {
 	val    float64
 	isNull bool
-	valSet set.Float64SetWithMemoryUsage
+	valSet float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSetWithMemoryUsage
+	valSet stringSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {
@@ -265,14 +264,14 @@ type sum4DistinctFloat64 struct {
 func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet, memDelta = set.NewFloat64SetWithMemoryUsage()
+	p.valSet, memDelta = newFloat64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + memDelta
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.isNull = true
-	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
+	p.valSet, _ = newFloat64SetWithMemoryUsage()
 }
 
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -314,14 +313,14 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet, memDelta = set.NewStringSetWithMemoryUsage()
+	p.valSet, memDelta = newStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + memDelta
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+	p.valSet, _ = newStringSetWithMemoryUsage()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

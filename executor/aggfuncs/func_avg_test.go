@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/util/set"
 )
 
 func (s *testSuite) TestMergePartialResult4Avg(c *C) {
@@ -48,11 +47,11 @@ func (s *testSuite) TestMemAvg(c *C) {
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4AvgDistinctDecimalSize+set.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4AvgDistinctDecimalSize+aggfuncs.DefStringSetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4AvgDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
+			aggfuncs.DefPartialResult4AvgDistinctFloat64Size+aggfuncs.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
