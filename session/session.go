@@ -664,9 +664,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if err != nil {
 				return err
 			}
-			if !s.sessionVars.IsAutocommit() {
-				s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-			}
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		} else {
 			s.PrepareTxnCtx(ctx)
 		}
