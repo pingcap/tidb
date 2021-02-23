@@ -164,7 +164,8 @@ type TransactionContext struct {
 	IsPessimistic  bool
 	// IsStaleness indicates whether the txn is read only staleness txn.
 	IsStaleness bool
-	// IsExplicit indicates whether the txn is an interactive txn started with a BEGIN statement
+	// IsExplicit indicates whether the txn is an interactive txn, which is typically started with a BEGIN
+	// or START TRANSACTION statement, or by setting autocommit to 0.
 	IsExplicit bool
 	Isolation  string
 	LockExpire uint32
