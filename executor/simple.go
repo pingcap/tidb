@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -152,8 +151,14 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 }
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
-	users := make([]string, 0, len(s.Specs))
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %s.%s (Host, User, Password) VALUES `)
+
+	i := 0
 	for _, spec := range s.Specs {
+		if i > 0 {
+			sqlexec.MustFormatSQL(sql, ",")
+		}
 		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
 			return errors.Trace(err1)
@@ -168,15 +173,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
 		}
-		user := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, pwd)
-		users = append(users, user)
+		sqlexec.MustFormatSQL(sql, `(%?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd)
+		i += 1
 	}
-	if len(users) == 0 {
+	if i == 0 {
 		return nil
 	}
 
-	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql.String())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -197,6 +201,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
+	sql := new(strings.Builder)
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
 		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
@@ -218,9 +223,10 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 				pwd = auth.EncodePassword(spec.AuthOpt.HashString)
 			}
 		}
-		sql := fmt.Sprintf(`UPDATE %s.%s SET Password = '%s' WHERE Host = '%s' and User = '%s';`,
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET Password = %? WHERE Host = %? and User = %?;`,
 			mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
 		if err != nil {
 			failedUsers = append(failedUsers, spec.User.String())
 		}
@@ -242,6 +248,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 }
 
 func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+	sql := new(strings.Builder)
 	failedUsers := make([]string, 0, len(s.UserList))
 	for _, user := range s.UserList {
 		exists, err := userExists(e.ctx, user.Username, user.Hostname)
@@ -259,8 +266,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 				return errors.Trace(err)
@@ -269,8 +277,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 
 		// delete privileges from mysql.db
-		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
+		if _, err = e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 				return errors.Trace(err)
@@ -279,8 +288,9 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 
 		// delete privileges from mysql.tables_priv
-		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = '%s' and User = '%s';`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
-		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
 				return errors.Trace(err)
@@ -301,7 +311,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 }
 
 func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, name, host)
+	sql := sqlexec.MustEscapeSQL(`SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -334,7 +344,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	}
 
 	// update mysql.user
-	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
+	sql := sqlexec.MustEscapeSQL(`UPDATE %n.%n SET password=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
