@@ -82,6 +82,7 @@ type StatementContext struct {
 	AllowInvalidDate          bool
 	IgnoreNoPartition         bool
 	OptimDependOnMutableConst bool
+	IgnoreExplainIDSuffix     bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

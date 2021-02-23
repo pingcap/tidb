@@ -39,11 +39,9 @@ func (b *builtinGreatestDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 		if err := b.args[j].VecEvalDecimal(b.ctx, input, buf); err != nil {
 			return err
 		}
+		result.MergeNulls(buf)
 		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
-				continue
-			} else if buf.IsNull(i) {
-				result.SetNull(i, true)
 				continue
 			}
 			v := buf.GetDecimal(i)
