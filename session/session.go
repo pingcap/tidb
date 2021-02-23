@@ -440,7 +440,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	defer func() {
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}()
 	if s.txn.IsReadOnly() {
 		return nil
@@ -611,7 +611,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	}
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
-	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	s.sessionVars.SetInTxn(false)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -697,7 +697,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
@@ -791,7 +791,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			zap.String("txn", s.txn.GoString()))
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		s.sessionVars.SetInTxn(false)
 	}
 	return err
 }
@@ -1902,7 +1902,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
-			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			s.sessionVars.SetInTxn(true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)

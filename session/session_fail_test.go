@@ -129,12 +129,33 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 		tk.MustExec("COMMIT")
 	}()
 
-	// Same for 1PC
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	tk.MustExec("set autocommit = 0")
 	tk.MustExec("INSERT INTO t1 VALUES (3)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	// Same for 1PC
+	tk.MustExec("set autocommit = 1")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	tk.MustExec("INSERT INTO t1 VALUES (4)")
 
 	tk.MustExec("BEGIN")
-	tk.MustExec("INSERT INTO t1 VALUES (2)")
+	tk.MustExec("INSERT INTO t1 VALUES (5)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("INSERT INTO t1 VALUES (6)")
 	func() {
 		defer func() {
 			err := recover()
