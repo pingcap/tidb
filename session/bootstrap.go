@@ -561,9 +561,6 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
-	if rs == nil {
-		return "", true, errors.New("Wrong number of Recordset")
-	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk()
 	err = rs.Next(ctx, req)
