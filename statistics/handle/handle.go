@@ -427,6 +427,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 				}
 				globalStats.Hg[i].NDV = globalStatsNDV
 			}
+			// TODO: if the globalStats.Fms[i] == nil, we should to consider how to update the NDV.
 		} else {
 			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
 			globalStatsNDV := int64(0)
