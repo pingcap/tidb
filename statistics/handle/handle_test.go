@@ -705,8 +705,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 
 	// Test the 'dynamic-only' mode
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only';")
-	err := testKit.ExecToErr("analyze table t, t1;")
-	c.Assert(err.Error(), Equals, "TODO: The merge function of the NDV has not been implemented yet")
+	testKit.MustExec("analyze table t, t1;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 3)
 	c.Assert(result.Rows()[0][5], Equals, "1")
@@ -721,8 +720,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	result = testKit.MustQuery("show stats_histograms where table_name = 't1';").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	err = testKit.ExecToErr("analyze table t index idx_t_ab, idx_t_b;")
-	c.Assert(err.Error(), Equals, "TODO: The merge function of the NDV has not been implemented yet")
+	testKit.MustExec("analyze table t index idx_t_ab, idx_t_b;")
 	result = testKit.MustQuery("show stats_meta where table_name = 't'").Sort()
 	c.Assert(len(result.Rows()), Equals, 3)
 	c.Assert(result.Rows()[0][5], Equals, "1")

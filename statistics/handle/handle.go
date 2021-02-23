@@ -409,10 +409,20 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			return
 		}
 
-		// Merge NDV
-		err = errors.Errorf("TODO: The merge function of the NDV has not been implemented yet")
-		if err != nil {
-			return
+		// Merge FMSketch to calculate column NDV
+		if isIndex == 0 {
+			// merge FMSketch
+			globalStats.Fms[i] = allFms[i][0].Copy()
+			for j := uint64(1); j < partitionNum; j++ {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			}
+
+			// update the NDV
+			globalStatsNDV := globalStats.Fms[i].NDV()
+			if globalStatsNDV > globalStats.Count {
+				globalStatsNDV = globalStats.Count
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}
 	return
