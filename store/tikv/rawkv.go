@@ -33,19 +33,6 @@ var (
 	ErrMaxScanLimitExceeded = errors.New("limit should be less than MaxRawKVScanLimit")
 )
 
-var (
-	tikvRawkvCmdHistogramWithGet           = metrics.TiKVRawkvCmdHistogram.WithLabelValues("get")
-	tikvRawkvCmdHistogramWithBatchGet      = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_get")
-	tikvRawkvCmdHistogramWithBatchPut      = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_put")
-	tikvRawkvCmdHistogramWithDelete        = metrics.TiKVRawkvCmdHistogram.WithLabelValues("delete")
-	tikvRawkvCmdHistogramWithBatchDelete   = metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_delete")
-	tikvRawkvCmdHistogramWithRawScan       = metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan")
-	tikvRawkvCmdHistogramWithRawReversScan = metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_reverse_scan")
-
-	tikvRawkvSizeHistogramWithKey   = metrics.TiKVRawkvSizeHistogram.WithLabelValues("key")
-	tikvRawkvSizeHistogramWithValue = metrics.TiKVRawkvSizeHistogram.WithLabelValues("value")
-)
-
 const (
 	// rawBatchPutSize is the maximum size limit for rawkv each batch put request.
 	rawBatchPutSize = 16 * 1024
@@ -102,7 +89,7 @@ func (c *RawKVClient) ClusterID() uint64 {
 // Get queries value with the key. When the key does not exist, it returns `nil, nil`.
 func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	start := time.Now()
-	defer func() { tikvRawkvCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.RawkvCmdHistogramWithGet.Observe(time.Since(start).Seconds()) }()
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawGet, &kvrpcpb.RawGetRequest{Key: key})
 	resp, _, err := c.sendReq(key, req, false)
@@ -126,7 +113,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	start := time.Now()
 	defer func() {
-		tikvRawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
+		metrics.RawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}()
 
 	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
@@ -155,9 +142,9 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 // Put stores a key-value pair to TiKV.
 func (c *RawKVClient) Put(key, value []byte) error {
 	start := time.Now()
-	defer func() { tikvRawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds()) }()
-	tikvRawkvSizeHistogramWithKey.Observe(float64(len(key)))
-	tikvRawkvSizeHistogramWithValue.Observe(float64(len(value)))
+	defer func() { metrics.RawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds()) }()
+	metrics.RawkvSizeHistogramWithKey.Observe(float64(len(key)))
+	metrics.RawkvSizeHistogramWithValue.Observe(float64(len(value)))
 
 	if len(value) == 0 {
 		return errors.New("empty value is not supported")
@@ -185,7 +172,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 	start := time.Now()
 	defer func() {
-		tikvRawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds())
+		metrics.RawkvCmdHistogramWithBatchPut.Observe(time.Since(start).Seconds())
 	}()
 
 	if len(keys) != len(values) {
@@ -204,7 +191,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 // Delete deletes a key-value pair from TiKV.
 func (c *RawKVClient) Delete(key []byte) error {
 	start := time.Now()
-	defer func() { tikvRawkvCmdHistogramWithDelete.Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.RawkvCmdHistogramWithDelete.Observe(time.Since(start).Seconds()) }()
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdRawDelete, &kvrpcpb.RawDeleteRequest{
 		Key: key,
@@ -227,7 +214,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 	start := time.Now()
 	defer func() {
-		tikvRawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
+		metrics.RawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
 	}()
 
 	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
@@ -285,7 +272,7 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 // `Scan(push(startKey, '\0'), push(endKey, '\0'), limit)`.
 func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
-	defer func() { tikvRawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
+	defer func() { metrics.RawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
 
 	if limit > MaxRawKVScanLimit {
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
@@ -327,7 +314,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {
-		tikvRawkvCmdHistogramWithRawReversScan.Observe(time.Since(start).Seconds())
+		metrics.RawkvCmdHistogramWithRawReversScan.Observe(time.Since(start).Seconds())
 	}()
 
 	if limit > MaxRawKVScanLimit {

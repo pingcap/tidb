@@ -244,7 +244,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"t CREATE TABLE `t` (\n" +
 			"  `c` int(11) NOT NULL AUTO_INCREMENT,\n" +
 			"  `d` int(11) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`c`)\n" +
+			"  PRIMARY KEY (`c`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002"))
 
 	// Test auto_increment for table without auto_increment column

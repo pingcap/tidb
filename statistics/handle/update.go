@@ -558,6 +558,7 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
+OUTER:
 	for _, fbs := range h.feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
@@ -575,9 +576,10 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
 				if idx.StatsVer >= statistics.Version2 {
-					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
 				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB}, int(idx.StatsVer))
@@ -588,6 +590,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				col, ok := tblStats.Columns[fb.Hist.ID]
 				if !ok || col.Histogram.Len() == 0 {
 					continue
+				}
+				if col.StatsVer >= statistics.Version2 {
+					// // For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+					// ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+					continue OUTER
 				}
 				newCol := *col
 				// only use the range query to update primary key
@@ -721,10 +728,17 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
+	var fms *statistics.FMSketch
 	var statsVer int64 = statistics.Version1
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		statsVer = idx.StatsVer
+		if statsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && idx.Histogram.Len() > 0 {
 			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
@@ -734,9 +748,16 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
+		if ok && col.StatsVer >= 2 {
+			logutil.BgLogger().Warn("[stats] Feedback is discarded because statistics on this table is version 2, which is incompatible with feedback. "+
+				"Please consider setting feedback-probability to 0.0 in config file to disable query feedback.",
+				zap.Int64("table_id", physicalTableID), zap.Int64("hist_id", histID), zap.Int64("is_index", isIndex))
+			return err
+		}
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
+			fms = col.FMSketch
 		}
 	}
 	// The column or index has been deleted.
@@ -747,10 +768,10 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	for _, row := range rows {
 		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
-			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
+			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, fms, statsVer)
 	return errors.Trace(err)
 }
 
@@ -769,9 +790,9 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -865,6 +886,11 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
+	err := h.UpdateSessionVar()
+	if err != nil {
+		logutil.BgLogger().Error("[stats] update analyze version for auto analyze session failed", zap.Error(err))
+		return
+	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -910,22 +936,32 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
-		h.execAutoAnalyze(sql, params...)
+		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
 			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
-			h.execAutoAnalyze(sql+" index %n", append(params, idx.Name.O)...)
+			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
+			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
 			return true
 		}
 	}
 	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string, params ...interface{}) {
+var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
+	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
+	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+}
+
+func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQL(context.Background(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
