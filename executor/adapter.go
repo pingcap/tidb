@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -305,7 +306,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	sctx := a.Ctx
-	ctx = sessionctx.SetCommitCtx(ctx, sctx)
+	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency()
@@ -727,30 +728,30 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		// Do not sync transaction for Execute statement, because the real optimization work is done in
-		// "ExecuteExec.Build".
-		useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-		if err != nil {
-			return nil, err
-		}
-		if useMaxTS {
-			logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else if ctx.GetSessionVars().SnapshotTS != 0 {
-			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
-				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
+				return nil, err
 			}
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
-			switch {
-			case useMaxTS:
-				stmtCtx.Priority = kv.PriorityHigh
-			case a.LowerPriority:
-				stmtCtx.Priority = kv.PriorityLow
+		} else {
+			// Do not sync transaction for Execute statement, because the real optimization work is done in
+			// "ExecuteExec.Build".
+			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+			if err != nil {
+				return nil, err
+			}
+			if useMaxTS {
+				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
+					return nil, err
+				}
+			}
+			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
+				switch {
+				case useMaxTS:
+					stmtCtx.Priority = kv.PriorityHigh
+				case a.LowerPriority:
+					stmtCtx.Priority = kv.PriorityLow
+				}
 			}
 		}
 	}
