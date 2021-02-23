@@ -104,7 +104,11 @@ func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize i
 	return s, s.NDV(), nil
 }
 
-func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
+// MergeFMSketch merges two FM Sketch.
+func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
+	if s == nil || rs == nil {
+		return
+	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
 		for key := range s.hashset {

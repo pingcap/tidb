@@ -446,18 +446,6 @@ func (d *ddl) GetID() string {
 	return d.uuid
 }
 
-func checkJobMaxInterval(job *model.Job) time.Duration {
-	// The job of adding index takes more time to process.
-	// So it uses the longer time.
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		return 3 * time.Second
-	}
-	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
-		return 500 * time.Millisecond
-	}
-	return 1 * time.Second
-}
-
 var (
 	fastDDLIntervalPolicy = []time.Duration{
 		500 * time.Millisecond,
