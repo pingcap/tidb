@@ -587,6 +587,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	txnCtx.IsExplicit = true
 	// Call ctx.Txn(true) to active pending txn.
 	txnMode := s.Mode
 	if txnMode == "" {
@@ -669,6 +670,7 @@ func (e *SimpleExec) executeStartTransactionReadOnlyWithTimestampBound(ctx conte
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	e.ctx.GetSessionVars().TxnCtx.IsExplicit = true
 	return nil
 }
 

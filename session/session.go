@@ -498,9 +498,8 @@ func (s *session) doCommit(ctx context.Context) error {
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
-		isCommitStmt := s.sessionVars.StmtCtx.StmtType == executor.GetStmtLabel(&ast.CommitStmt{})
 		s.txn.SetOption(kv.GuaranteeLinearizability,
-			isCommitStmt && s.GetSessionVars().GuaranteeLinearizability)
+			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
 	}
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
