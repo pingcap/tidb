@@ -14,7 +14,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/util/collate"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
