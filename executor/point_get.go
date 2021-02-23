@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -302,6 +304,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 // get will first try to get from txn buffer, then check the pessimistic lock cache,
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
+	needLog := false
 	if e.ctx.GetSessionVars().InTxn() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
@@ -321,8 +324,18 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			}
 		}
 		// fallthrough to snapshot get.
+	} else {
+		sessVars := e.ctx.GetSessionVars()
+		if sessVars.RetryInfo.Retrying && !sessVars.InTxn() && sessVars.TxnCtx.StatementCount > 0 {
+			needLog = true
+		}
+
 	}
-	return e.snapshot.Get(ctx, key)
+	val, err := e.snapshot.Get(ctx, key)
+	if err == nil && needLog {
+		logutil.Logger(ctx).Warn("point-get skips membuffer", zap.Uint64("startTS", e.startTS), zap.String("key", key.String()), zap.String("val", string(val)), zap.Int("stmtCount", e.ctx.GetSessionVars().TxnCtx.StatementCount))
+	}
+	return val, err
 }
 
 func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, hasNull bool, err error) {

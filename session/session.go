@@ -701,6 +701,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Int("queryNum", i))
 			}
 			_, err = st.Exec(ctx)
+			s.sessionVars.TxnCtx.StatementCount++
 			if err != nil {
 				s.StmtRollback()
 				break
