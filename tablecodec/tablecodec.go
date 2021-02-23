@@ -861,9 +861,8 @@ func getIndexVersion(value []byte) int {
 	tailLen := int(value[0])
 	if (tailLen == 0 || tailLen == 1) && value[1] == IndexVersionFlag {
 		return int(value[2])
-	} else {
-		return 0
 	}
+	return 0
 }
 
 // DecodeIndexKV uses to decode index key values.
@@ -1346,7 +1345,7 @@ func SplitIndexValue(value []byte) (segs IndexValueSegments) {
 	return
 }
 
-// SplitIndexValue splits index value into segments.
+// SplitIndexValueForClusteredIndexVersion1 splits index value into segments.
 func SplitIndexValueForClusteredIndexVersion1(value []byte) (segs IndexValueSegments) {
 	tailLen := int(value[0])
 	// Skip the tailLen and version info.
