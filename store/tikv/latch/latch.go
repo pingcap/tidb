@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )

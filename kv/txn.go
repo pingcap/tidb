@@ -26,7 +26,7 @@ import (
 )
 
 // RunInNewTxn will run the f in a new transaction environment.
-func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
+func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
 		err           error
 		originalTxnTS uint64
@@ -44,7 +44,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			originalTxnTS = txn.StartTS()
 		}
 
-		err = f(txn)
+		err = f(ctx, txn)
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(err1)
@@ -58,7 +58,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return err
 		}
 
-		err = txn.Commit(context.Background())
+		err = txn.Commit(ctx)
 		if err == nil {
 			break
 		}

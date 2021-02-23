@@ -388,7 +388,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
-		base.childrenReqProps = append(base.childrenReqProps, prop.Clone())
+		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil
 }
@@ -601,6 +601,9 @@ func (p *basePlan) ExplainInfo() string {
 
 func (p *basePlan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.tp
+		}
 		return p.tp + "_" + strconv.Itoa(p.id)
 	})
 }

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -35,11 +36,15 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -203,6 +208,7 @@ const (
 		repeats 	BIGINT(64) NOT NULL,
 		upper_bound BLOB NOT NULL,
 		lower_bound BLOB ,
+		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -279,6 +285,15 @@ const (
 		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
+	// CreateStatsFMSketchTable stores FMSketch data of a column histogram.
+	CreateStatsFMSketchTable = `CREATE TABLE IF NOT EXISTS mysql.stats_fm_sketch (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		value 		LONGBLOB,
+		INDEX tbl(table_id, is_index, hist_id)
+	);`
+
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
 		name 		CHAR(100) NOT NULL,
@@ -293,16 +308,14 @@ const (
 
 	// CreateStatsExtended stores the registered extended statistics.
 	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
-		stats_name varchar(32) NOT NULL,
-		db varchar(32) NOT NULL,
+		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		column_ids varchar(32) NOT NULL,
-		scalar_stats double DEFAULT NULL,
-		blob_stats blob DEFAULT NULL,
+		stats blob DEFAULT NULL,
 		version bigint(64) unsigned NOT NULL,
 		status tinyint(4) NOT NULL,
-		PRIMARY KEY(stats_name, db),
+		PRIMARY KEY(name, table_id),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
 	);`
@@ -432,7 +445,7 @@ const (
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
-	version51 = 51
+	// version51 will be redone in version63 so it's skipped here.
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
 	// version53 introduce Global variable tidb_enable_strict_double_type_check
@@ -446,12 +459,24 @@ const (
 	// version57 fixes the bug of concurrent create / drop binding
 	version57 = 57
 	// version58 add `Repl_client_priv` and `Repl_slave_priv` to `mysql.user`
-	version58 = 58
+	// version58 will be redone in version64 so it's skipped here.
 	// version59 add writes a variable `oom-action` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.11+.
 	version59 = 59
+	// version60 redesigns `mysql.stats_extended`
+	version60 = 60
+	// version61 restore all SQL bindings.
+	version61 = 61
+	// version62 add column ndv for mysql.stats_buckets.
+	version62 = 62
+	// version63 fixes the bug that upgradeToVer51 would be missed when upgrading from v4.0 to a new version
+	version63 = 63
+	// version64 is redone upgradeToVer58 after upgradeToVer63, this is to preserve the order of the columns in mysql.user
+	version64 = 64
+	// version65 add mysql.stats_fm_sketch table.
+	version65 = 65
 
 	// please make sure this is the largest version
-	currentBootstrapVersion = version59
+	currentBootstrapVersion = version65
 )
 
 var (
@@ -506,21 +531,27 @@ var (
 		// We will redo upgradeToVer48 and upgradeToVer49 in upgradeToVer55 and upgradeToVer56,
 		// so upgradeToVer48 and upgradeToVer49 is skipped here.
 		upgradeToVer50,
-		upgradeToVer51,
+		// We will redo upgradeToVer51 in upgradeToVer63, it is skipped here.
 		upgradeToVer52,
 		upgradeToVer53,
 		upgradeToVer54,
 		upgradeToVer55,
 		upgradeToVer56,
 		upgradeToVer57,
-		upgradeToVer58,
+		// We will redo upgradeToVer58 in upgradeToVer64, it is skipped here.
 		upgradeToVer59,
+		upgradeToVer60,
+		upgradeToVer61,
+		upgradeToVer62,
+		upgradeToVer63,
+		upgradeToVer64,
+		upgradeToVer65,
 	}
 )
 
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
-	_, err := s.Execute(context.Background(), fmt.Sprintf("USE %s;", mysql.SystemDB))
+	_, err := s.ExecuteInternal(context.Background(), "USE %n", mysql.SystemDB)
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		logutil.BgLogger().Fatal("check bootstrap error",
 			zap.Error(err))
@@ -546,20 +577,21 @@ func checkBootstrapped(s Session) (bool, error) {
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
-	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, name)
 	ctx := context.Background()
-	rs, err := s.Execute(ctx, sql)
+	rs, err := s.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		name,
+	)
 	if err != nil {
 		return "", true, errors.Trace(err)
 	}
-	if len(rs) != 1 {
+	if rs == nil {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	err = r.Next(ctx, req)
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -585,7 +617,7 @@ func upgrade(s Session) {
 	}
 
 	updateBootstrapVer(s)
-	_, err = s.Execute(context.Background(), "COMMIT")
+	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -632,9 +664,7 @@ func upgradeToVer3(s Session, ver int64) {
 		return
 	}
 	// Version 3 fix tx_read_only variable value.
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET variable_value = '0' WHERE variable_name = 'tx_read_only';",
-		mysql.SystemDB, mysql.GlobalVariablesTable)
-	mustExecute(s, sql)
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET variable_value = '0' WHERE variable_name = 'tx_read_only';", mysql.SystemDB, mysql.GlobalVariablesTable)
 }
 
 // upgradeToVer4 updates to version 4.
@@ -642,8 +672,7 @@ func upgradeToVer4(s Session, ver int64) {
 	if ver >= version4 {
 		return
 	}
-	sql := CreateStatsMetaTable
-	mustExecute(s, sql)
+	mustExecute(s, CreateStatsMetaTable)
 }
 
 func upgradeToVer5(s Session, ver int64) {
@@ -677,7 +706,7 @@ func upgradeToVer8(s Session, ver int64) {
 		return
 	}
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.Execute(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
+	if _, err := s.ExecuteInternal(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s, ver)
@@ -693,7 +722,7 @@ func upgradeToVer9(s Session, ver int64) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	_, err := s.Execute(context.Background(), sql)
+	_, err := s.ExecuteInternal(context.Background(), sql)
 	for _, ignorableErr := range ignorableErrs {
 		if terror.ErrorEqual(err, ignorableErr) {
 			return
@@ -719,7 +748,7 @@ func upgradeToVer11(s Session, ver int64) {
 	if ver >= version11 {
 		return
 	}
-	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	_, err := s.ExecuteInternal(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -734,21 +763,20 @@ func upgradeToVer12(s Session, ver int64) {
 		return
 	}
 	ctx := context.Background()
-	_, err := s.Execute(ctx, "BEGIN")
+	_, err := s.ExecuteInternal(ctx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
-	rs, err := s.Execute(ctx, sql)
+	rs, err := s.ExecuteInternal(ctx, sql)
 	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
 		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
-		rs, err = s.Execute(ctx, sql)
+		rs, err = s.ExecuteInternal(ctx, sql)
 	}
 	terror.MustNil(err)
-	r := rs[0]
 	sqls := make([]string, 0, 1)
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
+	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -760,7 +788,7 @@ func upgradeToVer12(s Session, ver int64) {
 			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user SET password = "%s" WHERE user="%s" AND host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.Next(ctx, req)
+		err = rs.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -790,7 +818,7 @@ func upgradeToVer13(s Session, ver int64) {
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(ctx, sql)
+		_, err := s.ExecuteInternal(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -819,7 +847,7 @@ func upgradeToVer14(s Session, ver int64) {
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
-		_, err := s.Execute(ctx, sql)
+		_, err := s.ExecuteInternal(ctx, sql)
 		if err != nil {
 			if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 				continue
@@ -834,7 +862,7 @@ func upgradeToVer15(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.Execute(context.Background(), CreateGCDeleteRangeTable)
+	_, err = s.ExecuteInternal(context.Background(), CreateGCDeleteRangeTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer15 error", zap.Error(err))
 	}
@@ -904,9 +932,13 @@ func upgradeToVer23(s Session, ver int64) {
 
 // writeSystemTZ writes system timezone info into mysql.tidb
 func writeSystemTZ(s Session) {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.InferSystemTZ(), timeutil.InferSystemTZ())
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbSystemTZ,
+		timeutil.InferSystemTZ(),
+		timeutil.InferSystemTZ(),
+	)
 }
 
 // upgradeToVer24 initializes `System` timezone according to docs/design/2018-09-10-adding-tz-env.md
@@ -1035,7 +1067,7 @@ func upgradeToVer38(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.Execute(context.Background(), CreateGlobalPrivTable)
+	_, err = s.ExecuteInternal(context.Background(), CreateGlobalPrivTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer38 error", zap.Error(err))
 	}
@@ -1047,9 +1079,9 @@ func writeNewCollationParameter(s Session, flag bool) {
 	if flag {
 		b = varTrue
 	}
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b,
+	)
 }
 
 func upgradeToVer40(s Session, ver int64) {
@@ -1085,14 +1117,14 @@ func upgradeToVer42(s Session, ver int64) {
 
 // Convert statement summary global variables to non-empty values.
 func writeStmtSummaryVars(s Session) {
-	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
+	sql := "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''"
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
-	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
-	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
-	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
-	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength))
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength)
 }
 
 func upgradeToVer43(s Session, ver int64) {
@@ -1141,14 +1173,6 @@ func upgradeToVer50(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
-}
-
-func upgradeToVer51(s Session, ver int64) {
-	if ver >= version51 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
 func upgradeToVer52(s Session, ver int64) {
@@ -1208,13 +1232,12 @@ func upgradeToVer55(s Session, ver int64) {
 
 	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
 	ctx := context.Background()
-	rs, err := s.Execute(ctx, selectSQL)
+	rs, err := s.ExecuteInternal(ctx, selectSQL)
 	terror.MustNil(err)
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
-	err = r.Next(ctx, req)
+	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			n := strings.ToLower(row.GetString(0))
@@ -1223,7 +1246,7 @@ func upgradeToVer55(s Session, ver int64) {
 				return
 			}
 		}
-		err = r.Next(ctx, req)
+		err = rs.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -1259,18 +1282,9 @@ func initBindInfoTable(s Session) {
 }
 
 func insertBuiltinBindInfoRow(s Session) {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES ("%s", "%s", "mysql", "%s", "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", "%s")`,
-		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin)
-	mustExecute(s, sql)
-}
-
-func upgradeToVer58(s Session, ver int64) {
-	if ver >= version58 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
+		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin,
+	)
 }
 
 func upgradeToVer59(s Session, ver int64) {
@@ -1288,26 +1302,165 @@ func upgradeToVer59(s Session, ver int64) {
 	writeOOMAction(s)
 }
 
+func upgradeToVer60(s Session, ver int64) {
+	if ver >= version60 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+type bindInfo struct {
+	bindSQL    string
+	status     string
+	createTime types.Time
+	charset    string
+	collation  string
+	source     string
+}
+
+func upgradeToVer61(s Session, ver int64) {
+	if ver >= version61 {
+		return
+	}
+	bindMap := make(map[string]bindInfo)
+	h := &bindinfo.BindHandle{}
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+
+		mustExecute(s, "COMMIT")
+	}()
+	mustExecute(s, h.LockBindInfoSQL())
+	var rs sqlexec.RecordSet
+	rs, err = s.ExecuteInternal(context.Background(),
+		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
+			FROM mysql.bind_info
+			WHERE source != 'builtin'
+			ORDER BY update_time DESC`)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+	}
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	req := rs.NewChunk()
+	iter := chunk.NewIterator4Chunk(req)
+	p := parser.New()
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	for {
+		err = rs.Next(context.TODO(), req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer61 error", zap.Error(err))
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		updateBindInfo(iter, p, bindMap)
+	}
+
+	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
+	for original, bind := range bindMap {
+		mustExecute(s, fmt.Sprintf("INSERT INTO mysql.bind_info VALUES(%s, %s, '', %s, %s, %s, %s, %s, %s)",
+			expression.Quote(original),
+			expression.Quote(bind.bindSQL),
+			expression.Quote(bind.status),
+			expression.Quote(bind.createTime.String()),
+			expression.Quote(now.String()),
+			expression.Quote(bind.charset),
+			expression.Quote(bind.collation),
+			expression.Quote(bind.source),
+		))
+	}
+}
+
+func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[string]bindInfo) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		bind := row.GetString(0)
+		db := row.GetString(1)
+		charset := row.GetString(4)
+		collation := row.GetString(5)
+		stmt, err := p.ParseOneStmt(bind, charset, collation)
+		if err != nil {
+			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+		}
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db))
+		if _, ok := bindMap[originWithDB]; ok {
+			// The results are sorted in descending order of time.
+			// And in the following cases, duplicate originWithDB may occur
+			//      originalText         	|bindText                                   	|DB
+			//		`select * from t` 		|`select /*+ use_index(t, idx) */ * from t` 	|`test`
+			// 		`select * from test.t`  |`select /*+ use_index(t, idx) */ * from test.t`|``
+			// Therefore, if repeated, we can skip to keep the latest binding.
+			continue
+		}
+		bindMap[originWithDB] = bindInfo{
+			bindSQL:    utilparser.RestoreWithDefaultDB(stmt, db),
+			status:     row.GetString(2),
+			createTime: row.GetTime(3),
+			charset:    charset,
+			collation:  collation,
+			source:     row.GetString(6),
+		}
+	}
+}
+
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30,
+	)
+}
+
+func upgradeToVer62(s Session, ver int64) {
+	if ver >= version62 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer63(s Session, ver int64) {
+	if ver >= version63 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer64(s Session, ver int64) {
+	if ver >= version64 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y'")
+}
+
+func upgradeToVer65(s Session, ver int64) {
+	if ver >= version65 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsFMSketchTable)
 }
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%s'`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+	)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%d", "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%d"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion,
+	)
 }
 
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
@@ -1327,7 +1480,7 @@ func doDDLWorks(s Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
-	mustExecute(s, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", mysql.SystemDB))
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	// Create user table.
 	mustExecute(s, CreateUserTable)
 	// Create privilege tables.
@@ -1369,10 +1522,13 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsExtended)
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
+	// Create stats_fm_sketch table.
+	mustExecute(s, CreateStatsFMSketchTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
+// TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 
@@ -1414,14 +1570,13 @@ func doDMLWorks(s Session) {
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
 
-	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
-		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, varTrue, varTrue)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, varTrue, varTrue,
+	)
 
-	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%d", "Bootstrap version. Do not delete.")`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
-	mustExecute(s, sql)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
+	)
 
 	writeSystemTZ(s)
 
@@ -1431,7 +1586,7 @@ func doDMLWorks(s Session) {
 
 	writeStmtSummaryVars(s)
 
-	_, err := s.Execute(context.Background(), "COMMIT")
+	_, err := s.ExecuteInternal(context.Background(), "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
 		logutil.BgLogger().Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
@@ -1448,8 +1603,8 @@ func doDMLWorks(s Session) {
 	}
 }
 
-func mustExecute(s Session, sql string) {
-	_, err := s.ExecuteInternal(context.Background(), sql)
+func mustExecute(s Session, sql string, args ...interface{}) {
+	_, err := s.ExecuteInternal(context.Background(), sql, args...)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))

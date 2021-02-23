@@ -160,7 +160,7 @@ func (ds *DataSource) getColumnNDV(colID int64) (ndv float64) {
 	hist, ok := ds.statisticTable.Columns[colID]
 	if ok && hist.Count > 0 {
 		factor := float64(ds.statisticTable.Count) / float64(hist.Count)
-		ndv = float64(hist.NDV) * factor
+		ndv = float64(hist.Histogram.NDV) * factor
 	} else {
 		ndv = float64(ds.statisticTable.Count) * distinctFactor
 	}
@@ -423,6 +423,17 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 				break
 			}
 			partialPaths = append(partialPaths, partialPath)
+		}
+		// If all of the partialPaths use the same index, we will not use the indexMerge.
+		singlePath := true
+		for i := len(partialPaths) - 1; i >= 1; i-- {
+			if partialPaths[i].Index != partialPaths[i-1].Index {
+				singlePath = false
+				break
+			}
+		}
+		if singlePath {
+			continue
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
