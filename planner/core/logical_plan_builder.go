@@ -2551,57 +2551,69 @@ func tblInfoFromCol(from ast.ResultSetNode, name *types.FieldName) *model.TableI
 	return nil
 }
 
-func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName) {
+func buildFuncDependCol(p LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName, error) {
 	binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if binOpExpr.Op != opcode.EQ {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lColExpr, ok := binOpExpr.L.(*ast.ColumnNameExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rColExpr, ok := binOpExpr.R.(*ast.ColumnNameExpr)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	lIdx, err := expression.FindFieldName(p.OutputNames(), lColExpr.Name)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
 	rIdx, err := expression.FindFieldName(p.OutputNames(), rColExpr.Name)
 	if err != nil {
-		return nil, nil
+		return nil, nil, err
 	}
-	return p.OutputNames()[lIdx], p.OutputNames()[rIdx]
+	if lIdx == -1 {
+		return nil, nil, ErrUnknownColumn.GenWithStackByArgs(lColExpr.Name, "where clause")
+	}
+	if rIdx == -1 {
+		return nil, nil, ErrUnknownColumn.GenWithStackByArgs(rColExpr.Name, "where clause")
+	}
+	return p.OutputNames()[lIdx], p.OutputNames()[rIdx], nil
 }
 
-func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) map[*types.FieldName]*types.FieldName {
+func buildWhereFuncDepend(p LogicalPlan, where ast.ExprNode) (map[*types.FieldName]*types.FieldName, error) {
 	whereConditions := splitWhere(where)
 	colDependMap := make(map[*types.FieldName]*types.FieldName, 2*len(whereConditions))
 	for _, cond := range whereConditions {
-		lCol, rCol := buildFuncDependCol(p, cond)
+		lCol, rCol, err := buildFuncDependCol(p, cond)
+		if err != nil {
+			return nil, err
+		}
 		if lCol == nil || rCol == nil {
 			continue
 		}
 		colDependMap[lCol] = rCol
 		colDependMap[rCol] = lCol
 	}
-	return colDependMap
+	return colDependMap, nil
 }
 
-func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*types.FieldName]*types.FieldName {
+func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.FieldName]*types.FieldName, error) {
 	switch x := from.(type) {
 	case *ast.Join:
 		if x.On == nil {
-			return nil
+			return nil, nil
 		}
 		onConditions := splitWhere(x.On.Expr)
 		colDependMap := make(map[*types.FieldName]*types.FieldName, len(onConditions))
 		for _, cond := range onConditions {
-			lCol, rCol := buildFuncDependCol(p, cond)
+			lCol, rCol, err := buildFuncDependCol(p, cond)
+			if err != nil {
+				return nil, err
+			}
 			if lCol == nil || rCol == nil {
 				continue
 			}
@@ -2619,9 +2631,9 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) map[*types.Field
 				colDependMap[lCol] = rCol
 			}
 		}
-		return colDependMap
+		return colDependMap, nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
@@ -2831,8 +2843,14 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		return nil
 	}
 
-	whereDepends := buildWhereFuncDepend(p, sel.Where)
-	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
+	whereDepends, err := buildWhereFuncDepend(p, sel.Where)
+	if err != nil {
+		return err
+	}
+	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	if err != nil {
+		return err
+	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(notInGbyOrSingleValueColNames))
 	for name, errExprLoc := range notInGbyOrSingleValueColNames {
 		tblInfo := tblInfoFromCol(sel.From.TableRefs, name)
@@ -2887,8 +2905,15 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, sel 
 	}
 	singleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	extractSingeValueColNamesFromWhere(p, sel.Where, singleValueColNames)
-	whereDepends := buildWhereFuncDepend(p, sel.Where)
-	joinDepends := buildJoinFuncDepend(p, sel.From.TableRefs)
+	whereDepends, err := buildWhereFuncDepend(p, sel.Where)
+	if err != nil {
+		return err
+	}
+
+	joinDepends, err := buildJoinFuncDepend(p, sel.From.TableRefs)
+	if err != nil {
+		return err
+	}
 	tblMap := make(map[*model.TableInfo]struct{}, len(resolver.nonAggCols))
 	for i, colName := range resolver.nonAggCols {
 		idx, err := expression.FindFieldName(p.OutputNames(), colName)
