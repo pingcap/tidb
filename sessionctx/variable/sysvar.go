@@ -346,16 +346,22 @@ func (sv *SysVar) ValidateFromHook(vars *SessionVars, normalizedValue string, or
 }
 
 // GetNativeValType attempts to convert the val to the approx MySQL non-string type
-func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte) {
+func (sv *SysVar) GetNativeValType(val string) (types.Datum, byte, uint) {
 	switch sv.Type {
+	case TypeUnsigned:
+		u, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			u = 0
+		}
+		return types.NewUintDatum(u), mysql.TypeLonglong, mysql.UnsignedFlag
 	case TypeBool:
 		optVal := int64(0) // OFF
 		if TiDBOptOn(val) {
 			optVal = 1
 		}
-		return types.NewIntDatum(optVal), mysql.TypeLong
+		return types.NewIntDatum(optVal), mysql.TypeLong, 0
 	}
-	return types.NewStringDatum(val), mysql.TypeVarString
+	return types.NewStringDatum(val), mysql.TypeVarString, 0
 }
 
 var sysVars map[string]*SysVar
@@ -490,7 +496,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetClient, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterValid(normalizedValue, CharacterSetClient)
 	}},
-	{Scope: ScopeNone, Name: Port, Value: "4000"},
+	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
 	{Scope: ScopeNone, Name: LogBin, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
