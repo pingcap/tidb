@@ -147,8 +147,9 @@ func (s *testPointGetSuite) TestPointGetDataTooLong(c *C) {
 		"  PRIMARY KEY (`COL1`)" +
 		");")
 	tk.MustExec("insert into PK_1389 values(0, \"皟钹糁泅埞礰喾皑杏灚暋蛨歜檈瓗跾咸滐梀揉\", \"7701-12-27 23:58:43\", 4806951672419474695, -1.55652e38);")
-	tk.MustQuery("select * from PK_1389 where col1 = 0x30;").Check(testkit.Rows(""))
-	tk.MustQuery("select * from PK_1389 where col1 in ( 0x30);").Check(testkit.Rows(""))
+	tk.MustQuery("select count(1) from PK_1389 where col1 = 0x30;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from PK_1389 where col1 in ( 0x30);").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists PK_1389;")
 }
 
 func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
