@@ -410,8 +410,9 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			return
 		}
 
-		// Merge FMSketch to calculate column NDV
+		// Update NDV of global-level stats
 		if isIndex == 0 {
+			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
 			// merge FMSketch
 			globalStats.Fms[i] = allFms[i][0].Copy()
 			for j := uint64(1); j < partitionNum; j++ {
@@ -419,9 +420,18 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 			}
 
 			// update the NDV
-			globalStatsNDV := globalStats.Fms[i].NDV()
-			if globalStatsNDV > globalStats.Count {
-				globalStatsNDV = globalStats.Count
+			if globalStats.Fms[i] != nil {
+				globalStatsNDV := globalStats.Fms[i].NDV()
+				if globalStatsNDV > globalStats.Count {
+					globalStatsNDV = globalStats.Count
+				}
+				globalStats.Hg[i].NDV = globalStatsNDV
+			}
+		} else {
+			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
+			globalStatsNDV := int64(0)
+			for _, bucket := range globalStats.Hg[i].Buckets {
+				globalStatsNDV += bucket.NDV
 			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
