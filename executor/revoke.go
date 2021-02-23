@@ -14,7 +14,7 @@
 package executor
 
 import (
-	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -138,13 +138,15 @@ func (e *RevokeExec) revokePriv(priv *ast.PrivElem, user, host string) error {
 }
 
 func (e *RevokeExec) revokeGlobalPriv(priv *ast.PrivElem, user, host string) error {
-	asgns, err := composeGlobalPrivUpdate(priv.Priv, "N")
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
+	err := composeGlobalPrivUpdate(sql, priv.Priv, "N")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s'`, mysql.SystemDB, mysql.UserTable, asgns, user, host)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-	return errors.Trace(err)
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user, host)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
+	return err
 }
 
 func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) error {
@@ -152,12 +154,14 @@ func (e *RevokeExec) revokeDBPriv(priv *ast.PrivElem, userName, host string) err
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
-	asgns, err := composeDBPrivUpdate(priv.Priv, "N")
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.DBTable)
+	err := composeDBPrivUpdate(sql, priv.Priv, "N")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s';`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, dbName)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%? AND DB=%?;`, userName, host, dbName)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
 	return errors.Trace(err)
 }
 
@@ -166,12 +170,14 @@ func (e *RevokeExec) revokeTablePriv(priv *ast.PrivElem, user, host string) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	asgns, err := composeTablePrivUpdateForRevoke(e.ctx, priv.Priv, user, host, dbName, tbl.Meta().Name.O)
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.TablePrivTable)
+	err = composeTablePrivUpdateForRevoke(e.ctx, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s';`, mysql.SystemDB, mysql.TablePrivTable, asgns, user, host, dbName, tbl.Meta().Name.O)
-	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?;`, user, host, dbName, tbl.Meta().Name.O)
+	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
 	return errors.Trace(err)
 }
 
@@ -180,20 +186,78 @@ func (e *RevokeExec) revokeColumnPriv(priv *ast.PrivElem, user, host string) err
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sql := new(strings.Builder)
 	for _, c := range priv.Cols {
 		col := table.FindCol(tbl.Cols(), c.Name.L)
 		if col == nil {
 			return errors.Errorf("Unknown column: %s", c)
 		}
-		asgns, err := composeColumnPrivUpdateForRevoke(e.ctx, priv.Priv, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.ColumnPrivTable)
+		err = composeColumnPrivUpdateForRevoke(e.ctx, sql, priv.Priv, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User='%s' AND Host='%s' AND DB='%s' AND Table_name='%s' AND Column_name='%s';`, mysql.SystemDB, mysql.ColumnPrivTable, asgns, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+		sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?;`, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
+		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+	return nil
+}
+
+func privUpdateForRevoke(cur []string, priv mysql.PrivilegeType) ([]string, error) {
+	p, ok := mysql.Priv2SetStr[priv]
+	if !ok {
+		return nil, errors.Errorf("Unknown priv: %v", priv)
+	}
+	cur = deleteFromSet(cur, p)
+	return cur, nil
+}
+
+func composeTablePrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
+	var newTablePriv, newColumnPriv []string
+
+	if priv != mysql.AllPriv {
+		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
+		if err != nil {
+			return err
+		}
+
+		newTablePriv = setFromString(currTablePriv)
+		newTablePriv, err = privUpdateForRevoke(newTablePriv, priv)
+		if err != nil {
+			return err
+		}
+
+		newColumnPriv = setFromString(currColumnPriv)
+		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
+		if err != nil {
+			return err
+		}
+	}
+
+	sqlexec.MustFormatSQL(sql, `Table_priv=%?, Column_priv=%?, Grantor=%?`, strings.Join(newTablePriv, ","), strings.Join(newColumnPriv, ","), ctx.GetSessionVars().User.String())
+	return nil
+}
+
+func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) error {
+	var newColumnPriv []string
+
+	if priv != mysql.AllPriv {
+		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
+		if err != nil {
+			return err
+		}
+
+		newColumnPriv = setFromString(currColumnPriv)
+		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
+		if err != nil {
+			return err
+		}
+	}
+
+	sqlexec.MustFormatSQL(sql, `Column_priv=%?`, strings.Join(newColumnPriv, ","))
 	return nil
 }
