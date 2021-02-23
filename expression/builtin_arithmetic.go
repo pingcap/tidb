@@ -432,7 +432,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 }
 
 // returns true when overflowed
-func (s* builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned bool, a, b int64) bool {
+func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned bool, a, b int64) bool {
 	res := a - b
 	ua, ub := uint64(a), uint64(b)
 	resUnsigned := false
