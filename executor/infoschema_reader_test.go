@@ -841,7 +841,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery(fmt.Sprintf("select TABLE_SCHEMA, sum(TABLE_SIZE) from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;", util.InformationSchemaName)).Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery(fmt.Sprintf("select TABLE_NAME from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';", util.InformationSchemaName)).Rows()), Equals, 22)
+	c.Assert(len(tk.MustQuery(fmt.Sprintf("select TABLE_NAME from %s.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';", util.InformationSchemaName)).Rows()), Equals, 23)
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

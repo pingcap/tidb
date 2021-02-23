@@ -316,9 +316,9 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	rows := tk.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
-	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1",
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1",
 	))
 
 	tkProcess := tk.Se.ShowProcess()
