@@ -52,7 +52,28 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+)
+
+var (
+	detailDurationRetryTime         = metrics.QueryDurationDetailHistogram.WithLabelValues("retry_time")
+	detailDurationQuery             = metrics.QueryDurationDetailHistogram.WithLabelValues("query")
+	detailDurationParse             = metrics.QueryDurationDetailHistogram.WithLabelValues("parse")
+	detailDurationCompile           = metrics.QueryDurationDetailHistogram.WithLabelValues("compile")
+	detailDurationWaitKVTotal       = metrics.QueryDurationDetailHistogram.WithLabelValues("wait_kv_total")
+	detailDurationWaitPDTotal       = metrics.QueryDurationDetailHistogram.WithLabelValues("wait_pd_total")
+	detailDurationBackoffTotal      = metrics.QueryDurationDetailHistogram.WithLabelValues("backoff_total")
+	detailDurationWriteSQLResp      = metrics.QueryDurationDetailHistogram.WithLabelValues("write_sql_resp")
+	detailDurationCopTime           = metrics.QueryDurationDetailHistogram.WithLabelValues("cop_time")
+	detailDurationProcessTime       = metrics.QueryDurationDetailHistogram.WithLabelValues("process_time")
+	detailDurationWaitTime          = metrics.QueryDurationDetailHistogram.WithLabelValues("wait_time")
+	detailDurationBackoffTime       = metrics.QueryDurationDetailHistogram.WithLabelValues("backoff_time")
+	detailDurationLockKeysTime      = metrics.QueryDurationDetailHistogram.WithLabelValues("lock_keys_time")
+	detailDurationGetCommitTS       = metrics.QueryDurationDetailHistogram.WithLabelValues("get_commit_ts")
+	detailDurationPrewriteTime      = metrics.QueryDurationDetailHistogram.WithLabelValues("prewrite_time")
+	detailDurationWaitPBinlogTime   = metrics.QueryDurationDetailHistogram.WithLabelValues("wait_prewrite_binlog_time")
+	detailDurationCommitTime        = metrics.QueryDurationDetailHistogram.WithLabelValues("commit_time")
+	detailDurationCommitBackoffTime = metrics.QueryDurationDetailHistogram.WithLabelValues("commit_backoff_time")
+	detailDurationResolveLockTime   = metrics.QueryDurationDetailHistogram.WithLabelValues("resolve_lock_time")
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -834,15 +855,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
-	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := cfg.Log.EnableSlowLog
-	// if the level is Debug, print slow logs anyway
-	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
-		return
-	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
 	if config.RedactLogEnabled() {
@@ -899,6 +914,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+		detailDurationRetryTime.Observe(slowItems.ExecRetryTime.Seconds())
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -906,6 +922,24 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
 	}
+	detailDurationQuery.Observe(costTime.Seconds())
+	detailDurationParse.Observe(sessVars.DurationParse.Seconds())
+	detailDurationCompile.Observe(sessVars.DurationCompile.Seconds())
+	detailDurationWaitKVTotal.Observe(time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)).Seconds())
+	detailDurationWaitPDTotal.Observe(time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)).Seconds())
+	detailDurationBackoffTotal.Observe(time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)).Seconds())
+	detailDurationWriteSQLResp.Observe(stmtDetail.WriteSQLRespDuration.Seconds())
+	detailDurationCopTime.Observe(execDetail.CopTime.Seconds())
+	detailDurationProcessTime.Observe(execDetail.ProcessTime.Seconds())
+	detailDurationWaitTime.Observe(execDetail.WaitTime.Seconds())
+	detailDurationBackoffTime.Observe(execDetail.BackoffTime.Seconds())
+	detailDurationLockKeysTime.Observe(execDetail.LockKeysDuration.Seconds())
+	detailDurationGetCommitTS.Observe(execDetail.CommitDetail.GetCommitTsTime.Seconds())
+	detailDurationPrewriteTime.Observe(execDetail.CommitDetail.PrewriteTime.Seconds())
+	detailDurationWaitPBinlogTime.Observe(execDetail.CommitDetail.WaitPrewriteBinlogTime.Seconds())
+	detailDurationCommitTime.Observe(execDetail.CommitDetail.CommitTime.Seconds())
+	detailDurationCommitBackoffTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.CommitBackoffTime)).Seconds())
+	detailDurationResolveLockTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.ResolveLockTime)).Seconds())
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {

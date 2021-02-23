@@ -35,6 +35,15 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblSQLType})
 
+	QueryDurationDetailHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handle_query_duration_detail_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled query details.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 29), // 0.1ms ~ 7.5hours
+		}, []string{LblSQLType})
+
 	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
