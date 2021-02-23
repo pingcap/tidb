@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -65,13 +66,41 @@ func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType
 // Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
+	isMixedSign := false
 	for i, t := range tps {
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
 			currType = *t
 			continue
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
+		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.Flag) != mysql.HasUnsignedFlag(t.Flag))
 		currType.Tp = mtp
+		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
+	}
+	// integral promotion when tps contains signed and unsigned
+	if isMixedSign && IsTypeInteger(currType.Tp) {
+		bumpRange := false // indicate one of tps bump currType range
+		for _, t := range tps {
+			bumpRange = bumpRange || (mysql.HasUnsignedFlag(t.Flag) && (t.Tp == currType.Tp || t.Tp == mysql.TypeBit))
+		}
+		if bumpRange {
+			switch currType.Tp {
+			case mysql.TypeTiny:
+				currType.Tp = mysql.TypeShort
+			case mysql.TypeShort:
+				currType.Tp = mysql.TypeInt24
+			case mysql.TypeInt24:
+				currType.Tp = mysql.TypeLong
+			case mysql.TypeLong:
+				currType.Tp = mysql.TypeLonglong
+			case mysql.TypeLonglong:
+				currType.Tp = mysql.TypeNewDecimal
+			}
+		}
+	}
+
+	if mysql.HasUnsignedFlag(currType.Flag) && !isMixedSign {
+		currType.Flag |= mysql.UnsignedFlag
 	}
 
 	return &currType
@@ -160,7 +189,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 func hasVariantFieldLength(tp *FieldType) bool {
 	switch tp.Tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
-		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
 		return true
 	}
 	return false
@@ -308,6 +337,13 @@ func MergeFieldType(a byte, b byte) byte {
 	return fieldTypeMergeRules[ia][ib]
 }
 
+// mergeTypeFlag merges two MySQL type flag to a new one
+// currently only NotNullFlag and UnsignedFlag is checked
+// todo more flag need to be checked
+func mergeTypeFlag(a, b uint) uint {
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag) & (b&mysql.UnsignedFlag | ^mysql.UnsignedFlag)
+}
+
 func getFieldTypeIndex(tp byte) int {
 	itp := int(tp)
 	if itp < fieldTypeTearFrom {
@@ -323,928 +359,928 @@ const (
 )
 
 var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
-	/* mysql.TypeDecimal -> */
+	/* mysql.TypeUnspecified -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
-		mysql.TypeDecimal, mysql.TypeDecimal,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeLonglong     mysql.TypeInt24
+		mysql.TypeUnspecified, mysql.TypeUnspecified,
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeTiny -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeTiny,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeShort, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeTiny, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeInt24,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeTiny,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeShort -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeShort,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeShort, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeShort, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeInt24,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeShort,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeLong -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeLong,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeLong, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeLong, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeLong,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeLong,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeFloat -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeDouble, mysql.TypeFloat,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeFloat, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeFloat, mysql.TypeFloat,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeFloat,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeDouble -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeDouble, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeDouble,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeDouble, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeNull -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeTiny,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeShort, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeNull, mysql.TypeTimestamp,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeLonglong,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeDate, mysql.TypeDuration,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeYear,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeBit,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeJSON,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeEnum,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeSet, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
 	/* mysql.TypeTimestamp -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeTimestamp, mysql.TypeTimestamp,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeDatetime, mysql.TypeDatetime,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeLonglong -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeLonglong,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeLonglong, mysql.TypeLonglong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeLonglong, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeLong,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeLonglong,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeInt24 -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeInt24,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeInt24, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeInt24, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeInt24,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeInt24,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal    mysql.TypeEnum
+		// mysql.TypeNewDecimal    mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeDate -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeDate, mysql.TypeDatetime,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeDate, mysql.TypeDatetime,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeTime -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeDuration, mysql.TypeDatetime,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeDatetime, mysql.TypeDuration,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeDatetime -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeDatetime, mysql.TypeDatetime,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeDatetime, mysql.TypeDatetime,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeYear -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
-		mysql.TypeDecimal, mysql.TypeTiny,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeUnspecified  mysql.TypeTiny
+		mysql.TypeUnspecified, mysql.TypeTiny,
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeShort, mysql.TypeLong,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeFloat, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeYear, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLonglong, mysql.TypeInt24,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeYear,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeNewDate -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeNewDate, mysql.TypeDatetime,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeNewDate, mysql.TypeDatetime,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeDatetime, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeVarchar -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeVarchar, mysql.TypeVarchar,
 	},
 	/* mysql.TypeBit -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeBit, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeBit,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeJSON -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewFloat     mysql.TypeDouble
+		// mysql.TypeNewFloat     mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeJSON, mysql.TypeVarchar,
-		//mysql.TypeLongLONG     mysql.TypeInt24
+		// mysql.TypeLongLONG     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         MYSQL_TYPE_TIME
+		// mysql.TypeDate         MYSQL_TYPE_TIME
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     MYSQL_TYPE_YEAR
+		// mysql.TypeDatetime     MYSQL_TYPE_YEAR
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeJSON,
-		//mysql.TypeNewDecimal   MYSQL_TYPE_ENUM
+		// mysql.TypeNewDecimal   MYSQL_TYPE_ENUM
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeLongBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeLongBlob, mysql.TypeVarchar,
-		//mysql.TypeString       MYSQL_TYPE_GEOMETRY
+		// mysql.TypeString       MYSQL_TYPE_GEOMETRY
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeNewDecimal -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeDouble, mysql.TypeDouble,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeNewDecimal, mysql.TypeNewDecimal,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeNewDecimal,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeNewDecimal, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeEnum -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeEnum, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeSet -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeSet, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeVarchar,
 	},
 	/* mysql.TypeTinyBlob -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeTinyBlob,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeLongBlob,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeTinyBlob,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeTinyBlob, mysql.TypeTinyBlob,
 	},
 	/* mysql.TypeMediumBlob -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified    mysql.TypeTiny
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeMediumBlob,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeLongBlob,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeMediumBlob, mysql.TypeMediumBlob,
 	},
 	/* mysql.TypeLongBlob -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeLongBlob,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeLongBlob,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeLongBlob, mysql.TypeLongBlob,
 	},
 	/* mysql.TypeBlob -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeBlob,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeLongBlob,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeBlob,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeBlob, mysql.TypeBlob,
 	},
 	/* mysql.TypeVarString -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeVarchar, mysql.TypeVarchar,
 	},
 	/* mysql.TypeString -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeString, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeString,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeString,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeString, mysql.TypeString,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeString, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeString,
 	},
 	/* mysql.TypeGeometry -> */
 	{
-		//mysql.TypeDecimal      mysql.TypeTiny
+		// mysql.TypeUnspecified  mysql.TypeTiny
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeShort        mysql.TypeLong
+		// mysql.TypeShort        mysql.TypeLong
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeFloat        mysql.TypeDouble
+		// mysql.TypeFloat        mysql.TypeDouble
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNull         mysql.TypeTimestamp
+		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeGeometry, mysql.TypeVarchar,
-		//mysql.TypeLonglong     mysql.TypeInt24
+		// mysql.TypeLonglong     mysql.TypeInt24
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDate         mysql.TypeTime
+		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeDatetime     mysql.TypeYear
+		// mysql.TypeDatetime     mysql.TypeYear
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeNewDate      mysql.TypeVarchar
+		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeBit          <16>-<244>
+		// mysql.TypeBit          <16>-<244>
 		mysql.TypeVarchar,
-		//mysql.TypeJSON
+		// mysql.TypeJSON
 		mysql.TypeVarchar,
-		//mysql.TypeNewDecimal   mysql.TypeEnum
+		// mysql.TypeNewDecimal   mysql.TypeEnum
 		mysql.TypeVarchar, mysql.TypeVarchar,
-		//mysql.TypeSet          mysql.TypeTinyBlob
+		// mysql.TypeSet          mysql.TypeTinyBlob
 		mysql.TypeVarchar, mysql.TypeTinyBlob,
-		//mysql.TypeMediumBlob  mysql.TypeLongBlob
+		// mysql.TypeMediumBlob  mysql.TypeLongBlob
 		mysql.TypeMediumBlob, mysql.TypeLongBlob,
-		//mysql.TypeBlob         mysql.TypeVarString
+		// mysql.TypeBlob         mysql.TypeVarString
 		mysql.TypeBlob, mysql.TypeVarchar,
-		//mysql.TypeString       mysql.TypeGeometry
+		// mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
 }
@@ -1258,3 +1294,11 @@ func SetBinChsClnFlag(ft *FieldType) {
 
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
+
+// CommonHandleNeedRestoredData indicates whether the column can be decoded directly from the common handle.
+// If can, then returns false. Otherwise returns true.
+func CommonHandleNeedRestoredData(ft *FieldType) bool {
+	return collate.NewCollationEnabled() &&
+		ft.EvalType() == ETString &&
+		!mysql.HasBinaryFlag(ft.Flag)
+}

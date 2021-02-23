@@ -31,7 +31,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "handle_job_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle jobs",
-			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 22), // 10ms ~ 6hours
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24hours
 		}, []string{LblType, LblResult})
 
 	BatchAddIdxHistogram = prometheus.NewHistogramVec(
@@ -40,7 +40,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "batch_add_idx_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of batch handle data",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 0.5hours
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
 	SyncerInit            = "init"
@@ -91,7 +91,7 @@ var (
 			Subsystem: "ddl",
 			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 2048s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
@@ -106,7 +106,7 @@ var (
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	AddIndexTotalCounter = prometheus.NewCounterVec(
+	BackfillTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -114,16 +114,24 @@ var (
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	AddIndexProgress = prometheus.NewGauge(
+	BackfillProgressGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "add_index_percentage_progress",
-			Help:      "Percentage progress of add index",
-		})
+			Name:      "backfill_percentage_progress",
+			Help:      "Percentage progress of backfill",
+		}, []string{LblType})
 )
 
 // Label constants.
 const (
 	LblAction = "action"
+
+	LblAddIndex     = "add_index"
+	LblModifyColumn = "modify_column"
 )
+
+// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
+func GetBackfillProgressByLabel(lbl string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(lbl)
+}

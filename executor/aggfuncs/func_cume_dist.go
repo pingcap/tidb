@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4CumeDistSize is the size of partialResult4CumeDist
+	DefPartialResult4CumeDistSize = int64(unsafe.Sizeof(partialResult4CumeDist{}))
 )
 
 type cumeDist struct {
@@ -29,8 +36,8 @@ type partialResult4CumeDist struct {
 	rows     []chunk.Row
 }
 
-func (r *cumeDist) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4CumeDist{})
+func (r *cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4CumeDist{}), DefPartialResult4CumeDistSize
 }
 
 func (r *cumeDist) ResetPartialResult(pr PartialResult) {
@@ -40,10 +47,11 @@ func (r *cumeDist) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return nil
+	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	return memDelta, nil
 }
 
 func (r *cumeDist) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -31,14 +30,14 @@ import (
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	OneByOneSuite
-	store *tikvStore
+	store *KVStore
 }
 
 var _ = Suite(&testIsolationSuite{})
 
 func (s *testIsolationSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
-	s.store = NewTestStore(c).(*tikvStore)
+	s.store = NewTestStore(c)
 }
 
 func (s *testIsolationSuite) TearDownSuite(c *C) {
@@ -72,7 +71,6 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsTxnRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 	}
 }
 

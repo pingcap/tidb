@@ -1,20 +1,20 @@
-/distsql @pingcap/co-exec
-/executor @pingcap/co-exec
-/expression @pingcap/co-exec
-/types @pingcap/co-exec
-/util/chunk @pingcap/co-exec
-/util/disk @pingcap/co-exec
-/util/execdetails @pingcap/co-exec
-/util/expensivequery @pingcap/co-exec
-/util/filesort @pingcap/co-exec
-/util/memory @pingcap/co-exec
-/util/sqlexec @pingcap/co-exec
+/distsql @pingcap/exec-reviewers
+/executor @pingcap/exec-reviewers
+/expression @pingcap/exec-reviewers
+/types @pingcap/exec-reviewers
+/util/chunk @pingcap/exec-reviewers
+/util/disk @pingcap/exec-reviewers
+/util/execdetails @pingcap/exec-reviewers
+/util/expensivequery @pingcap/exec-reviewers
+/util/filesort @pingcap/exec-reviewers
+/util/memory @pingcap/exec-reviewers
+/util/sqlexec @pingcap/exec-reviewers
 
-/planner @pingcap/co-planner
-/statistics @pingcap/co-planner
-/util/ranger @pingcap/co-planner
-/util/plancodec @pingcap/co-planner
-/bindinfo @pingcap/co-planner
+/planner @pingcap/planner-reviewers
+/statistics @pingcap/planner-reviewers
+/util/ranger @pingcap/planner-reviewers
+/util/plancodec @pingcap/planner-reviewers
+/bindinfo @pingcap/planner-reviewers
 
 /ddl @pingcap/co-ddl
 /domain @pingcap/co-ddl

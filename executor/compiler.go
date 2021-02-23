@@ -57,6 +57,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
 	}
+	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
@@ -69,6 +70,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
+		GoCtx:         ctx,
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
@@ -216,17 +218,36 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.CreateBindingStmt:
-		if x.OriginSel != nil {
-			originSelect := x.OriginSel.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
+		var resNode ast.ResultSetNode
+		if x.OriginNode != nil {
+			switch n := x.OriginNode.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 
-		if len(dbLabelSet) == 0 && x.HintedSel != nil {
-			hintedSelect := x.HintedSel.(*ast.SelectStmt)
-			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
+		if len(dbLabelSet) == 0 && x.HintedNode != nil {
+			switch n := x.HintedNode.(type) {
+			case *ast.SelectStmt:
+				resNode = n.From.TableRefs
+			case *ast.DeleteStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.UpdateStmt:
+				resNode = n.TableRefs.TableRefs
+			case *ast.InsertStmt:
+				resNode = n.Table.TableRefs
+			}
+			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -236,7 +257,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 	return dbLabelSet
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have duplicate db name
 	var dbLabels []string
 
 	if resultNode == nil {

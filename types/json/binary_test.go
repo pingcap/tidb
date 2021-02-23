@@ -14,6 +14,8 @@
 package json
 
 import (
+	"math"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -259,22 +261,52 @@ func (s *testJSONSuite) TestCompareBinary(c *C) {
 	jObject := mustParseBinaryFromString(c, `{"a": "b"}`)
 
 	var tests = []struct {
-		left  BinaryJSON
-		right BinaryJSON
+		left   BinaryJSON
+		right  BinaryJSON
+		result int
 	}{
-		{jNull, jIntegerSmall},
-		{jIntegerSmall, jIntegerLarge},
-		{jIntegerLarge, jStringSmall},
-		{jStringSmall, jStringLarge},
-		{jStringLarge, jObject},
-		{jObject, jArraySmall},
-		{jArraySmall, jArrayLarge},
-		{jArrayLarge, jBoolFalse},
-		{jBoolFalse, jBoolTrue},
+		{jNull, jIntegerSmall, -1},
+		{jIntegerSmall, jIntegerLarge, -1},
+		{jIntegerLarge, jStringSmall, -1},
+		{jStringSmall, jStringLarge, -1},
+		{jStringLarge, jObject, -1},
+		{jObject, jArraySmall, -1},
+		{jArraySmall, jArrayLarge, -1},
+		{jArrayLarge, jBoolFalse, -1},
+		{jBoolFalse, jBoolTrue, -1},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477580)), 0},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477581)), -1},
+		{CreateBinary(int64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
+
+		{CreateBinary(int64(-1)), CreateBinary(uint64(18446744073709551615)), -1},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(uint64(922337203685477581)), -1},
+		{CreateBinary(int64(2)), CreateBinary(uint64(1)), 1},
+		{CreateBinary(int64(math.MaxInt64)), CreateBinary(uint64(math.MaxInt64)), 0},
+
+		{CreateBinary(uint64(18446744073709551615)), CreateBinary(int64(-1)), 1},
+		{CreateBinary(uint64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
+		{CreateBinary(uint64(1)), CreateBinary(int64(2)), -1},
+		{CreateBinary(uint64(math.MaxInt64)), CreateBinary(int64(math.MaxInt64)), 0},
+
+		{CreateBinary(float64(9.0)), CreateBinary(int64(9)), 0},
+		{CreateBinary(float64(8.9)), CreateBinary(int64(9)), -1},
+		{CreateBinary(float64(9.1)), CreateBinary(int64(9)), 1},
+
+		{CreateBinary(float64(9.0)), CreateBinary(uint64(9)), 0},
+		{CreateBinary(float64(8.9)), CreateBinary(uint64(9)), -1},
+		{CreateBinary(float64(9.1)), CreateBinary(uint64(9)), 1},
+
+		{CreateBinary(int64(9)), CreateBinary(float64(9.0)), 0},
+		{CreateBinary(int64(9)), CreateBinary(float64(8.9)), 1},
+		{CreateBinary(int64(9)), CreateBinary(float64(9.1)), -1},
+
+		{CreateBinary(uint64(9)), CreateBinary(float64(9.0)), 0},
+		{CreateBinary(uint64(9)), CreateBinary(float64(8.9)), 1},
+		{CreateBinary(uint64(9)), CreateBinary(float64(9.1)), -1},
 	}
 	for _, tt := range tests {
 		cmp := CompareBinary(tt.left, tt.right)
-		c.Assert(cmp < 0, IsTrue)
+		c.Assert(cmp == tt.result, IsTrue, Commentf("left: %v, right: %v, expect: %v, got: %v", tt.left, tt.right, tt.result, cmp))
 	}
 }
 
@@ -320,7 +352,7 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 	b.SetBytes(int64(len(benchStr)))
 	bj, _ := ParseBinaryFromString(benchStr)
 	for i := 0; i < b.N; i++ {
-		bj.MarshalJSON()
+		_, _ = bj.MarshalJSON()
 	}
 }
 
@@ -374,6 +406,16 @@ func (s *testJSONSuite) TestGetKeys(c *C) {
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
 	parsedBJ = mustParseBinaryFromString(c, "{}")
 	c.Assert(parsedBJ.GetKeys().String(), Equals, "[]")
+
+	b := strings.Builder{}
+	b.WriteString("{\"")
+	for i := 0; i < 65536; i++ {
+		b.WriteByte('a')
+	}
+	b.WriteString("\": 1}")
+	parsedBJ, err := ParseBinaryFromString(b.String())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536")
 }
 
 func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {

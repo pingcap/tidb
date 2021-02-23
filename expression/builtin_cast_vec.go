@@ -48,6 +48,9 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			if types.ErrOverflow.Equal(err) {
 				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 			}
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			}
 			if err != nil {
 				return err
 			}
@@ -373,11 +376,19 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	i64s := buf.Int64s()
 	stmt := b.ctx.GetSessionVars().StmtCtx
 	fsp := int8(b.tp.Decimal)
+
+	var tm types.Time
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
+
+		if b.args[0].GetType().Tp == mysql.TypeYear {
+			tm, err = types.ParseTimeFromYear(stmt, i64s[i])
+		} else {
+			tm, err = types.ParseTimeFromNum(stmt, i64s[i], b.tp.Tp, fsp)
+		}
+
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -522,7 +533,12 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if buf.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTime(stmt, strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.Tp, fsp)
+		fv := strconv.FormatFloat(f64s[i], 'f', -1, 64)
+		if fv == "0" {
+			times[i] = types.ZeroTime
+			continue
+		}
+		tm, err := types.ParseTime(stmt, fv, b.tp.Tp, fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -631,7 +647,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	tp := b.args[0].GetType()
+	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isYearType := tp.Tp == mysql.TypeYear
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
@@ -644,6 +662,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 			str = strconv.FormatInt(i64s[i], 10)
 		} else {
 			str = strconv.FormatUint(uint64(i64s[i]), 10)
+		}
+		if isYearType && str == "0" {
+			str = "0000"
 		}
 		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err != nil {
@@ -807,9 +828,21 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
-				return err
+				if types.ErrOverflow.Equal(err) {
+					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+				} else if types.ErrTruncated.Equal(err) {
+					// This behavior is consistent with MySQL.
+					err = nil
+				}
+				if err != nil {
+					return err
+				}
 			}
 		}
 		dec, err := types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)
@@ -830,6 +863,12 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalInt(b.ctx, input, result)
 	}
+
+	// Take the implicit evalInt path if possible.
+	if CanImplicitEvalInt(b.args[0]) {
+		return b.args[0].VecEvalInt(b.ctx, input, result)
+	}
+
 	result.ResizeInt64(n, false)
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -855,7 +894,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		val := strings.TrimSpace(buf.GetString(i))
 		isNegative := len(val) > 1 && val[0] == '-'
 		if !isNegative {
-			ures, err = types.StrToUint(sc, val)
+			ures, err = types.StrToUint(sc, val, true)
 			if !isUnsigned && err == nil && ures > uint64(math.MaxInt64) {
 				sc.AppendWarning(types.ErrCastAsSignedOverflow)
 			}
@@ -863,7 +902,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		} else if unionUnsigned {
 			res = 0
 		} else {
-			res, err = types.StrToInt(sc, val)
+			res, err = types.StrToInt(sc, val, true)
 			if err == nil && isUnsigned {
 				// If overflow, don't append this warnings
 				sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
@@ -1143,7 +1182,7 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i], err = types.ConvertJSONToInt(sc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.Flag))
+		i64s[i], err = types.ConvertJSONToInt64(sc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.Flag))
 		if err != nil {
 			return err
 		}
@@ -1535,6 +1574,12 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].VecEvalReal(b.ctx, input, result)
 	}
+
+	// Take the implicit evalReal path if possible.
+	if CanImplicitEvalReal(b.args[0]) {
+		return b.args[0].VecEvalReal(b.ctx, input, result)
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
@@ -1554,7 +1599,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := types.StrToFloat(sc, buf.GetString(i))
+		res, err := types.StrToFloat(sc, buf.GetString(i), true)
 		if err != nil {
 			return err
 		}
@@ -1595,9 +1640,11 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
+		val := strings.TrimSpace(buf.GetString(i))
+		isNegative := len(val) > 0 && val[0] == '-'
 		dec := new(types.MyDecimal)
-		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && dec.IsNegative()) {
-			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(buf.GetString(i)))); err != nil {
+		if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && isNegative) {
+			if err := stmtCtx.HandleTruncate(dec.FromString([]byte(val))); err != nil {
 				return err
 			}
 			dec, err := types.ProduceDecWithSpecifiedTp(dec, b.tp, stmtCtx)

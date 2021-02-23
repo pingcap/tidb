@@ -1,6 +1,7 @@
-component/executor:
+sig/execution:
   - distsql/*
   - executor/*
+  - !executor/brie*
   - util/chunk/*
   - util/disk/*
   - util/execdetails/*
@@ -13,7 +14,7 @@ component/expression:
   - expression/*
   - types/*
 
-component/planner:
+sig/planner:
   - planner/*
   - bindinfo/*
   - util/ranger/*
@@ -22,12 +23,20 @@ component/planner:
 component/statistics:
   - statistics/*
 
-component/DDL:
+sig/sql-infra:
   - ddl/*
   - domain/*
   - infoschema/*
+  - session/*
+  - server/*
+  - privilege/*
+  - plugin/*
+  - config/*
   - meta/*
   - owner/*
 
 component/config:
   - config/*
+
+sig/migrate:
+  - executor/brie*

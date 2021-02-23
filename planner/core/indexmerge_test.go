@@ -91,7 +91,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
 		stmt, err := s.ParseOneStmt(tc, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			s.testdata.OnRecord(func() {
@@ -116,7 +116,7 @@ func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
 		}
 		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil)
 		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
 		s.testdata.OnRecord(func() {

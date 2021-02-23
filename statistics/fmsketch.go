@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // FMSketch is used to count the number of distinct elements in a set.
@@ -37,6 +37,23 @@ func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
 		hashset:  make(map[uint64]bool),
 		maxSize:  maxSize,
+		hashFunc: murmur3.New64(),
+	}
+}
+
+// Copy makes a copy for current FMSketch.
+func (s *FMSketch) Copy() *FMSketch {
+	if s == nil {
+		return nil
+	}
+	hashset := make(map[uint64]bool)
+	for key, value := range s.hashset {
+		hashset[key] = value
+	}
+	return &FMSketch{
+		hashset:  hashset,
+		mask:     s.mask,
+		maxSize:  s.maxSize,
 		hashFunc: murmur3.New64(),
 	}
 }
@@ -104,15 +121,20 @@ func (s *FMSketch) mergeFMSketch(rs *FMSketch) {
 // FMSketchToProto converts FMSketch to its protobuf representation.
 func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
-	protoSketch.Mask = s.mask
-	for val := range s.hashset {
-		protoSketch.Hashset = append(protoSketch.Hashset, val)
+	if s != nil {
+		protoSketch.Mask = s.mask
+		for val := range s.hashset {
+			protoSketch.Hashset = append(protoSketch.Hashset, val)
+		}
 	}
 	return protoSketch
 }
 
 // FMSketchFromProto converts FMSketch from its protobuf representation.
 func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
+	if protoSketch == nil {
+		return nil
+	}
 	sketch := &FMSketch{
 		hashset: make(map[uint64]bool, len(protoSketch.Hashset)),
 		mask:    protoSketch.Mask,
@@ -121,4 +143,37 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 		sketch.hashset[val] = true
 	}
 	return sketch
+}
+
+// EncodeFMSketch encodes the given FMSketch to byte slice.
+func EncodeFMSketch(c *FMSketch) ([]byte, error) {
+	if c == nil {
+		return nil, nil
+	}
+	p := FMSketchToProto(c)
+	protoData, err := p.Marshal()
+	return protoData, err
+}
+
+// DecodeFMSketch decode a FMSketch from the given byte slice.
+func DecodeFMSketch(data []byte) (*FMSketch, error) {
+	if data == nil {
+		return nil, nil
+	}
+	p := &tipb.FMSketch{}
+	err := p.Unmarshal(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fm := FMSketchFromProto(p)
+	return fm, nil
+}
+
+// MemoryUsage returns the total memory usage of a FMSketch.
+func (s *FMSketch) MemoryUsage() (sum int64) {
+	// In FMSketch, we will ignore the memory usage of `hashFunc`.
+	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.
+	// And for the variables hashset(map[uint64]bool), each element in map will consume 9 bytes(8[uint64] + 1[bool]).
+	sum = int64(16 + 9*len(s.hashset))
+	return
 }

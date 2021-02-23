@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -54,24 +55,31 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
+	record := &memoryUsageAlarm{}
 	for {
 		select {
 		case <-ticker.C:
 			processInfo := sm.ShowProcessList()
 			for _, info := range processInfo {
-				if len(info.Info) == 0 || info.ExceedExpensiveTimeThresh {
+				if len(info.Info) == 0 {
 					continue
 				}
 				costTime := time.Since(info.Time)
-				if costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
+				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
 					info.ExceedExpensiveTimeThresh = true
+				}
 
-				} else if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
+				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					sm.Kill(info.ID, true)
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+
+			record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
+			if record.err == nil {
+				record.alarm4ExcessiveMemUsage(sm)
+			}
 		case <-eqh.exitCh:
 			return
 		}
@@ -147,13 +155,16 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	}
 	logFields = append(logFields, zap.Uint64("txn_start_ts", info.CurTxnStartTS))
 	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
-		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.BytesToString(memTracker.MaxConsumed()))))
+		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
 	}
 
 	const logSQLLen = 1024 * 8
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
+		if info.RedactSQL {
+			sql = parser.Normalize(sql)
+		}
 	}
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))

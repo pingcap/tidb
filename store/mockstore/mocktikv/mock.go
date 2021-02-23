@@ -15,23 +15,16 @@ package mocktikv
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // NewTiKVAndPDClient creates a TiKV client and PD client from options.
-func NewTiKVAndPDClient(cluster *Cluster, mvccStore MVCCStore, path string) (*RPCClient, pd.Client, error) {
-	if cluster == nil {
-		cluster = NewCluster()
-		BootstrapWithSingleStore(cluster)
+func NewTiKVAndPDClient(path string) (*RPCClient, *Cluster, pd.Client, error) {
+	mvccStore, err := NewMVCCLevelDB(path)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
 	}
+	cluster := NewCluster(mvccStore)
 
-	if mvccStore == nil {
-		var err error
-		mvccStore, err = NewMVCCLevelDB(path)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-	}
-
-	return NewRPCClient(cluster, mvccStore), NewPDClient(cluster), nil
+	return NewRPCClient(cluster, mvccStore), cluster, NewPDClient(cluster), nil
 }

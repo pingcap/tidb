@@ -586,7 +586,7 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 // And this function will check if this record can replace one of the old records.
 func (e *topNExec) evalTopN(value [][]byte) error {
 	newRow := &sortRow{
-		key: make([]types.Datum, len(value)),
+		key: make([]types.Datum, len(e.orderByExprs)),
 	}
 	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {

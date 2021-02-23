@@ -14,11 +14,19 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
+)
+
+const (
+	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
+	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
 )
 
 type jsonObjectAgg struct {
@@ -29,10 +37,10 @@ type partialResult4JsonObjectAgg struct {
 	entries map[string]interface{}
 }
 
-func (e *jsonObjectAgg) AllocPartialResult() PartialResult {
+func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
-	return PartialResult(&p)
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -69,46 +77,79 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		value, err := e.args[1].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 
 		if key.IsNull() {
-			return json.ErrJSONDocumentNULLKey
+			return 0, json.ErrJSONDocumentNULLKey
 		}
 
 		// the result json's key is string, so it needs to convert the first arg to string
 		keyString, err := key.ToString()
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
+		keyString = stringutil.Copy(keyString)
 
-		realVal := value.GetValue()
+		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString))
+				memDelta += getValMemDelta(realVal)
+			}
 			p.entries[keyString] = realVal
 		default:
-			return json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
+			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return nil
+	return memDelta, nil
 }
 
-func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
+func getValMemDelta(val interface{}) (memDelta int64) {
+	memDelta = DefInterfaceSize
+	switch v := val.(type) {
+	case bool:
+		memDelta += DefBoolSize
+	case int64:
+		memDelta += DefInt64Size
+	case uint64:
+		memDelta += DefUint64Size
+	case float64:
+		memDelta += DefFloat64Size
+	case string:
+		memDelta += int64(len(v))
+	case json.BinaryJSON:
+		// +1 for the memory usage of the TypeCode of json
+		memDelta += int64(len(v.Value) + 1)
+	case *types.MyDecimal:
+		memDelta += DefMyDecimalSize
+	case []uint8:
+		memDelta += int64(len(v))
+	case types.Time:
+		memDelta += DefTimeSize
+	case types.Duration:
+		memDelta += DefDurationSize
+	}
+	return memDelta
+}
+
+func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries {
 		p2.entries[k] = v
 	}
-	return nil
+	return 0, nil
 }

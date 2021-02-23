@@ -73,8 +73,8 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 	}
 	var allHandles []int64
 	err = tbl.IterRecords(se, tbl.FirstKey(), nil,
-		func(h int64, _ []types.Datum, _ []*table.Column) (more bool, err error) {
-			allHandles = append(allHandles, h)
+		func(h kv.Handle, _ []types.Datum, _ []*table.Column) (more bool, err error) {
+			allHandles = append(allHandles, h.IntValue())
 			return true, nil
 		})
 	return allHandles, err

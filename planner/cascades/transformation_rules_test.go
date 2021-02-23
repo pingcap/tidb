@@ -44,7 +44,7 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
-	s.Parser.EnableWindowFunc(true)
+	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {
@@ -126,6 +126,9 @@ func (s *testTransformationRuleSuite) TestPredicatePushDown(c *C) {
 				NewRulePushSelDownUnionAll(),
 				NewRulePushSelDownWindow(),
 				NewRuleMergeAdjacentSelection(),
+			},
+			memo.OperandJoin: {
+				NewRuleTransformJoinCondToSel(),
 			},
 		},
 		TransformationRuleBatch{ // TiKV layer
@@ -412,6 +415,31 @@ func (s *testTransformationRuleSuite) TestDecorrelate(c *C) {
 		memo.OperandApply: {
 			NewRulePullSelectionUpApply(),
 			NewRuleTransformApplyToJoin(),
+		},
+	})
+	defer func() {
+		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	testGroupToString(input, output, s, c)
+}
+
+func (s *testTransformationRuleSuite) TestInjectProj(c *C) {
+	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandLimit: {
+			NewRuleTransformLimitToTopN(),
+		},
+	}, map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleInjectProjectionBelowAgg(),
+		},
+		memo.OperandTopN: {
+			NewRuleInjectProjectionBelowTopN(),
 		},
 	})
 	defer func() {

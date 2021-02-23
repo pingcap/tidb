@@ -16,14 +16,20 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"runtime"
+	"strconv"
+	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/core"
+	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -31,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -51,7 +56,8 @@ type testExecSerialSuite struct {
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []*util.ProcessInfo
+	PS       []*util.ProcessInfo
+	serverID uint64
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -74,10 +80,20 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager) KillAllConnections() {
 }
 
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return msm.serverID
+}
+
+func (msm *mockSessionManager) SetServerID(serverID uint64) {
+	msm.serverID = serverID
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
@@ -108,7 +124,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, nil),
+		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -234,6 +250,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 		FieldsInfo: &ast.FieldsClause{
 			Enclosed:   '"',
 			Terminated: ",",
+			Escaped:    '\\',
 		},
 	}
 
@@ -247,6 +264,33 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
+	tests := []struct {
+		input      string
+		escapeChar byte
+		expected   []string
+	}{
+		{
+			`"{""itemRangeType"":0,""itemContainType"":0,""shopRangeType"":1,""shopJson"":""[{\""id\"":\""A1234\"",\""shopName\"":\""AAAAAA\""}]""}"`,
+			byte(0), // escaped by ''
+			[]string{`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`},
+		},
+	}
+
+	for _, test := range tests {
+		ldInfo := LoadDataInfo{
+			FieldsInfo: &ast.FieldsClause{
+				Enclosed:   '"',
+				Terminated: ",",
+				Escaped:    test.escapeChar,
+			},
+		}
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+}
+
 func assertEqualStrings(c *C, got []field, expect []string) {
 	c.Assert(len(got), Equals, len(expect))
 	for i := 0; i < len(got); i++ {
@@ -255,17 +299,19 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	newConf.MemQuotaQuery = 1
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
-
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -275,12 +321,12 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
-		ByItems:      make([]*core.ByItems, 0, len(cas.orderByIdx)),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
 	for _, idx := range cas.orderByIdx {
-		exec.ByItems = append(exec.ByItems, &core.ByItems{Expr: cas.columns()[idx]})
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
 	}
 	tmpCtx := context.Background()
 	chk := newFirstChunk(exec)
@@ -296,12 +342,12 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition and all data in memory.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, false)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -313,15 +359,25 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test 2 partitions and all data in disk.
-	c.Assert(len(exec.partitionList), Equals, 2)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
-	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -334,8 +390,193 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition but spill disk.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
+
+	// Test partition nums.
+	ctx = mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt = mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource = buildMockDataSource(opt)
+	exec = &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx = context.Background()
+	chk = newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Don't spill too many partitions.
+	c.Assert(len(exec.partitionList) <= 4, IsTrue)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
+	stats := &slowQueryRuntimeStats{
+		totalFileNum: 2,
+		readFileNum:  2,
+		readFile:     time.Second,
+		initialize:   time.Millisecond,
+		readFileSize: 1024 * 1024 * 1024,
+		parseLog:     int64(time.Millisecond * 100),
+		concurrent:   15,
+	}
+	c.Assert(stats.String(), Equals, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
+}
+
+// Test whether the actual buckets in Golang Map is same with the estimated number.
+// The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
+func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
+	if runtime.Version() < `go1.13` {
+		c.Skip("Unsupported version")
+	}
+	type testCase struct {
+		rowNum          int
+		expectedB       int
+		expectedGrowing bool
+	}
+	cases := []testCase{
+		{
+			rowNum:          0,
+			expectedB:       0,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          100,
+			expectedB:       4,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          10000,
+			expectedB:       11,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          1000000,
+			expectedB:       18,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          851968, // 6.5 * (1 << 17)
+			expectedB:       17,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          851969, // 6.5 * (1 << 17) + 1
+			expectedB:       18,
+			expectedGrowing: true,
+		},
+		{
+			rowNum:          425984, // 6.5 * (1 << 16)
+			expectedB:       16,
+			expectedGrowing: false,
+		},
+		{
+			rowNum:          425985, // 6.5 * (1 << 16) + 1
+			expectedB:       17,
+			expectedGrowing: true,
+		},
+	}
+
+	for _, tc := range cases {
+		aggMap := make(aggPartialResultMapper)
+		tempSlice := make([]aggfuncs.PartialResult, 10)
+		for num := 0; num < tc.rowNum; num++ {
+			aggMap[strconv.Itoa(num)] = tempSlice
+		}
+
+		c.Assert(getB(aggMap), Equals, tc.expectedB)
+		c.Assert(getGrowing(aggMap), Equals, tc.expectedGrowing)
+	}
+}
+
+// A header for a Go map.
+type hmap struct {
+	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
+	// Make sure this stays in sync with the compiler's definition.
+	count     int // # live cells == size of map.  Must be first (used by len() builtin)
+	flags     uint8
+	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details
+	hash0     uint32 // hash seed
+
+	buckets    unsafe.Pointer // array of 2^B Buckets. may be nil if count==0.
+	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing
+	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
+
+	extra *mapextra // optional fields
+}
+
+// mapextra holds fields that are not present on all maps.
+type mapextra struct {
+	// If both key and elem do not contain pointers and are inline, then we mark bucket
+	// type as containing no pointers. This avoids scanning such maps.
+	// However, bmap.overflow is a pointer. In order to keep overflow buckets
+	// alive, we store pointers to all overflow buckets in hmap.extra.overflow and hmap.extra.oldoverflow.
+	// overflow and oldoverflow are only used if key and elem do not contain pointers.
+	// overflow contains overflow buckets for hmap.buckets.
+	// oldoverflow contains overflow buckets for hmap.oldbuckets.
+	// The indirection allows to store a pointer to the slice in hiter.
+	overflow    *[]*bmap
+	oldoverflow *[]*bmap
+
+	// nextOverflow holds a pointer to a free overflow bucket.
+	nextOverflow *bmap
+}
+
+const (
+	bucketCntBits = 3
+	bucketCnt     = 1 << bucketCntBits
+)
+
+// A bucket for a Go map.
+type bmap struct {
+	// tophash generally contains the top byte of the hash value
+	// for each key in this bucket. If tophash[0] < minTopHash,
+	// tophash[0] is a bucket evacuation state instead.
+	tophash [bucketCnt]uint8
+	// Followed by bucketCnt keys and then bucketCnt elems.
+	// NOTE: packing all the keys together and then all the elems together makes the
+	// code a bit more complicated than alternating key/elem/key/elem/... but it allows
+	// us to eliminate padding which would be needed for, e.g., map[int64]int8.
+	// Followed by an overflow pointer.
+}
+
+func getB(m aggPartialResultMapper) int {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return int(value.B)
+}
+
+func getGrowing(m aggPartialResultMapper) bool {
+	point := (**hmap)(unsafe.Pointer(&m))
+	value := *point
+	return value.oldbuckets != nil
 }

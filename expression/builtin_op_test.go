@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testutil"
@@ -540,10 +541,30 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			isTrue:  0,
 			isFalse: 0,
 		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 1000, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 0, 3)},
+			isTrue:  0,
+			isFalse: 1,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 1000), mysql.TypeDatetime, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.CoreTime(0), mysql.TypeTimestamp, 3)},
+			isTrue:  0,
+			isFalse: 1,
+		},
 	}
 
 	for _, tc := range testCases {
-		isTrueSig, err := funcs[ast.IsTruth].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 
@@ -589,13 +610,13 @@ func (s *testEvaluatorSuite) TestLogicXor(c *C) {
 		{[]interface{}{0, nil}, 0, true, false},
 		{[]interface{}{nil, 0}, 0, true, false},
 		{[]interface{}{nil, 1}, 0, true, false},
-		{[]interface{}{0.5000, 0.4999}, 1, false, false},
+		{[]interface{}{0.5000, 0.4999}, 0, false, false},
 		{[]interface{}{0.5000, 1.0}, 0, false, false},
-		{[]interface{}{0.4999, 1.0}, 1, false, false},
+		{[]interface{}{0.4999, 1.0}, 0, false, false},
 		{[]interface{}{nil, 0.000}, 0, true, false},
 		{[]interface{}{nil, 0.001}, 0, true, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 0.00001}, 0, false, false},
-		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
+		{[]interface{}{types.NewDecFromStringForTest("0.000001"), 1}, 0, false, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000000"), nil}, 0, true, false},
 		{[]interface{}{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
 

@@ -28,7 +28,7 @@ var (
 			Subsystem: "autoid",
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled autoid.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
 
 	GetSchemaDiff    = "get_schema_diff"
@@ -43,6 +43,6 @@ var (
 			Subsystem: "meta",
 			Name:      "operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of tidb meta data operations.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
 )

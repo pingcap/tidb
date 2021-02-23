@@ -16,19 +16,15 @@
 package storage
 
 import (
-	"syscall"
-	"unsafe"
+	"golang.org/x/sys/windows"
 )
 
 // GetTargetDirectoryCapacity get the capacity (bytes) of directory
 func GetTargetDirectoryCapacity(path string) (uint64, error) {
-	h := syscall.MustLoadDLL("kernel32.dll")
-	c := h.MustFindProc("GetDiskFreeSpaceExW")
-	var freeBytes int64
-	_, _, err := c.Call(uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(path))),
-		uintptr(unsafe.Pointer(&freeBytes)))
+	var freeBytes uint64
+	err := windows.GetDiskFreeSpaceEx(windows.StringToUTF16Ptr(path), &freeBytes, nil, nil)
 	if err != nil {
 		return 0, err
 	}
-	return uint64(freeBytes), nil
+	return freeBytes, nil
 }

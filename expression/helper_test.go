@@ -74,7 +74,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		{ast.NewValueExpr(int64(0), "", ""), "0000-00-00 00:00:00"},
 		{ast.NewValueExpr(nil, "", ""), nil},
 		{&ast.FuncCallExpr{FnName: model.NewCIStr(ast.CurrentTimestamp)}, strings.ToUpper(ast.CurrentTimestamp)},
-		//{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
+		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
 	}
 
 	for i, t := range tbl {
@@ -97,7 +97,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		{ast.NewValueExpr("2012-13-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4)},
 		{ast.NewValueExpr(int64(1), "", "")},
 		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
-		//{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
+		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
 	}
 
 	for _, t := range errTbl {

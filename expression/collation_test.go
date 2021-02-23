@@ -35,6 +35,16 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	c.Assert(types.CompareString("À", "A", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci"), Equals, 0)
 	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß", "s", "utf8_general_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß", "ss", "utf8_general_ci"), Not(Equals), 0)
+
+	c.Assert(types.CompareString("a", "A", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("À", "A", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("😜", "😃", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("a ", "a  ", "utf8_unicode_ci"), Equals, 0)
+	c.Assert(types.CompareString("ß", "s", "utf8_unicode_ci"), Not(Equals), 0)
+	c.Assert(types.CompareString("ß", "ss", "utf8_unicode_ci"), Equals, 0)
+
 	c.Assert(types.CompareString("a", "A", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("À", "A", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
@@ -69,11 +79,11 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 
 func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
 	tInt := types.NewFieldType(mysql.TypeLonglong)
+	tInt.Charset = charset.CharsetBin
 	ctx := mock.NewContext()
 
 	// no string column
-	chs, coll, flen := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
+	chs, coll := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
 	c.Assert(chs, Equals, charset.CharsetBin)
 	c.Assert(coll, Equals, charset.CollationBin)
-	c.Assert(flen, Equals, types.UnspecifiedLength)
 }

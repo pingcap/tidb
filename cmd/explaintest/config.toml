@@ -1,9 +1,10 @@
-port = 4001
 lease = "0"
 mem-quota-query = 34359738368
+nested-loop-join-cache-capacity = 20971520
+host = "127.0.0.1"
 
 [status]
-status-port = 10081
+status-host = "127.0.0.1"
 
 [performance]
 stats-lease = "0"

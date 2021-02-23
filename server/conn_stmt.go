@@ -39,37 +39,42 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func (cc *clientConn) handleStmtPrepare(sql string) error {
+func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err
 	}
 	data := make([]byte, 4, 128)
 
-	//status ok
+	// status ok
 	data = append(data, 0)
-	//stmt id
+	// stmt id
 	data = dumpUint32(data, uint32(stmt.ID()))
-	//number columns
+	// number columns
 	data = dumpUint16(data, uint16(len(columns)))
-	//number params
+	// number params
 	data = dumpUint16(data, uint16(len(params)))
-	//filter [00]
+	// filter [00]
 	data = append(data, 0)
-	//warning count
-	data = append(data, 0, 0) //TODO support warning count
+	// warning count
+	data = append(data, 0, 0) // TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
 		return err
@@ -105,10 +110,16 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 		}
 
 	}
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
+	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
+	defer func() {
+		if err != nil {
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+		}
+	}()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -138,7 +149,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 1:
 		useCursor = true
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", flag)
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
 	}
 
 	// skip iteration-count, always 1
@@ -182,12 +193,32 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if cc.ctx.GetSessionVars().EnableTiFlashFallbackTiKV && err != nil && errors.ErrorEqual(err, tikv.ErrTiFlashServerTimeout) && retryable {
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		prevErr := err
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
+		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
+	}
+	return err
+}
+
+// The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried
+// to correct error. Currently the first return value is used to fallback to TiKV when TiFlash is down.
+func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return true, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
 	if rs == nil {
-		return cc.writeOK()
+		return false, cc.writeOK(ctx)
 	}
 
 	// if the client wants to use cursor
@@ -197,20 +228,20 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if cl, ok := rs.(fetchNotifier); ok {
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		return cc.flush()
+		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	err = cc.writeResultset(ctx, rs, true, 0, 0)
+	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
-		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
+		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
-	return nil
+	return false, nil
 }
 
 // maxFetchSize constants
@@ -242,7 +273,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
@@ -591,7 +622,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	return stmt.AppendParam(paramID, data[6:])
 }
 
-func (cc *clientConn) handleStmtReset(data []byte) (err error) {
+func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -604,11 +635,11 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	}
 	stmt.Reset()
 	stmt.StoreResultSet(nil)
-	return cc.writeOK()
+	return cc.writeOK(ctx)
 }
 
 // handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
-func (cc *clientConn) handleSetOption(data []byte) (err error) {
+func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}
@@ -627,13 +658,16 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 		return err
 	}
 
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return ""
+	}
+	if sv.EnableRedactLog {
+		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
 }

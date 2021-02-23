@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -37,7 +38,11 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
-	return col
+	var d types.Datum
+	return &CorrelatedColumn{
+		Column: col.Column,
+		Data:   &d,
+	}
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -252,13 +257,12 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 			}
 			return nil
 		}
+		result.MergeNulls(src)
 		for i := range f32s {
-			// TODO(zhangyuanjia): speed up the way to manipulate null-bitmaps.
-			if src.IsNull(i) {
-				result.SetNull(i, true)
-			} else {
-				f64s[i] = float64(f32s[i])
+			if result.IsNull(i) {
+				continue
 			}
+			f64s[i] = float64(f32s[i])
 		}
 		return nil
 	}
@@ -326,7 +330,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col)), nil
+	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.
@@ -602,4 +606,14 @@ func (col *Column) Coercibility() Coercibility {
 	}
 	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
+}
+
+// SortColumns sort columns based on UniqueID.
+func SortColumns(cols []*Column) []*Column {
+	sorted := make([]*Column, len(cols))
+	copy(sorted, cols)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].UniqueID < sorted[j].UniqueID
+	})
+	return sorted
 }

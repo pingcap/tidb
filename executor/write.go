@@ -18,8 +18,12 @@ import (
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -28,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -73,7 +78,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
-			v, err := table.CastValue(sctx, newData[i], col.ToInfo())
+			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false, false)
 			if err != nil {
 				return false, err
 			}
@@ -84,14 +89,18 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// 2. Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
+		if err = col.HandleBadNull(&newData[i], sc); err != nil {
 			return false, err
 		}
 	}
 
 	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
+		collation := newData[i].Collation()
+		// We should use binary collation to compare datum, otherwise the result will be incorrect.
+		newData[i].SetCollation(charset.CollationBin)
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
+		newData[i].SetCollation(collation)
 		if err != nil {
 			return false, err
 		}
@@ -113,6 +122,23 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				newHandle = kv.IntHandle(newData[i].GetInt64())
 				// Rebase auto random id if the field is changed.
 				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
+					return false, err
+				}
+			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				pkIdx := tables.FindPrimaryIndex(t.Meta())
+				handleChanged = true
+				pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+				for _, idxCol := range pkIdx.Columns {
+					pkDts = append(pkDts, newData[idxCol.Offset])
+				}
+				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
+				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
+				if err != nil {
+					return false, err
+				}
+				newHandle, err = kv.NewCommonHandle(handleBytes)
+				if err != nil {
 					return false, err
 				}
 			}
@@ -169,6 +195,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			// If the new handle exists, this will avoid to remove the record.
 			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
 			if err != nil {
+				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+					return false, nil
+				}
 				return false, err
 			}
 		}
@@ -190,9 +219,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+				return false, nil
+			}
 			return false, err
 		}
+
 		if onDup {
 			sc.AddAffectedRows(2)
 		} else {
@@ -214,8 +247,12 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	if err != nil {
 		return err
 	}
-	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
-	recordID = recordID << shardBits >> shardBits
+	if recordID < 0 {
+		return nil
+	}
+	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	// Set bits except incremental_bits to zero.
+	recordID = recordID & (1<<layout.IncrementalBits - 1)
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 

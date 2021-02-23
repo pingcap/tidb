@@ -17,16 +17,18 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/fastrand"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -43,38 +45,25 @@ const (
 	DecorrJitter
 )
 
-var (
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
-)
-
-func (t backoffType) metric() prometheus.Observer {
+func (t BackoffType) metric() prometheus.Observer {
 	switch t {
-	case boTiKVRPC:
-		return tikvBackoffHistogramRPC
+	// TODO: distinguish tikv and tiflash in metrics
+	case BoTiKVRPC, BoTiFlashRPC:
+		return metrics.BackoffHistogramRPC
 	case BoTxnLock:
-		return tikvBackoffHistogramLock
-	case boTxnLockFast:
-		return tikvBackoffHistogramLockFast
+		return metrics.BackoffHistogramLock
+	case BoTxnLockFast:
+		return metrics.BackoffHistogramLockFast
 	case BoPDRPC:
-		return tikvBackoffHistogramPD
+		return metrics.BackoffHistogramPD
 	case BoRegionMiss:
-		return tikvBackoffHistogramRegionMiss
-	case BoUpdateLeader:
-		return tikvBackoffHistogramUpdateLeader
-	case boServerBusy:
-		return tikvBackoffHistogramServerBusy
+		return metrics.BackoffHistogramRegionMiss
+	case boTiKVServerBusy, boTiFlashServerBusy:
+		return metrics.BackoffHistogramServerBusy
 	case boStaleCmd:
-		return tikvBackoffHistogramStaleCmd
+		return metrics.BackoffHistogramStaleCmd
 	}
-	return tikvBackoffHistogramEmpty
+	return metrics.BackoffHistogramEmpty
 }
 
 // NewBackoffFn creates a backoff func which implements exponential backoff with
@@ -94,12 +83,12 @@ func NewBackoffFn(base, cap, jitter int) func(ctx context.Context, maxSleepMs in
 			sleep = expo(base, cap, attempts)
 		case FullJitter:
 			v := expo(base, cap, attempts)
-			sleep = int(fastrand.Uint32N(uint32(v)))
+			sleep = rand.Intn(v)
 		case EqualJitter:
 			v := expo(base, cap, attempts)
-			sleep = v/2 + int(fastrand.Uint32N(uint32(v/2)))
+			sleep = v/2 + rand.Intn(v/2)
 		case DecorrJitter:
-			sleep = int(math.Min(float64(cap), float64(base+int(fastrand.Uint32N(uint32(lastSleep*3-base))))))
+			sleep = int(math.Min(float64(cap), float64(base+rand.Intn(lastSleep*3-base))))
 		}
 		logutil.BgLogger().Debug("backoff",
 			zap.Int("base", base),
@@ -125,31 +114,34 @@ func expo(base, cap, n int) int {
 	return int(math.Min(float64(cap), float64(base)*math.Pow(2.0, float64(n))))
 }
 
-type backoffType int
+// BackoffType defines the backoff type.
+type BackoffType int
 
 // Back off types.
 const (
-	boTiKVRPC backoffType = iota
+	BoTiKVRPC BackoffType = iota
+	BoTiFlashRPC
 	BoTxnLock
-	boTxnLockFast
+	BoTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	BoUpdateLeader
-	boServerBusy
+	boTiKVServerBusy
+	boTiFlashServerBusy
 	boTxnNotFound
 	boStaleCmd
+	boMaxTsNotSynced
 )
 
-func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
+func (t BackoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
 	if vars.Hook != nil {
 		vars.Hook(t.String(), vars)
 	}
 	switch t {
-	case boTiKVRPC:
+	case BoTiKVRPC, BoTiFlashRPC:
 		return NewBackoffFn(100, 2000, EqualJitter)
 	case BoTxnLock:
 		return NewBackoffFn(200, 3000, EqualJitter)
-	case boTxnLockFast:
+	case BoTxnLockFast:
 		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
 	case BoPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
@@ -158,65 +150,75 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 500, NoJitter)
 	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoUpdateLeader:
-		return NewBackoffFn(1, 10, NoJitter)
-	case boServerBusy:
+	case boTiKVServerBusy, boTiFlashServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
 		return NewBackoffFn(2, 1000, NoJitter)
+	case boMaxTsNotSynced:
+		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
 }
 
-func (t backoffType) String() string {
+func (t BackoffType) String() string {
 	switch t {
-	case boTiKVRPC:
+	case BoTiKVRPC:
 		return "tikvRPC"
+	case BoTiFlashRPC:
+		return "tiflashRPC"
 	case BoTxnLock:
 		return "txnLock"
-	case boTxnLockFast:
+	case BoTxnLockFast:
 		return "txnLockFast"
 	case BoPDRPC:
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case BoUpdateLeader:
-		return "updateLeader"
-	case boServerBusy:
-		return "serverBusy"
+	case boTiKVServerBusy:
+		return "tikvServerBusy"
+	case boTiFlashServerBusy:
+		return "tiflashServerBusy"
 	case boStaleCmd:
 		return "staleCommand"
 	case boTxnNotFound:
 		return "txnNotFound"
+	case boMaxTsNotSynced:
+		return "maxTsNotSynced"
 	}
 	return ""
 }
 
-func (t backoffType) TError() error {
+// TError returns pingcap/error of the backoff type.
+func (t BackoffType) TError() error {
 	switch t {
-	case boTiKVRPC:
+	case BoTiKVRPC:
 		return ErrTiKVServerTimeout
-	case BoTxnLock, boTxnLockFast, boTxnNotFound:
+	case BoTiFlashRPC:
+		return ErrTiFlashServerTimeout
+	case BoTxnLock, BoTxnLockFast, boTxnNotFound:
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss, BoUpdateLeader:
+	case BoRegionMiss:
 		return ErrRegionUnavailable
-	case boServerBusy:
+	case boTiKVServerBusy:
 		return ErrTiKVServerBusy
+	case boTiFlashServerBusy:
+		return ErrTiFlashServerBusy
 	case boStaleCmd:
 		return ErrTiKVStaleCommand
+	case boMaxTsNotSynced:
+		return ErrTiKVMaxTimestampNotSynced
 	}
 	return ErrUnknown
 }
 
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
-	copBuildTaskMaxBackoff         = 5000
+	GetAllMembersBackoff           = 5000
 	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
-	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
 	cleanupMaxBackoff              = 20000
 	GcOneRegionMaxBackoff          = 20000
@@ -225,7 +227,6 @@ const (
 	rawkvMaxBackoff                = 20000
 	splitRegionBackoff             = 20000
 	maxSplitRegionsBackoff         = 120000
-	scatterRegionBackoff           = 20000
 	waitScatterRegionFinishBackoff = 120000
 	locateRegionMaxBackoff         = 20000
 	pessimisticLockMaxBackoff      = 20000
@@ -234,7 +235,7 @@ const (
 
 var (
 	// CommitMaxBackoff is max sleep time of the 'commit' command
-	CommitMaxBackoff = 41000
+	CommitMaxBackoff = uint64(41000)
 
 	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
 	PrewriteMaxBackoff = 20000
@@ -244,7 +245,7 @@ var (
 type Backoffer struct {
 	ctx context.Context
 
-	fn         map[backoffType]func(context.Context, int) int
+	fn         map[BackoffType]func(context.Context, int) int
 	maxSleep   int
 	totalSleep int
 	errors     []error
@@ -252,16 +253,16 @@ type Backoffer struct {
 	vars       *kv.Variables
 	noop       bool
 
-	backoffSleepMS map[backoffType]int
-	backoffTimes   map[backoffType]int
+	backoffSleepMS map[BackoffType]int
+	backoffTimes   map[BackoffType]int
 }
 
 type txnStartCtxKeyType struct{}
 
-// txnStartKey is a key for transaction start_ts info in context.Context.
-var txnStartKey = txnStartCtxKeyType{}
+// TxnStartKey is a key for transaction start_ts info in context.Context.
+var TxnStartKey interface{} = txnStartCtxKeyType{}
 
-// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
+// NewBackoffer (Deprecated) creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
@@ -270,13 +271,18 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	}
 }
 
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
+	return NewBackoffer(ctx, maxSleep).withVars(vars)
+}
+
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// WithVars sets the kv.Variables to the Backoffer and return it.
-func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -290,13 +296,18 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
-func (b *Backoffer) Backoff(typ backoffType, err error) error {
+func (b *Backoffer) Backoff(typ BackoffType, err error) error {
+	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", typ), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(b.ctx, span1)
+	}
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 
 // BackoffWithMaxSleep sleeps a while base on the backoffType and records the error message
 // and never sleep more than maxSleepMs for each sleep.
-func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err error) error {
+func (b *Backoffer) BackoffWithMaxSleep(typ BackoffType, maxSleepMs int, err error) error {
 	if strings.Contains(err.Error(), mismatchClusterID) {
 		logutil.BgLogger().Fatal("critical error", zap.Error(err))
 	}
@@ -318,12 +329,12 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		}
 		logutil.BgLogger().Warn(errMsg)
 		// Use the first backoff type to generate a MySQL error.
-		return b.types[0].(backoffType).TError()
+		return b.types[0].(BackoffType).TError()
 	}
 
 	// Lazy initialize.
 	if b.fn == nil {
-		b.fn = make(map[backoffType]func(context.Context, int) int)
+		b.fn = make(map[BackoffType]func(context.Context, int) int)
 	}
 	f, ok := b.fn[typ]
 	if !ok {
@@ -335,22 +346,29 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	typ.metric().Observe(float64(realSleep) / 1000)
 	b.totalSleep += realSleep
 	if b.backoffSleepMS == nil {
-		b.backoffSleepMS = make(map[backoffType]int)
+		b.backoffSleepMS = make(map[BackoffType]int)
 	}
 	b.backoffSleepMS[typ] += realSleep
 	if b.backoffTimes == nil {
-		b.backoffTimes = make(map[backoffType]int)
+		b.backoffTimes = make(map[BackoffType]int)
 	}
 	b.backoffTimes[typ]++
 
+	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtExec != nil {
+		detail := stmtExec.(*execdetails.StmtExecDetails)
+		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
+		atomic.AddInt64(&detail.BackoffCount, 1)
+	}
+
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}
 
 	var startTs interface{}
-	if ts := b.ctx.Value(txnStartKey); ts != nil {
+	if ts := b.ctx.Value(TxnStartKey); ts != nil {
 		startTs = ts
 	}
 	logutil.Logger(b.ctx).Debug("retry later",
@@ -392,4 +410,34 @@ func (b *Backoffer) Fork() (*Backoffer, context.CancelFunc) {
 		errors:     b.errors,
 		vars:       b.vars,
 	}, cancel
+}
+
+// GetVars returns the binded vars.
+func (b *Backoffer) GetVars() *kv.Variables {
+	return b.vars
+}
+
+// GetTotalSleep returns total sleep time.
+func (b *Backoffer) GetTotalSleep() int {
+	return b.totalSleep
+}
+
+// GetTypes returns type list.
+func (b *Backoffer) GetTypes() []fmt.Stringer {
+	return b.types
+}
+
+// GetCtx returns the binded context.
+func (b *Backoffer) GetCtx() context.Context {
+	return b.ctx
+}
+
+// GetBackoffTimes returns a map contains backoff time count by type.
+func (b *Backoffer) GetBackoffTimes() map[BackoffType]int {
+	return b.backoffTimes
+}
+
+// GetBackoffSleepMS returns a map contains backoff sleep time by type.
+func (b *Backoffer) GetBackoffSleepMS() map[BackoffType]int {
+	return b.backoffSleepMS
 }

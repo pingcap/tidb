@@ -58,13 +58,13 @@ type BinlogInfo struct {
 type BinlogStatus int
 
 const (
-	//BinlogStatusUnknown stands for unknown binlog status
+	// BinlogStatusUnknown stands for unknown binlog status
 	BinlogStatusUnknown BinlogStatus = iota
-	//BinlogStatusOn stands for the binlog is enabled
+	// BinlogStatusOn stands for the binlog is enabled
 	BinlogStatusOn
-	//BinlogStatusOff stands for the binlog is disabled
+	// BinlogStatusOff stands for the binlog is disabled
 	BinlogStatusOff
-	//BinlogStatusSkipping stands for the binlog status
+	// BinlogStatusSkipping stands for the binlog status
 	BinlogStatusSkipping
 )
 
@@ -298,7 +298,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 	txn.SetOption(kv.BinlogInfo, info)
 }
 
-const specialPrefix = `/*!90000 `
+const specialPrefix = `/*T! `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
 // Export for testing.

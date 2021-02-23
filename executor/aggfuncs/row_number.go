@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4RowNumberSize is the size of partialResult4RowNumberSize
+	DefPartialResult4RowNumberSize = int64(unsafe.Sizeof(partialResult4RowNumber{}))
 )
 
 type rowNumber struct {
@@ -26,8 +33,8 @@ type partialResult4RowNumber struct {
 	curIdx int64
 }
 
-func (rn *rowNumber) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4RowNumber{})
+func (rn *rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4RowNumber{}), DefPartialResult4RowNumberSize
 }
 
 func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
@@ -35,8 +42,8 @@ func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	return nil
+func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	return 0, nil
 }
 
 func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

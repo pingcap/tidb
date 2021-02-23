@@ -137,10 +137,10 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			}
 			// TODO: recycle all old Columns returned here.
 			output.SetCol(colIdx, buf)
-		} else if mysql.HasUnsignedFlag(ft.Flag) {
-			// the underlying memory formats of int64 and uint64 are the same in Golang,
-			// so we can do a no-op here.
-		}
+		} // else if mysql.HasUnsignedFlag(ft.Flag) {
+		// the underlying memory formats of int64 and uint64 are the same in Golang,
+		// so we can do a no-op here.
+		// }
 	case types.ETReal:
 		if err := expr.VecEvalReal(ctx, input, result); err != nil {
 			return err

@@ -15,8 +15,12 @@ import (
 )
 
 var _ = Suite(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
 
 type pkgTestSuite struct {
+}
+
+type pkgTestSerialSuite struct {
 }
 
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
@@ -55,12 +59,13 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		retTypes(outerExec), retTypes(innerExec), nil)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
+		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
+		ctx:          sctx,
 	}
 	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
 	join.innerChunk = newFirstChunk(innerExec)

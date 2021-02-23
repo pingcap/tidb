@@ -22,12 +22,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 )
 
 type testRangeTaskSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	cluster cluster.Cluster
+	store   *KVStore
 
 	testRanges     []kv.KeyRange
 	expectedRanges [][]kv.KeyRange
@@ -59,14 +60,24 @@ func (s *testRangeTaskSuite) SetUpTest(c *C) {
 	}
 	allRegionRanges = append(allRegionRanges, makeRange("z", ""))
 
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(s.cluster, splitKeys...)
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
+	mocktikv.BootstrapWithMultiRegions(cluster, splitKeys...)
+	s.cluster = cluster
 
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithStoreType(mockstore.MockTiKV),
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithMultiRegions(c, splitKeys...)
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
+	s.store = store
 
 	s.testRanges = []kv.KeyRange{
 		makeRange("", ""),

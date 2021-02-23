@@ -153,7 +153,7 @@ func (b *builtinFieldStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 				continue
 			}
 
-			if buf0.GetString(j) == buf1.GetString(j) {
+			if b.ctor.Compare(buf0.GetString(j), buf1.GetString(j)) == 0 {
 
 				i64s[j] = int64(i)
 			}

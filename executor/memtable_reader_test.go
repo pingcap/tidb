@@ -442,7 +442,7 @@ func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServ
 		diagnosticspb.RegisterDiagnosticsServer(server, sysutil.NewDiagnosticsServer(logFile))
 
 		// Find a available port
-		listener, err := net.Listen("tcp", ":0")
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		c.Assert(err, IsNil, Commentf("cannot find available port"))
 
 		testServers[typ] = &testServer{
@@ -570,28 +570,11 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		conditions []string
 		expected   [][]string
 	}{
-		// all log items
-		{
-			conditions: []string{},
-			expected:   fullLogs,
-		},
-		{
-			conditions: []string{
-				"time>='2019/08/26 06:18:13.011'",
-			},
-			expected: fullLogs,
-		},
-		{
-			conditions: []string{
-				"time>='2019/08/26 06:18:13.011'",
-				"time<='2019/08/26 06:28:19.011'",
-			},
-			expected: fullLogs,
-		},
 		{
 			conditions: []string{
 				"time>='2019/08/26 06:18:13.011'",
 				"time<='2099/08/26 06:28:19.011'",
+				"message like '%'",
 			},
 			expected: fullLogs,
 		},
@@ -599,6 +582,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 			},
 			expected: [][]string{
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
@@ -617,6 +601,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				"type='pd'",
 			},
 			expected: [][]string{
@@ -642,6 +627,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 				"time>='2019/08/26 06:18:13.011'",
 				"time>='2019/08/26 06:19:13.011'",
 				"time='2019/08/26 06:19:14.011'",
+				"message like '%'",
 				"type='pd'",
 			},
 			expected: [][]string{
@@ -652,6 +638,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				"type='tidb'",
 			},
 			expected: [][]string{
@@ -666,6 +653,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				"type='tikv'",
 			},
 			expected: [][]string{
@@ -678,6 +666,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				fmt.Sprintf("instance='%s'", testServers["pd"].address),
 			},
 			expected: [][]string{
@@ -689,6 +678,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				fmt.Sprintf("instance='%s'", testServers["tidb"].address),
 			},
 			expected: [][]string{
@@ -703,6 +693,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				fmt.Sprintf("instance='%s'", testServers["tikv"].address),
 			},
 			expected: [][]string{
@@ -715,6 +706,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 			conditions: []string{
 				"time>='2019/08/26 06:19:13.011'",
 				"time<='2019/08/26 06:21:15.011'",
+				"message like '%'",
 				fmt.Sprintf("instance in ('%s', '%s')", testServers["pd"].address, testServers["tidb"].address),
 			},
 			expected: [][]string{
@@ -729,6 +721,9 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
+				"message like '%'",
 				"level='critical'",
 			},
 			expected: [][]string{
@@ -742,6 +737,9 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
+				"message like '%'",
 				"level='critical'",
 				"type in ('pd', 'tikv')",
 			},
@@ -754,6 +752,9 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
+				"message like '%'",
 				"level='critical'",
 				"(type='pd' or type='tikv')",
 			},
@@ -766,6 +767,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message like '%pd%'",
 			},
@@ -776,6 +779,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message like '%pd%'",
 				"message like '%5%'",
@@ -786,6 +791,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message like '%pd%'",
 				"message like '%5%'",
@@ -795,6 +802,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message regexp '.*pd.*'",
 			},
@@ -805,6 +814,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message regexp '.*pd.*'",
 				"message regexp '.*foo]$'",
@@ -815,6 +826,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"message regexp '.*pd.*'",
 				"message regexp '.*5.*'",
@@ -824,6 +837,8 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 		},
 		{
 			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2019/08/26 06:28:19.011'",
 				"level='critical'",
 				"(message regexp '.*pd.*' or message regexp '.*tidb.*')",
 			},
@@ -832,6 +847,19 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 				{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
 				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
 				{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
+			},
+		},
+		{
+			conditions: []string{
+				"time>='2019/08/26 06:18:13.011'",
+				"time<='2099/08/26 06:28:19.011'",
+				// this pattern verifies that there is no optimization breaking
+				// length of multiple wildcards, for example, %% may be
+				// converted to %, but %_ cannot be converted to %.
+				"message like '%tidb_%_4%'",
+			},
+			expected: [][]string{
+				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
 			},
 		},
 	}
@@ -875,7 +903,22 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
+	// Test without start time error.
 	rs, err := tk.Exec("select * from information_schema.cluster_log")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+
+	// Test without end time error.
+	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011'")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+
+	// Test without specified message error.
+	rs, err = tk.Exec("select * from information_schema.cluster_log where time>='2019/08/26 06:18:13.011' and time<'2019/08/26 16:18:13.011'")
 	c.Assert(err, IsNil)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
