@@ -13,7 +13,9 @@
 
 package aggfuncs
 
-import "github.com/pingcap/tidb/util/set"
+import (
+	"github.com/pingcap/tidb/util/set"
+)
 
 const (
 	// DefStringSetBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(struct{}))+2*ptrSize
@@ -28,16 +30,16 @@ const (
 	loadFactorDen = 2
 )
 
-// stringSetWithMemoryUsage is a string set with memory usage.
-type stringSetWithMemoryUsage struct {
+// StringSetWithMemoryUsage is a string set with memory usage.
+type StringSetWithMemoryUsage struct {
 	set.StringSet
 	bInMap int64
 }
 
-// newStringSetWithMemoryUsage builds a string set.
-func newStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage stringSetWithMemoryUsage, memDelta int64) {
+// NewStringSetWithMemoryUsage builds a string set.
+func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWithMemoryUsage, memDelta int64) {
 	set := make(set.StringSet, len(ss))
-	setWithMemoryUsage = stringSetWithMemoryUsage{
+	setWithMemoryUsage = StringSetWithMemoryUsage{
 		StringSet: set,
 		bInMap:    0,
 	}
@@ -49,25 +51,25 @@ func newStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage stringSetWith
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *stringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
+func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
 	s.StringSet.Insert(val)
-	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
 		memDelta = DefStringSetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
 	return memDelta + int64(len(val))
 }
 
-// float64SetWithMemoryUsage is a float64 set with memory usage.
-type float64SetWithMemoryUsage struct {
+// Float64SetWithMemoryUsage is a float64 set with memory usage.
+type Float64SetWithMemoryUsage struct {
 	set.Float64Set
 	bInMap int64
 }
 
-// newFloat64SetWithMemoryUsage builds a float64 set.
-func newFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage float64SetWithMemoryUsage, memDelta int64) {
+// NewFloat64SetWithMemoryUsage builds a float64 set.
+func NewFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage Float64SetWithMemoryUsage, memDelta int64) {
 	set := make(set.Float64Set, len(ss))
-	setWithMemoryUsage = float64SetWithMemoryUsage{
+	setWithMemoryUsage = Float64SetWithMemoryUsage{
 		Float64Set: set,
 		bInMap:     0,
 	}
@@ -79,25 +81,25 @@ func newFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage float64SetW
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
+func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
 	s.Float64Set.Insert(val)
-	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
 		memDelta = DefFloat64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}
 	return memDelta + 8
 }
 
-// int64SetWithMemoryUsage is a int set with memory usage.
-type int64SetWithMemoryUsage struct {
+// Int64SetWithMemoryUsage is a int set with memory usage.
+type Int64SetWithMemoryUsage struct {
 	set.Int64Set
 	bInMap int64
 }
 
-// newInt64SetWithMemoryUsage builds a int64 set.
-func newInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage int64SetWithMemoryUsage, memDelta int64) {
+// NewInt64SetWithMemoryUsage builds a int64 set.
+func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
 	set := make(set.Int64Set, len(ss))
-	setWithMemoryUsage = int64SetWithMemoryUsage{
+	setWithMemoryUsage = Int64SetWithMemoryUsage{
 		Int64Set: set,
 		bInMap:   0,
 	}
@@ -109,9 +111,9 @@ func newInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage int64SetWithMem
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
+func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
 	s.Int64Set.Insert(val)
-	if s.Count() < (1<<s.bInMap)*loadFactorNum/loadFactorDen {
+	if s.Count() > (1<<s.bInMap)*loadFactorNum/loadFactorDen {
 		memDelta = DefInt64SetBucketMemoryUsage * (1 << s.bInMap)
 		s.bInMap++
 	}

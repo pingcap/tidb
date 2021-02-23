@@ -125,7 +125,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	count    int64
 	sum      float64
 	variance float64
-	valSet   float64SetWithMemoryUsage
+	valSet   Float64SetWithMemoryUsage
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -133,7 +133,7 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
-	p.valSet, memDelta = newFloat64SetWithMemoryUsage()
+	p.valSet, memDelta = NewFloat64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + memDelta
 }
 
@@ -142,7 +142,7 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.count = 0
 	p.sum = 0
 	p.variance = 0
-	p.valSet, _ = newFloat64SetWithMemoryUsage()
+	p.valSet, _ = NewFloat64SetWithMemoryUsage()
 }
 
 func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

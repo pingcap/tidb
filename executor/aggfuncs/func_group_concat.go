@@ -167,7 +167,7 @@ func (e *groupConcat) GetTruncated() *int32 {
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet            stringSetWithMemoryUsage
+	valSet            StringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -178,14 +178,14 @@ type groupConcatDistinct struct {
 func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
-	p.valSet, memDelta = newStringSetWithMemoryUsage()
+	p.valSet, memDelta = NewStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + memDelta
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer = nil
-	p.valSet, _ = newStringSetWithMemoryUsage()
+	p.valSet, _ = NewStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -455,7 +455,7 @@ func (e *groupConcatOrder) GetTruncated() *int32 {
 
 type partialResult4GroupConcatOrderDistinct struct {
 	topN              *topNRows
-	valSet            stringSetWithMemoryUsage
+	valSet            StringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
@@ -478,7 +478,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
 	}
-	valSet, memDelta := newStringSetWithMemoryUsage()
+	valSet, memDelta := NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
 			desc:      desc,
@@ -494,7 +494,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 func (e *groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	p.topN.reset()
-	p.valSet, _ = newStringSetWithMemoryUsage()
+	p.valSet, _ = NewStringSetWithMemoryUsage()
 }
 
 func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

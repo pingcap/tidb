@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
@@ -105,7 +104,7 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
-	groupSet            set.StringSet
+	groupSet            aggfuncs.StringSetWithMemoryUsage
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
@@ -168,7 +167,7 @@ type HashAggExec struct {
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
 	bInMap           int64
-	groupSet         set.StringSet
+	groupSet         aggfuncs.StringSetWithMemoryUsage
 	groupKeys        []string
 	cursor4GroupKey  int
 	GroupByItems     []expression.Expression
@@ -230,7 +229,7 @@ func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
 		e.memTracker.Consume(-e.childResult.MemoryUsage())
 		e.childResult = nil
-		e.groupSet = nil
+		e.groupSet, _ = aggfuncs.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
 		return e.baseExecutor.Close()
 	}
@@ -282,7 +281,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 }
 
 func (e *HashAggExec) initForUnparallelExec() {
-	e.groupSet = set.NewStringSet()
+	e.groupSet, _ = aggfuncs.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
@@ -344,10 +343,11 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
+		set, memDelta := aggfuncs.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.memTracker),
 			partialResultMap:    make(aggPartialResultMapper),
-			groupSet:            set.NewStringSet(),
+			groupSet:            set,
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
@@ -356,7 +356,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKeys:           make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
+		e.memTracker.Consume(defBucketMemoryUsage*(1<<w.BInMap) + memDelta)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -591,9 +591,10 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			}
 			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
+			memDelta := int64(0)
 			for i, groupKey := range groupKeys {
 				if !w.groupSet.Exist(groupKey) {
-					w.groupSet.Insert(groupKey)
+					memDelta += w.groupSet.Insert(groupKey)
 				}
 				prs := intermDataBuffer[i]
 				for j, af := range w.aggFuncs {
@@ -602,6 +603,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 					}
 				}
 			}
+			w.memTracker.Consume(memDelta)
 		}
 		if w.stats != nil {
 			w.stats.ExecTime += int64(time.Since(execStart))
@@ -622,12 +624,12 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	memSize := getGroupKeyMemUsage(w.groupKeys)
 	w.groupKeys = w.groupKeys[:0]
-	for groupKey := range w.groupSet {
+	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
-	for i := 0; i < len(w.groupSet); i++ {
+	for i := 0; i < len(w.groupSet.StringSet); i++ {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
@@ -821,7 +823,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return err
 		}
-		if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
+		if (len(e.groupSet.StringSet) == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]

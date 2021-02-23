@@ -192,7 +192,7 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet stringSetWithMemoryUsage
+	valSet StringSetWithMemoryUsage
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -200,7 +200,7 @@ type avgOriginal4DistinctDecimal struct {
 }
 
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	valSet, memDelta := newStringSetWithMemoryUsage()
+	valSet, memDelta := NewStringSetWithMemoryUsage()
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: valSet,
 	}
@@ -211,7 +211,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.valSet, _ = newStringSetWithMemoryUsage()
+	p.valSet, _ = NewStringSetWithMemoryUsage()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -389,7 +389,7 @@ func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctFloat64 struct {
 	partialResult4AvgFloat64
-	valSet float64SetWithMemoryUsage
+	valSet Float64SetWithMemoryUsage
 }
 
 type avgOriginal4DistinctFloat64 struct {
@@ -397,7 +397,7 @@ type avgOriginal4DistinctFloat64 struct {
 }
 
 func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	valSet, memDelta := newFloat64SetWithMemoryUsage()
+	valSet, memDelta := NewFloat64SetWithMemoryUsage()
 	p := &partialResult4AvgDistinctFloat64{
 		valSet: valSet,
 	}
@@ -408,7 +408,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.sum = float64(0)
 	p.count = int64(0)
-	p.valSet, _ = newFloat64SetWithMemoryUsage()
+	p.valSet, _ = NewFloat64SetWithMemoryUsage()
 }
 
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
