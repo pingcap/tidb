@@ -152,7 +152,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 
 func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStmt) error {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `INSERT INTO %s.%s (Host, User, Password) VALUES `)
+	sqlexec.MustFormatSQL(sql, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.UserTable)
 
 	i := 0
 	for _, spec := range s.Specs {
