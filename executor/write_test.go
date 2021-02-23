@@ -3875,7 +3875,7 @@ func (s *testSerialSuite) TestIssue22496(c *C) {
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("create table t12(d decimal(15,2));")
 	tk.MustExec("insert into t12 values('1,999.00');")
-	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("0.00"))
+	tk.MustQuery("SELECT * FROM t12;").Check(testkit.Rows("1.00"))
 	tk.MustExec("drop table t12")
 }
 

@@ -389,6 +389,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
+	var strErr error
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
@@ -420,8 +421,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		}
 		digitsFrac = endIdx - strIdx - 1
 	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E') {
-		*d = zeroMyDecimal
-		return ErrBadNumber
+		strErr = ErrBadNumber
 	} else {
 		digitsFrac = 0
 		endIdx = strIdx
@@ -522,6 +522,9 @@ func (d *MyDecimal) FromString(str []byte) error {
 		d.negative = false
 	}
 	d.resultFrac = d.digitsFrac
+	if strErr != nil {
+		return strErr
+	}
 	return err
 }
 
