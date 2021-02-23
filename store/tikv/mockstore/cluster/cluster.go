@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/kv"
 )
 
 // Cluster simulates a TiKV cluster.
@@ -41,7 +40,7 @@ type Cluster interface {
 	// SplitIndex evenly splits the data in index into count regions.
 	SplitIndex(tableID, indexID int64, count int)
 	// SplitKeys evenly splits the start, end key into "count" regions.
-	SplitKeys(start, end kv.Key, count int)
+	SplitKeys(start, end []byte, count int)
 	// AddStore adds a new Store to the cluster.
 	AddStore(storeID uint64, addr string, labels ...*metapb.StoreLabel)
 	// RemoveStore removes a Store from the cluster.

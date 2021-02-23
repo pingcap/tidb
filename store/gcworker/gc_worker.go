@@ -203,9 +203,9 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func createSession(store kv.Storage) session.Session {
+func createSession(store tikv.Storage) session.Session {
 	for {
-		se, err := session.CreateSession(store)
+		se, err := session.CreateSession(store.(kv.Storage))
 		if err != nil {
 			logutil.BgLogger().Warn("[gc worker] create session", zap.Error(err))
 			continue
@@ -1817,7 +1817,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		err = kv.RunInNewTxn(context.Background(), w.store.(kv.Storage), false, func(ctx context.Context, txn kv.Transaction) error {
 			var err1 error
 			t := meta.NewMeta(txn)
 			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)

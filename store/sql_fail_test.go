@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
@@ -54,10 +55,10 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.store = NewTestStore(c).(tikv.Storage)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
 	if *WithTiKV {
-		session.ResetStoreForWithTiKVTest(s.store)
+		session.ResetStoreForWithTiKVTest(s.store.(kv.Storage))
 	}
 
-	s.dom, err = session.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store.(kv.Storage))
 	c.Assert(err, IsNil)
 }
 
@@ -68,7 +69,7 @@ func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
-	se, err := session.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store.(kv.Storage))
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
@@ -104,7 +105,7 @@ func TestMain(m *testing.M) {
 }
 
 func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store.(kv.Storage))
 	tk.MustExec("use test")
 	tk.MustExec("create table cop_stream_timeout (id int)")
 	for i := 0; i < 200; i++ {

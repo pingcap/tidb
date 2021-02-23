@@ -26,6 +26,9 @@ type tikvTxn struct {
 	idxNameCache map[int64]*model.TableInfo
 }
 
+func NewTiKVTxn(txn *tikv.TikvTxn) *tikvTxn {
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
+}
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.idxNameCache[id]
 }

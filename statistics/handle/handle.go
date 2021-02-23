@@ -267,12 +267,12 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // UpdateSessionVar updates the necessary session variables for the stats reader.
 func (h *Handle) UpdateSessionVar() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	ver, err := strconv.ParseInt(verInString, 10, 64)
 	if err != nil {
 		return err
@@ -292,10 +292,11 @@ type GlobalStats struct {
 	Hg    []*statistics.Histogram
 	Cms   []*statistics.CMSketch
 	TopN  []*statistics.TopN
+	Fms   []*statistics.FMSketch
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -330,10 +331,12 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 	allHg := make([][]*statistics.Histogram, globalStats.Num)
 	allCms := make([][]*statistics.CMSketch, globalStats.Num)
 	allTopN := make([][]*statistics.TopN, globalStats.Num)
+	allFms := make([][]*statistics.FMSketch, globalStats.Num)
 	for i := 0; i < globalStats.Num; i++ {
 		allHg[i] = make([]*statistics.Histogram, 0, partitionNum)
 		allCms[i] = make([]*statistics.CMSketch, 0, partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
+		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
 
 	for _, partitionID := range partitionIDs {
@@ -361,10 +364,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 				// If the statistics is the index stats, we should use the index ID to replace the column ID.
 				ID = idxID
 			}
-			hg, cms, topN := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			allHg[i] = append(allHg[i], hg)
 			allCms[i] = append(allCms[i], cms)
 			allTopN[i] = append(allTopN[i], topN)
+			allFms[i] = append(allFms[i], fms)
 		}
 	}
 
@@ -382,14 +386,31 @@ func (h *Handle) MergePartitionStats2GlobalStats(is infoschema.InfoSchema, physi
 
 		// Merge topN. We need to merge TopN before merging the histogram.
 		// Because after merging TopN, some numbers will be left.
-		// These left numbers should be inserted into the histogram.
-		err = errors.Errorf("TODO: The merge function of the topN structure has not been implemented yet")
+		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
+		var popedTopN []statistics.TopNMeta
+		n := uint32(0)
+		for _, topN := range allTopN[i] {
+			if topN == nil {
+				continue
+			}
+			n = mathutil.MaxUint32(n, uint32(len(topN.TopN)))
+		}
+		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], n)
+
+		// Merge histogram
+		numBuckets := int64(0)
+		for _, hg := range allHg[i] {
+			if int64(hg.Len()) > numBuckets {
+				numBuckets = int64(hg.Len())
+			}
+		}
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, allHg[i], popedTopN, numBuckets)
 		if err != nil {
 			return
 		}
 
-		// Merge histogram
-		err = errors.Errorf("TODO: The merge function of the histogram structure has not been implemented yet")
+		// Merge NDV
+		err = errors.Errorf("TODO: The merge function of the NDV has not been implemented yet")
 		if err != nil {
 			return
 		}
@@ -528,11 +549,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -549,6 +574,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Info:       c.Info,
 			CMSketch:   cms,
 			TopN:       topN,
+			FMSketch:   fms,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
@@ -597,6 +623,14 @@ func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, is
 		return nil, nil, err
 	}
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
+}
+
+func (h *Handle) fmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
+	rows, _, err := reader.read("select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
 func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -648,6 +682,10 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -678,6 +716,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
@@ -704,6 +743,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Info:       colInfo,
 				CMSketch:   cms,
 				TopN:       topN,
+				FMSketch:   fmSketch,
 				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
@@ -827,7 +867,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -854,7 +894,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	data, err := statistics.EncodeCMSketchWithoutTopN(cms)
+	cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
+	if err != nil {
+		return err
+	}
+	fmSketch, err := statistics.EncodeFMSketch(fms)
 	if err != nil {
 		return err
 	}
@@ -869,12 +913,17 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			}
 		}
 	}
+	if fmSketch != nil {
+		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
+			return err
+		}
+	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
 	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -727,7 +726,7 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 }
 
 type mockStore struct {
-	tikv.Storage
+	kv.Storage
 	host string
 }
 
@@ -738,7 +737,7 @@ func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store,
 		mockAddr,
 	}
 
@@ -811,7 +810,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	c.Assert(err.Error(), Equals, "pd unavailable")
 	mockAddr := s.mockAddr
 	store := &mockStore{
-		s.store.(tikv.Storage),
+		s.store,
 		mockAddr,
 	}
 
@@ -841,7 +840,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 22)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 23)
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

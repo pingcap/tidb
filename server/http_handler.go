@@ -332,7 +332,7 @@ func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName strin
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	session, err := session.CreateSession(t.Store)
+	session, err := session.CreateSession(t.Store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1804,7 +1804,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of TiDB metric profile.
 func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	sctx, err := session.CreateSession(h.Store)
+	sctx, err := session.CreateSession(h.Store.(kv.Storage))
 	if err != nil {
 		writeError(w, err)
 		return

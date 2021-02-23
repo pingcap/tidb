@@ -146,9 +146,9 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		result := tk.MustQuery(tt)
 		result.Check(testkit.Rows(output[i].Result...))
 		// If the query doesn't specified the partition, compare the result with normal table
@@ -206,10 +206,10 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	valid := false
 	for i, tt := range input {
 		// Test for table without index.
-		plan := tk.MustQuery("explain " + tt.SQL)
+		plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
 		planTree := s.testData.ConvertRowsToStrings(plan.Rows())
 		// Test for table with index.
-		indexPlan := tk1.MustQuery("explain " + tt.SQL)
+		indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
 		indexPlanTree := s.testData.ConvertRowsToStrings(indexPlan.Rows())
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
