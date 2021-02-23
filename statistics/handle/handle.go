@@ -323,6 +323,7 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc *stmtctx.StatementContext, i
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
 	globalStats.TopN = make([]*statistics.TopN, globalStats.Num)
+	globalStats.Fms = make([]*statistics.FMSketch, globalStats.Num)
 
 	// The first dimension of slice is means the number of column or index stats in the globalStats.
 	// The second dimension of slice is means the number of partition tables.
