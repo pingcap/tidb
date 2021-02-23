@@ -1437,6 +1437,7 @@ func buildTableInfo(
 					tbInfo.PKIsHandle = true
 				} else {
 					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
 				}
 			case model.PrimaryKeyTypeDefault:
 				alterPKConf := config.GetGlobalConfig().AlterPrimaryKey
@@ -1444,6 +1445,9 @@ func buildTableInfo(
 					tbInfo.PKIsHandle = !alterPKConf
 				} else {
 					tbInfo.IsCommonHandle = !alterPKConf && ctx.GetSessionVars().EnableClusteredIndex
+					if tbInfo.IsCommonHandle {
+						tbInfo.CommonHandleVersion = 1
+					}
 				}
 			}
 			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
