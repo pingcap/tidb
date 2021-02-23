@@ -45,8 +45,9 @@ func (s *testExecutorSuite) SetUpSuite(c *C) {
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	s.mvccStore = rpcClient.MvccStore
-	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
+	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
+	store := NewTestTiKVStore(tikvStore)
 	s.store = store
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()

@@ -38,13 +38,28 @@ type testClusterSuite struct {
 	store kv.Storage
 }
 
+type mockTiKVStore struct {
+	*tikv.KVStore
+	memCache kv.MemManager
+}
+
+// GetMemCache return memory mamager of the storage
+func (s *mockTiKVStore) GetMemCache() kv.MemManager {
+	return s.memCache
+}
+
+func NewTestTiKVStore(store *tikv.KVStore) *mockTiKVStore {
+	return &mockTiKVStore{store, kv.NewCacheDB()}
+}
+
 func (s *testClusterSuite) TestClusterSplit(c *C) {
 	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := rpcClient.MvccStore
-	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
+	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
+	store := NewTestTiKVStore(tikvStore)
 	s.store = store
 
 	txn, err := store.Begin()

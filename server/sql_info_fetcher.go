@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
@@ -75,7 +76,7 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 
 func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) {
 	var err error
-	sh.s, err = session.CreateSession(sh.store)
+	sh.s, err = session.CreateSession(sh.store.(kv.Storage))
 	if err != nil {
 		serveError(w, http.StatusInternalServerError, fmt.Sprintf("create session failed, err: %v", err))
 		return

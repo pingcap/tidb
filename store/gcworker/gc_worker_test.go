@@ -95,7 +95,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	s.oracle = &oracles.MockOracle{}
 	s.store.SetOracle(s.oracle)
-	s.dom, err = session.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store.(kv.Storage))
 	c.Assert(err, IsNil)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
