@@ -934,12 +934,14 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	detailDurationWaitTime.Observe(execDetail.WaitTime.Seconds())
 	detailDurationBackoffTime.Observe(execDetail.BackoffTime.Seconds())
 	detailDurationLockKeysTime.Observe(execDetail.LockKeysDuration.Seconds())
-	detailDurationGetCommitTS.Observe(execDetail.CommitDetail.GetCommitTsTime.Seconds())
-	detailDurationPrewriteTime.Observe(execDetail.CommitDetail.PrewriteTime.Seconds())
-	detailDurationWaitPBinlogTime.Observe(execDetail.CommitDetail.WaitPrewriteBinlogTime.Seconds())
-	detailDurationCommitTime.Observe(execDetail.CommitDetail.CommitTime.Seconds())
-	detailDurationCommitBackoffTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.CommitBackoffTime)).Seconds())
-	detailDurationResolveLockTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.ResolveLockTime)).Seconds())
+	if execDetail.CommitDetail != nil {
+		detailDurationGetCommitTS.Observe(execDetail.CommitDetail.GetCommitTsTime.Seconds())
+		detailDurationPrewriteTime.Observe(execDetail.CommitDetail.PrewriteTime.Seconds())
+		detailDurationWaitPBinlogTime.Observe(execDetail.CommitDetail.WaitPrewriteBinlogTime.Seconds())
+		detailDurationCommitTime.Observe(execDetail.CommitDetail.CommitTime.Seconds())
+		detailDurationCommitBackoffTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.CommitBackoffTime)).Seconds())
+		detailDurationResolveLockTime.Observe(time.Duration(atomic.LoadInt64(&execDetail.CommitDetail.ResolveLockTime)).Seconds())
+	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
 	} else {
