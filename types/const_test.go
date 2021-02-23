@@ -191,8 +191,8 @@ func (s *testMySQLConstSuite) TestIssue22390(c *C) {
 	tk.MustExec("insert into tb5 values (10, -9223372036854775808);")
 	rs, _ := tk.Exec("select a - b from tb5;")
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
-	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
+	c.Assert(rows, IsNil)
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT value is out of range in '(test.tb5.a - test.tb5.b)'")
 	c.Assert(rs.Close(), IsNil)
 }

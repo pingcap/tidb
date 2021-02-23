@@ -420,10 +420,11 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
 	errType := "BIGINT UNSIGNED"
-	if forceToSigned {
+	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
+	if signed {
 		errType = "BIGINT"
 	}
-	overflow := s.overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned, a, b)
+	overflow := s.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, a, b)
 	if overflow {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
@@ -432,7 +433,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 }
 
 // returns true when overflowed
-func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned bool, a, b int64) bool {
+func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigned, signed bool, a, b int64) bool {
 	res := a - b
 	ua, ub := uint64(a), uint64(b)
 	resUnsigned := false
@@ -471,7 +472,7 @@ func (s *builtinArithmeticMinusIntSig) overflowCheck(isLHSUnsigned, isRHSUnsigne
 		}
 	}
 
-	if (!forceToSigned && !resUnsigned && res < 0) || (forceToSigned && resUnsigned && uint64(res) > uint64(math.MaxInt64)) {
+	if (!signed && !resUnsigned && res < 0) || (signed && resUnsigned && uint64(res) > uint64(math.MaxInt64)) {
 		return true
 	}
 

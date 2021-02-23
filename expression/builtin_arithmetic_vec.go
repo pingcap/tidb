@@ -350,7 +350,8 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 
 	errType := "BIGINT UNSIGNED"
-	if forceToSigned {
+	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
+	if signed {
 		errType = "BIGINT"
 	}
 	for i := 0; i < len(lhi64s); i++ {
@@ -359,7 +360,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
-		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, forceToSigned, lh, rh)
+		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, lh, rh)
 		if overflow {
 			return types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
