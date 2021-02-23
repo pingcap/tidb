@@ -1261,7 +1261,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 	//   1. Calc the selectivity of each column.
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
 	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
-	// This calculation reduced the independce assumption and can work well better than it.
+	// This calculation reduced the independence assumption and can work well better than it.
 	for i := 0; i < len(indexRange.LowVal); i++ {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
@@ -1278,6 +1278,8 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 			count, err = coll.GetRowCountByIndexRanges(sc, anotherIdxID, tmpRan)
 		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sc, coll.Pseudo) {
 			count, err = coll.GetRowCountByColumnRanges(sc, colID, tmpRan)
+		} else {
+			continue
 		}
 		if err != nil {
 			return 0, err
