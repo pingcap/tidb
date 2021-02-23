@@ -166,9 +166,9 @@ type TransactionContext struct {
 	IsStaleness bool
 	// IsExplicit indicates whether the txn is an interactive txn started with a BEGIN statement
 	IsExplicit bool
-	Isolation     string
-	LockExpire    uint32
-	ForUpdate     uint32
+	Isolation  string
+	LockExpire uint32
+	ForUpdate  uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
