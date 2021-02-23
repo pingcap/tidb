@@ -1036,7 +1036,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			return err
 		}
 		return cc.writeOK(ctx)
-	// ComStatistics, ComProcessInfo, ComConnect, ComProcessKill, ComDebug
+	case mysql.ComStatistics:
+		return cc.writeStats(ctx)
+	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
 		return cc.writeOK(ctx)
 	// ComTime, ComDelayedInsert
@@ -1064,6 +1066,19 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, cmd)
 	}
+}
+
+func (cc *clientConn) writeStats(ctx context.Context) error {
+	msg := []byte("Uptime: 0  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000")
+	data := cc.alloc.AllocWithLen(4, len(msg))
+	data = append(data, msg...)
+
+	err := cc.writePacket(data)
+	if err != nil {
+		return err
+	}
+
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
