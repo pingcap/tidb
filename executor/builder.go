@@ -2056,6 +2056,11 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 			TopNSize:   topNSize,
 			Version:    statsVersion,
 		}
+		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
+		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+		e.analyzePB.IdxReq.CmsketchDepth = &depth
+		e.analyzePB.IdxReq.CmsketchWidth = &width
+		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
 		e.commonHandle = task.CommonHandleInfo
 	}

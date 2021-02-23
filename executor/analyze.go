@@ -533,6 +533,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 			Hist:     []*statistics.Histogram{hists[0]},
 			Cms:      []*statistics.CMSketch{cms[0]},
 			TopNs:    []*statistics.TopN{topNs[0]},
+			Fms:      []*statistics.FMSketch{nil},
 			IsIndex:  1,
 			job:      colExec.job,
 			StatsVer: colExec.analyzeVer,
