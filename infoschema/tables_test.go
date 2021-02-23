@@ -1012,8 +1012,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t100    \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
