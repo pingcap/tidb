@@ -43,14 +43,20 @@ import (
 	"go.uber.org/zap"
 )
 
+// Storage represents a storage that connects TiKV.
+type Storage interface {
+	kv.Storage
+	tikv.Storage
+}
+
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
 type Helper struct {
-	Store       tikv.Storage
+	Store       Storage
 	RegionCache *tikv.RegionCache
 }
 
-// NewHelper get a Helper from Storage
-func NewHelper(store tikv.Storage) *Helper {
+// NewHelper gets a Helper from Storage
+func NewHelper(store Storage) *Helper {
 	return &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
