@@ -821,7 +821,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if len(privData) > 0 {
 			sql.Reset()
 			sqlexec.MustFormatSQL(sql, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)",
-				mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, hack.String(privData))
+				mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql.String())
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
