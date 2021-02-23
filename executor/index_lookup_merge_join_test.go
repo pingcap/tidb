@@ -58,7 +58,7 @@ func (s *testSuite9) TestIssue18631(c *C) {
 	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b,c))")
 	tk.MustExec("insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("insert into t2 values(1,1,1,1),(2,2,2,2)")
-	firstOperator := tk.MustQuery("explain select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc").Rows()[0][0].(string)
+	firstOperator := tk.MustQuery("explain format = 'brief' select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc").Rows()[0][0].(string)
 	c.Assert(strings.Index(firstOperator, plancodec.TypeIndexMergeJoin), Equals, 0)
 	tk.MustQuery("select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc").Check(testkit.Rows(
 		"3 3 3 3 <nil> <nil> <nil> <nil>",
@@ -118,19 +118,19 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 		tk.MustExec("insert into t2 values (1, 'Bob')")
 		sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
 		// Partition table can't be inner side of index merge join, because it can't keep order.
 		c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, -1)
 		c.Assert(len(tk.MustQuery("show warnings").Rows()) > 0, Equals, true)
 
 		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
 		c.Assert(strings.Index(rows[0], "IndexHashJoin"), Equals, 0)
 
 		sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
 		c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
 	}
 }

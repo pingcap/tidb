@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -505,4 +506,8 @@ func (gs *tidbGlueSession) showCreateDatabase(db *model.DBInfo) (string, error) 
 		return "", errors.Trace(err)
 	}
 	return result.String(), nil
+}
+
+func (gs *tidbGlueSession) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
 }

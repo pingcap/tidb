@@ -94,7 +94,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	var tableID int64 = -1
 	if ts != nil {
 		tableID = ts.Table.ID
-		kvRanges, err = distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, ts.Table.IsCommonHandle, ts.Ranges, nil)
+		splitedRanges, _ := distsql.SplitRangesBySign(ts.Ranges, false, false, ts.Table.IsCommonHandle)
+		kvRanges, err = distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tableID}, ts.Table.IsCommonHandle, splitedRanges, nil)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
