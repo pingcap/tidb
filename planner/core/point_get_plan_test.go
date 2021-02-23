@@ -78,22 +78,22 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update_4 N/A root  N/A",
-		"└─Point_Get_1 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
-		"Delete_2 N/A root  N/A",
-		"└─Point_Get_1 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
+		"Delete N/A root  N/A",
+		"└─Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
@@ -197,7 +197,7 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 }
 
 func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
-	res := tk.MustQuery("explain select * from fu where id = 6 for update")
+	res := tk.MustQuery("explain format = 'brief' select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6
 	opInfo := res.Rows()[0][4]
 	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
@@ -218,38 +218,38 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"3 3 3",
 		"4 4 5",
 	))
-	tk.MustQuery("explain select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
-		"Selection_6 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
-		"└─Point_Get_5 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
+		"Selection 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"└─Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
-		"Selection_6 1.00 root  eq(1, test.t.b), eq(1, test.t.c)",
-		"└─Point_Get_5 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
+		"Selection 1.00 root  eq(1, test.t.b), eq(1, test.t.c)",
+		"└─Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
-		"Selection_6 1.00 root  eq(1, test.t.c), eq(test.t.b, 1)",
-		"└─Point_Get_5 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'brief' select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
+		"Selection 1.00 root  eq(1, test.t.c), eq(test.t.b, 1)",
+		"└─Point_Get 1.00 root table:t handle:1",
 	))
-	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:idx_abc(a, b, c) keep order:false, desc:false",
-	))
-
-	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 4 5], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t, index:idx_abc(a, b, c) keep order:false, desc:false",
 	))
 
-	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
+		"Batch_Point_Get 5.00 root table:t handle:[1 2 3 4 5], keep order:false, desc:false",
+	))
+
+	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustExec("begin")
-	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false, lock",
+	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE").Check(testkit.Rows(
+		"Batch_Point_Get 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false, lock",
 	))
 	tk.MustExec("rollback")
 
-	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
+		"Batch_Point_Get 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustExec("use test")
@@ -262,8 +262,8 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"3 4 5",
 		"4 5 6",
 	))
-	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
 		"1 2 3",
@@ -286,8 +286,8 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 	))
 
 	tk.MustExec("begin pessimistic")
-	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false, lock",
+	tk.MustQuery("explain format = 'brief' select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false, lock",
 	))
 	tk.MustExec("rollback")
 }
@@ -311,7 +311,7 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
-		// Test explain result is useless, plan id will be reset when running `explain`.
+		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
 		c.Assert(p.ID(), Equals, 1)
 	}
 }
@@ -332,7 +332,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		plan := tk.MustQuery("explain " + sql)
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
 		res := tk.MustQuery(sql)
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql
@@ -362,8 +362,8 @@ func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustQuery("explain select * from t where a in (1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t handle:[1 2], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get 2.00 root table:t handle:[1 2], keep order:false, desc:false",
 	))
 	tk.MustExec("prepare stmt from 'select * from t where a in (?,?)'")
 	tk.MustExec("set @p1 = 1, @p2 = 2")
@@ -397,19 +397,19 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
-	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
+		"Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
 
-	tk.MustQuery("explain update t set b = b + 1 where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Update_3 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' update t set b = b + 1 where a in (1, 2, 3, 4)").Check(testkit.Rows(
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("update t set b = b + 1 where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 2", "2 3", "3 4", "4 5"))
 
-	tk.MustQuery("explain delete from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Delete_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' delete from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows())
@@ -417,21 +417,21 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustQuery("explain select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
-		"Batch_Point_Get_1 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
+		"Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").
 		Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4"))
 
-	tk.MustQuery("explain update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Update_3 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
+		"Update N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Sort().
 		Check(testkit.Rows("1 1 2", "2 2 3", "3 3 4", "4 4 5"))
 
-	tk.MustQuery("explain delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Delete_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
+	tk.MustQuery("explain format = 'brief' delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
+		"Delete N/A root  N/A]\n[└─Batch_Point_Get 4.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
@@ -545,10 +545,10 @@ func (s *testPointGetSuite) TestPointGetWithInvisibleIndex(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, unique(c1))")
 	tk.MustExec("alter table t alter index c1 invisible")
-	tk.MustQuery("explain select * from t where c1 = 10").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.c1, 10)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'brief' select * from t where c1 = 10").Check(testkit.Rows(
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(test.t.c1, 10)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
 
@@ -558,10 +558,10 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 int, unique(c1))")
 	tk.MustExec("alter table t alter index c1 invisible")
-	tk.MustQuery("explain select * from t where c1 in (10, 20)").Check(testkit.Rows(
-		"TableReader_7 2.00 root  data:Selection_6",
-		"└─Selection_6 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'brief' select * from t where c1 in (10, 20)").Check(testkit.Rows(
+		"TableReader 2.00 root  data:Selection",
+		"└─Selection 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
 
@@ -589,7 +589,7 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, sql := range input {
-		plan := tk.MustQuery("explain " + sql)
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
 		res := tk.MustQuery(sql)
 		s.testData.OnRecord(func() {
 			output[i].SQL = sql

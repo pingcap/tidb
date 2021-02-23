@@ -103,3 +103,20 @@ func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
 }
+
+func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1;")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1 (c int)`)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO", `panic`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO")
+
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1")
+	tk.MustExec("INSERT INTO t1 VALUES (1)")
+
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	tk.MustExec("INSERT INTO t1 VALUES (2)")
+}
