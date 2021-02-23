@@ -302,7 +302,13 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", oracle.GlobalTxnScope)
+	variable.SetSysVar("txn_scope", func() string {
+		v, ok := config.GetGlobalConfig().Labels["zone"]
+		if ok && len(v) > 0 {
+			return oracle.LocalTxnScope
+		}
+		return oracle.GlobalTxnScope
+	}())
 }
 
 // Export config-related metrics
