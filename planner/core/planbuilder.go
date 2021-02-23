@@ -1695,6 +1695,17 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, err
 		}
 		var commonHandleInfo *model.IndexInfo
+		// If we want to analyze this table with analyze version 2 but the existing stats is version 1 and stats feedback is enabled,
+		// we will switch back to analyze version 1.
+		if statistics.FeedbackProbability.Load() > 0 && version == 2 {
+			statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+			versionIsSame := statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &version)
+			if !versionIsSame {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(fmt.Sprintf("Use analyze version 1 on table `%s` ", tbl.Name) +
+					"because this table already has version 1 statistics and query feedback is also enabled. " +
+					"If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
+			}
+		}
 		for _, idx := range idxInfo {
 			if idx.Primary && tbl.TableInfo.IsCommonHandle {
 				commonHandleInfo = idx
