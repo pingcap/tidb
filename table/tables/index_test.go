@@ -302,8 +302,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.Background(), key)
 		c.Assert(err, IsNil)
-		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
-			createRowcodecColInfo(tblInfo, idx.Meta()))
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, createRowcodecColInfo(tblInfo, idx.Meta()))
 		c.Assert(err, IsNil)
 		c.Assert(colVals, HasLen, 2)
 		_, d, err := codec.DecodeOne(colVals[0])
@@ -319,8 +318,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 
 		unTouchedVal := append([]byte{1}, val[1:]...)
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
-		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
-			createRowcodecColInfo(tblInfo, idx.Meta()))
+		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault, createRowcodecColInfo(tblInfo, idx.Meta()))
 		c.Assert(err, IsNil)
 	}
 }
@@ -379,8 +377,7 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 			IsPKHandle: false,
 			Ft:         rowcodec.FieldTypeFromModelColumn(b),
 		})
-		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
-			colInfo)
+		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, colInfo)
 		c.Assert(err, IsNil)
 		c.Assert(colVals, HasLen, 3)
 		_, d, err := codec.DecodeOne(colVals[0])
