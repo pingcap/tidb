@@ -277,6 +277,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.PKIsHandle = true
 			default:
 				tblInfo.IsCommonHandle = true
+				tblInfo.CommonHandleVersion = 1
 				index := &model.IndexInfo{
 					Name:    model.NewCIStr("primary"),
 					State:   model.StatePublic,
