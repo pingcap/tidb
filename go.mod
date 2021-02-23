@@ -1,5 +1,7 @@
 module github.com/pingcap/tidb
 
+replace github.com/pingcap/tipb => github.com/TisonKun/tipb v0.0.0-20210223074431-8d70982f3317
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
