@@ -1316,10 +1316,10 @@ func encodePartitionID(idxVal []byte, partitionID int64) []byte {
 
 // IndexValueSegments use to store result of SplitIndexValue.
 type IndexValueSegments struct {
-	CommonHandle    []byte
-	PartitionID     []byte
-	RestoredValues  []byte
-	IntHandle       []byte
+	CommonHandle   []byte
+	PartitionID    []byte
+	RestoredValues []byte
+	IntHandle      []byte
 }
 
 // SplitIndexValue splits index value into segments.
