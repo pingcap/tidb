@@ -767,6 +767,13 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 			return nil, errors.New("ON condition doesn't support subqueries yet")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
+		// Keep these expressions as a LogicalSelection upon the inner join, in order to apply
+		// possible decorrelate optimizations. The ON clause is actually treated as a WHERE clause now.
+		if joinPlan.JoinType == InnerJoin {
+			sel := LogicalSelection{Conditions: onCondition}.Init(b.ctx, b.getSelectOffset())
+			sel.SetChildren(joinPlan)
+			return sel, nil
+		}
 		joinPlan.AttachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
