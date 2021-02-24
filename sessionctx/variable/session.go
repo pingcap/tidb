@@ -784,7 +784,7 @@ type SessionVars struct {
 	PartitionPruneMode atomic2.String
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
-	TxnScope string
+	TxnScope oracle.TxnScope
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
@@ -819,8 +819,8 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
 		return oracle.GlobalTxnScope
 	}
-	if s.TxnScope == oracle.LocalTxnScope {
-		return config.GetTxnScopeFromConfig()
+	if s.TxnScope.GetTxnScope() == oracle.LocalTxnScope {
+		return s.TxnScope.GetLocation()
 	}
 	return oracle.GlobalTxnScope
 }
@@ -966,7 +966,7 @@ func NewSessionVars() *SessionVars {
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    oracle.GlobalTxnScope,
+		TxnScope:                    oracle.NewGlobalTxnScope(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1683,10 +1683,17 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	case TiDBTxnScope:
-		if val != oracle.GlobalTxnScope && val != oracle.LocalTxnScope {
-			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
+		switch val {
+		case oracle.GlobalTxnScope:
+			s.TxnScope = oracle.NewGlobalTxnScope()
+		case oracle.LocalTxnScope:
+			if v := config.GetTxnScopeFromConfig(); len(v) > 0 {
+				s.TxnScope = oracle.NewLocalTxnScope(v)
+			} else {
+				s.TxnScope = oracle.NewGlobalTxnScope()
+			}
 		}
-		s.TxnScope = val
+		return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:

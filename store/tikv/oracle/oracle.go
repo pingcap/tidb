@@ -44,6 +44,43 @@ type Future interface {
 	Wait() (uint64, error)
 }
 
+// TxnScope indicates the used txnScope for oracle
+type TxnScope struct {
+	// txnScope indicates the value of @@txn_scope, which only can be `global` or `local`
+	txnScope TxnScopeEnum
+	// location indicates the value which the tidb-server holds to request tso from pd
+	location string
+}
+
+func newTxnScope(txnScope TxnScopeEnum, location string) TxnScope {
+	return TxnScope{
+		txnScope: txnScope,
+		location: location,
+	}
+}
+
+// NewGlobalTxnScope...
+func NewGlobalTxnScope() TxnScope {
+	return newTxnScope(GlobalTxnScope, GlobalTxnScope)
+}
+
+// NewLocalTxnScope...
+func NewLocalTxnScope(location string) TxnScope {
+	return newTxnScope(LocalTxnScope, location)
+}
+
+// GetTxnScope...
+func (t TxnScope) GetTxnScope() TxnScopeEnum {
+	return t.txnScope
+}
+
+// GetLocation...
+func (t TxnScope) GetLocation() string {
+	return t.location
+}
+
+type TxnScopeEnum string
+
 const (
 	physicalShiftBits = 18
 	// GlobalTxnScope is the default transaction scope for a Oracle service.

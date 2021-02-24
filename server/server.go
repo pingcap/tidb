@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -301,7 +302,12 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", config.GetTxnScopeDefaultValueFromConfig())
+	variable.SetSysVar("txn_scope", func() string {
+		if v := config.GetTxnScopeFromConfig(); len(v) > 0 {
+			return oracle.LocalTxnScope
+		}
+		return oracle.GlobalTxnScope
+	}())
 }
 
 // Export config-related metrics
