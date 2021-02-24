@@ -283,7 +283,6 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		{
 			args:   []interface{}{int64(-1), int64(math.MinInt64)},
 			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-1 \\* -9223372036854775808\\)'"},
-
 		},
 		{
 			args:   []interface{}{int64(math.MinInt64), int64(-1)},
