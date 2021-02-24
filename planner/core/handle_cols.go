@@ -115,6 +115,7 @@ func (cb *CommonHandleCols) ResolveIndices(schema *expression.Schema) (HandleCol
 	return ncb, nil
 }
 
+// Clone implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) Clone() HandleCols {
 	ncb := &CommonHandleCols{
 		tblInfo: cb.tblInfo,
