@@ -1713,7 +1713,7 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
-// TryGetHandleRestoredDataWrapper tries to get the restored data. The argument can be a slice or a map.
+// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
 func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
 	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle || t.meta.CommonHandleVersion == 0 {
 		return nil

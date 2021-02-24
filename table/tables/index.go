@@ -140,45 +140,6 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-// Value layout:
-//		+--New Encoding (with restore data, or common handle, or index is global)
-//		|
-//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
-//		|  Length:   1     | len(options) | len(padding) |    8        |     1
-//		|
-//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
-//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
-//		|                 See below for more information.
-//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
-//		|  IntHandle:     Only exists when table use int handles and index is unique.
-//		|  UntouchedFlag: Only exists when index is untouched.
-//		|
-//		|  Layout of Options:
-//		|
-//		|     Segment:             Common Handle                 |     Global Index      |       New Collation
-// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | [v5.0 Flag] |    restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |     1       | len(restoreData)
-//		|
-//		|     Common Handle Segment: Exists when unique index used common handles.
-//		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: (Created in v4.0) Exists when new collation is used and index contains non-binary string.
-//		|                            (Created in v5.0) Exists when new collation is used and index or handle contains non-binary string.
-//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
-//		|     The restored data contains both the values of a and b.
-//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
-//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
-//		|     and the restored data together to restore original data.
-//		+--Old Encoding (without restore data, integer handle, local)
-//
-//		   Layout: [Handle] | [UntouchedFlag]
-//		   Length:   8      |     1
-//
-//		   Handle:        Only exists in unique index.
-//		   UntouchedFlag: Only exists when index is untouched.
-//
-//		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		   Length of value <= 9, use to distinguish from the new encoding.
-//
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
 		us.CacheTableInfo(c.phyTblID, c.tblInfo)

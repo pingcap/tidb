@@ -821,7 +821,7 @@ type indexRecord struct {
 	handle kv.Handle
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
-	rsData []types.Datum // It's the restored data.
+	rsData []types.Datum // It's the restored data for handle.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
