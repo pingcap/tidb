@@ -1209,6 +1209,17 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		"where digest_text like 'insert into `test_summary`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
 
+	tk.MustExec("drop table if exists `table`")
+	tk.MustExec("create table `table`(a int)")
+	tk.MustExec("insert into `table` values(1)")
+
+	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys," +
+		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions," +
+		"max_prewrite_regions, avg_affected_rows, query_sample_text " +
+		"from information_schema.statements_summary_history " +
+		"where digest_text like 'insert into `table`%'"
+	tk.MustQuery(sql).Check(testkit.Rows("Insert test test.table <nil> 1 0 0 0 0 0 1 1 1 1 1 insert into `table` values(1)"))
+
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
