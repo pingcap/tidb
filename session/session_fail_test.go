@@ -115,8 +115,52 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 
 	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1")
 	tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1")
+	// Auto-commit transactions don't need to get minCommitTS from TSO
 	tk.MustExec("INSERT INTO t1 VALUES (1)")
 
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	tk.MustExec("BEGIN")
 	tk.MustExec("INSERT INTO t1 VALUES (2)")
+	// An explicit transaction needs to get minCommitTS from TSO
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("INSERT INTO t1 VALUES (3)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	// Same for 1PC
+	tk.MustExec("set autocommit = 1")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_1pc", "1")
+	tk.MustExec("INSERT INTO t1 VALUES (4)")
+
+	tk.MustExec("BEGIN")
+	tk.MustExec("INSERT INTO t1 VALUES (5)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
+
+	tk.MustExec("set autocommit = 0")
+	tk.MustExec("INSERT INTO t1 VALUES (6)")
+	func() {
+		defer func() {
+			err := recover()
+			c.Assert(err, NotNil)
+		}()
+		tk.MustExec("COMMIT")
+	}()
 }
