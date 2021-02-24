@@ -284,7 +284,11 @@ func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTabl
 }
 
 func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer) error {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	sql, err := sqlexec.EscapeSQL("SHOW CREATE TABLE %n.%n", pair.DBName, pair.TableName)
+	if err != nil {
+		return err
+	}
+	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(recordSets) > 0 {
 		defer terror.Call(recordSets[0].Close)
 	}
