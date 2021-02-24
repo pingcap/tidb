@@ -1044,6 +1044,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
+		if is.Table.IsCommonHandle {
+			cop.extraHandleCol, _ = ts.appendExtraHandleCol(ds)
+		}
 	}
 	cop.cst = cost
 	task = cop
