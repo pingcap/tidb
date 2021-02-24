@@ -90,15 +90,15 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	if !ok {
 		return "", false
 	}
-	lower := strings.ToLower(origin)
-	parenPos := strings.Index(lower, "(")
+	parenPos := strings.Index(origin, "(")
 	if parenPos == -1 {
 		return "", false
 	}
 	if strings.Contains(origin[:parenPos], ".") {
 		return origin, true
 	}
-	pos := findTablePos(lower[:parenPos], tn.Name.L)
+	lower := strings.ToLower(origin[:parenPos])
+	pos := findTablePos(lower, tn.Name.L)
 	if pos == -1 {
 		return "", false
 	}
