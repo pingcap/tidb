@@ -325,16 +325,6 @@ func (s *KVStore) GetPDClient() pd.Client {
 	return s.pdClient
 }
 
-// Name gets the name of the storage engine
-func (s *KVStore) Name() string {
-	return "TiKV"
-}
-
-// Describe returns of brief introduction of the storage
-func (s *KVStore) Describe() string {
-	return "TiKV is a distributed transactional key-value database"
-}
-
 // ShowStatus returns the specified status of the storage
 func (s *KVStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
