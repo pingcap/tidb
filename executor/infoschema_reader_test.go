@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -41,6 +42,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -725,9 +729,80 @@ func (sm *mockSessionManager) SetServerID(serverID uint64) {
 	sm.serverID = serverID
 }
 
+type mockStoreInterface interface {
+	// GetRegionCache gets the RegionCache.
+	GetRegionCache() *tikv.RegionCache
+
+	// SendReq sends a request to TiKV.
+	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
+
+	// GetLockResolver gets the LockResolver.
+	GetLockResolver() *tikv.LockResolver
+
+	// GetSafePointKV gets the SafePointKV.
+	GetSafePointKV() tikv.SafePointKV
+
+	// UpdateSPCache updates the cache of safe point.
+	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+
+	// SetOracle sets the Oracle.
+	SetOracle(oracle oracle.Oracle)
+
+	// SetTiKVClient sets the TiKV client.
+	SetTiKVClient(client tikv.Client)
+
+	// GetTiKVClient gets the TiKV client.
+	GetTiKVClient() tikv.Client
+
+	// Closed returns the closed channel.
+	Closed() <-chan struct{}
+
+	// Begin a global transaction
+	Begin() (kv.Transaction, error)
+	// Begin a transaction with the given txnScope (local or global)
+	BeginWithTxnScope(txnScope string) (kv.Transaction, error)
+	// BeginWithStartTS begins transaction with given txnScope and startTS.
+	BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error)
+	// BeginWithStalenessTS begins transaction with given staleness
+	BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Transaction, error)
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver kv.Version) kv.Snapshot
+	// GetClient gets a client instance.
+	GetClient() kv.Client
+	// GetMPPClient gets a mpp client instance.
+	GetMPPClient() kv.MPPClient
+	// Close store
+	Close() error
+	// UUID return a unique ID which represents a Storage.
+	UUID() string
+	// CurrentVersion returns current max committed version with the given txnScope (local or global).
+	CurrentVersion(txnScope string) (kv.Version, error)
+	// GetOracle gets a timestamp oracle client.
+	GetOracle() oracle.Oracle
+	// SupportDeleteRange gets the storage support delete range or not.
+	SupportDeleteRange() (supported bool)
+	// Name gets the name of the storage engine
+	Name() string
+	// Describe returns of brief introduction of the storage
+	Describe() string
+	// ShowStatus returns the specified status of the storage
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	// GetMemCache return memory manager of the storage
+	GetMemCache() kv.MemManager
+}
 type mockStore struct {
-	kv.Storage
+	mockStoreInterface
 	host string
+}
+
+func (s *testInfoschemaClusterTableSuite) newMockStore() mockStoreInterface {
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(mockStoreInterface),
+		mockAddr,
+	}
+	return store
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
@@ -736,10 +811,7 @@ func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr
-	store := &mockStore{
-		s.store,
-		mockAddr,
-	}
+	store := s.newMockStore()
 
 	// information_schema.cluster_info
 	tk := testkit.NewTestKit(c, store)
@@ -808,12 +880,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
 	c.Assert(err.Error(), Equals, "pd unavailable")
-	mockAddr := s.mockAddr
-	store := &mockStore{
-		s.store,
-		mockAddr,
-	}
-
+	store := s.newMockStore()
 	// Test information_schema.TABLE_STORAGE_STATS.
 	tk = testkit.NewTestKit(c, store)
 
