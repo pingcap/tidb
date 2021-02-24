@@ -184,7 +184,7 @@ func (d *sqlDigester) normalize(sql string) {
 			d.buffer.WriteString(token.lit)
 		} else if token.tok == underscoreCS {
 			d.buffer.WriteString("(_charset)")
-		} else if token.tok == identifier {
+		} else if token.tok == identifier || token.tok == quotedIdentifier {
 			d.buffer.WriteByte('`')
 			d.buffer.WriteString(token.lit)
 			d.buffer.WriteByte('`')
