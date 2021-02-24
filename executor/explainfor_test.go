@@ -112,7 +112,7 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 		}
 		c.Assert(buf.String(), Matches, ""+
 			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
-			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0}, scan_detail:.* keep order:false, stats:pseudo N/A N/A")
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
@@ -316,9 +316,9 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	rows := tk.MustQuery("select connection_id()").Rows()
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
-	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1",
+	tk.MustQuery("explain format = 'brief' select 1").Check(testkit.Rows(
+		"Projection 1.00 root  1->Column#1",
+		"└─TableDual 1.00 root  rows:1",
 	))
 
 	tkProcess := tk.Se.ShowProcess()
@@ -445,7 +445,7 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))")
 	tk.MustExec("INSERT INTO t1 VALUES (1,'3'),(2,'4')")

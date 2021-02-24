@@ -739,8 +739,8 @@ func ParseDateFormat(format string) []string {
 		return nil
 	}
 
-	// Date format must start and end with number.
-	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+	// Date format must start with number.
+	if !isDigit(format[0]) {
 		return nil
 	}
 
@@ -786,7 +786,14 @@ func isValidSeparator(c byte, prevParts int) bool {
 		return true
 	}
 
-	return prevParts == 2 && (c == ' ' || c == 'T')
+	if prevParts == 2 && (c == ' ' || c == 'T') {
+		return true
+	}
+
+	if prevParts > 4 && !isDigit(c) {
+		return true
+	}
+	return false
 }
 
 var validIdxCombinations = map[int]struct {
@@ -995,6 +1002,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		}
 	}
 	switch len(seps) {
+	case 0:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 1:
 		l := len(seps[0])
 		// Values specified as numbers
@@ -1083,6 +1092,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
+	case 2:
+		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -1098,7 +1109,14 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
+		seps = seps[:6]
+		// YYYY-MM-DD HH-MM-SS
+		if sc != nil {
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+		}
+		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
+		hhmmss = true
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -2878,6 +2896,9 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%S": secondsNumeric,        // Seconds (00..59)
 	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
 	"%Y": yearNumericFourDigits, // Year, numeric, four digits
+	"%#": skipAllNums,           // Skip all numbers
+	"%.": skipAllPunct,          // Skip all punctation characters
+	"%@": skipAllAlpha,          // Skip all alpha characters
 	// Deprecated since MySQL 5.7.5
 	"%y": yearNumericTwoDigits, // Year, numeric (two digits)
 	// TODO: Add the following...
@@ -3257,4 +3278,40 @@ func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 
 	inRange := (t.After(b) || t.Equal(b)) && (t.Before(e) || t.Equal(e))
 	return !inRange, nil
+}
+
+func skipAllNums(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsNumber(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllPunct(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsPunct(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
+}
+
+func skipAllAlpha(t *CoreTime, input string, ctx map[string]int) (string, bool) {
+	retIdx := 0
+	for i, ch := range input {
+		if unicode.IsLetter(ch) {
+			retIdx = i + 1
+		} else {
+			break
+		}
+	}
+	return input[retIdx:], true
 }

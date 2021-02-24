@@ -898,7 +898,7 @@ func (s *testSuiteAgg) TestAggEliminator(c *C) {
 func (s *testSuiteAgg) TestClusterIndexMaxMinEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	for i := 0; i < 10+1; i++ {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
@@ -1227,7 +1227,7 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 		if con == 1 {
 			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 		} else {
-			er := tk.MustQuery("explain " + sql).Rows()
+			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			ok := false
 			for _, l := range er {
 				str := fmt.Sprintf("%v", l)
@@ -1273,7 +1273,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort().Rows()
 			} else {
-				er := tk.MustQuery("explain " + sql).Rows()
+				er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 				ok := false
 				for _, l := range er {
 					str := fmt.Sprintf("%v", l)

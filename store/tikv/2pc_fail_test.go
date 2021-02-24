@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/israce"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -116,31 +115,4 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 	_, err = txn2.Get(context.TODO(), []byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(len(value), Greater, 0)
-}
-
-// TestFailPrewriteRegionError tests data race does not happen on retries
-func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
-	}()
-
-	txn := s.begin(c)
-
-	// Set the value big enough to create many batches. This increases the chance of data races.
-	var bigVal [18000]byte
-	for i := 0; i < 1000; i++ {
-		err := txn.Set([]byte{byte(i)}, bigVal[:])
-		c.Assert(err, IsNil)
-	}
-
-	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
-	c.Assert(err, IsNil)
-
-	ctx := context.Background()
-	err = committer.prewriteMutations(NewBackofferWithVars(ctx, 1000, nil), committer.mutations)
-	c.Assert(err, NotNil)
 }

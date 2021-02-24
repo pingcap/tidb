@@ -60,7 +60,7 @@ func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 		Sc:              sc,
 		RecordSet:       s.rs,
 		ColLen:          1,
-		PkBuilder:       NewSortedBuilder(sc, 256, 1, types.NewFieldType(mysql.TypeLonglong)),
+		PkBuilder:       NewSortedBuilder(sc, 256, 1, types.NewFieldType(mysql.TypeLonglong), Version2),
 		MaxSampleSize:   10000,
 		MaxBucketSize:   256,
 		MaxFMSketchSize: 1000,

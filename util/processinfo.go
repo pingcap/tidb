@@ -91,10 +91,16 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 // "SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST".
 func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	bytesConsumed := int64(0)
-	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
-		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+	diskConsumed := int64(0)
+	if pi.StmtCtx != nil {
+		if pi.StmtCtx.MemTracker != nil {
+			bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
+		}
+		if pi.StmtCtx.DiskTracker != nil {
+			diskConsumed = pi.StmtCtx.DiskTracker.BytesConsumed()
+		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz))
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
