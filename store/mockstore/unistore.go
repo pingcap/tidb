@@ -49,7 +49,10 @@ type mockStorage struct {
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) kv.Storage {
-	coprStore, _ := copr.NewStore(tikvStore, nil)
+	coprStore, err := copr.NewStore(tikvStore, nil)
+	if err != nil {
+		panic(err)
+	}
 	return &mockStorage{
 		KVStore: tikvStore,
 		Store:   coprStore,
