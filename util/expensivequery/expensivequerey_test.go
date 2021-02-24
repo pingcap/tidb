@@ -69,7 +69,7 @@ func (s *testSuite) TestLogFormat(c *C) {
 	c.Assert(logFields[4].Key, Equals, "txn_start_ts")
 	c.Assert(logFields[4].Integer, Equals, int64(23333))
 	c.Assert(logFields[5].Key, Equals, "mem_max")
-	c.Assert(logFields[5].String, Equals, "2013265920 Bytes (1.875 GB)")
+	c.Assert(logFields[5].String, Equals, "2013265920 Bytes (1.88 GB)")
 	c.Assert(logFields[6].Key, Equals, "sql")
 	c.Assert(logFields[6].String, Equals, "select * from table where a > 1")
 

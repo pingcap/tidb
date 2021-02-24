@@ -56,19 +56,35 @@ partition p2 values less than (10))`)
 
 func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists p, t")
-	tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("create table t (id int)")
-	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9)")
-	tk.MustExec("insert into t values (4), (9)")
+	for i := 0; i < 3; i++ {
+		tk.MustExec("set @@session.tidb_enable_table_partition = nightly")
+		tk.MustExec("drop table if exists p, t")
+		if i == 0 {
+			// Test for range partition
+			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+				partition p0 values less than (4),
+				partition p1 values less than (7),
+				partition p2 values less than (10))`)
+		} else if i == 1 {
+			// Test for list partition
+			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by list (c) (
+				partition p0 values in (1,2,3,4),
+				partition p1 values in (5,6,7),
+				partition p2 values in (8, 9,10))`)
+		} else {
+			// Test for hash partition
+			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by hash(c) partitions 5;`)
+		}
 
-	// Build indexLookUp in index join
-	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
-	// Build index reader in index join
-	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9)")
+		tk.MustExec("insert into t values (4), (9)")
+
+		// Build indexLookUp in index join
+		tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
+		// Build index reader in index join
+		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+	}
 }
 
 func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {

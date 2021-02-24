@@ -29,7 +29,7 @@ import (
 )
 
 // DispatchMPPTasks dispathes all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
 	if resp == nil {
 		err := errors.New("client returns nil response")
@@ -49,6 +49,9 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		ctx:        sctx,
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		encodeType: encodeType,
+		copPlanIDs: planIDs,
+		rootPlanID: rootID,
+		storeType:  kv.TiFlash,
 	}, nil
 
 }
@@ -70,7 +73,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker)
+	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
@@ -110,6 +114,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
 		encodeType: encodetype,
+		storeType:  kvReq.StoreType,
 	}, nil
 }
 
@@ -131,7 +136,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
 	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker)
+	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -145,6 +150,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    label,
 		encodeType: tipb.EncodeType_TypeDefault,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }
@@ -153,7 +159,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil)
+	resp := client.Send(ctx, kvReq, vars, nil, false)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -163,6 +169,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    metrics.LblGeneral,
 		encodeType: tipb.EncodeType_TypeDefault,
+		storeType:  kvReq.StoreType,
 	}
 	return result, nil
 }

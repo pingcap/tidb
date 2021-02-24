@@ -376,8 +376,8 @@ func NewColDesc(col *Column) *ColDesc {
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		extra = "auto_increment"
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
-		//in order to match the rules of mysql 8.0.16 version
-		//see https://github.com/pingcap/tidb/issues/10337
+		// in order to match the rules of mysql 8.0.16 version
+		// see https://github.com/pingcap/tidb/issues/10337
 		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldType)
 	} else if col.IsGenerated() {
 		if col.GeneratedStored {
@@ -583,12 +583,12 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
-		return GetZeroValue(col), nil
-	}
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
+		return GetZeroValue(col), nil
+	}
+	if sc.BadNullAsWarning {
+		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)

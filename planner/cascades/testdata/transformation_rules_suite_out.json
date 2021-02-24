@@ -132,19 +132,19 @@
           "Group#0 Schema:[test.t.a,test.t.b,test.t.b]",
           "    Projection_5 input:[Group#1], test.t.a, test.t.b, test.t.b",
           "Group#1 Schema:[test.t.a,test.t.b,test.t.a,test.t.b]",
-          "    Join_3 input:[Group#2,Group#3], inner join, equal:[eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)], other cond:gt(test.t.a, test.t.b)",
+          "    Join_9 input:[Group#2,Group#3], inner join, equal:[eq(test.t.a, test.t.a) eq(test.t.b, test.t.b)], other cond:gt(test.t.a, test.t.b)",
           "Group#2 Schema:[test.t.a,test.t.b]",
-          "    TiKVSingleGather_9 input:[Group#4], table:t1",
+          "    TiKVSingleGather_15 input:[Group#4], table:t1",
           "Group#4 Schema:[test.t.a,test.t.b]",
-          "    Selection_12 input:[Group#5], gt(test.t.a, test.t.b), gt(test.t.b, 10)",
+          "    Selection_18 input:[Group#5], gt(test.t.a, test.t.b), gt(test.t.a, test.t.b), gt(test.t.b, 10)",
           "Group#5 Schema:[test.t.a,test.t.b]",
-          "    TableScan_11 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]",
+          "    TableScan_17 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 10)]",
           "Group#3 Schema:[test.t.a,test.t.b]",
-          "    TiKVSingleGather_14 input:[Group#6], table:t2",
+          "    TiKVSingleGather_20 input:[Group#6], table:t2",
           "Group#6 Schema:[test.t.a,test.t.b]",
-          "    Selection_17 input:[Group#7], gt(test.t.a, test.t.b), gt(test.t.b, 10)",
+          "    Selection_23 input:[Group#7], gt(test.t.a, test.t.b), gt(test.t.a, test.t.b), gt(test.t.b, 10)",
           "Group#7 Schema:[test.t.a,test.t.b]",
-          "    TableScan_16 table:t2, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
+          "    TableScan_22 table:t2, pk col:test.t.a, cond:[gt(test.t.a, 10)]"
         ]
       },
       {
@@ -153,7 +153,7 @@
           "Group#0 Schema:[test.t.a,test.t.b]",
           "    Projection_5 input:[Group#1], test.t.a, test.t.b",
           "Group#1 Schema:[test.t.a,test.t.b,test.t.a]",
-          "    TableDual_6 rowcount:0"
+          "    TableDual_7 rowcount:0"
         ]
       },
       {
@@ -217,7 +217,7 @@
           "Group#0 Schema:[test.t.a,test.t.b]",
           "    Projection_5 input:[Group#1], test.t.a, test.t.b",
           "Group#1 Schema:[test.t.a,test.t.b,test.t.a]",
-          "    TableDual_6 rowcount:0"
+          "    TableDual_7 rowcount:0"
         ]
       },
       {
@@ -286,6 +286,23 @@
           "    Selection_10 input:[Group#4], gt(test.t.b, 1), gt(test.t.b, 2), gt(test.t.c, 1), gt(test.t.c, 2)",
           "Group#4 Schema:[test.t.b,test.t.c]",
           "    TableScan_8 table:t"
+        ]
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a and t1.a > 2",
+        "Result": [
+          "Group#0 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Projection_4 input:[Group#1], test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date, test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.c_str, test.t.d_str, test.t.e_str, test.t.f, test.t.g, test.t.h, test.t.i_date",
+          "Group#1 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date,test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    Join_5 input:[Group#2,Group#3], inner join, equal:[eq(test.t.a, test.t.a)]",
+          "Group#2 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_9 input:[Group#4], table:t1",
+          "Group#4 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_11 table:t1, pk col:test.t.a, cond:[gt(test.t.a, 2)]",
+          "Group#3 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TiKVSingleGather_13 input:[Group#5], table:t2",
+          "Group#5 Schema:[test.t.a,test.t.b,test.t.c,test.t.d,test.t.e,test.t.c_str,test.t.d_str,test.t.e_str,test.t.f,test.t.g,test.t.h,test.t.i_date]",
+          "    TableScan_15 table:t2, pk col:test.t.a, cond:[gt(test.t.a, 2)]"
         ]
       }
     ]
