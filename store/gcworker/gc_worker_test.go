@@ -924,10 +924,11 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 			mCluster := s.cluster.(*mocktikv.Cluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
-			s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
+			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
 				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
+			c.Assert(err, IsNil)
 			// also let region1 contains all 4 locks
 			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
 				if regionID == s.initRegion.regionID {
