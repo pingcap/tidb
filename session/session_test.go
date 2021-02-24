@@ -2707,14 +2707,14 @@ func (s *testSessionSuite3) TestEnablePartition(c *C) {
 	tk.MustQuery("show variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition OFF"))
 	tk.MustQuery("show global variables like 'tidb_enable_table_partition'").Check(testkit.Rows("tidb_enable_table_partition ON"))
 
-	tk.MustExec("set experimental_enable_list_partition=off")
-	tk.MustQuery("show variables like 'experimental_enable_list_partition'").Check(testkit.Rows("experimental_enable_list_partition OFF"))
+	tk.MustExec("set tidb_enable_list_partition=off")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition OFF"))
 
-	tk.MustExec("set experimental_enable_list_partition=1")
-	tk.MustQuery("show variables like 'experimental_enable_list_partition'").Check(testkit.Rows("experimental_enable_list_partition ON"))
+	tk.MustExec("set tidb_enable_list_partition=1")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
-	tk.MustExec("set experimental_enable_list_partition=on")
-	tk.MustQuery("show variables like 'experimental_enable_list_partition'").Check(testkit.Rows("experimental_enable_list_partition ON"))
+	tk.MustExec("set tidb_enable_list_partition=on")
+	tk.MustQuery("show variables like 'tidb_enable_list_partition'").Check(testkit.Rows("tidb_enable_list_partition ON"))
 
 	// Disable global variable cache, so load global session variable take effect immediate.
 	s.dom.GetGlobalVarsCache().Disable()
