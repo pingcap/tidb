@@ -298,6 +298,8 @@ type joinExec struct {
 
 	idx          int
 	reservedRows []chunk.Row
+
+	defaultInner chunk.Row
 }
 
 func (e *joinExec) buildHashTable() error {
@@ -358,6 +360,16 @@ func (e *joinExec) fetchRows() (bool, error) {
 				}
 				e.reservedRows = append(e.reservedRows, newRow.ToRow())
 			}
+		} else if e.Join.JoinType == tipb.JoinType_TypeLeftOuterJoin {
+			newRow := chunk.MutRowFromTypes(e.fieldTypes)
+			newRow.ShallowCopyPartialRow(0, row)
+			newRow.ShallowCopyPartialRow(row.Len(), e.defaultInner)
+			e.reservedRows = append(e.reservedRows, newRow.ToRow())
+		} else if e.Join.JoinType == tipb.JoinType_TypeRightOuterJoin {
+			newRow := chunk.MutRowFromTypes(e.fieldTypes)
+			newRow.ShallowCopyPartialRow(0, e.defaultInner)
+			newRow.ShallowCopyPartialRow(e.defaultInner.Len(), row)
+			e.reservedRows = append(e.reservedRows, newRow.ToRow())
 		}
 	}
 	return false, nil

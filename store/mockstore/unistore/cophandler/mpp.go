@@ -25,12 +25,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
@@ -147,6 +149,25 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	rightCh, err := b.buildMPPExecutor(children[1])
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
+		for _, tp := range rightCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(rightCh.getFieldTypes())
+		for i := range rightCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
+	} else if pb.JoinType == tipb.JoinType_TypeRightOuterJoin {
+		for _, tp := range leftCh.getFieldTypes() {
+			tp.Flag &= ^mysql.NotNullFlag
+		}
+		defaultInner := chunk.MutRowFromTypes(leftCh.getFieldTypes())
+		for i := range leftCh.getFieldTypes() {
+			defaultInner.SetDatum(i, types.NewDatum(nil))
+		}
+		e.defaultInner = defaultInner.ToRow()
 	}
 	// because the field type is immutable, so this kind of appending is safe.
 	e.fieldTypes = append(leftCh.getFieldTypes(), rightCh.getFieldTypes()...)
