@@ -76,14 +76,18 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		appendRows := make([]chunk.Row, 0, e.srcChunk.NumRows())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					req.AppendRow(row)
+					appendRows = append(appendRows, row)
 					break
 				}
 			}
+		}
+		if len(appendRows) > 0 {
+			req.AppendRows(appendRows)
 		}
 		if req.NumRows() > 0 {
 			return nil
@@ -316,7 +320,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		result        backfillResult
 	)
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 			var err error
 			result, err = e.backfillIndexInTxn(ctx, txn, currentHandle)
 			return err
@@ -687,7 +691,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
 				return err

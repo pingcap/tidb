@@ -162,7 +162,7 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 			break
 		}
 	}
-
+	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
@@ -289,6 +289,9 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		return errors.New("mock commit one task error")
 	})
 	e.Ctx.StmtCommit()
+	// Make sure process stream routine never use invalid txn
+	e.txnInUse.Lock()
+	defer e.txnInUse.Unlock()
 	// Make sure that there are no retries when committing.
 	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
@@ -401,9 +404,93 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 	return nil, curData
 }
 
+// indexOfTerminator return index of terminator, if not, return -1.
+// normally, the field terminator and line terminator is short, so we just use brute force algorithm.
+func (e *LoadDataInfo) indexOfTerminator(bs []byte) int {
+	fieldTerm := []byte(e.FieldsInfo.Terminated)
+	fieldTermLen := len(fieldTerm)
+	lineTerm := []byte(e.LinesInfo.Terminated)
+	lineTermLen := len(lineTerm)
+	type termType int
+	const (
+		notTerm termType = iota
+		fieldTermType
+		lineTermType
+	)
+	// likely, fieldTermLen should equal to lineTermLen, compare fieldTerm first can avoid useless lineTerm comparison.
+	cmpTerm := func(restLen int, bs []byte) (typ termType) {
+		if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+			typ = fieldTermType
+			return
+		}
+		if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+			typ = lineTermType
+			return
+		}
+		return
+	}
+	if lineTermLen > fieldTermLen && bytes.HasPrefix(lineTerm, fieldTerm) {
+		// unlikely, fieldTerm is prefix of lineTerm, we should compare lineTerm first.
+		cmpTerm = func(restLen int, bs []byte) (typ termType) {
+			if restLen >= lineTermLen && bytes.Equal(bs[:lineTermLen], lineTerm) {
+				typ = lineTermType
+				return
+			}
+			if restLen >= fieldTermLen && bytes.Equal(bs[:fieldTermLen], fieldTerm) {
+				typ = fieldTermType
+				return
+			}
+			return
+		}
+	}
+	atFieldStart := true
+	inQuoter := false
+loop:
+	for i := 0; i < len(bs); i++ {
+		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
+			inQuoter = true
+			atFieldStart = false
+			continue
+		}
+		restLen := len(bs) - i - 1
+		if inQuoter && bs[i] == e.FieldsInfo.Enclosed {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen, bs[i+1:]) {
+			case lineTermType:
+				return i + 1
+			case fieldTermType:
+				i += fieldTermLen
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
+		}
+		if !inQuoter {
+			// look ahead to see if it is end of line or field.
+			switch cmpTerm(restLen+1, bs[i:]) {
+			case lineTermType:
+				return i
+			case fieldTermType:
+				i += fieldTermLen - 1
+				inQuoter = false
+				atFieldStart = true
+				continue loop
+			default:
+			}
+		}
+		// if it is escaped char, skip next char.
+		if bs[i] == e.FieldsInfo.Escaped {
+			i++
+		}
+		atFieldStart = false
+	}
+	return -1
+}
+
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
-func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
+func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
 	startingLen := len(e.LinesInfo.Starting)
 	prevData, curData = e.getValidData(prevData, curData)
 	if prevData == nil && len(curData) < startingLen {
@@ -418,7 +505,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
+		if ignore {
+			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
+		} else {
+			endIdx = e.indexOfTerminator(curData[curStartIdx:])
+		}
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -428,7 +519,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
+		if ignore {
+			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
+		} else {
+			endIdx = e.indexOfTerminator(curData[startingLen:])
+		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -445,7 +540,11 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 
 	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
+	if ignore {
+		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
+	} else {
+		endIdx = e.indexOfTerminator(prevData[startingLen:])
+	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -470,7 +569,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		prevData, curData = curData, prevData
 	}
 	for len(curData) > 0 {
-		line, curData, hasStarting = e.getLine(prevData, curData)
+		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
 		prevData = nil
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
@@ -627,17 +726,19 @@ type fieldWriter struct {
 	term          string
 	enclosedChar  byte
 	fieldTermChar byte
+	escapeChar    byte
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
 }
 
-func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf []byte, term string) {
+func (w *fieldWriter) Init(enclosedChar, escapeChar, fieldTermChar byte, readBuf []byte, term string) {
 	w.isEnclosed = false
 	w.isLineStart = true
 	w.isFieldStart = true
 	w.ReadBuf = readBuf
 	w.enclosedChar = enclosedChar
+	w.escapeChar = escapeChar
 	w.fieldTermChar = fieldTermChar
 	w.term = term
 }
@@ -743,13 +844,12 @@ func (w *fieldWriter) GetField() (bool, field) {
 				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
 				w.putback()
 			}
-		} else if ch == '\\' {
-			// TODO: escape only support '\'
+		} else if ch == w.escapeChar {
 			// When the escaped character is interpreted as if
 			// it was not escaped, backslash is ignored.
 			flag, ch = w.getChar()
 			if flag {
-				w.OutputBuf = append(w.OutputBuf, '\\')
+				w.OutputBuf = append(w.OutputBuf, w.escapeChar)
 				w.OutputBuf = append(w.OutputBuf, ch)
 			}
 		} else {
@@ -771,10 +871,10 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		return fields, nil
 	}
 
-	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Escaped, e.FieldsInfo.Terminated[0], line, e.FieldsInfo.Terminated)
 	for {
 		eol, f := reader.GetField()
-		f = f.escape()
+		f = f.escape(reader.escapeChar)
 		if bytes.Equal(f.str, null) && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
@@ -789,12 +889,11 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 
 // escape handles escape characters when running load data statement.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
-func (f *field) escape() field {
+func (f *field) escape(escapeChar byte) field {
 	pos := 0
 	for i := 0; i < len(f.str); i++ {
 		c := f.str[i]
-		if i+1 < len(f.str) && f.str[i] == '\\' {
+		if i+1 < len(f.str) && f.str[i] == escapeChar {
 			c = f.escapeChar(f.str[i+1])
 			i++
 		}

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -533,7 +532,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -545,7 +544,7 @@ func (s *TestDDLSuite) Bootstrap(c *C) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {
@@ -1061,5 +1060,5 @@ func addEnvPath(newPath string) {
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	store.Register("tikv", tikv.Driver{})
+	store.Register("tikv", store.TiKVDriver{})
 }

@@ -491,14 +491,14 @@ func (b *builtinInetNtoaSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if val < 0 || uint64(val) > math.MaxUint32 {
-		//not an IPv4 address.
+		// not an IPv4 address.
 		return "", true, nil
 	}
 	ip := make(net.IP, net.IPv4len)
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
-		//Not a vaild ipv4 address.
+		// Not a vaild ipv4 address.
 		return "", true, nil
 	}
 
@@ -553,7 +553,7 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 
 	var isMappedIpv6 bool
 	if ip.To4() != nil && strings.Contains(val, ":") {
-		//mapped ipv6 address.
+		// mapped ipv6 address.
 		isMappedIpv6 = true
 	}
 
@@ -737,7 +737,7 @@ func (b *builtinIsIPv4CompatSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
-		//Not an IPv6 address, return false
+		// Not an IPv6 address, return false
 		return 0, false, nil
 	}
 
@@ -785,7 +785,7 @@ func (b *builtinIsIPv4MappedSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	ipAddress := []byte(val)
 	if len(ipAddress) != net.IPv6len {
-		//Not an IPv6 address, return false
+		// Not an IPv6 address, return false
 		return 0, false, nil
 	}
 
@@ -1013,6 +1013,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 

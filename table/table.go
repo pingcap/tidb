@@ -34,11 +34,11 @@ import (
 type Type int16
 
 const (
-	// NormalTable , store data in tikv, mocktikv and so on.
+	// NormalTable stores data in tikv, mocktikv and so on.
 	NormalTable Type = iota
-	// VirtualTable , store no data, just extract data from the memory struct.
+	// VirtualTable stores no data, just extract data from the memory struct.
 	VirtualTable
-	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	// ClusterTable contains the `VirtualTable` in the all cluster tidb nodes.
 	ClusterTable
 )
 
@@ -220,7 +220,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	}
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -230,13 +230,9 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}
@@ -260,6 +256,7 @@ type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetAllPartitionIDs() []int64
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"encoding/hex"
 	"math"
 	"sync/atomic"
 	"time"
@@ -22,10 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -33,15 +34,13 @@ import (
 type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
-var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
-var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
 }
 
 func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
-	return tiKVTxnRegionsNumHistogramPrewrite
+	return metrics.TxnRegionsNumHistogramPrewrite
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
@@ -56,10 +55,12 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
-	var minCommitTS uint64
-	if c.forUpdateTS > 0 {
+	c.mu.Lock()
+	minCommitTS := c.minCommitTS
+	c.mu.Unlock()
+	if c.forUpdateTS > 0 && c.forUpdateTS >= minCommitTS {
 		minCommitTS = c.forUpdateTS + 1
-	} else {
+	} else if c.startTS >= minCommitTS {
 		minCommitTS = c.startTS + 1
 	}
 
@@ -70,11 +71,25 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 	})
 
+	ttl := c.lockTTL
+
+	if c.sessionID > 0 {
+		failpoint.Inject("twoPCShortLockTTL", func() {
+			ttl = 1
+			keys := make([]string, 0, len(mutations))
+			for _, m := range mutations {
+				keys = append(keys, hex.EncodeToString(m.Key))
+			}
+			logutil.BgLogger().Info("[failpoint] injected lock ttl = 1 on prewrite",
+				zap.Uint64("txnStartTS", c.startTS), zap.Strings("keys", keys))
+		})
+	}
+
 	req := &pb.PrewriteRequest{
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
-		LockTtl:           c.lockTTL,
+		LockTtl:           ttl,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
@@ -82,13 +97,17 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
+	failpoint.Inject("invalidMaxCommitTS", func() {
+		if req.MaxCommitTs > 0 {
+			req.MaxCommitTs = minCommitTS - 1
+		}
+	})
+
 	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
-		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
-		req.MinCommitTs = 0
 	}
 
 	if c.isOnePC() {
@@ -105,6 +124,30 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
 
+	if c.sessionID > 0 {
+		failpoint.Inject("prewritePrimaryFail", func() {
+			if batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting primary batch"))
+			}
+		})
+	}
+
+	if c.sessionID > 0 {
+		failpoint.Inject("prewriteSecondaryFail", func() {
+			if !batch.isPrimary {
+				// Delay to avoid cancelling other normally ongoing prewrite requests.
+				time.Sleep(time.Millisecond * 50)
+				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
+					zap.Uint64("txnStartTS", c.startTS))
+				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
+			}
+		})
+	}
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -119,7 +162,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil {
+		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+		// errors.
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
@@ -156,10 +201,14 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 			if c.isOnePC() {
 				if prewriteResp.OnePcCommitTs == 0 {
+					if prewriteResp.MinCommitTs != 0 {
+						return errors.Trace(errors.New("MinCommitTs must be 0 when 1pc falls back to 2pc"))
+					}
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("startTS", c.startTS))
-					tikvOnePCTxnCounterFallback.Inc()
+					metrics.OnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
+					c.setAsyncCommit(false)
 				} else {
 					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
 					// not to lock the mutex.
@@ -209,7 +258,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
-				zap.Uint64("conn", c.connID),
+				zap.Uint64("session", c.sessionID),
 				zap.Stringer("lock", lock))
 			locks = append(locks, lock)
 		}
