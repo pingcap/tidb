@@ -308,7 +308,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			enable = true
 		}
 	case model.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_list_table_partition is 'ON'.
+		// Partition by list is enabled only when experimental_enable_list_partition is 'ON'.
 		enable = ctx.GetSessionVars().EnableListTablePartition
 	}
 

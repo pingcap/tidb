@@ -57,7 +57,7 @@ partition p2 values less than (10))`)
 func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec("set @@session.tidb_enable_list_table_partition = 1")
+	tk.MustExec("set @@session.experimental_enable_list_partition = 1")
 	for i := 0; i < 3; i++ {
 		tk.MustExec("drop table if exists p, t")
 		if i == 0 {

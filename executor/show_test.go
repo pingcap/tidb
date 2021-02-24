@@ -830,7 +830,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
-	tk.MustExec("set @@session.tidb_enable_list_table_partition = ON")
+	tk.MustExec("set @@session.experimental_enable_list_partition = ON")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
     	partition p0 values in (3,5,6,9,17),
