@@ -473,6 +473,21 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+
+	// test fast analyze in dynamic mode
+	tk.MustExec("drop table if exists t4;")
+	tk.MustExec("create table t4(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t4 values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+	// Because the statistics of partition p1 are missing, the construction of global-level stats will fail.
+	tk.MustExec("analyze table t4 partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats.(tableID: 63, partitionID: 64)"))
+	tk.MustExec("analyze table t4 partition p1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 [stats] build global-level stats failed due to missing partition-level stats.(tableID: 63, partitionID: 65)"))
+	//tk.MustQuery(`explain format = 'brief' select * from t4 where a = 3`).Check(testkit.Rows(
+	//	"IndexReader 2.00 root  index:IndexRangeScan",
+	//	"└─IndexRangeScan 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+	//))
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {

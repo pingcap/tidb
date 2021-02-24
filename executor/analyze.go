@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -171,6 +172,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			sc := e.ctx.GetSessionVars().StmtCtx
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStats(sc, infoschema.GetInfoSchema(e.ctx), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
+				errMessage := err.Error()
+				match, err1 := regexp.MatchString("^\\[stats\\] build global-level stats failed due to missing partition-level stats.", errMessage)
+				if err1 != nil {
+					return err1
+				}
+				if match {
+					sc.AppendWarning(err)
+					continue
+				}
 				return err
 			}
 			for i := 0; i < globalStats.Num; i++ {
@@ -809,8 +819,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		sql := new(strings.Builder)
 		sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", dbInfo.Name.L, e.tblInfo.Name.L)
 
-		pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
-		if pruneMode != variable.DynamicOnly && e.tblInfo.ID != e.tableID.GetStatisticsID() {
+		if e.tblInfo.ID != e.tableID.GetStatisticsID() {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.GetStatisticsID() {
 					sqlexec.MustFormatSQL(sql, " partition(%n)", definition.Name.L)
