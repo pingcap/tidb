@@ -117,6 +117,7 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 
 	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
 	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_guarantee_linearizability", "1"), IsNil)
+
 	// Auto-commit transactions don't need to get minCommitTS from TSO
 	tk.MustExec("INSERT INTO t1 VALUES (1)")
 
