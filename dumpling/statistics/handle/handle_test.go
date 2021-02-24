@@ -676,6 +676,36 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestShowGlobalStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static-only'")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values (1), (2), (3), (4)")
+	tk.MustExec("analyze table t with 1 buckets")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 4) // 2 partitions * (1 for the column_a and 1 for the index_a)
+	c.Assert(len(tk.MustQuery("show stats_buckets where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_histograms").Rows()), Equals, 4)
+	c.Assert(len(tk.MustQuery("show stats_histograms where partition_name='global'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 0)
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustExec("analyze table t with 1 buckets")
+	c.Assert(len(tk.MustQuery("show stats_meta").Rows()), Equals, 3)
+	c.Assert(len(tk.MustQuery("show stats_meta where partition_name='global'").Rows()), Equals, 1)
+	c.Assert(len(tk.MustQuery("show stats_buckets").Rows()), Equals, 6)
+	c.Assert(len(tk.MustQuery("show stats_buckets where partition_name='global'").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_histograms").Rows()), Equals, 6)
+	c.Assert(len(tk.MustQuery("show stats_histograms where partition_name='global'").Rows()), Equals, 2)
+	c.Assert(len(tk.MustQuery("show stats_healthy").Rows()), Equals, 3)
+	c.Assert(len(tk.MustQuery("show stats_healthy where partition_name='global'").Rows()), Equals, 1)
+}
+
 func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
