@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -278,6 +279,14 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		{
 			args:   []interface{}{int64(11), int64(11)},
 			expect: int64(121),
+		},
+		{
+			args:   []interface{}{int64(-1), int64(math.MinInt64)},
+			expect: nil,
+		},
+		{
+			args:   []interface{}{int64(math.MinInt64), int64(-1)},
+			expect: nil,
 		},
 		{
 			args:   []interface{}{uint64(11), uint64(11)},
