@@ -48,6 +48,9 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select * from t USE Index(kk)", "select * from `t`"},
 		{"select * from t Ignore Index(kk)", "select * from `t`"},
 		{"select * from t1 straight_join t2 on t1.id=t2.id", "select * from `t1` join `t2` on `t1` . `id` = `t2` . `id`"},
+		{"select * from `table`", "select * from `table`"},
+		{"select * from `30`", "select * from `30`"},
+		{"select * from `select`", "select * from `select`"},
 		// test syntax error, it will be checked by parser, but it should not make normalize dead loop.
 		{"select * from t ignore index(", "select * from `t` ignore index"},
 		{"select /*+ ", "select "},
@@ -56,6 +59,7 @@ func (s *testSQLDigestSuite) TestNormalize(c *C) {
 		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},
 		{"select @a=b from t", "select @a = `b` from `t`"},
+		{"select * from `table", "select * from"},
 	}
 	for _, test := range tests {
 		normalized := parser.Normalize(test.input)
