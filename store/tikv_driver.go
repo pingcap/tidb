@@ -178,6 +178,16 @@ type tikvStore struct {
 	gcWorker  *gcworker.GCWorker
 }
 
+// Name gets the name of the storage engine
+func (s *tikvStore) Name() string {
+	return "TiKV"
+}
+
+// Describe returns of brief introduction of the storage
+func (s *tikvStore) Describe() string {
+	return "TiKV is a distributed transactional key-value database"
+}
+
 var (
 	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
 )
