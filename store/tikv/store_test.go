@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -58,7 +58,7 @@ func (s *testStoreSuiteBase) TearDownTest(c *C) {
 }
 
 func (s *testStoreSuite) TestOracle(c *C) {
-	o := &mockoracle.MockOracle{}
+	o := &oracles.MockOracle{}
 	s.store.oracle = o
 
 	ctx := context.Background()
@@ -307,7 +307,7 @@ func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD",
 		"return(10000)"), IsNil)
-	o := &mockoracle.MockOracle{}
+	o := &oracles.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
 	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil), oracle.GlobalTxnScope)

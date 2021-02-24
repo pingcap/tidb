@@ -623,7 +623,7 @@ type regionMeta struct {
 	approximateKeys int64
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -671,7 +671,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -776,7 +776,7 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 	return fmt.Sprintf("%x", key)
 }
 
-func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{},
+func getRegionMeta(tikvStore helper.Storage, regionMetas []*tikv.Region, uniqueRegionMap map[uint64]struct{},
 	tablePrefix, recordPrefix, indexPrefix []byte, physicalTableID, indexID int64,
 	hasUnsignedIntHandle bool) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(regionMetas))
@@ -799,7 +799,7 @@ func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueReg
 	return regions, nil
 }
 
-func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, error) {
+func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, error) {
 	// check pd server exists.
 	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {
