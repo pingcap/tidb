@@ -34,12 +34,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type sqlInfoFetcher struct {
-	store tikv.Storage
+	store kv.Storage
 	do    *domain.Domain
 	s     session.Session
 }

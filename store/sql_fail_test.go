@@ -45,14 +45,14 @@ type testSQLSerialSuite struct {
 
 type testSQLSuiteBase struct {
 	OneByOneSuite
-	store tikv.Storage
+	store kv.Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	var err error
-	s.store = NewTestStore(c).(tikv.Storage)
+	s.store = NewTestStore(c)
 	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
 	if *WithTiKV {
 		session.ResetStoreForWithTiKVTest(s.store.(kv.Storage))

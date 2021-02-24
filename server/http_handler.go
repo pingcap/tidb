@@ -122,13 +122,13 @@ type tikvHandlerTool struct {
 // newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
 func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
-	var tikvStore tikv.Storage
+	var tikvStore helper.Storage
 	store, ok := s.driver.(*TiDBDriver)
 	if !ok {
 		panic("Invalid KvStore with illegal driver")
 	}
 
-	if tikvStore, ok = store.store.(tikv.Storage); !ok {
+	if tikvStore, ok = store.store.(helper.Storage); !ok {
 		panic("Invalid KvStore with illegal store")
 	}
 

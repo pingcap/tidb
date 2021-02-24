@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1562,7 +1561,7 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
-	h := helper.NewHelper(s.store.(tikv.Storage))
+	h := helper.NewHelper(s.store.(helper.Storage))
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	c.Assert(err, IsNil)
 	// The new format will start with CodecVer = 128 (0x80).
