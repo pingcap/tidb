@@ -93,7 +93,7 @@ func (s *testStatsSuite) TestDumpGlobalStats(c *C) {
 	c.Assert(stats.Partitions["global"], IsNil)
 
 	// global-stats is existed
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t")
 	stats = s.getStatsJSON(c, "test", "t")
 	c.Assert(stats.Partitions["p0"], NotNil)
@@ -105,7 +105,7 @@ func (s *testStatsSuite) TestLoadGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1), (2)")
