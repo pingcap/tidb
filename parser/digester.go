@@ -23,6 +23,8 @@ import (
 	"sync"
 	"unicode"
 	"unsafe"
+
+	"github.com/pingcap/parser/charset"
 )
 
 // DigestHash generates the digest of statements.
@@ -159,14 +161,36 @@ func (d *sqlDigester) normalize(sql string) {
 
 		d.reduceLit(&currTok)
 
+		if currTok.tok == identifier {
+			if strings.HasPrefix(currTok.lit, "_") {
+				_, _, err := charset.GetCharsetInfo(currTok.lit[1:])
+				if err == nil {
+					currTok.tok = underscoreCS
+					goto APPEND
+				}
+			}
+
+			if tok1 := d.lexer.isTokenIdentifier(currTok.lit, pos.Offset); tok1 != 0 {
+				currTok.tok = tok1
+			}
+		}
+	APPEND:
 		d.tokens = append(d.tokens, currTok)
 	}
 	d.lexer.reset("")
 	for i, token := range d.tokens {
 		if token.tok == singleAtIdentifier {
 			d.buffer.WriteString("@")
+			d.buffer.WriteString(token.lit)
+		} else if token.tok == underscoreCS {
+			d.buffer.WriteString("(_charset)")
+		} else if token.tok == identifier {
+			d.buffer.WriteByte('`')
+			d.buffer.WriteString(token.lit)
+			d.buffer.WriteByte('`')
+		} else {
+			d.buffer.WriteString(token.lit)
 		}
-		d.buffer.WriteString(token.lit)
 		if i != len(d.tokens)-1 {
 			d.buffer.WriteRune(' ')
 		}
