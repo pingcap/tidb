@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 )
 
 type testErrorSuite struct{}
@@ -87,4 +88,9 @@ func (s testErrorSuite) TestError(c *C) {
 		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
+}
+
+func (s testErrorSuite) TestErrorCode(c *C) {
+	c.Assert(int(terror.ToSQLError(ErrFieldNotInGroupBy).Code), Equals, errno.ErrFieldNotInGroupBy)
+	c.Assert(int(terror.ToSQLError(ErrMixOfGroupFuncAndFields).Code), Equals, errno.ErrMixOfGroupFuncAndFields)
 }
