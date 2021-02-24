@@ -860,7 +860,7 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	txn.SetOption(kv.Priority, kv.PriorityLow)
 	txn.SetOption(kv.IsolationLevel, kv.RC)
 	txn.SetOption(kv.NotFillCache, true)
-	return nil, nil
+	return rollbackFn, nil
 }
 
 // buildSampTask build sample tasks.
